@@ -6,8 +6,7 @@ This directory contains Recommendation Data Records (RDRs) - detailed technical 
 
 | ID  | Title                                                                                                    | Status         | Priority |
 |-----|----------------------------------------------------------------------------------------------------------|----------------|----------|
-| 001 | ...                                | Recommendation | Medium   |
-| 002 | ...                                    | Implemented    | High     |
+| 001 | [Claude Code Marketplace Project Structure](RDR-001-project-structure.md)                               | Recommendation | High     |
 
 
 ## What are RDRs?

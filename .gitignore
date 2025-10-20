@@ -1,5 +1,5 @@
+.envrc
 .claude
-
 .beads
 
 # Keep JSONL exports (source of truth for git)

@@ -200,9 +200,8 @@ if store_type == 'pdf' and not text.strip():
 - **External retry**: Use Tenacity library for transient network errors
 
 **Resumability**:
-- **SQLite checkpoint DB**: Track completed batches for crash recovery
-- **Batch-level granularity**: Resume from last completed batch
-- **Pattern**: Same as ChromaDB (proven in production)
+- **Idempotent re-indexing**: Re-run indexing after crash, metadata-based sync skips already-indexed files
+- **Metadata as source of truth**: Query Qdrant for indexed (file_path, file_hash) pairs to determine what needs indexing
 
 **Memory Optimization**:
 - Disable HNSW indexing during bulk upload (`m=0`)
@@ -277,7 +276,6 @@ Phase 5: Batch Upload
 ├─ Upload 100-200 chunks per batch
 ├─ Parallel workers (4 recommended)
 ├─ Exponential backoff retry
-├─ SQLite checkpoint for resumability
 └─ Progress tracking (tqdm/Rich)
 ```
 
@@ -373,17 +371,17 @@ Phase 5: Batch Upload
 ┌─────────────────────────────────────────────────────────────┐
 │  Phase 5: Batch Upload to Qdrant                            │
 │  ┌─────────────┐   ┌─────────────┐   ┌─────────────┐       │
-│  │ Batch       │──▶│ Upload with │──▶│ Checkpoint  │       │
-│  │ 100-200     │   │ Retry       │   │ Progress    │       │
-│  │ points      │   │ (Tenacity)  │   │ (SQLite)    │       │
+│  │ Batch       │──▶│ Upload with │──▶│ Progress    │       │
+│  │ 100-200     │   │ Retry       │   │ Tracking    │       │
+│  │ points      │   │ (Tenacity)  │   │ (tqdm/Rich) │       │
 │  └─────────────┘   └─────────────┘   └──────┬──────┘       │
 │        │                                     │               │
 │        │ parallel=4                          │               │
 │        ▼                                     ▼               │
 │  ┌─────────────┐                     ┌─────────────┐       │
-│  │ 4 Workers   │                     │ Progress    │       │
-│  │ 3-4x faster │                     │ Tracking    │       │
-│  └─────────────┘                     │ (tqdm/Rich) │       │
+│  │ 4 Workers   │                     │ Idempotent  │       │
+│  │ 3-4x faster │                     │ Re-indexing │       │
+│  └─────────────┘                     │ on Restart  │       │
 │                                      └─────────────┘       │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -439,8 +437,6 @@ pdf_processing:
     batch_size: 100           # Chunks per batch
     parallel_workers: 4       # Parallel upload workers
     max_retries: 5            # Maximum retry attempts
-    checkpoint_enabled: true  # Enable SQLite checkpointing for crash recovery
-    checkpoint_db: ./upload_checkpoint.db
 
 # Model-specific settings (from RDR-003, updated with 15% overlap)
 models:
@@ -491,7 +487,6 @@ src/arcaneum/
 │   │   └── chunker.py            # Chunking strategies (traditional + late)
 │   ├── common/
 │   │   ├── __init__.py
-│   │   ├── checkpoint.py         # SQLite checkpoint management
 │   │   ├── sync.py               # Metadata-based sync for incremental indexing
 │   │   ├── progress.py           # Progress tracking (tqdm/Rich)
 │   │   └── retry.py              # Retry logic with Tenacity
@@ -1277,7 +1272,7 @@ class PDFBatchUploader:
 3. **Quality-Driven OCR**: Conditional OCR triggering (< 100 chars threshold) avoids unnecessary overhead on 80% of PDFs
 4. **Optimal Chunking**: 15% overlap (vs 10%) and late chunking improve retrieval quality by 5-8% on long documents
 5. **Batch Efficiency**: 100-200 batch size with 4 parallel workers delivers 3-4x faster uploads than ChromaDB patterns
-6. **Resumability**: SQLite checkpointing enables crash recovery for long-running jobs
+6. **Idempotent Re-indexing**: Metadata-based sync enables crash recovery through automatic detection of already-indexed files
 7. **Multi-Model Support**: Named vectors architecture (from RDR-002/003) allows different embedding models per use case
 8. **Production-Ready**: Exponential backoff retry, progress tracking, and error handling patterns from battle-tested implementations
 
@@ -1306,9 +1301,6 @@ class PDFBatchUploader:
 
 - **Risk**: Character-to-token ratio inaccuracy causes chunk overflow
   **Mitigation**: Use conservative RDR-003 values (3.2-3.4), validate empirically, add 10% safety buffer
-
-- **Risk**: Checkpoint database corruption
-  **Mitigation**: SQLite is robust; add checkpoint backup before each run, validate checkpoint integrity on load
 
 ## Implementation Plan
 
@@ -1358,7 +1350,6 @@ touch src/arcaneum/indexing/pdf/ocr.py
 touch src/arcaneum/indexing/pdf/preprocessor.py
 touch src/arcaneum/indexing/pdf/chunker.py
 touch src/arcaneum/indexing/common/__init__.py
-touch src/arcaneum/indexing/common/checkpoint.py
 touch src/arcaneum/indexing/common/sync.py
 touch src/arcaneum/indexing/common/progress.py
 touch src/arcaneum/indexing/common/retry.py
@@ -1386,47 +1377,7 @@ touch src/arcaneum/indexing/uploader.py
 - Late chunking strategy selection
 - Semantic chunking (future enhancement)
 
-**3.4: Checkpoint Manager** (`src/arcaneum/indexing/common/checkpoint.py`)
-```python
-import sqlite3
-from pathlib import Path
-
-class BatchCheckpoint:
-    """SQLite-based checkpoint for resumability."""
-
-    def __init__(self, db_path: str):
-        self.conn = sqlite3.connect(db_path)
-        self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS upload_progress (
-                batch_id INTEGER PRIMARY KEY,
-                file_path TEXT,
-                chunk_start INTEGER,
-                chunk_end INTEGER,
-                status TEXT,
-                uploaded_at TIMESTAMP,
-                error_message TEXT
-            )
-        """)
-        self.conn.commit()
-
-    def mark_completed(self, batch_id: int, file_path: str, chunks: tuple):
-        self.conn.execute("""
-            INSERT INTO upload_progress
-            (batch_id, file_path, chunk_start, chunk_end, status, uploaded_at)
-            VALUES (?, ?, ?, ?, 'completed', datetime('now'))
-        """, (batch_id, file_path, chunks[0], chunks[1]))
-        self.conn.commit()
-
-    def get_last_completed_batch(self) -> int:
-        cursor = self.conn.execute("""
-            SELECT MAX(batch_id) FROM upload_progress
-            WHERE status='completed'
-        """)
-        result = cursor.fetchone()[0]
-        return result if result else 0
-```
-
-**3.4b: Metadata-Based Sync** (`src/arcaneum/indexing/common/sync.py`)
+**3.4: Metadata-Based Sync** (`src/arcaneum/indexing/common/sync.py`)
 ```python
 import hashlib
 from pathlib import Path
@@ -1755,7 +1706,7 @@ See [RDR-004](doc/rdr/RDR-004-pdf-bulk-indexing.md) for details.
 - `src/arcaneum/indexing/pdf/extractor.py` - PDF extraction (PyMuPDF + pdfplumber)
 - `src/arcaneum/indexing/pdf/ocr.py` - OCR integration (Tesseract + EasyOCR)
 - `src/arcaneum/indexing/pdf/chunker.py` - Chunking strategies
-- `src/arcaneum/indexing/common/checkpoint.py` - SQLite checkpointing
+- `src/arcaneum/indexing/common/sync.py` - Metadata-based sync for incremental indexing
 - `src/arcaneum/indexing/uploader.py` - Batch upload orchestrator
 - `src/arcaneum/embeddings/late_chunking.py` - Late chunking implementation
 
@@ -2190,12 +2141,7 @@ def benchmark_pipeline(pdf_dir: Path, sample_size: int = 100):
    - Use Path objects, not string concatenation
    - Validate OCR language codes (whitelist: eng, fra, spa, etc.)
 
-3. **SQLite Injection**:
-   - Use parameterized queries (no string formatting)
-   - All checkpoint queries use `?` placeholders
-   - No user input directly in SQL
-
-4. **Qdrant Upload**:
+3. **Qdrant Upload**:
    - No credentials in code (use environment variables)
    - Validate payload data before upload
    - Set upload size limits (max 1000 points per batch)
@@ -2292,9 +2238,8 @@ def test_sql_injection():
 2. ✅ OCR integration (Tesseract default)
 3. ✅ Traditional chunking (15% overlap)
 4. ✅ Batch upload (100-200 chunks, exponential backoff)
-5. ✅ Checkpoint/resumability (SQLite for crash recovery)
-6. ✅ Incremental indexing (metadata-based sync with file_hash)
-7. ✅ CLI command (`arcaneum index pdfs --force`)
+5. ✅ Incremental indexing (metadata-based sync with file_hash, idempotent re-indexing)
+6. ✅ CLI command (`arcaneum index pdfs --force`)
 
 **Medium Priority** (Post-MVP):
 1. ⭕ Late chunking implementation (stella, modernbert, jina-v3)

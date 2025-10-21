@@ -13,6 +13,7 @@ This directory contains Recommendation Data Records (RDRs) - detailed technical 
 | 005 | [Git-Aware Source Code Indexing with AST Chunking](RDR-005-source-code-indexing.md)                     | Recommendation | High     |
 | 006 | [Claude Code Marketplace Plugin and CLI Integration](RDR-006-claude-code-integration.md)                | Recommendation | High     |
 | 007 | [Semantic Search CLI for Qdrant Collections](RDR-007-semantic-search.md)                                | Recommendation | High     |
+| 008 | [Full-Text Search Server Setup (MeiliSearch)](RDR-008-fulltext-search-server-setup.md)                  | Recommendation | High     |
 
 
 ## What are RDRs?

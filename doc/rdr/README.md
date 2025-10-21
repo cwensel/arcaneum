@@ -15,6 +15,7 @@ This directory contains Recommendation Data Records (RDRs) - detailed technical 
 | 007 | [Semantic Search CLI for Qdrant Collections](RDR-007-semantic-search.md)                                | Recommendation | High     |
 | 008 | [Full-Text Search Server Setup (MeiliSearch)](RDR-008-fulltext-search-server-setup.md)                  | Recommendation | High     |
 | 009 | [Minimal-Command Dual Indexing Workflow](RDR-009-dual-indexing-strategy.md)                             | Recommendation | High     |
+| 010 | [Bulk PDF Indexing to Full-Text Search (MeiliSearch)](RDR-010-pdf-fulltext-indexing.md)                 | Recommendation | High     |
 
 
 ## What are RDRs?

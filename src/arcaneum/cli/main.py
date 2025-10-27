@@ -41,6 +41,25 @@ def list_collections(verbose, output_json):
     list_collections_command(verbose, output_json)
 
 
+@cli.command('collection-info')
+@click.argument('name')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def collection_info(name, output_json):
+    """Show detailed information about a collection (from RDR-003)"""
+    from arcaneum.cli.collections import info_collection_command
+    info_collection_command(name, output_json)
+
+
+@cli.command('delete-collection')
+@click.argument('name')
+@click.option('--confirm', is_flag=True, help='Skip confirmation prompt')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def delete_collection(name, confirm, output_json):
+    """Delete a Qdrant collection (from RDR-003)"""
+    from arcaneum.cli.collections import delete_collection_command
+    delete_collection_command(name, confirm, output_json)
+
+
 # Indexing commands (RDR-004, RDR-005)
 @cli.command('index-pdfs')
 @click.argument('path', type=click.Path(exists=True))

@@ -1,0 +1,36 @@
+{
+  "name": "arcaneum",
+  "description": "CLI tools for semantic and full-text search across Qdrant and MeiliSearch. Manage Docker instances, index PDFs and source code with AST-aware chunking, git awareness, and dual-indexing support.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Arcaneum Contributors",
+    "url": "https://github.com/yourorg/arcaneum"
+  },
+  "repository": "https://github.com/yourorg/arcaneum",
+  "license": "MIT",
+  "homepage": "https://github.com/yourorg/arcaneum",
+  "keywords": [
+    "semantic-search",
+    "full-text-search",
+    "qdrant",
+    "meilisearch",
+    "vector-database",
+    "pdf-indexing",
+    "code-indexing",
+    "ast-chunking",
+    "git-aware",
+    "docker",
+    "dual-indexing",
+    "cli-tools"
+  ],
+  "commands": [
+    "./commands/index-pdfs.md",
+    "./commands/index-source.md",
+    "./commands/create-collection.md",
+    "./commands/list-collections.md",
+    "./commands/search.md",
+    "./commands/search-text.md",
+    "./commands/create-corpus.md",
+    "./commands/sync-directory.md"
+  ]
+}

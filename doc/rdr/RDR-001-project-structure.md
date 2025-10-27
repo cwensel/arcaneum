@@ -156,22 +156,58 @@ arcaneum/                        # GitHub repo (yourorg/arcaneum)
 ├── commands/                    # ✅ Slash commands (*.md files)
 │   ├── docker-start.md          # /arc-docker-start
 │   ├── docker-stop.md           # /arc-docker-stop
-│   ├── index-pdfs.md            # /arc-index-pdfs
-│   ├── index-code.md            # /arc-index-code
-│   └── search.md                # /arc-search
+│   ├── index-pdfs.md            # /arc-index-pdfs (RDR-006)
+│   ├── index-source.md          # /arc-index-source (RDR-006)
+│   ├── create-collection.md     # /arc-create-collection (RDR-006)
+│   ├── list-collections.md      # /arc-list-collections (RDR-006)
+│   ├── search.md                # /arc-search (semantic, RDR-007)
+│   ├── search-text.md           # /arc-search-text (full-text, RDR-012)
+│   ├── create-corpus.md         # /arc-create-corpus (dual indexing, RDR-009)
+│   └── sync-directory.md        # /arc-sync-directory (dual sync, RDR-009)
 │
 ├── src/                         # ✅ Python CLI scripts
 │   └── arcaneum/
 │       ├── __init__.py          # Version constant
+│       ├── config.py            # Configuration models (RDR-003)
 │       ├── cli/                 # CLI scripts
 │       │   ├── __init__.py
-│       │   ├── main.py          # Main CLI dispatcher
-│       │   ├── docker.py        # Docker subcommands (future)
-│       │   ├── index.py         # Indexing subcommands (future)
-│       │   └── search.py        # Search subcommands (future)
-│       ├── docker/              # Docker management logic (future)
-│       ├── indexing/            # Indexing logic (future)
-│       └── search/              # Search logic (future)
+│       │   ├── main.py          # Main CLI dispatcher (RDR-001/003)
+│       │   ├── collections.py   # Collection management (RDR-003)
+│       │   ├── index_pdfs.py    # PDF indexing (RDR-004)
+│       │   ├── index_source.py  # Source code indexing (RDR-005)
+│       │   ├── search.py        # Semantic search (RDR-007)
+│       │   ├── fulltext.py      # Full-text search (RDR-012)
+│       │   └── corpus.py        # Dual indexing commands (RDR-009)
+│       ├── embeddings/          # Embedding generation (RDR-003)
+│       │   ├── __init__.py
+│       │   └── client.py        # EmbeddingClient with model caching
+│       ├── collections/         # Collection utilities (RDR-003)
+│       │   ├── __init__.py
+│       │   └── manager.py       # Collection creation and management
+│       ├── indexing/            # Indexing pipelines
+│       │   ├── __init__.py
+│       │   ├── pdf_pipeline.py      # PDF indexing logic (RDR-004)
+│       │   ├── source_code_pipeline.py  # Code indexing (RDR-005)
+│       │   ├── git_operations.py    # Git discovery/metadata (RDR-005)
+│       │   ├── git_metadata_sync.py # Metadata-based sync (RDR-005)
+│       │   ├── ast_chunker.py       # AST-aware chunking (RDR-005)
+│       │   ├── qdrant_indexer.py    # Qdrant operations (RDR-005)
+│       │   └── dual_indexer.py      # Dual indexing orchestrator (RDR-009)
+│       ├── search/              # Search logic
+│       │   ├── __init__.py
+│       │   ├── embedder.py          # Query embeddings (RDR-007)
+│       │   ├── searcher.py          # Qdrant search (RDR-007)
+│       │   ├── filters.py           # Filter parsing (RDR-007)
+│       │   ├── formatter.py         # Result formatting (RDR-007)
+│       │   ├── fulltext_searcher.py # MeiliSearch search (RDR-012)
+│       │   └── fulltext_formatter.py # Full-text formatting (RDR-012)
+│       ├── fulltext/            # MeiliSearch integration (RDR-008)
+│       │   ├── __init__.py
+│       │   ├── client.py        # MeiliSearch client wrapper
+│       │   └── indexes.py       # Index configuration
+│       └── schema/              # Unified schemas (RDR-009)
+│           ├── __init__.py
+│           └── document.py      # DualIndexDocument schema
 │
 ├── README.md                    # Setup and usage instructions
 ├── LICENSE                      # MIT
@@ -185,12 +221,92 @@ arcaneum/                        # GitHub repo (yourorg/arcaneum)
 
 **Note**: Scripts are run directly from the repository (e.g., `python -m arcaneum.cli.main`). Packaging deferred to future RDR.
 
+#### Docker Compose Configuration (Updated from RDR-002 and RDR-008)
+
+**`docker-compose.yml`** - Dual service deployment (Qdrant + MeiliSearch):
+
+```yaml
+version: '3.8'
+
+services:
+  # Qdrant vector database (RDR-002)
+  qdrant:
+    image: qdrant/qdrant:v1.15.4
+    container_name: qdrant-arcaneum
+    restart: unless-stopped
+    ports:
+      - "6333:6333"  # REST API
+      - "6334:6334"  # gRPC API
+    volumes:
+      - ./qdrant_storage:/qdrant/storage
+      - ./qdrant_snapshots:/qdrant/snapshots
+      - ./models_cache:/models
+    environment:
+      - QDRANT__LOG_LEVEL=INFO
+      - SENTENCE_TRANSFORMERS_HOME=/models
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 2G
+          cpus: '1.0'
+
+  # MeiliSearch full-text engine (RDR-008)
+  meilisearch:
+    image: getmeili/meilisearch:v1.24.0
+    container_name: meilisearch-arcaneum
+    restart: unless-stopped
+    ports:
+      - "7700:7700"  # HTTP API
+    volumes:
+      - ./meili_data:/meili_data
+      - ./meili_dumps:/dumps
+      - ./meili_snapshots:/snapshots
+    environment:
+      - MEILI_ENV=production
+      - MEILI_MASTER_KEY=${MEILI_MASTER_KEY}
+      - MEILI_HTTP_ADDR=0.0.0.0:7700
+      - MEILI_MAX_INDEXING_MEMORY=2.5GiB
+      - MEILI_MAX_INDEXING_THREADS=4
+      - MEILI_DB_PATH=/meili_data/data.ms
+      - MEILI_DUMP_DIR=/dumps
+      - MEILI_SNAPSHOT_DIR=/snapshots
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '4.0'
+        reservations:
+          memory: 1G
+          cpus: '2.0'
+
+volumes:
+  qdrant_storage:
+  qdrant_snapshots:
+  models_cache:
+  meili_data:
+  meili_dumps:
+  meili_snapshots:
+```
+
+**Environment Variables** (`.env` file):
+```bash
+# Qdrant settings (RDR-002)
+QDRANT_PORT=6333
+
+# MeiliSearch settings (RDR-008)
+MEILI_MASTER_KEY=your_secure_master_key_here_min_16_chars
+MEILI_PORT=7700
+```
+
 #### Minimal .claude-plugin/plugin.json
 
 ```json
 {
   "name": "arcaneum",
-  "description": "CLI tools for semantic search across Qdrant and full-text engines. Manage Docker instances, index PDFs and source code, and search with metadata filtering.",
+  "description": "CLI tools for semantic and full-text search across Qdrant and MeiliSearch. Manage Docker instances, index PDFs and source code with AST-aware chunking, git awareness, and dual-indexing support.",
   "version": "0.1.0",
   "author": {
     "name": "Arcaneum Contributors",
@@ -201,11 +317,29 @@ arcaneum/                        # GitHub repo (yourorg/arcaneum)
   "homepage": "https://github.com/yourorg/arcaneum",
   "keywords": [
     "semantic-search",
-    "qdrant",
     "full-text-search",
+    "qdrant",
+    "meilisearch",
+    "vector-database",
+    "pdf-indexing",
+    "code-indexing",
+    "ast-chunking",
+    "git-aware",
     "docker",
-    "indexing",
+    "dual-indexing",
     "cli-tools"
+  ],
+  "commands": [
+    "./commands/docker-start.md",
+    "./commands/docker-stop.md",
+    "./commands/index-pdfs.md",
+    "./commands/index-source.md",
+    "./commands/create-collection.md",
+    "./commands/list-collections.md",
+    "./commands/search.md",
+    "./commands/search-text.md",
+    "./commands/create-corpus.md",
+    "./commands/sync-directory.md"
   ]
 }
 ```
@@ -290,27 +424,72 @@ __version__ = "0.1.0"
 
 `src/arcaneum/cli/main.py`:
 ```python
-"""Main CLI entry point for Arcaneum."""
+"""Main CLI entry point for Arcaneum (Extended from RDR-003/006/007/012)."""
 
 import sys
+import click
 from arcaneum import __version__
+
+@click.group()
+def cli():
+    """Arcaneum: Semantic and full-text search tools for Qdrant and MeiliSearch"""
+    pass
+
+# Collection management (RDR-003)
+@cli.command('create-collection')
+def create_collection():
+    """Create Qdrant collection with named vectors"""
+    from arcaneum.cli.collections import create_collection_command
+    create_collection_command()
+
+@cli.command('list-collections')
+def list_collections():
+    """List all Qdrant collections"""
+    from arcaneum.cli.collections import list_collections_command
+    list_collections_command()
+
+# Indexing (RDR-004/005)
+@cli.command('index-pdfs')
+def index_pdfs():
+    """Index PDF files to Qdrant collection"""
+    from arcaneum.cli.index_pdfs import index_pdfs_command
+    index_pdfs_command()
+
+@cli.command('index-source')
+def index_source():
+    """Index source code to Qdrant collection"""
+    from arcaneum.cli.index_source import index_source_command
+    index_source_command()
+
+# Search (RDR-007/012)
+@cli.command('search')
+def search():
+    """Semantic search across Qdrant collections"""
+    from arcaneum.cli.search import search_command
+    search_command()
+
+@cli.command('search-text')
+def search_text():
+    """Full-text search across MeiliSearch indexes"""
+    from arcaneum.cli.fulltext import search_text_command
+    search_text_command()
+
+# Dual indexing (RDR-009)
+@cli.command('create-corpus')
+def create_corpus():
+    """Create both Qdrant collection and MeiliSearch index"""
+    from arcaneum.cli.corpus import create_corpus_command
+    create_corpus_command()
+
+@cli.command('sync-directory')
+def sync_directory():
+    """Index directory to both Qdrant and MeiliSearch"""
+    from arcaneum.cli.corpus import sync_directory_command
+    sync_directory_command()
 
 def main():
     """Main CLI entry point."""
-    print(f"Arcaneum v{__version__}")
-    print("CLI tools for semantic search")
-    print()
-    print("Subcommands:")
-    print("  docker   - Manage Docker containers (Qdrant, MeiliSearch)")
-    print("  index    - Index PDFs and source code")
-    print("  search   - Semantic search across collections")
-    print()
-    print("Use 'arcaneum <subcommand> --help' for more information")
-    print()
-    print("For Claude Code integration:")
-    print("  /plugin marketplace add yourorg/arcaneum")
-    print("  /plugin install arcaneum")
-    return 0
+    cli()
 
 if __name__ == "__main__":
     sys.exit(main())
@@ -560,16 +739,29 @@ Copy from Technical Design section, adjust URLs as needed.
 #### Step 6: Create .gitignore
 
 ```gitignore
+# Python
 __pycache__/
 *.py[cod]
 .venv/
 venv/
 .pytest_cache/
+
+# OS
 .DS_Store
 
-# Docker volumes
+# Docker volumes (RDR-002)
 qdrant_storage/
-meilisearch_data/
+qdrant_snapshots/
+models_cache/
+
+# MeiliSearch volumes (RDR-008)
+meili_data/
+meili_dumps/
+meili_snapshots/
+
+# Config files (RDR-003)
+arcaneum.yaml
+.env
 ```
 
 #### Step 7: Create LICENSE
@@ -668,16 +860,35 @@ Should execute slash command (even if placeholder).
 
 ### Dependencies
 
-**Required** (initially):
-- None (add as features are implemented)
+Add to `pyproject.toml` or `requirements.txt`:
 
-**Future** (to be added in feature RDRs):
-- docker (Python Docker SDK)
-- qdrant-client
-- Additional search engines (MeiliSearch, etc.)
+**Core Dependencies** (from RDR-002/003/008):
+- qdrant-client[fastembed] >= 1.15.0  # Vector database with FastEmbed (RDR-002/003)
+- fastembed >= 0.3.0                   # ONNX embeddings (RDR-003)
+- meilisearch >= 0.31.0                # Full-text search engine (RDR-008)
+
+**CLI & Configuration** (from RDR-003):
+- click >= 8.1.0                       # CLI framework
+- rich >= 13.0.0                       # Terminal formatting
+- pydantic >= 2.0.0                    # Configuration validation
+- pyyaml >= 6.0                        # YAML config parsing
+
+**Git & Code Processing** (from RDR-005):
+- GitPython >= 3.1.40                  # Git operations
+- tree-sitter-language-pack >= 0.5.0   # AST parsing for 165+ languages
+- llama-index >= 0.9.0                 # CodeSplitter for AST chunking
+
+**PDF Processing** (from RDR-004):
+- pypdf >= 3.0.0                       # PDF text extraction
+- pytesseract >= 0.3.10                # OCR for scanned PDFs
+
+**Utilities**:
+- tenacity >= 8.2.0                    # Retry logic
+- tqdm >= 4.65.0                       # Progress bars
 
 **Development**:
 - pytest >= 8.3.5
+- pytest-cov >= 4.0.0
 - black >= 24.0.0
 - ruff >= 0.8.0
 

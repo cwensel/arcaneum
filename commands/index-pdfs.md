@@ -1,0 +1,33 @@
+---
+description: Index PDF files to Qdrant collection
+argument-hint: <path> --collection <name> [options]
+---
+
+Index PDF files from a directory to a Qdrant collection for semantic search.
+
+**Arguments:**
+- <path>: Directory containing PDF files
+- --collection <name>: Target Qdrant collection name (required)
+- --model <model>: Embedding model (default: stella)
+- --workers <n>: Parallel workers (default: 4)
+- --ocr-enabled: Enable OCR for scanned documents
+- --ocr-language <lang>: OCR language code (default: eng)
+- --force: Force reindex all files
+- --verbose: Detailed progress output
+- --json: Output JSON format
+
+**Examples:**
+```
+/index-pdfs /Documents/papers --collection Research
+/index-pdfs /Scans --collection Archive --ocr-enabled --ocr-language fra
+/index-pdfs /Books --collection Library --workers 8 --force
+```
+
+**Execution:**
+```bash
+cd ${CLAUDE_PLUGIN_ROOT}
+python -m arcaneum.cli.main index-pdfs $ARGUMENTS
+```
+
+**Note:** This command may take several minutes for large document collections.
+Progress will be reported in real-time. Full implementation in RDR-004.

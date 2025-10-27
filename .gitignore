@@ -4,3 +4,40 @@
 
 # Keep JSONL exports (source of truth for git)
 !.beads/*.jsonl
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker volumes (RDR-002: Qdrant)
+qdrant_storage/
+qdrant_snapshots/
+models_cache/
+
+# Docker volumes (RDR-008: MeiliSearch)
+meili_data/
+meili_dumps/
+meili_snapshots/
+
+# Config files (RDR-003)
+arcaneum.yaml
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

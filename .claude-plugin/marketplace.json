@@ -1,0 +1,16 @@
+{
+  "name": "arcaneum-marketplace",
+  "description": "Arcaneum semantic search tools marketplace",
+  "owner": {
+    "name": "Arcaneum Contributors",
+    "url": "https://github.com/yourorg"
+  },
+  "plugins": [
+    {
+      "name": "arcaneum",
+      "source": "./",
+      "description": "CLI tools for semantic and full-text search with Qdrant and MeiliSearch",
+      "version": "0.1.0"
+    }
+  ]
+}

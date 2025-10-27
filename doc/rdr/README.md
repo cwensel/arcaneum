@@ -9,7 +9,7 @@ This directory contains Recommendation Data Records (RDRs) - detailed technical 
 | 001 | [Claude Code Marketplace Project Structure](RDR-001-project-structure.md)                               | Implemented    | High     |
 | 002 | [Qdrant Server Setup with Client-side Embeddings](RDR-002-qdrant-server-setup.md)                       | Implemented    | High     |
 | 003 | [CLI Tool for Qdrant Collection Creation with Named Vectors](RDR-003-collection-creation.md)            | Implemented    | High     |
-| 004 | [Bulk PDF Indexing with OCR Support](RDR-004-pdf-bulk-indexing.md)                                      | Recommendation | High     |
+| 004 | [Bulk PDF Indexing with OCR Support](RDR-004-pdf-bulk-indexing.md)                                      | Implemented    | High     |
 | 005 | [Git-Aware Source Code Indexing with AST Chunking](RDR-005-source-code-indexing.md)                     | Recommendation | High     |
 | 006 | [Claude Code Marketplace Plugin and CLI Integration](RDR-006-claude-code-integration.md)                | Recommendation | High     |
 | 007 | [Semantic Search CLI for Qdrant Collections](RDR-007-semantic-search.md)                                | Recommendation | High     |

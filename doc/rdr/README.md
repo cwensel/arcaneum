@@ -16,6 +16,8 @@ This directory contains Recommendation Data Records (RDRs) - detailed technical 
 | 008 | [Full-Text Search Server Setup (MeiliSearch)](RDR-008-fulltext-search-server-setup.md)                  | Recommendation | High     |
 | 009 | [Minimal-Command Dual Indexing Workflow](RDR-009-dual-indexing-strategy.md)                             | Recommendation | High     |
 | 010 | [Bulk PDF Indexing to Full-Text Search (MeiliSearch)](RDR-010-pdf-fulltext-indexing.md)                 | Recommendation | High     |
+| 011 | [Git-Aware Source Code Full-Text Indexing to MeiliSearch](RDR-011-source-code-fulltext-indexing.md)     | Recommendation | High     |
+| 012 | [Claude Code Integration for Full-Text Search](RDR-012-fulltext-search-claude-integration.md)           | Recommendation | High     |
 
 
 ## What are RDRs?

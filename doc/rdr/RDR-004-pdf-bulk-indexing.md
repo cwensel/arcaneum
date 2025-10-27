@@ -1657,16 +1657,16 @@ pytest tests/test_uploader.py
 **7.2: Integration Test**
 ```bash
 # Create test collection
-arcaneum collection create pdf-test --models stella,bge --config ./arcaneum.yaml
+arc collection create pdf-test --models stella,bge --config ./arcaneum.yaml
 
 # Index test PDFs
-arcaneum index pdfs --input ./test_pdfs --collection pdf-test --model stella
+arc index pdfs --input ./test_pdfs --collection pdf-test --model stella
 
 # Verify upload
-arcaneum collection info pdf-test
+arc collection info pdf-test
 
 # Cleanup
-arcaneum collection delete pdf-test --confirm
+arc collection delete pdf-test --confirm
 ```
 
 #### Step 8: Documentation
@@ -1682,10 +1682,10 @@ Index PDFs with OCR support:
 docker compose up -d
 
 # Create collection
-arcaneum collection create pdf-docs --models stella,bge
+arc collection create pdf-docs --models stella,bge
 
 # Index PDFs
-arcaneum index pdfs \
+arc index pdfs \
   --input /path/to/pdfs \
   --collection pdf-docs \
   --model stella

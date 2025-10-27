@@ -144,13 +144,12 @@ Arcaneum provides two complementary search systems:
 
 ```bash
 # 1. Semantic discovery
-arcaneum search "machine learning algorithms" --collection research-papers
+arc find research-papers "machine learning algorithms"
 
 # Results show: paper.pdf (pages 5-7 relevant)
 
 # 2. Exact verification
-arcaneum fulltext search '"gradient descent algorithm"' \
-  --index research-papers \
+arc match research-papers '"gradient descent algorithm"' \
   --filter 'file_path = paper.pdf AND page_number >= 5 AND page_number <= 7'
 ```
 
@@ -734,14 +733,14 @@ python -m arcaneum.cli.main fulltext search '"stochastic gradient descent"' \
 
 ```bash
 # 1. Create corpus (both Qdrant + MeiliSearch)
-arcaneum create-corpus research-pdfs --type pdf
+arc corpus create research-pdfs --type pdf
 
 # 2. Sync directory (indexes to both systems)
-arcaneum sync-directory ./research-papers --corpus research-pdfs
+arc corpus sync research-pdfs ./research-papers
 
 # Now searchable via both:
-# - Semantic: arcaneum search "query" --collection research-pdfs
-# - Exact: arcaneum fulltext search '"exact phrase"' --index research-pdfs
+# - Semantic: arc find research-pdfs "query"
+# - Exact: arc match research-pdfs '"exact phrase"'
 ```
 
 ## Alternatives Considered
@@ -1093,9 +1092,9 @@ Already satisfied by RDR-004 and RDR-008:
 
 - **Setup**: PDF indexed to both Qdrant (RDR-004) and MeiliSearch (this RDR)
 - **Action**:
-  1. `arcaneum search "machine learning" --collection research-pdfs`
+  1. `arc find research-pdfs "machine learning"`
   2. Note file_path from results (e.g., `ml-paper.pdf`)
-  3. `arcaneum fulltext search '"neural network architecture"' --index research-pdfs --filter 'file_path = ml-paper.pdf'`
+  3. `arc match research-pdfs '"neural network architecture"' --filter 'file_path = ml-paper.pdf'`
 - **Expected**:
   - Semantic search returns relevant PDF
   - Exact search finds specific phrase in that PDF
@@ -1170,7 +1169,7 @@ Already satisfied by RDR-004 and RDR-008:
 
 - Combine semantic (Qdrant) + exact (MeiliSearch) results
 - Reciprocal Rank Fusion (RRF) for result merging
-- `arcaneum search "query" --corpus research-pdfs --hybrid`
+- `arc find research-pdfs "query" --hybrid`
 
 **Parallel OCR:**
 

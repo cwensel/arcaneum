@@ -49,10 +49,10 @@ search.
 
 **Key Design Questions** (from arcaneum-71):
 
-- Separate slash command: `/search-text` vs `/search`?
+- Separate slash command: `/arc:match` vs `/arc:find`?
 - How to present choice to user (semantic vs exact)?
 - Result format: file:line (exact location needed)
-- CLI interface: `arcaneum search-text "exact phrase" --index MyCode`
+- CLI interface: `arc match MyCode "exact phrase"`
 - Integration pattern: Should mirror RDR-007 structure?
 - When to use which: Guide for Claude/users?
 
@@ -160,10 +160,10 @@ file_path CONTAINS /src/auth/
 
 ```bash
 # Semantic search (RDR-007)
-arcaneum search "authentication patterns" --collection MyCode
+arc find MyCode "authentication patterns"
 
 # Full-text search (this RDR)
-arcaneum search-text '"def authenticate"' --index MyCode-fulltext
+arc match MyCode-fulltext '"def authenticate"'
 ```
 
 **Why `search-text` instead of `fulltext search`**:
@@ -175,7 +175,7 @@ arcaneum search-text '"def authenticate"' --index MyCode-fulltext
 **Command Options**:
 
 ```bash
-arcaneum search-text "<query>" \
+arc match <query>" \
   --index <name> \            # Required: MeiliSearch index name
   --filter <filter> \         # Optional: Metadata filters
   --limit <n> \               # Optional: Max results (default: 10)
@@ -203,9 +203,9 @@ Perform full-text search for exact phrases and keywords.
 - --json: Output JSON format
 
 **Examples:**
-/search-text '"def authenticate"' --index MyCode-fulltext
-/search-text 'calculate_total' --index MyCode-fulltext --filter 'language=python'
-/search-text '"neural network"' --index PDFs --filter 'page_number > 5'
+/arc:match '"def authenticate"' --index MyCode-fulltext
+/arc:match 'calculate_total' --index MyCode-fulltext --filter 'language=python'
+/arc:match '"neural network"' --index PDFs --filter 'page_number > 5'
 
 **Execution:**
 cd ${CLAUDE_PLUGIN_ROOT}
@@ -260,13 +260,13 @@ User Query Analysis:
 **Simple DSL** (80% use case):
 
 ```bash
-arcaneum search-text "query" --filter language=python,git_branch=main
+arc match MyIndex "query" --filter language=python,git_branch=main
 ```
 
 **JSON DSL** (20% advanced):
 
 ```bash
-arcaneum search-text "query" --filter '{
+arc match MyIndex "query" --filter '{
   "must": [
     {"key": "language", "match": {"value": "python"}},
     {"key": "git_branch", "match": {"value": "main"}}
@@ -284,16 +284,16 @@ arcaneum search-text "query" --filter '{
 
 ```bash
 # Basic full-text search
-arcaneum search-text '"def authenticate"' --index MyCode-fulltext
+arc match MyCode-fulltext '"def authenticate"'
 
 # With filters
-arcaneum search-text 'calculate' --index MyCode-fulltext --filter language=python
+arc match MyCode-fulltext 'calculate' --filter language=python
 
 # With limit
-arcaneum search-text '"neural network"' --index PDFs --limit 20
+arc match PDFs '"neural network"' --limit 20
 
 # JSON output
-arcaneum search-text '"async def"' --index MyCode-fulltext --json
+arc match MyCode-fulltext '"async def"' --json
 ```
 
 **Architecture** (parallel to RDR-007):
@@ -574,15 +574,15 @@ def search_text_command(
 
     \b
     # Exact phrase search
-    arcaneum search-text '"def authenticate"' --index MyCode-fulltext
+    arc match MyCode-fulltext '"def authenticate"'
 
     \b
     # Keyword search with filters
-    arcaneum search-text 'calculate_total' --index MyCode-fulltext --filter 'language=python'
+    arc match MyCode-fulltext 'calculate_total' --filter 'language=python'
 
     \b
     # PDF search with page filter
-    arcaneum search-text '"neural network"' --index PDFs --filter 'page_number > 5'
+    arc match PDFs '"neural network"' --filter 'page_number > 5'
     """
 
     # Initialize MeiliSearch client
@@ -673,19 +673,19 @@ Perform full-text search for exact phrases and keywords across MeiliSearch index
 
 ```bash
 # Exact phrase in source code
-/search-text '"def authenticate"' --index MyCode-fulltext
+/arc:match '"def authenticate"' --index MyCode-fulltext
 
 # Keyword with language filter
-/search-text 'calculate_total' --index MyCode-fulltext --filter 'language=python'
+/arc:match 'calculate_total' --index MyCode-fulltext --filter 'language=python'
 
 # Search specific branch
-/search-text 'UserAuth' --index MyCode-fulltext --filter 'git_branch=main'
+/arc:match 'UserAuth' --index MyCode-fulltext --filter 'git_branch=main'
 
 # PDF search with page filter
-/search-text '"neural network"' --index PDFs --filter 'page_number > 5'
+/arc:match '"neural network"' --index PDFs --filter 'page_number > 5'
 
 # JSON output for processing
-/search-text '"async def"' --index MyCode-fulltext --json
+/arc:match '"async def"' --index MyCode-fulltext --json
 ```
 
 **When to Use Full-Text vs Semantic Search:**
@@ -728,7 +728,7 @@ docker compose up -d meilisearch
 # Already done: PDFs and source code indexed to MeiliSearch
 
 # 3. Full-text search (this RDR)
-arcaneum search-text '"def authenticate"' --index MyCode-fulltext
+arc match MyCode-fulltext '"def authenticate"'
 
 # Output:
 # Full-text search: "def authenticate"
@@ -744,11 +744,10 @@ arcaneum search-text '"def authenticate"' --index MyCode-fulltext
 
 # 4. Cooperative workflow (semantic → exact)
 # Step 1: Semantic discovery
-arcaneum search "authentication code" --collection MyCode
+arc find MyCode "authentication code"
 
 # Step 2: Exact verification on discovered file
-arcaneum search-text '"def authenticate"' \
-  --index MyCode-fulltext \
+arc match MyCode-fulltext '"def authenticate"' \
   --filter 'file_path=/path/to/src/auth/verify.py'
 ```
 
@@ -759,7 +758,7 @@ User: "Find the exact function definition for authenticate"
 
 Claude: I'll search for the exact string "def authenticate" in the code.
 
-[Uses /search-text '"def authenticate"' --index MyCode-fulltext]
+[Uses /arc:match '"def authenticate"' --index MyCode-fulltext]
 
 Claude: I found the authenticate function at src/auth/verify.py:42-67.
 The function signature is:
@@ -776,7 +775,7 @@ def authenticate(username, password):
 **Description**: Use single `/search` command, auto-detect semantic vs full-text
 
 ```bash
-arcaneum search "query"  # Auto-detects quotes → full-text, else semantic
+arc find MyCorpus "query"  # Auto-detects quotes → full-text, else semantic
 ```
 
 **Pros**:
@@ -829,7 +828,7 @@ async def search_fulltext(
 **Description**: Use `fulltext search` instead of `search-text`
 
 ```bash
-arcaneum fulltext search "query" --index MyCode-fulltext
+arc fulltext search "query" --index MyCode-fulltext
 ```
 
 **Pros**:
@@ -1078,7 +1077,7 @@ Already satisfied by RDR-007 and RDR-008:
 #### Scenario 1: Exact Phrase Search in Code
 
 - **Setup**: Code indexed via RDR-011 with function `authenticate`
-- **Action**: `arcaneum search-text '"def authenticate"' --index MyCode-fulltext`
+- **Action**: `arc match MyCode-fulltext '"def authenticate"'`
 - **Expected**:
   - Returns document with exact match
   - Shows file:line location (e.g., verify.py:42-67)
@@ -1088,7 +1087,7 @@ Already satisfied by RDR-007 and RDR-008:
 #### Scenario 2: Keyword Search with Filters
 
 - **Setup**: Multi-language code indexed
-- **Action**: `arcaneum search-text 'calculate' --index MyCode-fulltext --filter 'language=python'`
+- **Action**: `arc match MyCode-fulltext 'calculate' --filter 'language=python'`
 - **Expected**:
   - Returns only Python files
   - All results contain "calculate"
@@ -1097,7 +1096,7 @@ Already satisfied by RDR-007 and RDR-008:
 #### Scenario 3: PDF Search with Page Filter
 
 - **Setup**: PDFs indexed via RDR-010
-- **Action**: `arcaneum search-text '"neural network"' --index PDFs --filter 'page_number > 5'`
+- **Action**: `arc match PDFs '"neural network"' --filter 'page_number > 5'`
 - **Expected**:
   - Returns only pages 6+
   - Shows file:pageN location
@@ -1107,9 +1106,9 @@ Already satisfied by RDR-007 and RDR-008:
 
 - **Setup**: Code indexed in both Qdrant (RDR-007) and MeiliSearch (RDR-011)
 - **Action**:
-  1. `arcaneum search "authentication" --collection MyCode` (semantic)
+  1. `arc find MyCode "authentication"` (semantic)
   2. Note file path from results
-  3. `arcaneum search-text '"def authenticate"' --index MyCode-fulltext --filter 'file_path=<noted_path>'`
+  3. `arc match MyCode-fulltext '"def authenticate"' --filter 'file_path=<noted_path>'`
 - **Expected**:
   - Semantic search finds relevant files
   - Exact search verifies specific implementation
@@ -1118,16 +1117,16 @@ Already satisfied by RDR-007 and RDR-008:
 #### Scenario 5: Error Handling (Missing Index)
 
 - **Setup**: MeiliSearch running but index doesn't exist
-- **Action**: `arcaneum search-text "query" --index NonExistent`
+- **Action**: `arc match NonExistent "query"`
 - **Expected**:
   - Clear error: "Index 'NonExistent' not found in MeiliSearch"
-  - Suggests: "Create index with: arcaneum fulltext create-index NonExistent"
+  - Suggests: "Create index with: arc index create NonExistent --type code"
   - Exit code 1
 
 #### Scenario 6: JSON Output for Programmatic Use
 
 - **Setup**: Any indexed content
-- **Action**: `arcaneum search-text '"test"' --index MyCode-fulltext --json`
+- **Action**: `arc match MyCode-fulltext '"test"' --json`
 - **Expected**:
   - Valid JSON output
   - Contains: query, index, search_type, total_results, results array
@@ -1206,7 +1205,7 @@ Already satisfied by RDR-007 and RDR-008:
 
 - Combine semantic (Qdrant) + exact (MeiliSearch) results
 - Reciprocal Rank Fusion (RRF) for result merging
-- `arcaneum search "query" --corpus MyCode --hybrid`
+- `arc find MyCode "query" --hybrid`
 
 **MCP Wrapper** (Optional):
 

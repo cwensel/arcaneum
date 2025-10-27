@@ -231,32 +231,32 @@ All configuration is explicit - the CLI parses settings and passes them directly
 
 ```bash
 # Initialize workspace with config file
-arcaneum init \
+arc init \
   --qdrant-url http://localhost:6333 \
   --cache-dir ./models_cache \
   --config-file ./arcaneum.yaml \
   --validate
 
 # Collection management
-arcaneum collection create SOURCE_CODE \
+arc collection create SOURCE_CODE \
   --config ./arcaneum.yaml \
   --models stella,jina,bge \
   --hnsw-m 16 \
   --hnsw-ef 100 \
   --on-disk-payload
 
-arcaneum collection list --config ./arcaneum.yaml --format table
+arc collection list --config ./arcaneum.yaml --format table
 
-arcaneum collection info SOURCE_CODE --config ./arcaneum.yaml
+arc collection info SOURCE_CODE --config ./arcaneum.yaml
 
-arcaneum collection delete SOURCE_CODE --config ./arcaneum.yaml --confirm
+arc collection delete SOURCE_CODE --config ./arcaneum.yaml --confirm
 
 # Model management
-arcaneum models list --config ./arcaneum.yaml
+arc models list --config ./arcaneum.yaml
 
-arcaneum models download stella --cache-dir ./models_cache --validate
+arc models download stella --cache-dir ./models_cache --validate
 
-arcaneum models info stella --show-cached
+arc models info stella --show-cached
 ```
 
 #### Configuration File Schema (arcaneum.yaml)
@@ -852,7 +852,7 @@ if __name__ == '__main__':
 
 ```bash
 # 1. Initialize configuration
-arcaneum init \
+arc init \
   --qdrant-url http://localhost:6333 \
   --cache-dir ./models_cache \
   --config-file ./arcaneum.yaml \
@@ -861,29 +861,29 @@ arcaneum init \
 # Config file created: ./arcaneum.yaml
 
 # 2. Download embedding models
-arcaneum models download stella --validate
-arcaneum models download jina --validate
+arc models download stella --validate
+arc models download jina --validate
 
 # 3. Create source code collection with multiple models
-arcaneum collection create source-code \
+arc collection create source-code \
   --config ./arcaneum.yaml \
   --models stella,jina \
   --indexes programming_language,git_project_root
 
 # 4. Create PDF documents collection
-arcaneum collection create pdf-docs \
+arc collection create pdf-docs \
   --config ./arcaneum.yaml \
   --models stella,bge \
   --indexes filename,file_path
 
 # 5. List all collections
-arcaneum collection list --config ./arcaneum.yaml
+arc collection list --config ./arcaneum.yaml
 
 # 6. View collection details
-arcaneum collection info source-code --config ./arcaneum.yaml
+arc collection info source-code --config ./arcaneum.yaml
 
 # 7. Delete collection (with confirmation)
-arcaneum collection delete old-collection --config ./arcaneum.yaml
+arc collection delete old-collection --config ./arcaneum.yaml
 ```
 
 ## Alternatives Considered
@@ -941,9 +941,9 @@ arcaneum collection delete old-collection --config ./arcaneum.yaml
 
 **Description**: Break init into multiple subcommands:
 ```bash
-arcaneum init config --qdrant-url ...
-arcaneum init cache --cache-dir ...
-arcaneum init validate
+arc init config --qdrant-url ...
+arc init cache --cache-dir ...
+arc init validate
 ```
 
 **Pros**:
@@ -1146,7 +1146,7 @@ dependencies = [
 ]
 
 [project.scripts]
-arcaneum = "arcaneum.cli.main:cli"
+arc = "arcaneum.cli.main:cli"
 
 [project.optional-dependencies]
 dev = [

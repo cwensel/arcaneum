@@ -154,12 +154,12 @@ def get_model(model_key: str) -> TextEmbedding:
 
 **Simple DSL** (80% use case):
 ```bash
-arcaneum search "query" --filter language=python,git_project_name=myproj
+arc find MyCollection "query" --filter language=python,git_project_name=myproj
 ```
 
 **JSON DSL** (20% advanced):
 ```bash
-arcaneum search "query" --filter '{
+arc find MyCollection "query" --filter '{
   "must": [{"key": "language", "match": {"value": "python"}}],
   "should": [{"key": "git_project", "match": {"any": ["proj1", "proj2"]}}]
 }'
@@ -229,16 +229,16 @@ Found 5 results
 **CLI-First Design** (follows RDR-006 pattern):
 ```bash
 # Basic search
-arcaneum search "authentication patterns" --collection MyCode
+arc find MyCode "authentication patterns"
 
 # With filtering
-arcaneum search "auth" --collection MyCode --filter language=python
+arc find MyCode "auth" --filter language=python
 
 # With limit
-arcaneum search "auth" --collection MyCode --limit 20
+arc find MyCode "auth" --limit 20
 
 # JSON output
-arcaneum search "auth" --collection MyCode --json
+arc find MyCode "auth" --json
 ```
 
 **Simplified Architecture** (single collection only):
@@ -695,10 +695,10 @@ Perform semantic search across Qdrant collections.
 - --json: Output JSON format
 
 **Examples:**
-/search "authentication patterns" --collection MyCode --limit 5
-/search "auth" --collection MyCode --filter language=python
-/search "error handling" --collection Documentation --score-threshold 0.7
-/search "API design" --collection MyCode --vector-name jina
+/arc:find "authentication patterns" --collection MyCode --limit 5
+/arc:find "auth" --collection MyCode --filter language=python
+/arc:find "error handling" --collection Documentation --score-threshold 0.7
+/arc:find "API design" --collection MyCode --vector-name jina
 
 **Execution:**
 cd ${CLAUDE_PLUGIN_ROOT}
@@ -997,32 +997,32 @@ Reuse existing from RDR-003/004/005:
 
 **Scenario 1: Basic Search**
 - **Setup**: PDF collection with 100 documents indexed
-- **Action**: `arcaneum search "machine learning" --collection Research`
+- **Action**: `arc find Research "machine learning"`
 - **Expected**: Top 10 results, formatted with scores and paths
 
 **Scenario 2: Filtered Search**
 - **Setup**: Source code collection with multiple projects
-- **Action**: `arcaneum search "authentication" --collection MyCode --filter git_project_name=backend`
+- **Action**: `arc find MyCode "authentication" --filter git_project_name=backend`
 - **Expected**: Results only from "backend" project
 
 **Scenario 3: Score Threshold**
 - **Setup**: Source code collection
-- **Action**: `arcaneum search "function" --collection MyCode --score-threshold 0.8`
+- **Action**: `arc find MyCode "function" --score-threshold 0.8`
 - **Expected**: Only high-confidence results (score >= 0.8)
 
 **Scenario 4: JSON Output**
 - **Setup**: Any collection
-- **Action**: `arcaneum search "test" --collection MyCode --json`
+- **Action**: `arc find MyCode "test" --json`
 - **Expected**: Valid JSON with schema from Component 4
 
 **Scenario 5: Missing Model**
 - **Setup**: Collection without embedding_model metadata
-- **Action**: `arcaneum search "query" --collection BadCollection`
+- **Action**: `arc find BadCollection "query"`
 - **Expected**: Clear error: "Collection BadCollection missing embedding_model metadata"
 
 **Scenario 6: Complex Filter**
 - **Setup**: Source code collection
-- **Action**: `arcaneum search "auth" --filter '{"must": [{"key": "language", "match": {"value": "python"}}], "must_not": [{"key": "file_path", "match": {"text": "test"}}]}'`
+- **Action**: `arc find MyCode "auth" --filter '{"must": [{"key": "language", "match": {"value": "python"}}], "must_not": [{"key": "file_path", "match": {"text": "test"}}]}'`
 - **Expected**: Python files excluding tests
 
 ### Performance Validation
@@ -1042,7 +1042,7 @@ Reuse existing from RDR-003/004/005:
 **Workflow**:
 ```bash
 # Step 1: Discover relevant collections
-arcaneum collection-relevance "authentication patterns"
+arc collection-relevance "authentication patterns"
 
 # Output:
 # MyCode: 47 relevant chunks (stella model)
@@ -1053,7 +1053,7 @@ arcaneum collection-relevance "authentication patterns"
 # Recommended: Start with MyCode
 
 # Step 2: Search targeted collection
-arcaneum search "authentication patterns" --collection MyCode
+arc find MyCode "authentication patterns"
 ```
 
 **Implementation Sketch**:

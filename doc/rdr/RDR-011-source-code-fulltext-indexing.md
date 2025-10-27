@@ -338,7 +338,7 @@ class ASTFunctionExtractor:
 
 ```bash
 # Single command indexes to both systems
-arcaneum index-code ./src --corpus MyCode
+arc index-code ./src --corpus MyCode
 ```
 
 **Implementation**:
@@ -430,20 +430,20 @@ def upload_documents_batch(
 **Dual Indexing** (extend RDR-005's existing command):
 
 ```bash
-arcaneum index-code ./src --corpus MyCode
+arc index-code ./src --corpus MyCode
 # Creates: Qdrant "MyCode" + MeiliSearch "MyCode-fulltext"
 ```
 
 **Full-Text Only** (new command):
 
 ```bash
-arcaneum fulltext index-code ./src --index MyCode-fulltext
+arc fulltext index-code ./src --index MyCode-fulltext
 ```
 
 **Search** (existing from RDR-008):
 
 ```bash
-arcaneum fulltext search '"def authenticate"' \
+arc fulltext search '"def authenticate"' \
   --index MyCode-fulltext \
   --filter 'language = python AND git_branch = main'
 ```
@@ -452,10 +452,10 @@ arcaneum fulltext search '"def authenticate"' \
 
 ```bash
 # List indexed projects with commit hashes
-arcaneum fulltext list-projects --index MyCode-fulltext
+arc fulltext list-projects --index MyCode-fulltext
 
 # Delete specific project/branch
-arcaneum fulltext delete-project arcaneum#main --index MyCode-fulltext
+arc fulltext delete-project arcaneum#main --index MyCode-fulltext
 ```
 
 ## Proposed Solution
@@ -774,25 +774,25 @@ class SourceCodeFullTextIndexer:
 ```bash
 # 1. Create MeiliSearch index with source code settings
 export MEILI_MASTER_KEY=your_master_key
-arcaneum fulltext create-index MyCode-fulltext --type source-code
+arc fulltext create-index MyCode-fulltext --type source-code
 
 # 2. Dual index source code (RDR-005 + this RDR)
-arcaneum index-code ./src --corpus MyCode
+arc index-code ./src --corpus MyCode
 # Creates: Qdrant "MyCode" + MeiliSearch "MyCode-fulltext"
 
 # 3. Search for exact phrase
-arcaneum fulltext search '"def authenticate"' --index MyCode-fulltext
+arc fulltext search '"def authenticate"' --index MyCode-fulltext
 
 # 4. Search with filters
-arcaneum fulltext search 'calculate_total' \
+arc fulltext search 'calculate_total' \
   --index MyCode-fulltext \
   --filter 'language = python AND git_branch = main'
 
 # 5. List indexed projects
-arcaneum fulltext list-projects --index MyCode-fulltext
+arc fulltext list-projects --index MyCode-fulltext
 
 # 6. Delete specific branch
-arcaneum fulltext delete-project arcaneum#feature-x --index MyCode-fulltext
+arc fulltext delete-project arcaneum#feature-x --index MyCode-fulltext
 ```
 
 ## Alternatives Considered
@@ -839,8 +839,8 @@ arcaneum fulltext delete-project arcaneum#feature-x --index MyCode-fulltext
 **Description**: Separate commands for vector and full-text indexing
 
 ```bash
-arcaneum index-code ./src --collection MyCode  # Qdrant only
-arcaneum fulltext index-code ./src --index MyCode-fulltext  # MeiliSearch only
+arc index-code ./src --collection MyCode  # Qdrant only
+arc fulltext index-code ./src --index MyCode-fulltext  # MeiliSearch only
 ```
 
 **Pros**:
@@ -1213,7 +1213,7 @@ Already satisfied by RDR-005 and RDR-008:
 
 - Combine semantic (Qdrant) + exact (MeiliSearch) results
 - Reciprocal Rank Fusion (RRF) for result merging
-- `arcaneum search "query" --corpus MyCode --hybrid`
+- `arc find MyCode "query" --hybrid`
 
 **Advanced AST Analysis**:
 

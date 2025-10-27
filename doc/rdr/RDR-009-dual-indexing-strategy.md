@@ -105,13 +105,12 @@ achieve 2-command workflow.
 
 ```bash
 # 1. Semantic discovery
-arcaneum search "authentication patterns" --collection MyCode
+arc find MyCode "authentication patterns"
 
 # Results show: src/auth/verify.py
 
 # 2. Exact verification
-arcaneum fulltext search '"def authenticate"' \
-  --index MyCode \
+arc match MyCode '"def authenticate"' \
   --filter 'file_path = src/auth/verify.py'
 ```
 
@@ -229,7 +228,7 @@ Result: Searchable corpus in both systems
 **CLI Signature:**
 
 ```bash
-arcaneum create-corpus <name> --type <source-code|pdf> [--models <models>]
+arc corpus create <name> --type <source-code|pdf> [--models <models>]
 ```
 
 **Implementation:**
@@ -326,7 +325,7 @@ def create_corpus(name, type, models, qdrant_url, meili_url, meili_key):
 **CLI Signature:**
 
 ```bash
-arcaneum sync-directory <path> --corpus <name> [--models <models>]
+arc corpus sync <name> <path> [--models <models>]
 ```
 
 **Implementation Pattern:**
@@ -526,28 +525,28 @@ class DualIndexer:
 
 ```bash
 # 1. Create corpus (both systems)
-arcaneum create-corpus my-pdfs --type pdf --models stella,bge
+arc corpus create my-pdfs --type pdf --models stella,bge
 
 # 2. Sync directory (index to both systems)
-arcaneum sync-directory ./research-papers --corpus my-pdfs
+arc corpus sync my-pdfs ./research-papers
 
 # Done! Search both ways:
-arcaneum search "machine learning" --collection my-pdfs
-arcaneum fulltext search '"neural networks"' --index my-pdfs
+arc find my-pdfs "machine learning"
+arc match my-pdfs '"neural networks"'
 ```
 
 **Source Code Example:**
 
 ```bash
 # 1. Create corpus for code
-arcaneum create-corpus my-code --type source-code --models stella,jina
+arc corpus create my-code --type source-code --models stella,jina
 
 # 2. Sync git repository
-arcaneum sync-directory ./src --corpus my-code --file-types .py,.js
+arc corpus sync my-code ./src --file-types .py,.js
 
 # Search:
-arcaneum search "authentication" --collection my-code --filter language=python
-arcaneum fulltext search '"def authenticate"' --index my-code
+arc find my-code "authentication" --filter language=python
+arc match my-code '"def authenticate"'
 ```
 
 ## Alternatives Considered
@@ -558,9 +557,9 @@ arcaneum fulltext search '"def authenticate"' --index my-code
 document level
 
 ```bash
-arcaneum collection create my-pdfs --models stella,bge
-arcaneum fulltext create-index my-pdfs --type pdf
-arcaneum sync-directory ./docs --corpus my-pdfs
+arc collection create my-pdfs --models stella,bge
+arc fulltext create-index my-pdfs --type pdf
+arc corpus sync my-pdfs ./docs
 ```
 
 **Pros:**
@@ -584,8 +583,8 @@ purity is secondary to UX.
 **Description**: No dual indexing at all, completely independent systems
 
 ```bash
-arcaneum sync-directory ./docs --vector my-pdfs --auto-create
-arcaneum sync-directory ./docs --fulltext my-pdfs --auto-create
+arc corpus sync ./docs --vector my-pdfs --auto-create
+arc corpus sync ./docs --fulltext my-pdfs --auto-create
 ```
 
 **Pros:**
@@ -610,7 +609,7 @@ cooperative use cases. This alternative abandons that goal.
 
 ```bash
 # Single command (corpus auto-created)
-arcaneum sync-directory ./docs --corpus my-pdfs --type pdf --models stella,bge
+arc corpus sync my-pdfs ./docs --type pdf --models stella,bge
 ```
 
 **Pros:**
@@ -874,10 +873,9 @@ Already satisfied by RDR-003 and RDR-008:
 
 - **Setup**: Code corpus indexed via 2-command workflow
 - **Action**:
-  1. `arcaneum search "authentication" --collection my-code`
+  1. `arc find my-code "authentication"`
   2. Note file_path from results
-  3. `arcaneum fulltext search '"def authenticate"' --index my-code --filter
-     'file_path = <noted_path>'`
+  3. `arc match my-code '"def authenticate"' --filter 'file_path = <noted_path>'`
 - **Expected**:
   - Semantic search finds related patterns
   - Exact search verifies specific implementation
@@ -957,20 +955,19 @@ Already satisfied by RDR-003 and RDR-008:
 
 **Hybrid Search with RRF:**
 
-- `arcaneum search "query" --corpus my-code --hybrid` (queries both, merges
-  results)
+- `arc find my-code "query" --hybrid` (queries both, merges results)
 - Configurable weights (70% semantic, 30% exact)
 
 **Corpus Management:**
 
-- `arcaneum corpus list` - Show all corpuses
-- `arcaneum corpus info <name>` - Show stats from both systems
-- `arcaneum corpus delete <name>` - Delete from both systems
+- `arc corpus list` - Show all corpuses
+- `arc corpus info <name>` - Show stats from both systems
+- `arc corpus delete <name>` - Delete from both systems
 
 **Smart Sync:**
 
-- `arcaneum sync-directory --watch` - Continuous sync mode
-- Git-aware: `arcaneum sync-repository <url> --corpus <name>` - Clone and index
+- `arc corpus sync <corpus> <path> --watch` - Continuous sync mode
+- Git-aware: `arc corpus sync-repository <corpus> <url>` - Clone and index
 
 ### Success Criteria
 

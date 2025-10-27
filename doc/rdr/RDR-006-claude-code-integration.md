@@ -650,9 +650,9 @@ Perform semantic search across a Qdrant collection.
 - --verbose: Show detailed match information
 
 **Examples:**
-/search "authentication patterns" --collection MyCode --limit 5
-/search "machine learning" --collection Research --filter '{"author": "Smith"}'
-/search "error handling" --collection Documentation --verbose
+/arc:find "authentication patterns" --collection MyCode --limit 5
+/arc:find "machine learning" --collection Research --filter '{"author": "Smith"}'
+/arc:find "error handling" --collection Documentation --verbose
 
 **Execution:**
 cd ${CLAUDE_PLUGIN_ROOT}

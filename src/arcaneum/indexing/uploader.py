@@ -5,7 +5,7 @@ from qdrant_client.models import PointStruct
 from pathlib import Path
 from typing import List, Dict, Optional
 from tqdm import tqdm
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_not_exception_type
 import logging
 import os
 
@@ -136,71 +136,79 @@ class PDFBatchUploader:
         point_id = self._get_next_point_id(collection_name)
         stats = {"files": 0, "chunks": 0, "errors": 0}
 
-        with tqdm(total=len(pdf_files), desc="Indexing PDFs", unit="file",
-                  bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]') as pbar:
+        try:
+            with tqdm(total=len(pdf_files), desc="Indexing PDFs", unit="file",
+                      bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]') as pbar:
 
-            for pdf_path in pdf_files:
-                try:
-                    # Compute file hash for incremental indexing
-                    file_hash = compute_file_hash(pdf_path)
+                for pdf_path in pdf_files:
+                    try:
+                        # Compute file hash for incremental indexing
+                        file_hash = compute_file_hash(pdf_path)
 
-                    # Extract text
-                    text, extract_meta = self.extractor.extract(pdf_path)
+                        # Extract text
+                        text, extract_meta = self.extractor.extract(pdf_path)
 
-                    # Check if OCR needed
-                    if self.ocr_enabled and len(text) < self.ocr_threshold:
-                        logger.debug(f"Triggering OCR for {pdf_path.name}")
-                        text, ocr_meta = self.ocr.process_pdf(pdf_path)
-                        extract_meta.update(ocr_meta)
+                        # Check if OCR needed
+                        if self.ocr_enabled and len(text) < self.ocr_threshold:
+                            logger.debug(f"Triggering OCR for {pdf_path.name}")
+                            text, ocr_meta = self.ocr.process_pdf(pdf_path)
+                            extract_meta.update(ocr_meta)
 
-                    # Chunk text with file metadata (including hash for sync)
-                    base_metadata = {
-                        'filename': pdf_path.name,
-                        'file_path': str(pdf_path),
-                        'file_hash': file_hash,  # For incremental sync
-                        'file_size': pdf_path.stat().st_size,
-                        'store_type': 'pdf',
-                        **extract_meta
-                    }
+                        # Chunk text with file metadata (including hash for sync)
+                        base_metadata = {
+                            'filename': pdf_path.name,
+                            'file_path': str(pdf_path),
+                            'file_hash': file_hash,  # For incremental sync
+                            'file_size': pdf_path.stat().st_size,
+                            'store_type': 'pdf',
+                            **extract_meta
+                        }
 
-                    chunks = chunker.chunk(text, base_metadata)
+                        chunks = chunker.chunk(text, base_metadata)
 
-                    # Generate embeddings
-                    texts = [chunk.text for chunk in chunks]
-                    embeddings = self.embeddings.embed(texts, model_name)
+                        # Generate embeddings
+                        texts = [chunk.text for chunk in chunks]
+                        embeddings = self.embeddings.embed(texts, model_name)
 
-                    # Create points
-                    for chunk, embedding in zip(chunks, embeddings):
-                        point = PointStruct(
-                            id=point_id,
-                            vector={model_name: embedding},  # Named vector
-                            payload={
-                                'text': chunk.text,
-                                **chunk.metadata
-                            }
-                        )
-                        batch.append(point)
-                        point_id += 1
+                        # Create points
+                        for chunk, embedding in zip(chunks, embeddings):
+                            point = PointStruct(
+                                id=point_id,
+                                vector={model_name: embedding},  # Named vector
+                                payload={
+                                    'text': chunk.text,
+                                    **chunk.metadata
+                                }
+                            )
+                            batch.append(point)
+                            point_id += 1
 
-                        # Upload when batch full
-                        if len(batch) >= self.batch_size:
-                            self._upload_batch(collection_name, batch)
-                            stats["chunks"] += len(batch)
-                            batch = []
+                            # Upload when batch full
+                            if len(batch) >= self.batch_size:
+                                self._upload_batch(collection_name, batch)
+                                stats["chunks"] += len(batch)
+                                batch = []
 
-                    stats["files"] += 1
-                    pbar.update(1)
+                        stats["files"] += 1
+                        pbar.update(1)
 
-                except Exception as e:
-                    logger.error(f"Failed: {pdf_path.name}: {e}")
-                    stats["errors"] += 1
-                    pbar.update(1)
-                    continue
+                    except Exception as e:
+                        logger.error(f"Failed: {pdf_path.name}: {e}")
+                        stats["errors"] += 1
+                        pbar.update(1)
+                        continue
 
-            # Upload remaining batch
-            if batch:
-                self._upload_batch(collection_name, batch)
-                stats["chunks"] += len(batch)
+                # Upload remaining batch
+                if batch:
+                    self._upload_batch(collection_name, batch)
+                    stats["chunks"] += len(batch)
+
+        except KeyboardInterrupt:
+            print("\n\n⚠️  Indexing interrupted by user")
+            print(f"📊 Partial progress: {stats['files']} files indexed, {stats['chunks']} chunks uploaded")
+            if stats['errors'] > 0:
+                print(f"⚠️  {stats['errors']} errors occurred")
+            raise
 
         # Summary
         print()
@@ -230,7 +238,8 @@ class PDFBatchUploader:
 
     @retry(
         stop=stop_after_attempt(5),
-        wait=wait_exponential(multiplier=1, min=2, max=60),
+        wait=wait_exponential(multiplier=1, min=2, max=10),  # Max 10 second wait
+        retry=retry_if_not_exception_type(KeyboardInterrupt),  # Don't retry on Ctrl+C
         reraise=True
     )
     def _upload_batch(self, collection_name: str, points: List[PointStruct]):

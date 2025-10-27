@@ -14,8 +14,8 @@ pip install -e .
 # 3. Verify CLI works
 bin/arc --help
 
-# 4. (If behind corporate proxy) Pre-download models
-#    See SSL-SOLUTION.md for details
+# 4. (If behind corporate proxy) Pre-download models and use --offline
+#    See CORPORATE-PROXY.md for details
 ```
 
 ## Basic Test (5 commands)

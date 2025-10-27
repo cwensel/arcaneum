@@ -7,6 +7,7 @@ from rich.table import Table
 import logging
 import sys
 import json
+import os
 
 from ..config import load_config, DEFAULT_MODELS
 from ..embeddings.client import EmbeddingClient
@@ -25,6 +26,7 @@ def index_pdfs_command(
     ocr_enabled: bool,
     ocr_language: str,
     force: bool,
+    offline: bool,
     verbose: bool,
     output_json: bool
 ):
@@ -38,9 +40,16 @@ def index_pdfs_command(
         ocr_enabled: Enable OCR for scanned PDFs
         ocr_language: OCR language code
         force: Force reindex all files
+        offline: Use cached models only (no network calls)
         verbose: Verbose output
         output_json: Output JSON format
     """
+    # Enable offline mode if requested (blocks all HuggingFace network calls)
+    if offline:
+        os.environ['HF_HUB_OFFLINE'] = '1'
+        os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
+        os.environ['TRANSFORMERS_OFFLINE'] = '1'
+
     # Setup logging
     if verbose:
         # Verbose: Show everything
@@ -96,6 +105,8 @@ def index_pdfs_command(
             console.print(f"  Model: {model}")
             if ocr_enabled:
                 console.print(f"  OCR: {ocr_language}")
+            if offline:
+                console.print(f"  [yellow]Mode: Offline (cached models only)[/yellow]")
             console.print()
 
         # Index PDFs

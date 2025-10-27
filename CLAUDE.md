@@ -1,37 +1,14 @@
 # CLAUDE.md
 
-**Note**: This project uses [bd (beads)](https://github.com/steveyegge/beads) for issue tracking. Use `bd` commands instead of markdown TODOs. See @AGENTS.md for workflow details.
-
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 
-Arcaneum is a Claude Code marketplace for skills and mcp servers to manage search across vector and full text databases. 
+Arcaneum is a Claude Code marketplace for skills and mcp servers to manage search across vector and full text databases.
 
 This repository uses Recommendation Data Records (RDRs) for detailed technical planning before implementation.
 
-## Issue Tracking with Beads
-
-This repository uses **Beads (bd)** for issue tracking instead of Markdown files.
-
-- Database: `.beads/arcaneum.db`
-- Issue prefix: `arcaneum` (issues named `arcaneum-1`, `arcaneum-2`, etc.)
-
-### Common Beads Commands
-
-```bash
-bd stats              # Project statistics
-bd list              # List all issues
-bd ready             # Find ready-to-work tasks (no blockers)
-bd show <issue-id>   # Show issue details
-bd create            # Create new issue
-bd update            # Update issue status/priority
-bd close <issue-id>  # Mark issue as completed
-```
-
-**Note**: Always set context before write operations: `bd set_context <workspace_root>`
-
-See resource `beads://quickstart` for detailed workflow guidance.
+**Note**: This project uses [bd (beads)](https://github.com/steveyegge/beads) for issue tracking. Use `bd` commands instead of markdown TODOs. See @AGENTS.md for workflow details.
 
 ## Recommendation Data Records (RDRs)
 
@@ -54,9 +31,6 @@ Create an RDR for complex implementations, architectural decisions, framework wo
 
 See `doc/rdr/README.md` for complete RDR workflow, format details, and usage guidelines.
 
-## Development Workflow
+## Source Control
 
-1. Use `bd ready` to find available tasks
-2. Create RDRs for complex implementations (see `doc/rdr/README.md`)
-3. Update Beads issues as work progresses
-4. Preserve knowledge in RDRs for future reference
+We use git to manage the project source, but Claude may never create commits, but may create commit messages.

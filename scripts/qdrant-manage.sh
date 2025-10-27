@@ -1,10 +1,14 @@
 #!/bin/bash
+# Qdrant management script (RDR-002)
+
 set -e
+
+COMPOSE_FILE="deploy/docker-compose.yml"
 
 case "$1" in
     start)
         echo "🚀 Starting Qdrant..."
-        docker compose up -d
+        docker compose -f "$COMPOSE_FILE" up -d
         sleep 3
         if curl -sf http://localhost:6333/healthz > /dev/null; then
             echo "✅ Qdrant started successfully"
@@ -17,21 +21,21 @@ case "$1" in
         ;;
     stop)
         echo "🛑 Stopping Qdrant..."
-        docker compose down
+        docker compose -f "$COMPOSE_FILE" down
         echo "✅ Qdrant stopped"
         ;;
     restart)
         echo "🔄 Restarting Qdrant..."
-        docker compose restart
+        docker compose -f "$COMPOSE_FILE" restart
         sleep 2
         curl -sf http://localhost:6333/healthz && echo "✅ Restarted"
         ;;
     logs)
-        docker compose logs -f qdrant
+        docker compose -f "$COMPOSE_FILE" logs -f qdrant
         ;;
     status)
         echo "📊 Qdrant Status:"
-        docker compose ps
+        docker compose -f "$COMPOSE_FILE" ps
         echo ""
         curl -s http://localhost:6333/healthz && echo "✅ Healthy" || echo "❌ Unhealthy"
         ;;

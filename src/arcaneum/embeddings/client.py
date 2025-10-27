@@ -28,13 +28,18 @@ EMBEDDING_MODELS = {
 class EmbeddingClient:
     """Manages embedding model instances with caching."""
 
-    def __init__(self, cache_dir: str = "./models_cache"):
+    def __init__(self, cache_dir: str = "./models_cache", verify_ssl: bool = True):
         """Initialize embedding client.
 
         Args:
             cache_dir: Directory to cache downloaded models
+            verify_ssl: Whether to verify SSL certificates (set False for self-signed certs)
+
+        Note: SSL configuration must be done before creating EmbeddingClient.
+              Use ssl_config.check_and_configure_ssl() or disable_ssl_verification() first.
         """
         self.cache_dir = cache_dir
+        self.verify_ssl = verify_ssl
         os.environ["SENTENCE_TRANSFORMERS_HOME"] = cache_dir
         self._models: Dict[str, TextEmbedding] = {}
 

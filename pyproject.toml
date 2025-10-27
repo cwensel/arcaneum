@@ -27,6 +27,14 @@ dependencies = [
     "pyyaml>=6.0",
     "rich>=13.0.0",
     "pydantic>=2.0.0",
+    # PDF indexing dependencies (RDR-004)
+    "pymupdf>=1.23.0",
+    "pdfplumber>=0.10.0",
+    "pytesseract>=0.3.10",
+    "pdf2image>=1.16.0",
+    "opencv-python-headless>=4.8.0",
+    "tenacity>=8.2.0",
+    "tqdm>=4.66.0",
 ]
 
 [project.optional-dependencies]
@@ -35,9 +43,12 @@ dev = [
     "black>=23.0",
     "ruff>=0.1.0",
 ]
+ocr = [
+    "easyocr>=1.7.0",
+]
 
 [project.scripts]
-arcaneum = "arcaneum.cli.main:main"
+arc = "arcaneum.cli.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

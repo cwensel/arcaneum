@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+"""Arc CLI - Semantic and full-text search tools (RDR-001).
+
+This is the main entrypoint for the arc CLI tool, used by:
+- Terminal users: bin/arc <command> [options]
+- Claude Code agents and plugins
+- Automation scripts
+
+All commands are dispatched through arcaneum.cli.main.
+"""
+
+import sys
+import os
+
+# Add src to path for development mode (bin/ is one level deep)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src'))
+
+from arcaneum.cli.main import main
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -1,0 +1,14 @@
+#!/usr/bin/env python3
+"""Simplified CLI wrapper for PDF indexing (RDR-004)."""
+
+import sys
+import os
+
+# Add src to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+from arcaneum.cli.main import cli
+
+if __name__ == '__main__':
+    sys.argv = ['arcaneum', 'index-pdfs'] + sys.argv[1:]
+    cli()

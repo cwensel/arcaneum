@@ -13,6 +13,8 @@ class ModelConfig(BaseModel):
     chunk_size: int
     chunk_overlap: int
     distance: Literal["cosine", "euclid", "dot"] = "cosine"
+    late_chunking: bool = False
+    char_to_token_ratio: float = 3.3
 
 
 class QdrantConfig(BaseModel):
@@ -37,12 +39,23 @@ class CollectionTemplate(BaseModel):
     indexes: List[str] = Field(default_factory=list)
 
 
+class PDFProcessingConfig(BaseModel):
+    """PDF processing configuration (RDR-004)."""
+    ocr_enabled: bool = False
+    ocr_engine: str = "tesseract"
+    ocr_language: str = "eng"
+    ocr_threshold: int = 100
+    batch_size: int = 100
+    parallel_workers: int = 4
+
+
 class ArcaneumConfig(BaseModel):
     """Root configuration."""
     qdrant: QdrantConfig = Field(default_factory=QdrantConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
     models: Dict[str, ModelConfig]
     collections: Dict[str, CollectionTemplate] = Field(default_factory=dict)
+    pdf_processing: PDFProcessingConfig = Field(default_factory=PDFProcessingConfig)
 
 
 def load_config(config_path: Path) -> ArcaneumConfig:
@@ -79,30 +92,38 @@ def save_config(config: ArcaneumConfig, config_path: Path):
         yaml.dump(config.model_dump(mode='json'), f, default_flow_style=False)
 
 
-# Default model configurations (from RDR-003)
+# Default model configurations (from RDR-003, updated for RDR-004)
 DEFAULT_MODELS = {
     "stella": ModelConfig(
         name="BAAI/bge-large-en-v1.5",
         dimensions=1024,
-        chunk_size=512,
-        chunk_overlap=51,
+        chunk_size=768,  # Conservative for PDF
+        chunk_overlap=115,  # 15% overlap
+        late_chunking=True,
+        char_to_token_ratio=3.3,
     ),
     "modernbert": ModelConfig(
         name="answerdotai/ModernBERT-base",
         dimensions=768,
-        chunk_size=2048,
-        chunk_overlap=205,
+        chunk_size=1536,  # Conservative for long context
+        chunk_overlap=230,  # 15% overlap
+        late_chunking=True,
+        char_to_token_ratio=3.4,
     ),
     "bge": ModelConfig(
         name="BAAI/bge-large-en-v1.5",
         dimensions=1024,
-        chunk_size=460,
-        chunk_overlap=46,
+        chunk_size=460,  # Safe margin from 512 limit
+        chunk_overlap=69,  # 15% overlap
+        late_chunking=False,  # Not supported (512 token limit)
+        char_to_token_ratio=3.3,
     ),
     "jina": ModelConfig(
         name="jinaai/jina-embeddings-v2-base-code",
         dimensions=768,
-        chunk_size=1024,
-        chunk_overlap=102,
+        chunk_size=1536,
+        chunk_overlap=230,  # 15% overlap
+        late_chunking=True,
+        char_to_token_ratio=3.2,
     ),
 }

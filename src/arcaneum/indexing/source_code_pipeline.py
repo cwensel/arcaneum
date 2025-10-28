@@ -116,13 +116,18 @@ class SourceCodeIndexer:
             ... )
             >>> print(f"Indexed {stats['projects_indexed']} projects")
         """
-        # Minimal output by default, verbose if requested
-        if verbose:
-            console.print(f"\n[bold blue]Source Code Indexing[/bold blue]")
-            console.print(f"Input: {input_path}")
-            console.print(f"Collection: {collection_name}")
-            console.print(f"Depth: {depth if depth is not None else 'unlimited'}")
-            console.print(f"Force: {force}\n")
+        # Show configuration at start
+        console.print(f"\n[bold blue]Source Code Indexing Configuration[/bold blue]")
+        console.print(f"  Collection: {collection_name} (type: code)")
+        console.print(f"  Embedding: {self.embedding_model_name}")
+        if self.vector_name:
+            console.print(f"  Vector: {self.vector_name}")
+        console.print(f"  Pipeline: Git Discover → AST Chunk → Embed (batched) → Upload")
+        if depth is not None:
+            console.print(f"  Depth: {depth}")
+        if force:
+            console.print(f"  Mode: Force reindex")
+        console.print()
 
         # Step 1: Query Qdrant for indexed projects (source of truth)
         if not force:
@@ -287,6 +292,9 @@ class SourceCodeIndexer:
 
         for file_idx, file_path in enumerate(files, 1):
             try:
+                filename = os.path.basename(file_path)
+                chunks_before_file = len(all_chunks)
+
                 # Read file
                 with open(file_path, 'r', encoding='utf-8') as f:
                     code = f.read()
@@ -332,13 +340,16 @@ class SourceCodeIndexer:
 
                 self.stats["files_processed"] += 1
 
-                # Show incremental file progress (every file)
+                # Calculate chunks for this specific file
+                file_chunks = len(all_chunks) - chunks_before_file
+
+                # Show incremental file progress (every file with filename and its chunk count)
                 if not verbose:
                     # Use sys.stdout for proper \r overwriting
-                    # Pad with spaces to clear previous line
+                    # Show filename and how many chunks it generated
                     print(
                         f"\r[{project_num}/{total_projects}] {identifier}: "
-                        f"{file_idx}/{total_files} files, {len(all_chunks)} chunks" + " " * 20,
+                        f"{file_idx}/{total_files} files ({filename}: {file_chunks})" + " " * 30,
                         end="",
                         flush=True,
                         file=sys.stdout

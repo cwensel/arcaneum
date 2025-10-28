@@ -72,6 +72,8 @@ class EmbeddingClient:
     def embed(self, texts: List[str], model_name: str) -> List[List[float]]:
         """Generate embeddings for texts using specified model.
 
+        Processes in batches of 100 to prevent FastEmbed hangs on large batches.
+
         Args:
             texts: List of text strings to embed
             model_name: Model identifier (stella, jina, modernbert, bge)
@@ -83,8 +85,18 @@ class EmbeddingClient:
             ValueError: If model_name is not recognized
         """
         model = self.get_model(model_name)
-        embeddings = list(model.embed(texts))
-        return embeddings
+
+        # Process in batches to prevent FastEmbed hangs
+        BATCH_SIZE = 100
+        all_embeddings = []
+        total_texts = len(texts)
+
+        for i in range(0, total_texts, BATCH_SIZE):
+            batch = texts[i:i + BATCH_SIZE]
+            batch_embeddings = list(model.embed(batch))
+            all_embeddings.extend(batch_embeddings)
+
+        return all_embeddings
 
     def get_dimensions(self, model_name: str) -> int:
         """Get vector dimensions for a model.

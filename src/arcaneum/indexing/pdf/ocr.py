@@ -46,14 +46,22 @@ class OCREngine:
                 logger.error("EasyOCR not installed. Install with: pip install easyocr")
                 raise
 
-    def process_pdf(self, pdf_path: Path) -> Tuple[str, dict]:
+    def process_pdf(self, pdf_path: Path, verbose: bool = False) -> Tuple[str, dict]:
         """Perform OCR on PDF.
+
+        Args:
+            pdf_path: Path to PDF file
+            verbose: If True, show per-page progress
 
         Returns:
             Tuple of (text, metadata)
         """
         # Convert PDF to images
         images = convert_from_path(pdf_path, dpi=self.image_dpi)
+        total_pages = len(images)
+
+        if verbose:
+            print(f"  → OCR: Processing {total_pages} pages...", flush=True)
 
         text_parts = []
         confidence_scores = []
@@ -71,7 +79,10 @@ class OCREngine:
             if page_text.strip():
                 text_parts.append(page_text)
                 confidence_scores.append(page_conf)
-                logger.debug(f"Page {page_num}: {len(page_text)} chars, confidence: {page_conf:.1f}")
+
+                # Show per-page progress
+                if verbose:
+                    print(f"  → OCR: Page {page_num}/{total_pages} ({len(page_text)} chars, conf: {page_conf:.0f}%)", flush=True)
 
         text = '\n'.join(text_parts)
         avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0
@@ -81,10 +92,12 @@ class OCREngine:
             'is_image_pdf': True,
             'ocr_confidence': avg_confidence,
             'ocr_language': self.language,
-            'page_count': len(images),
+            'page_count': total_pages,
+            'ocr_pages_processed': len(text_parts),
         }
 
-        logger.info(f"OCR completed: {len(text)} chars, avg confidence: {avg_confidence:.1f}%")
+        if verbose:
+            print(f"  → OCR complete: {len(text)} chars, avg conf: {avg_confidence:.0f}%", flush=True)
 
         return text, metadata
 

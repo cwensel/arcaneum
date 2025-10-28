@@ -8,6 +8,7 @@ from tqdm import tqdm
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_not_exception_type
 import logging
 import os
+import sys
 
 from ..embeddings.client import EmbeddingClient
 from .common.sync import MetadataBasedSync, compute_file_hash
@@ -80,7 +81,8 @@ class PDFBatchUploader:
         collection_name: str,
         model_name: str,
         model_config: Dict,
-        force_reindex: bool = False
+        force_reindex: bool = False,
+        verbose: bool = False
     ) -> Dict:
         """Index PDFs in directory with incremental sync.
 
@@ -90,6 +92,7 @@ class PDFBatchUploader:
             model_name: Embedding model to use
             model_config: Model configuration (chunk_size, overlap, etc.)
             force_reindex: Bypass metadata sync and reindex all files
+            verbose: If True, show tqdm progress bar; if False, show per-file progress
 
         Returns:
             Statistics dict with files, chunks, errors counts
@@ -111,25 +114,36 @@ class PDFBatchUploader:
         logger.info(f"Found {len(all_pdf_files)} total PDF files")
 
         # Filter to unindexed files via metadata queries (unless force_reindex)
-        print(f"🔍 Scanning collection for existing files...")
+        if verbose:
+            print(f"🔍 Scanning collection for existing files...")
+
         if force_reindex:
             pdf_files = all_pdf_files
             logger.info(f"Force reindex: processing all {len(pdf_files)} PDFs")
-            print(f"🔄 Force reindex: {len(pdf_files)} PDFs to process")
+            if verbose:
+                print(f"🔄 Force reindex: {len(pdf_files)} PDFs to process")
         else:
             pdf_files = self.sync.get_unindexed_files(collection_name, all_pdf_files)
             skipped = len(all_pdf_files) - len(pdf_files)
             logger.info(f"Incremental sync: {len(pdf_files)} new/modified, {skipped} already indexed")
 
-            # Always show sync status to user
-            print(f"📊 Found {len(all_pdf_files)} PDFs: {len(pdf_files)} new/modified, {skipped} already indexed")
+            if verbose:
+                print(f"📊 Found {len(all_pdf_files)} PDFs: {len(pdf_files)} new/modified, {skipped} already indexed")
 
         if not pdf_files:
             logger.info("No PDFs to index")
-            print("✅ All PDFs are up to date")
+            if not verbose:
+                print("All PDFs up to date")
+            else:
+                print("✅ All PDFs are up to date")
             return {"files": 0, "chunks": 0, "errors": 0}
 
-        print()
+        # Show count for minimal mode
+        if not verbose:
+            print(f"Found {len(pdf_files)} PDF(s)")
+            print(f"Processing {len(pdf_files)} PDF(s)...")
+        else:
+            print()
 
         # Process PDFs with clean progress bar
         batch = []
@@ -137,77 +151,176 @@ class PDFBatchUploader:
         stats = {"files": 0, "chunks": 0, "errors": 0}
 
         try:
-            with tqdm(total=len(pdf_files), desc="Indexing PDFs", unit="file",
-                      bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]') as pbar:
+            total_pdfs = len(pdf_files)
 
-                for pdf_path in pdf_files:
-                    try:
-                        # Compute file hash for incremental indexing
-                        file_hash = compute_file_hash(pdf_path)
+            # Use tqdm for verbose mode, simple print for minimal mode
+            if verbose:
+                pbar = tqdm(total=total_pdfs, desc="Indexing PDFs", unit="file",
+                           bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
+            else:
+                pbar = None
 
-                        # Extract text
-                        text, extract_meta = self.extractor.extract(pdf_path)
+            for pdf_idx, pdf_path in enumerate(pdf_files, 1):
+                try:
+                    # Track chunks created and uploaded for this PDF
+                    file_chunk_count = 0
+                    chunks_uploaded_before = stats["chunks"]
 
-                        # Check if OCR needed
-                        if self.ocr_enabled and len(text) < self.ocr_threshold:
-                            logger.debug(f"Triggering OCR for {pdf_path.name}")
-                            text, ocr_meta = self.ocr.process_pdf(pdf_path)
-                            extract_meta.update(ocr_meta)
+                    # Show initial state
+                    if not verbose:
+                        print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → extracting", end="", flush=True)
+                    else:
+                        print(f"\n[{pdf_idx}/{total_pdfs}] Processing {pdf_path.name}...", flush=True)
+                        print(f"  → Computing hash", flush=True)
 
-                        # Chunk text with file metadata (including hash for sync)
-                        base_metadata = {
-                            'filename': pdf_path.name,
-                            'file_path': str(pdf_path),
-                            'file_hash': file_hash,  # For incremental sync
-                            'file_size': pdf_path.stat().st_size,
-                            'store_type': 'pdf',
-                            **extract_meta
-                        }
+                    # Compute file hash for incremental indexing
+                    file_hash = compute_file_hash(pdf_path)
 
-                        chunks = chunker.chunk(text, base_metadata)
+                    # Extract text
+                    if verbose:
+                        print(f"  → Extracting text", flush=True)
+                    text, extract_meta = self.extractor.extract(pdf_path)
 
-                        # Generate embeddings
-                        texts = [chunk.text for chunk in chunks]
-                        embeddings = self.embeddings.embed(texts, model_name)
+                    if verbose:
+                        print(f"  → Extracted {len(text)} chars", flush=True)
 
-                        # Create points
-                        for chunk, embedding in zip(chunks, embeddings):
-                            point = PointStruct(
-                                id=point_id,
-                                vector={model_name: embedding},  # Named vector
-                                payload={
-                                    'text': chunk.text,
-                                    **chunk.metadata
-                                }
-                            )
-                            batch.append(point)
-                            point_id += 1
+                    # Check if OCR needed
+                    if self.ocr_enabled and len(text) < self.ocr_threshold:
+                        # Get page count for progress display
+                        import pymupdf as fitz
+                        try:
+                            temp_doc = fitz.open(pdf_path)
+                            page_count = len(temp_doc)
+                            temp_doc.close()
+                        except:
+                            page_count = 0
 
-                            # Upload when batch full
-                            if len(batch) >= self.batch_size:
-                                self._upload_batch(collection_name, batch)
-                                stats["chunks"] += len(batch)
-                                batch = []
+                        if not verbose:
+                            print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → OCR ({page_count} pages)", end="", flush=True)
 
-                        stats["files"] += 1
+                        text, ocr_meta = self.ocr.process_pdf(pdf_path, verbose=verbose)
+                        extract_meta.update(ocr_meta)
+
+                    # Chunk text with file metadata (including hash for sync)
+                    base_metadata = {
+                        'filename': pdf_path.name,
+                        'file_path': str(pdf_path),
+                        'file_hash': file_hash,  # For incremental sync
+                        'file_size': pdf_path.stat().st_size,
+                        'store_type': 'pdf',
+                        **extract_meta
+                    }
+
+                    # Chunking
+                    if not verbose:
+                        print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → chunking ({len(text)} chars)", end="", flush=True)
+                    else:
+                        print(f"  → Chunking text ({len(text)} chars)", flush=True)
+
+                    chunks = chunker.chunk(text, base_metadata)
+                    file_chunk_count = len(chunks)
+
+                    if verbose:
+                        print(f"  → Created {file_chunk_count} chunks", flush=True)
+
+                    # Generate embeddings
+                    texts = [chunk.text for chunk in chunks]
+
+                    if not verbose:
+                        print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → embedding ({file_chunk_count} chunks)", end="", flush=True)
+                    else:
+                        print(f"  → Embedding {file_chunk_count} chunks", flush=True)
+
+                    embeddings = self.embeddings.embed(texts, model_name)
+
+                    if verbose:
+                        print(f"  → Embedding complete", flush=True)
+
+                    # Create points
+                    if not verbose and file_chunk_count > 0:
+                        print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → creating points", end="", flush=True)
+
+                    for chunk, embedding in zip(chunks, embeddings):
+                        point = PointStruct(
+                            id=point_id,
+                            vector={model_name: embedding},  # Named vector
+                            payload={
+                                'text': chunk.text,
+                                **chunk.metadata
+                            }
+                        )
+                        batch.append(point)
+                        point_id += 1
+
+                        # Upload when batch full
+                        if len(batch) >= self.batch_size:
+                            if not verbose:
+                                print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → uploading batch ({len(batch)})", end="", flush=True)
+                            else:
+                                print(f"  → Uploading batch of {len(batch)} chunks", flush=True)
+                            self._upload_batch(collection_name, batch)
+                            stats["chunks"] += len(batch)
+                            batch = []
+
+                    if verbose:
+                        print(f"  ✓ Completed {pdf_path.name}", flush=True)
+
+                    stats["files"] += 1
+
+                    # Show completion with created vs uploaded counts
+                    chunks_uploaded_this_file = stats["chunks"] - chunks_uploaded_before
+                    chunks_in_batch = len([p for p in batch if p.payload.get('filename') == pdf_path.name])
+
+                    if not verbose:
+                        if file_chunk_count == chunks_uploaded_this_file:
+                            # Normal: all chunks uploaded
+                            print(f" ✓ ({file_chunk_count} chunks)")
+                        elif chunks_in_batch > 0:
+                            # Chunks waiting in batch buffer (will upload at end or when batch fills)
+                            print(f" ✓ ({file_chunk_count} chunks, {chunks_in_batch} pending)")
+                        else:
+                            # Warning: mismatch and not in batch - something failed
+                            print(f" ⚠ ({file_chunk_count} created, {chunks_uploaded_this_file} uploaded - UPLOAD FAILED)")
+                    else:
+                        print(f"  Chunks: {file_chunk_count} created, {chunks_uploaded_this_file} uploaded, {chunks_in_batch} in batch", flush=True)
                         pbar.update(1)
 
-                    except Exception as e:
-                        logger.error(f"Failed: {pdf_path.name}: {e}")
-                        stats["errors"] += 1
-                        pbar.update(1)
-                        continue
+                except Exception as e:
+                    # Show detailed error
+                    error_msg = str(e)
+                    if not verbose:
+                        # Minimal: show error type
+                        error_type = type(e).__name__
+                        print(f" ✗ ({error_type})")
+                    else:
+                        # Verbose: show full error
+                        print(f"  ✗ ERROR: {error_msg}", file=sys.stderr, flush=True)
+                        if pbar:
+                            pbar.update(1)
 
-                # Upload remaining batch
-                if batch:
+                    stats["errors"] += 1
+                    continue
+
+            # Upload remaining batch (critical - don't lose pending chunks!)
+            if batch:
+                if verbose:
+                    print(f"\n  → Uploading final batch: {len(batch)} chunks", flush=True)
+                try:
                     self._upload_batch(collection_name, batch)
                     stats["chunks"] += len(batch)
+                    if verbose:
+                        print(f"  ✓ Final batch uploaded", flush=True)
+                except Exception as e:
+                    print(f"\nERROR: Final batch upload failed: {e}", file=sys.stderr)
+                    print(f"  Lost {len(batch)} chunks from batch buffer!", file=sys.stderr)
+
+            # Close progress bar if used
+            if verbose and pbar:
+                pbar.close()
 
         except KeyboardInterrupt:
-            print("\n\n⚠️  Indexing interrupted by user")
-            print(f"📊 Partial progress: {stats['files']} files indexed, {stats['chunks']} chunks uploaded")
-            if stats['errors'] > 0:
-                print(f"⚠️  {stats['errors']} errors occurred")
+            # Let the signal handler in CLI handle it
+            # Just re-raise to propagate to CLI
             raise
 
         # Summary

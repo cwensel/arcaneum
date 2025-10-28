@@ -8,10 +8,15 @@ import logging
 import sys
 import json
 import os
+import signal
+
+# Suppress tokenizers parallelism warning
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
 from ..config import load_config, DEFAULT_MODELS
 from ..embeddings.client import EmbeddingClient
 from ..indexing.uploader import PDFBatchUploader
+from ..indexing.collection_metadata import validate_collection_type, CollectionType
 from qdrant_client import QdrantClient
 
 console = Console()
@@ -52,8 +57,12 @@ def index_pdfs_command(
 
     # Setup logging
     if verbose:
-        # Verbose: Show everything
-        logging.basicConfig(level=logging.DEBUG, format='%(levelname)s:%(name)s:%(message)s')
+        # Verbose: Show INFO but not DEBUG (too noisy)
+        logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+        # Suppress DEBUG from libraries
+        logging.getLogger('httpx').setLevel(logging.WARNING)
+        logging.getLogger('httpcore').setLevel(logging.WARNING)
+        logging.getLogger('qdrant_client').setLevel(logging.INFO)
     else:
         # Normal: Clean output, only warnings and errors
         logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
@@ -62,7 +71,15 @@ def index_pdfs_command(
         logging.getLogger('arcaneum').setLevel(logging.WARNING)
         logging.getLogger('httpx').setLevel(logging.ERROR)
         logging.getLogger('qdrant_client').setLevel(logging.ERROR)
-        logging.getLogger('fastembed').setLevel(logging.ERROR)
+        # Keep fastembed at WARNING to allow download progress bars
+        logging.getLogger('fastembed').setLevel(logging.WARNING)
+
+    # Set up signal handler for Ctrl-C
+    def signal_handler(sig, frame):
+        console.print("\n\nIndexing interrupted by user")
+        sys.exit(130)
+
+    signal.signal(signal.SIGINT, signal_handler)
 
     try:
         pdf_dir = Path(path)
@@ -108,13 +125,14 @@ def index_pdfs_command(
             ocr_threshold=100,
         )
 
+        # Show configuration at start
         if not output_json:
-            console.print(f"\n[bold blue]Indexing PDFs[/bold blue]")
-            console.print(f"  Directory: {pdf_dir}")
-            console.print(f"  Collection: {collection}")
-            console.print(f"  Model: {model}")
+            console.print(f"\n[bold blue]PDF Indexing Configuration[/bold blue]")
+            console.print(f"  Collection: {collection} (type: pdf)")
+            console.print(f"  Embedding: {model}")
             if ocr_enabled:
-                console.print(f"  OCR: {ocr_language}")
+                console.print(f"  OCR: tesseract ({ocr_language})")
+            console.print(f"  Pipeline: PDF → Extract → [OCR if needed] → Chunk → Embed → Upload")
             if offline:
                 console.print(f"  [yellow]Mode: Offline (cached models only)[/yellow]")
             console.print()
@@ -125,7 +143,8 @@ def index_pdfs_command(
             collection_name=collection,
             model_name=model,
             model_config=model_dict,
-            force_reindex=force
+            force_reindex=force,
+            verbose=verbose
         )
 
         # Output results
@@ -138,20 +157,31 @@ def index_pdfs_command(
             }
             print(json.dumps(result, indent=2))
         else:
-            console.print("\n[bold green]✓ Indexing Complete[/bold green]")
+            # Minimal output by default (matches index-source style)
+            if not verbose:
+                console.print(f"\n✓ Indexed {stats['files']} PDF(s): {stats['chunks']} chunks")
+                if stats['errors'] > 0:
+                    console.print(f"⚠ {stats['errors']} errors occurred")
+            else:
+                # Verbose: Show detailed table
+                console.print("\n[bold green]✓ Indexing Complete[/bold green]")
 
-            table = Table(title="Indexing Results")
-            table.add_column("Metric", style="cyan")
-            table.add_column("Value", style="magenta")
+                table = Table(title="Indexing Results")
+                table.add_column("Metric", style="cyan")
+                table.add_column("Value", style="magenta")
 
-            table.add_row("Files Processed", str(stats['files']))
-            table.add_row("Chunks Uploaded", str(stats['chunks']))
-            table.add_row("Errors", str(stats['errors']))
+                table.add_row("Files Processed", str(stats['files']))
+                table.add_row("Chunks Uploaded", str(stats['chunks']))
+                table.add_row("Errors", str(stats['errors']))
 
-            console.print(table)
+                console.print(table)
 
-            if stats['errors'] > 0:
-                console.print(f"\n[yellow]⚠ {stats['errors']} errors occurred[/yellow]")
+                if stats['errors'] > 0:
+                    console.print(f"\n[yellow]⚠ {stats['errors']} errors occurred[/yellow]")
+
+    except KeyboardInterrupt:
+        console.print("\n\nIndexing interrupted by user")
+        sys.exit(130)
 
     except Exception as e:
         if output_json:

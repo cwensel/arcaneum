@@ -48,10 +48,15 @@ def index_source_command(
     """
     # Setup logging - minimal output by default
     if verbose:
+        # Verbose: Show INFO but not DEBUG (too noisy)
         logging.basicConfig(
-            level=logging.DEBUG,
-            format='%(levelname)s:%(name)s:%(message)s'
+            level=logging.INFO,
+            format='%(levelname)s: %(message)s'
         )
+        # Suppress DEBUG from libraries
+        logging.getLogger('httpx').setLevel(logging.WARNING)
+        logging.getLogger('httpcore').setLevel(logging.WARNING)
+        logging.getLogger('qdrant_client').setLevel(logging.INFO)
     else:
         # Default: Only warnings and errors, no INFO logs
         logging.basicConfig(
@@ -62,7 +67,8 @@ def index_source_command(
         logging.getLogger('arcaneum').setLevel(logging.WARNING)
         logging.getLogger('httpx').setLevel(logging.ERROR)
         logging.getLogger('qdrant_client').setLevel(logging.ERROR)
-        logging.getLogger('fastembed').setLevel(logging.ERROR)
+        # Keep fastembed at WARNING to allow download progress bars
+        logging.getLogger('fastembed').setLevel(logging.WARNING)
 
     logger = logging.getLogger(__name__)
 

@@ -7,31 +7,54 @@ import os
 # Model configurations with dimensions
 # Note: "stella" is an alias for bge-large since actual stella (dunzhang/stella_en_1.5B_v5)
 # is not available in FastEmbed
-# Model configurations with dimensions
-# Currently limited to FastEmbed-supported models
-# TODO (arcaneum-141): Add support for code-specific models via HuggingFace/SentenceTransformers
+# Model configurations with multiple backends
 EMBEDDING_MODELS = {
+    # Code-specific models (SentenceTransformers)
+    "jina-code": {
+        "name": "jinaai/jina-embeddings-v2-base-code",
+        "dimensions": 768,
+        "backend": "sentence-transformers",
+        "description": "Code-specific (768D, 8K context, best for source code)",
+        "available": True,
+        "recommended_for": "code"
+    },
+
+    # General purpose models (SentenceTransformers)
+    "stella": {
+        "name": "dunzhang/stella_en_1.5B_v5",
+        "dimensions": 1024,
+        "backend": "sentence-transformers",
+        "description": "General purpose (1024D, high quality for docs/PDFs)",
+        "available": True,
+        "recommended_for": "pdf"
+    },
+
+    # BGE models (FastEmbed - fast ONNX inference)
     "bge-large": {
         "name": "BAAI/bge-large-en-v1.5",
         "dimensions": 1024,
-        "description": "BGE Large (1024D, best quality)",
+        "backend": "fastembed",
+        "description": "BGE Large (1024D, general purpose, fast)",
         "available": True
     },
-    "bge": {  # Alias for bge-large
+    "bge": {  # Alias
         "name": "BAAI/bge-large-en-v1.5",
         "dimensions": 1024,
-        "description": "BGE Large (1024D, best quality)",
+        "backend": "fastembed",
+        "description": "BGE Large (alias for bge-large)",
         "available": True
     },
     "bge-base": {
         "name": "BAAI/bge-base-en-v1.5",
         "dimensions": 768,
+        "backend": "fastembed",
         "description": "BGE Base (768D, balanced)",
         "available": True
     },
     "bge-small": {
         "name": "BAAI/bge-small-en-v1.5",
         "dimensions": 384,
+        "backend": "fastembed",
         "description": "BGE Small (384D, fastest)",
         "available": True
     },
@@ -56,7 +79,7 @@ class EmbeddingClient:
         os.environ["SENTENCE_TRANSFORMERS_HOME"] = cache_dir
         self._models: Dict[str, TextEmbedding] = {}
 
-    def get_model(self, model_name: str) -> TextEmbedding:
+    def get_model(self, model_name: str):
         """Get or initialize embedding model.
 
         Args:
@@ -76,10 +99,19 @@ class EmbeddingClient:
 
         if model_name not in self._models:
             config = EMBEDDING_MODELS[model_name]
-            self._models[model_name] = TextEmbedding(
-                model_name=config["name"],
-                cache_dir=self.cache_dir,
-            )
+            backend = config.get("backend", "fastembed")
+
+            if backend == "fastembed":
+                self._models[model_name] = TextEmbedding(
+                    model_name=config["name"],
+                    cache_dir=self.cache_dir,
+                )
+            elif backend == "sentence-transformers":
+                from sentence_transformers import SentenceTransformer
+                model_obj = SentenceTransformer(config["name"], cache_folder=self.cache_dir)
+                model_obj._backend = "sentence-transformers"
+                self._models[model_name] = model_obj
+
         return self._models[model_name]
 
     def embed(self, texts: List[str], model_name: str) -> List[List[float]]:
@@ -99,16 +131,14 @@ class EmbeddingClient:
         """
         model = self.get_model(model_name)
 
-        # Process in batches to prevent FastEmbed hangs
-        BATCH_SIZE = 100
-        all_embeddings = []
-        total_texts = len(texts)
-
-        # Just embed - batching now handled by callers (uploader.py, source_code_pipeline.py)
-        # They control the line updates to maintain progress consistency
-        all_embeddings = list(model.embed(texts))
-
-        return all_embeddings
+        # Handle different backends
+        if hasattr(model, '_backend') and model._backend == "sentence-transformers":
+            # SentenceTransformers: use encode()
+            embeddings = model.encode(texts, show_progress_bar=False, convert_to_numpy=False)
+            return [emb.tolist() for emb in embeddings]
+        else:
+            # FastEmbed: use embed()
+            return list(model.embed(texts))
 
     def get_dimensions(self, model_name: str) -> int:
         """Get vector dimensions for a model.

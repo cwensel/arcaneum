@@ -1,6 +1,6 @@
 """PDF chunking with semantic awareness and late chunking support (RDR-004)."""
 
-from typing import List, Dict
+from typing import List, Dict, Optional
 from dataclasses import dataclass
 import logging
 
@@ -126,17 +126,26 @@ class PDFChunker:
                 # Estimate token count
                 token_count = int(len(chunk_text) / char_to_token)
 
+                # Calculate page number if page boundaries available
+                page_number = self._calculate_page_number(start, metadata.get('page_boundaries'))
+
+                chunk_metadata = {
+                    **metadata,
+                    'chunk_index': chunk_index,
+                    'chunk_start_char': start,
+                    'chunk_end_char': end,
+                    'late_chunking': False,
+                }
+
+                # Add page_number if calculated
+                if page_number is not None:
+                    chunk_metadata['page_number'] = page_number
+
                 chunk = Chunk(
                     text=chunk_text,
                     chunk_index=chunk_index,
                     token_count=token_count,
-                    metadata={
-                        **metadata,
-                        'chunk_index': chunk_index,
-                        'chunk_start_char': start,
-                        'chunk_end_char': end,
-                        'late_chunking': False,
-                    }
+                    metadata=chunk_metadata
                 )
 
                 chunks.append(chunk)
@@ -147,3 +156,31 @@ class PDFChunker:
 
         logger.info(f"Created {len(chunks)} chunks")
         return chunks
+
+    def _calculate_page_number(self, chunk_start_char: int, page_boundaries: List[Dict]) -> Optional[int]:
+        """Calculate which page a chunk belongs to based on its character position.
+
+        Args:
+            chunk_start_char: Starting character position of chunk
+            page_boundaries: List of dicts with page_number, start_char, page_text_length
+
+        Returns:
+            Page number (1-indexed) or None if page_boundaries not available
+        """
+        if not page_boundaries:
+            return None
+
+        # Find the page this chunk starts in
+        for page in page_boundaries:
+            page_start = page['start_char']
+            page_end = page_start + page['page_text_length']
+
+            if page_start <= chunk_start_char < page_end:
+                return page['page_number']
+
+        # If not found (edge case), return last page
+        # This handles chunks at exact page boundaries
+        if page_boundaries:
+            return page_boundaries[-1]['page_number']
+
+        return None

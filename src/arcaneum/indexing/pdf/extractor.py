@@ -58,6 +58,8 @@ class PDFExtractor:
     def _extract_with_pymupdf(self, pdf_path: Path) -> Tuple[str, dict]:
         """Extract text using PyMuPDF (fast, general-purpose)."""
         text_parts = []
+        page_boundaries = []  # Track character positions where each page starts
+        current_pos = 0
 
         with pymupdf.open(pdf_path) as doc:
             page_count = len(doc)
@@ -66,7 +68,13 @@ class PDFExtractor:
                 page_text = page.get_text(sort=True)  # Sort for reading order
 
                 if page_text.strip():
+                    page_boundaries.append({
+                        'page_number': page_num + 1,  # 1-indexed for user display
+                        'start_char': current_pos,
+                        'page_text_length': len(page_text)
+                    })
                     text_parts.append(page_text)
+                    current_pos += len(page_text) + 1  # +1 for newline
 
         text = '\n'.join(text_parts)
 
@@ -75,6 +83,7 @@ class PDFExtractor:
             'is_image_pdf': False,
             'page_count': page_count,
             'file_size': pdf_path.stat().st_size,
+            'page_boundaries': page_boundaries,  # Add page boundary tracking
         }
 
         return text, metadata
@@ -82,6 +91,8 @@ class PDFExtractor:
     def _extract_with_pdfplumber(self, pdf_path: Path) -> Tuple[str, dict]:
         """Extract text using pdfplumber (slower, better table handling)."""
         text_parts = []
+        page_boundaries = []  # Track character positions where each page starts
+        current_pos = 0
 
         with pdfplumber.open(pdf_path) as pdf:
             page_count = len(pdf.pages)
@@ -99,7 +110,13 @@ class PDFExtractor:
                     page_text = page_text + '\n\n' + '\n\n'.join(table_texts)
 
                 if page_text and page_text.strip():
+                    page_boundaries.append({
+                        'page_number': page.page_number,  # pdfplumber already 1-indexed
+                        'start_char': current_pos,
+                        'page_text_length': len(page_text)
+                    })
                     text_parts.append(page_text)
+                    current_pos += len(page_text) + 1  # +1 for newline
 
         text = '\n'.join(text_parts)
 
@@ -108,6 +125,7 @@ class PDFExtractor:
             'is_image_pdf': False,
             'page_count': page_count,
             'file_size': pdf_path.stat().st_size,
+            'page_boundaries': page_boundaries,  # Add page boundary tracking
         }
 
         return text, metadata

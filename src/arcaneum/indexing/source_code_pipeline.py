@@ -127,6 +127,9 @@ class SourceCodeIndexer:
             console.print(f"  Depth: {depth}")
         if force:
             console.print(f"  Mode: Force reindex")
+        # Check if offline mode set via environment
+        if os.environ.get('HF_HUB_OFFLINE') == '1':
+            console.print(f"  [yellow]Mode: Offline (HF_HUB_OFFLINE=1)[/yellow]")
         console.print()
 
         # Step 1: Query Qdrant for indexed projects (source of truth)

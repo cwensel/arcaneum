@@ -97,12 +97,14 @@ cd arcaneum
 
 ### Install Dependencies
 
-Dependencies will be added as features are implemented (see RDR-002 onwards):
-- qdrant-client[fastembed] >= 1.15.0
-- meilisearch >= 0.31.0
-- click >= 8.1.0
-- rich >= 13.0.0
-- And more...
+```bash
+pip install -e .
+```
+
+**Corporate Networks:** If behind VPN with SSL certificate issues:
+- **Recommended:** Pre-download models, then set `export HF_HUB_OFFLINE=1` in your shell
+- **Alternative:** Set SSL bypass env vars in `~/.bashrc`: `export PYTHONHTTPSVERIFY=0`
+- See `doc/testing/OFFLINE-MODE.md` for complete corporate network setup
 
 ## Quick Start
 

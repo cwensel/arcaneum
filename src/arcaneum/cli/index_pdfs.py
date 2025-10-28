@@ -49,9 +49,16 @@ def index_pdfs_command(
         offline: Use cached models only (no network calls)
         verbose: Verbose output
         output_json: Output JSON format
+
+    Note:
+        For corporate networks with SSL issues, set environment variables:
+        - HF_HUB_OFFLINE=1 (offline mode)
+        - PYTHONHTTPSVERIFY=0 (disable SSL verification)
+        See doc/testing/OFFLINE-MODE.md for details.
     """
     # Invert no_ocr flag to get ocr_enabled
     ocr_enabled = not no_ocr
+
     # Enable offline mode if requested (blocks all HuggingFace network calls)
     if offline:
         os.environ['HF_HUB_OFFLINE'] = '1'
@@ -154,6 +161,9 @@ def index_pdfs_command(
                 console.print(f"  Upload: Atomic per-document (safer)")
             if offline:
                 console.print(f"  [yellow]Mode: Offline (cached models only)[/yellow]")
+            # Check if offline mode set via environment
+            elif os.environ.get('HF_HUB_OFFLINE') == '1':
+                console.print(f"  [yellow]Mode: Offline (HF_HUB_OFFLINE=1)[/yellow]")
             console.print()
 
         # Index PDFs

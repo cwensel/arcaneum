@@ -1,19 +1,39 @@
-# Offline Mode
+# Corporate Network Setup
 
-Use `--offline` to prevent all network calls when models are cached.
+## For Self-Signed SSL Certificates
 
-## Usage
+Set environment variables BEFORE running arc commands:
 
 ```bash
-bin/arc index-pdfs ./pdfs --collection docs --model stella --offline
+# Disable SSL verification (use on trusted networks only)
+export PYTHONHTTPSVERIFY=0
+export REQUESTS_CA_BUNDLE=""
+export CURL_CA_BUNDLE=""
+
+# Then run normally
+arc index-pdfs ./pdfs --collection docs --model stella
+arc index-source ./code --collection code --model jina-code
 ```
 
-## What It Does
+## For Offline Mode (Recommended)
 
-Sets these environment variables:
-- `HF_HUB_OFFLINE=1` - Blocks all HuggingFace network calls
-- `HF_HUB_DISABLE_TELEMETRY=1` - Disables telemetry
-- `TRANSFORMERS_OFFLINE=1` - Alternative offline flag
+Set environment variables to use only cached models:
+
+```bash
+# Enable offline mode
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+
+# Then run (models must be pre-downloaded)
+arc index-pdfs ./pdfs --collection docs --model stella
+arc index-source ./code --collection code --model jina-code
+```
+
+Or use the `--offline` flag:
+```bash
+arc index-pdfs ./pdfs --collection docs --model stella --offline
+arc index-source ./code --collection code --model jina-code --offline
+```
 
 ## When to Use
 
@@ -27,27 +47,96 @@ Sets these environment variables:
 - Models not downloaded yet
 - Want to check for model updates
 
-## Corporate Proxy Workflow
+## Complete Corporate Network Workflow
+
+### Step 1: Pre-download Models (one-time setup)
+
+On a machine with working internet:
 
 ```bash
-# 1. Pre-download models (on machine with working internet)
+# Download all models you'll need
 python scripts/download-models.py
 
-# 2. Copy models_cache/ to target machine
+# Or download specific models
+python -c "
+from fastembed import TextEmbedding
+from sentence_transformers import SentenceTransformer
 
-# 3. Use offline mode (no SSL errors!)
-bin/arc index-pdfs ./pdfs --collection docs --model stella --offline
+# FastEmbed models
+TextEmbedding('BAAI/bge-large-en-v1.5', cache_dir='./models_cache')
+TextEmbedding('jinaai/jina-embeddings-v3', cache_dir='./models_cache')
+
+# SentenceTransformers models
+SentenceTransformer('dunzhang/stella_en_1.5B_v5', cache_folder='./models_cache')
+SentenceTransformer('jinaai/jina-embeddings-v2-base-code', cache_folder='./models_cache')
+"
 ```
+
+### Step 2: Copy Models to Corporate Machine
+
+```bash
+# Copy the models_cache directory
+scp -r ./models_cache/ corporate-machine:~/arcaneum/
+```
+
+### Step 3: Set Environment Variables
+
+Add to your `~/.bashrc` or `~/.zshrc` (BEFORE running any arc commands):
+
+```bash
+# For offline mode (recommended - works reliably)
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+
+# For SSL bypass (set in shell, not via --no-verify-ssl flag)
+export PYTHONHTTPSVERIFY=0
+export REQUESTS_CA_BUNDLE=""
+export CURL_CA_BUNDLE=""
+export SSL_CERT_FILE=""
+```
+
+Then restart your shell or run:
+```bash
+source ~/.bashrc  # or ~/.zshrc
+```
+
+**IMPORTANT:** Environment variables MUST be set in your shell before running arc. The `--no-verify-ssl` flag has limitations due to fastembed's early initialization.
+
+### Step 4: Use arc Normally
+
+```bash
+# Models are cached, offline mode active - no network/SSL issues!
+arc index-pdfs ./pdfs --collection docs --model stella
+arc index-source ./code --collection code --model jina-code
+```
+
+**Why environment variables?**
+- ✓ Set once, works for all commands
+- ✓ More reliable than runtime flags (set before Python imports)
+- ✓ Works with fastembed's early initialization
+- ✓ No code changes needed
 
 ## Verification
 
-With `--offline`, you should see:
+### With --offline:
 ```
-Indexing PDFs
-  Directory: ./pdfs
-  Collection: docs
-  Model: stella
+Source Code Indexing Configuration
+  Collection: code (type: code)
+  Embedding: jinaai/jina-embeddings-v2-base-code
+  Vector: jina-code
+  Pipeline: Git Discover → AST Chunk → Embed (batched) → Upload
   Mode: Offline (cached models only)
 ```
 
-And NO SSL errors!
+### With --no-verify-ssl:
+```
+PDF Indexing Configuration
+  Collection: docs (type: pdf)
+  Model: stella → dunzhang/stella_en_1.5B_v5
+  OCR: tesseract (eng)
+  Pipeline: PDF → Extract → [OCR if needed] → Chunk → Embed → Upload
+  Upload: Atomic per-document (safer)
+  SSL Verification: Disabled (VPN mode)
+```
+
+Both prevent SSL certificate errors!

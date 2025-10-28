@@ -91,10 +91,9 @@ class EmbeddingClient:
         all_embeddings = []
         total_texts = len(texts)
 
-        for i in range(0, total_texts, BATCH_SIZE):
-            batch = texts[i:i + BATCH_SIZE]
-            batch_embeddings = list(model.embed(batch))
-            all_embeddings.extend(batch_embeddings)
+        # Just embed - batching now handled by callers (uploader.py, source_code_pipeline.py)
+        # They control the line updates to maintain progress consistency
+        all_embeddings = list(model.embed(texts))
 
         return all_embeddings
 

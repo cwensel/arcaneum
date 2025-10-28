@@ -5,6 +5,16 @@ import pdfplumber
 from pathlib import Path
 from typing import Tuple, Optional
 import logging
+import warnings
+import sys
+import os
+
+# Suppress PyMuPDF warnings about invalid PDF values
+warnings.filterwarnings('ignore', message='.*Cannot set.*is an invalid.*')
+warnings.filterwarnings('ignore', category=UserWarning, module='pymupdf')
+
+# Suppress PyMuPDF C library warnings to stderr
+pymupdf.TOOLS.mupdf_display_errors(False)
 
 logger = logging.getLogger(__name__)
 

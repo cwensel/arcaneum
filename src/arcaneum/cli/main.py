@@ -70,13 +70,14 @@ def delete_collection(name, confirm, output_json):
 @click.option('--ocr-enabled', is_flag=True, help='Enable OCR for scanned PDFs')
 @click.option('--ocr-language', default='eng', help='OCR language code')
 @click.option('--force', is_flag=True, help='Force reindex all files')
+@click.option('--batch-across-files', is_flag=True, help='Batch uploads across files (faster but less atomic)')
 @click.option('--offline', is_flag=True, help='Offline mode (use cached models only, no network)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_pdfs(path, collection, model, workers, ocr_enabled, ocr_language, force, offline, verbose, output_json):
+def index_pdfs(path, collection, model, workers, ocr_enabled, ocr_language, force, batch_across_files, offline, verbose, output_json):
     """Index PDF files to Qdrant collection (from RDR-004)"""
     from arcaneum.cli.index_pdfs import index_pdfs_command
-    index_pdfs_command(path, collection, model, workers, ocr_enabled, ocr_language, force, offline, verbose, output_json)
+    index_pdfs_command(path, collection, model, workers, ocr_enabled, ocr_language, force, batch_across_files, offline, verbose, output_json)
 
 
 @cli.command('index-source')

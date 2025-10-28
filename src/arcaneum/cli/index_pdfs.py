@@ -31,6 +31,7 @@ def index_pdfs_command(
     ocr_enabled: bool,
     ocr_language: str,
     force: bool,
+    batch_across_files: bool,
     offline: bool,
     verbose: bool,
     output_json: bool
@@ -123,6 +124,7 @@ def index_pdfs_command(
             ocr_engine='tesseract',
             ocr_language=ocr_language,
             ocr_threshold=100,
+            batch_across_files=batch_across_files,
         )
 
         # Show configuration at start
@@ -133,6 +135,10 @@ def index_pdfs_command(
             if ocr_enabled:
                 console.print(f"  OCR: tesseract ({ocr_language})")
             console.print(f"  Pipeline: PDF → Extract → [OCR if needed] → Chunk → Embed → Upload")
+            if batch_across_files:
+                console.print(f"  Upload: Batched across files (100 chunks)")
+            else:
+                console.print(f"  Upload: Atomic per-document (safer)")
             if offline:
                 console.print(f"  [yellow]Mode: Offline (cached models only)[/yellow]")
             console.print()

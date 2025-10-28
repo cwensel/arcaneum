@@ -33,6 +33,7 @@ class PDFBatchUploader:
         ocr_engine: str = 'tesseract',
         ocr_language: str = 'eng',
         ocr_threshold: int = 100,
+        batch_across_files: bool = False,
     ):
         """Initialize batch uploader.
 
@@ -61,6 +62,8 @@ class PDFBatchUploader:
 
         self.ocr_enabled = ocr_enabled
         self.ocr_threshold = ocr_threshold
+        self.batch_across_files = batch_across_files
+
         if ocr_enabled:
             self.ocr = OCREngine(
                 engine=ocr_engine,
@@ -252,8 +255,8 @@ class PDFBatchUploader:
                         batch.append(point)
                         point_id += 1
 
-                        # Upload when batch full
-                        if len(batch) >= self.batch_size:
+                        # Upload when batch full (only if batching across files)
+                        if self.batch_across_files and len(batch) >= self.batch_size:
                             if not verbose:
                                 print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → uploading batch ({len(batch)})", end="", flush=True)
                             else:
@@ -262,6 +265,16 @@ class PDFBatchUploader:
                             stats["chunks"] += len(batch)
                             batch = []
 
+                    # Upload this PDF's chunks immediately (atomic mode - default)
+                    if not self.batch_across_files and len(batch) > 0:
+                        if not verbose:
+                            print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → uploading ({len(batch)} chunks)", end="", flush=True)
+                        elif verbose:
+                            print(f"  → Uploading {len(batch)} chunks", flush=True)
+                        self._upload_batch(collection_name, batch)
+                        stats["chunks"] += len(batch)
+                        batch = []
+
                     if verbose:
                         print(f"  ✓ Completed {pdf_path.name}", flush=True)
 
@@ -269,21 +282,26 @@ class PDFBatchUploader:
 
                     # Show completion with created vs uploaded counts
                     chunks_uploaded_this_file = stats["chunks"] - chunks_uploaded_before
-                    chunks_in_batch = len([p for p in batch if p.payload.get('filename') == pdf_path.name])
 
                     if not verbose:
-                        if file_chunk_count == chunks_uploaded_this_file:
-                            # Normal: all chunks uploaded
-                            print(f" ✓ ({file_chunk_count} chunks)")
-                        elif chunks_in_batch > 0:
-                            # Chunks waiting in batch buffer (will upload at end or when batch fills)
-                            print(f" ✓ ({file_chunk_count} chunks, {chunks_in_batch} pending)")
+                        if self.batch_across_files:
+                            # Batching mode: may have chunks pending
+                            chunks_in_batch = len([p for p in batch if p.payload.get('filename') == pdf_path.name])
+                            if chunks_in_batch > 0:
+                                print(f" ✓ ({file_chunk_count} chunks, {chunks_in_batch} pending)")
+                            else:
+                                print(f" ✓ ({file_chunk_count} chunks)")
                         else:
-                            # Warning: mismatch and not in batch - something failed
-                            print(f" ⚠ ({file_chunk_count} created, {chunks_uploaded_this_file} uploaded - UPLOAD FAILED)")
+                            # Atomic mode: all chunks should be uploaded immediately
+                            if file_chunk_count == chunks_uploaded_this_file:
+                                print(f" ✓ ({file_chunk_count} chunks)")
+                            else:
+                                print(f" ⚠ ({file_chunk_count} created, {chunks_uploaded_this_file} uploaded - FAILED)")
                     else:
+                        chunks_in_batch = len([p for p in batch if p.payload.get('filename') == pdf_path.name])
                         print(f"  Chunks: {file_chunk_count} created, {chunks_uploaded_this_file} uploaded, {chunks_in_batch} in batch", flush=True)
-                        pbar.update(1)
+                        if pbar:
+                            pbar.update(1)
 
                 except Exception as e:
                     # Show detailed error
@@ -301,9 +319,9 @@ class PDFBatchUploader:
                     stats["errors"] += 1
                     continue
 
-            # Upload remaining batch (critical - don't lose pending chunks!)
+            # Upload remaining batch (only needed if batching across files)
             if batch:
-                if verbose:
+                if verbose or not self.batch_across_files:
                     print(f"\n  → Uploading final batch: {len(batch)} chunks", flush=True)
                 try:
                     self._upload_batch(collection_name, batch)

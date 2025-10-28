@@ -1,6 +1,7 @@
 """Result formatters for search output (RDR-007)."""
 
 import json
+import re
 from typing import List, Dict, Any
 from .searcher import SearchResult
 
@@ -98,7 +99,7 @@ def format_json_results(
         verbose: If True, include full metadata and longer content
 
     Returns:
-        JSON string
+        JSON string (properly escaped for all control characters)
     """
     # Truncate content unless verbose mode
     content_length = None if verbose else 500
@@ -110,8 +111,8 @@ def format_json_results(
         "results": [
             {
                 "score": r.score,
-                "location": r.location,
-                "content": r.content[:content_length] if content_length else r.content,
+                "location": _sanitize_for_json(r.location),  # Sanitize location too
+                "content": _sanitize_for_json(r.content[:content_length] if content_length else r.content),
                 "metadata": r.metadata if verbose else _filter_metadata(r.metadata),
                 "point_id": r.point_id
             }
@@ -119,7 +120,9 @@ def format_json_results(
         ]
     }
 
-    return json.dumps(output, indent=2)
+    # ensure_ascii=True escapes ALL non-ASCII and control characters
+    # This is the safest option for PDF text which may contain unusual characters
+    return json.dumps(output, indent=2, ensure_ascii=True)
 
 
 def format_metadata(metadata: Dict[str, Any], verbose: bool = False) -> str:
@@ -188,6 +191,38 @@ def extract_snippet(content: str, max_length: int = 200) -> str:
         snippet = snippet[:last_space]
 
     return snippet + "..."
+
+
+def _sanitize_for_json(text: str) -> str:
+    """Sanitize text for JSON output by removing/replacing problematic control characters.
+
+    Python's json.dumps handles newlines and tabs correctly, but some PDFs contain
+    other control characters (0x00-0x1F) that can cause JSON parsing errors.
+
+    Args:
+        text: Raw text that may contain control characters
+
+    Returns:
+        Sanitized text safe for JSON serialization
+    """
+    if not text:
+        return text
+
+    # Replace problematic control characters (0x00-0x1F) except common ones
+    # Keep: \n (0x0A), \r (0x0D), \t (0x09)
+    # Remove: all other control characters
+    def replace_control_char(match):
+        char = match.group(0)
+        # Keep newline, carriage return, tab
+        if char in ('\n', '\r', '\t'):
+            return char
+        # Replace other control chars with space
+        return ' '
+
+    # Pattern matches all control characters (0x00-0x1F)
+    sanitized = re.sub(r'[\x00-\x1f]', replace_control_char, text)
+
+    return sanitized
 
 
 def _filter_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:

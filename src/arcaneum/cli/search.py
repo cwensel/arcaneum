@@ -112,7 +112,8 @@ def search_command(
                 results=results,
                 verbose=verbose
             )
-            console.print(output)
+            # Use print() not console.print() for JSON to avoid Rich wrapping
+            print(output)
         else:
             # Human-readable text output
             if verbose:

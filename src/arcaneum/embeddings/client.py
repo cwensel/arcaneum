@@ -29,6 +29,23 @@ EMBEDDING_MODELS = {
         "recommended_for": "pdf"
     },
 
+    # Jina models (FastEmbed)
+    "jina-v3": {
+        "name": "jinaai/jina-embeddings-v3",
+        "dimensions": 1024,
+        "backend": "fastembed",
+        "description": "Jina v3 (1024D, multilingual ~100, 8K context, 2024)",
+        "available": True,
+        "recommended_for": "multilingual"
+    },
+    "jina-base-en": {
+        "name": "jinaai/jina-embeddings-v2-base-en",
+        "dimensions": 768,
+        "backend": "fastembed",
+        "description": "Jina v2 Base English (768D, 8K context, English-only)",
+        "available": True
+    },
+
     # BGE models (FastEmbed - fast ONNX inference)
     "bge-large": {
         "name": "BAAI/bge-large-en-v1.5",

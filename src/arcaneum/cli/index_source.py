@@ -102,22 +102,29 @@ def index_source_command(
             if verbose:
                 console.print(f"[yellow]Collection '{collection}' does not exist, creating...[/yellow]")
 
-            # Map model names to FastEmbed models for NEW collections
+            # Map model names to actual embedding models for NEW collections
             model_map = {
-                'jina-code': 'BAAI/bge-small-en-v1.5',      # 384D - use bge-small as placeholder
-                'jina-v2-code': 'BAAI/bge-small-en-v1.5',   # 384D
-                'stella': 'BAAI/bge-large-en-v1.5',         # 1024D
+                'jina-code': 'jinaai/jina-embeddings-v2-base-code',  # 768D - code-specific
+                'jina-v2-code': 'jinaai/jina-embeddings-v2-base-code',  # 768D
+                'jina-v3': 'jinaai/jina-embeddings-v3',  # 1024D - multilingual
+                'jina-base-en': 'jinaai/jina-embeddings-v2-base-en',  # 768D - English-only
+                'stella': 'dunzhang/stella_en_1.5B_v5',     # 1024D
                 'bge': 'BAAI/bge-large-en-v1.5',            # 1024D
             }
-            embedding_model = model_map.get(model, 'BAAI/bge-small-en-v1.5')
+            embedding_model = model_map.get(model, 'jinaai/jina-embeddings-v2-base-code')
 
             # Determine vector size
             vector_sizes = {
                 'sentence-transformers/all-MiniLM-L6-v2': 384,
                 'BAAI/bge-small-en-v1.5': 384,
+                'BAAI/bge-base-en-v1.5': 768,
                 'BAAI/bge-large-en-v1.5': 1024,
+                'jinaai/jina-embeddings-v2-base-code': 768,
+                'jinaai/jina-embeddings-v2-base-en': 768,
+                'jinaai/jina-embeddings-v3': 1024,
+                'dunzhang/stella_en_1.5B_v5': 1024,
             }
-            vector_size = vector_sizes.get(embedding_model, 384)
+            vector_size = vector_sizes.get(embedding_model, 768)
 
             qdrant_indexer.create_collection(collection, vector_size=vector_size)
 
@@ -145,15 +152,17 @@ def index_source_command(
                         f"(type: code, vector: {vector_name})[/green]"
                     )
 
-                # Map vector name back to FastEmbed model
+                # Map vector name back to actual embedding model
                 # Must match EMBEDDING_MODELS dimensions in embeddings/client.py
                 vector_to_model_map = {
                     'bge': 'BAAI/bge-large-en-v1.5',        # 1024D
-                    'stella': 'BAAI/bge-large-en-v1.5',     # 1024D (stella uses bge-large)
-                    'jina-code': 'BAAI/bge-small-en-v1.5',  # 384D placeholder
-                    'jina': 'BAAI/bge-base-en-v1.5',        # 768D (jina uses bge-base as placeholder)
+                    'stella': 'dunzhang/stella_en_1.5B_v5',  # 1024D
+                    'jina-code': 'jinaai/jina-embeddings-v2-base-code',  # 768D - code-specific
+                    'jina': 'jinaai/jina-embeddings-v2-base-code',  # 768D
+                    'jina-v3': 'jinaai/jina-embeddings-v3',  # 1024D - multilingual
+                    'jina-base-en': 'jinaai/jina-embeddings-v2-base-en',  # 768D - English-only
                 }
-                embedding_model = vector_to_model_map.get(vector_name, 'sentence-transformers/all-MiniLM-L6-v2')
+                embedding_model = vector_to_model_map.get(vector_name, 'jinaai/jina-embeddings-v2-base-code')
                 if verbose:
                     console.print(f"[cyan]Auto-detected embedding model:[/cyan] {embedding_model}")
             else:

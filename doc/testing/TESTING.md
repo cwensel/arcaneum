@@ -85,7 +85,7 @@ Options:
   --collection TEXT    Target collection name  [required]
   --model TEXT         Embedding model
   --workers INTEGER    Parallel workers
-  --ocr-enabled        Enable OCR for scanned PDFs
+  --no-ocr             Disable OCR (enabled by default for scanned PDFs)
   --ocr-language TEXT  OCR language code
   --force              Force reindex all files
   -v, --verbose        Verbose output
@@ -262,14 +262,14 @@ bin/arc index-pdfs ./test_pdfs --collection pdf-test --model stella --json
 
 ## Test OCR (If You Have Scanned PDFs)
 
-### Test 11: Index with OCR
+### Test 11: Index with OCR (enabled by default)
 
 ```bash
 # Add a scanned PDF to test_pdfs/ first
+# OCR is enabled by default, so no flag needed
 bin/arc index-pdfs ./test_pdfs \
   --collection pdf-test \
   --model stella \
-  --ocr-enabled \
   --ocr-language eng \
   --verbose
 ```

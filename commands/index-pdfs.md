@@ -10,7 +10,7 @@ Index PDF files from a directory to a Qdrant collection for semantic search.
 - --collection <name>: Target Qdrant collection name (required)
 - --model <model>: Embedding model (default: stella)
 - --workers <n>: Parallel workers (default: 4)
-- --ocr-enabled: Enable OCR for scanned documents
+- --no-ocr: Disable OCR (enabled by default for scanned documents)
 - --ocr-language <lang>: OCR language code (default: eng)
 - --force: Force reindex all files
 - --verbose: Detailed progress output
@@ -19,7 +19,7 @@ Index PDF files from a directory to a Qdrant collection for semantic search.
 **Examples:**
 ```
 /index-pdfs /Documents/papers --collection Research
-/index-pdfs /Scans --collection Archive --ocr-enabled --ocr-language fra
+/index-pdfs /Scans --collection Archive --ocr-language fra
 /index-pdfs /Books --collection Library --workers 8 --force
 ```
 

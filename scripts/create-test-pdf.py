@@ -78,8 +78,8 @@ def create_test_pdf(output_path: Path):
     c.drawString(100, height - 130, "Basic indexing command:")
     c.drawString(100, height - 150, "  bin/arc index-pdfs ./pdfs --collection docs --model stella")
 
-    c.drawString(100, height - 190, "With OCR enabled:")
-    c.drawString(100, height - 210, "  bin/arc index-pdfs ./pdfs --collection docs --ocr-enabled")
+    c.drawString(100, height - 190, "Index PDFs (OCR enabled by default):")
+    c.drawString(100, height - 210, "  bin/arc index-pdfs ./pdfs --collection docs")
 
     c.drawString(100, height - 250, "Force reindex:")
     c.drawString(100, height - 270, "  bin/arc index-pdfs ./pdfs --collection docs --force")

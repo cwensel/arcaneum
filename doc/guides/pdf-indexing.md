@@ -56,16 +56,17 @@ arc index-pdfs /path/to/pdfs \
   --workers 4
 ```
 
-### 3. Enable OCR (for scanned PDFs)
+### 3. Index PDFs with OCR disabled (if all PDFs are machine-generated text)
 
 ```bash
-arc index-pdfs /path/to/scanned-pdfs \
+arc index-pdfs /path/to/text-pdfs \
   --collection pdf-docs \
   --model stella \
-  --ocr-enabled \
-  --ocr-language eng \
+  --no-ocr \
   --workers 4
 ```
+
+**Note**: OCR is enabled by default to handle scanned PDFs automatically.
 
 ## Usage
 
@@ -80,7 +81,7 @@ arc index-pdfs <directory> --collection <name> --model <model>
 - `--collection`: Target Qdrant collection (required)
 - `--model`: Embedding model (stella, bge, modernbert, jina) [default: stella]
 - `--workers`: Parallel upload workers [default: 4]
-- `--ocr-enabled`: Enable OCR for scanned PDFs
+- `--no-ocr`: Disable OCR (enabled by default for scanned PDFs)
 - `--ocr-language`: OCR language code (eng, fra, spa, deu, etc.) [default: eng]
 - `--force`: Force reindex all files (bypass incremental sync)
 - `--verbose`: Verbose output
@@ -96,12 +97,11 @@ arc index-pdfs ./docs \
   --workers 8
 ```
 
-**Index scanned books with OCR:**
+**Index scanned books (OCR enabled by default):**
 ```bash
 arc index-pdfs ./books \
   --collection book-archive \
   --model stella \
-  --ocr-enabled \
   --ocr-language eng \
   --workers 4
 ```
@@ -169,9 +169,11 @@ Choose the embedding model based on your use case:
 
 ### Trigger Logic
 
-OCR is automatically triggered when:
-- `--ocr-enabled` flag is set
-- Extracted text < 100 characters
+OCR is enabled by default and automatically triggered when:
+- Extracted text < 100 characters (scanned PDFs)
+
+To disable OCR completely (if all PDFs are machine-generated text):
+- Use `--no-ocr` flag
 
 ### Supported Languages
 
@@ -251,7 +253,7 @@ For large PDFs or many parallel workers:
 
 OCR is CPU-intensive (2s per page). To speed up:
 
-1. Only enable OCR when needed (`--ocr-enabled`)
+1. Disable OCR if all PDFs are machine-generated text (`--no-ocr`)
 2. Use GPU with EasyOCR (future enhancement)
 3. Process in smaller batches
 

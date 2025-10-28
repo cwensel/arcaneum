@@ -28,7 +28,7 @@ def index_pdfs_command(
     collection: str,
     model: str,
     workers: int,
-    ocr_enabled: bool,
+    no_ocr: bool,
     ocr_language: str,
     force: bool,
     batch_across_files: bool,
@@ -43,13 +43,15 @@ def index_pdfs_command(
         collection: Target collection name
         model: Embedding model to use
         workers: Number of parallel workers
-        ocr_enabled: Enable OCR for scanned PDFs
+        no_ocr: Disable OCR (enabled by default)
         ocr_language: OCR language code
         force: Force reindex all files
         offline: Use cached models only (no network calls)
         verbose: Verbose output
         output_json: Output JSON format
     """
+    # Invert no_ocr flag to get ocr_enabled
+    ocr_enabled = not no_ocr
     # Enable offline mode if requested (blocks all HuggingFace network calls)
     if offline:
         os.environ['HF_HUB_OFFLINE'] = '1'
@@ -143,6 +145,8 @@ def index_pdfs_command(
                 console.print(f"  Embedding: {actual_model}")
             if ocr_enabled:
                 console.print(f"  OCR: tesseract ({ocr_language})")
+            else:
+                console.print(f"  OCR: disabled")
             console.print(f"  Pipeline: PDF → Extract → [OCR if needed] → Chunk → Embed → Upload")
             if batch_across_files:
                 console.print(f"  Upload: Batched across files (100 chunks)")

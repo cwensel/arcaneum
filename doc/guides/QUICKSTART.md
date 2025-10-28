@@ -83,11 +83,11 @@ bin/arc delete-collection <name> --confirm
 ### Indexing
 
 ```bash
-# PDFs (text)
+# PDFs (OCR enabled by default for scanned PDFs)
 bin/arc index-pdfs <directory> --collection <name> --model <model>
 
-# PDFs with OCR (scanned)
-bin/arc index-pdfs <directory> --collection <name> --model <model> --ocr-enabled
+# Disable OCR if all PDFs are machine-generated text
+bin/arc index-pdfs <directory> --collection <name> --model <model> --no-ocr
 
 # Source code
 bin/arc index-source <directory> --collection <name> --model jina

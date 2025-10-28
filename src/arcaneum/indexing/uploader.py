@@ -29,7 +29,7 @@ class PDFBatchUploader:
         batch_size: int = 100,
         parallel_workers: int = 4,
         max_retries: int = 5,
-        ocr_enabled: bool = False,
+        ocr_enabled: bool = True,
         ocr_engine: str = 'tesseract',
         ocr_language: str = 'eng',
         ocr_threshold: int = 100,
@@ -43,7 +43,7 @@ class PDFBatchUploader:
             batch_size: Number of points per batch
             parallel_workers: Number of parallel upload workers
             max_retries: Maximum retry attempts for failed uploads
-            ocr_enabled: Enable OCR for scanned PDFs
+            ocr_enabled: Enable OCR for scanned PDFs (default: True)
             ocr_engine: OCR engine ('tesseract' or 'easyocr')
             ocr_language: OCR language code
             ocr_threshold: Trigger OCR if text < N characters

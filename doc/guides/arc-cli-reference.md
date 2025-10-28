@@ -109,7 +109,6 @@ arc index-pdfs /path/to/pdfs --collection pdf-docs --model stella
 arc index-pdfs /path/to/scanned-pdfs \
   --collection pdf-docs \
   --model stella \
-  --ocr-enabled \
   --ocr-language eng
 ```
 

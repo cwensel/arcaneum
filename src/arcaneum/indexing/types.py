@@ -184,10 +184,14 @@ class CodeChunk:
         else:
             vector = self.embedding
 
+        # Build payload with metadata AND content (for search result display)
+        payload = self.metadata.to_payload()
+        payload["text"] = self.content  # Add content field for search snippets
+
         return PointStruct(
             id=self.id,
             vector=vector,
-            payload=self.metadata.to_payload()
+            payload=payload
         )
 
 

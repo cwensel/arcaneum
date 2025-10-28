@@ -61,11 +61,19 @@ def delete_collection(name, confirm, output_json):
     delete_collection_command(name, confirm, output_json)
 
 
+@cli.command('list-models')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def list_models(output_json):
+    """List available embedding models"""
+    from arcaneum.cli.models import list_models_command
+    list_models_command(output_json)
+
+
 # Indexing commands (RDR-004, RDR-005)
 @cli.command('index-pdfs')
 @click.argument('path', type=click.Path(exists=True))
 @click.option('--collection', required=True, help='Target collection name')
-@click.option('--model', default='stella', help='Embedding model')
+@click.option('--model', default='bge-large', help='Embedding model (bge-large, bge-base, bge-small)')
 @click.option('--workers', type=int, default=4, help='Parallel workers')
 @click.option('--ocr-enabled', is_flag=True, help='Enable OCR for scanned PDFs')
 @click.option('--ocr-language', default='eng', help='OCR language code')

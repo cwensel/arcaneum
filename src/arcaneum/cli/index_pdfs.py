@@ -129,9 +129,18 @@ def index_pdfs_command(
 
         # Show configuration at start
         if not output_json:
+            # Get actual model name being used
+            from arcaneum.embeddings.client import EMBEDDING_MODELS
+            actual_model = EMBEDDING_MODELS.get(model, {}).get('name', model)
+            model_desc = EMBEDDING_MODELS.get(model, {}).get('description', '')
+
             console.print(f"\n[bold blue]PDF Indexing Configuration[/bold blue]")
             console.print(f"  Collection: {collection} (type: pdf)")
-            console.print(f"  Embedding: {model}")
+            if model_desc:
+                console.print(f"  Model: {model} → {actual_model}")
+                console.print(f"    ({model_desc})")
+            else:
+                console.print(f"  Embedding: {actual_model}")
             if ocr_enabled:
                 console.print(f"  OCR: tesseract ({ocr_language})")
             console.print(f"  Pipeline: PDF → Extract → [OCR if needed] → Chunk → Embed → Upload")

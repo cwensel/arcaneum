@@ -5,22 +5,35 @@ from typing import Dict, List
 import os
 
 # Model configurations with dimensions
+# Note: "stella" is an alias for bge-large since actual stella (dunzhang/stella_en_1.5B_v5)
+# is not available in FastEmbed
+# Model configurations with dimensions
+# Currently limited to FastEmbed-supported models
+# TODO (arcaneum-141): Add support for code-specific models via HuggingFace/SentenceTransformers
 EMBEDDING_MODELS = {
-    "stella": {
+    "bge-large": {
         "name": "BAAI/bge-large-en-v1.5",
         "dimensions": 1024,
+        "description": "BGE Large (1024D, best quality)",
+        "available": True
     },
-    "modernbert": {
-        "name": "nomic-ai/modernbert-embed-base",
-        "dimensions": 1024,
-    },
-    "bge": {
+    "bge": {  # Alias for bge-large
         "name": "BAAI/bge-large-en-v1.5",
         "dimensions": 1024,
+        "description": "BGE Large (1024D, best quality)",
+        "available": True
     },
-    "jina": {
-        "name": "jinaai/jina-embeddings-v2-base-code",
+    "bge-base": {
+        "name": "BAAI/bge-base-en-v1.5",
         "dimensions": 768,
+        "description": "BGE Base (768D, balanced)",
+        "available": True
+    },
+    "bge-small": {
+        "name": "BAAI/bge-small-en-v1.5",
+        "dimensions": 384,
+        "description": "BGE Small (384D, fastest)",
+        "available": True
     },
 }
 

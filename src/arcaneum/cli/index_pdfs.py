@@ -85,6 +85,16 @@ def index_pdfs_command(
         qdrant = QdrantClient(url="http://localhost:6333")
         embeddings = EmbeddingClient(cache_dir="./models_cache")
 
+        # Validate collection type (must be 'pdf' or untyped)
+        try:
+            validate_collection_type(qdrant, collection, CollectionType.PDF)
+        except Exception as e:
+            if output_json:
+                print(json.dumps({"error": str(e)}))
+            else:
+                console.print(f"[red]❌ {e}[/red]")
+            sys.exit(1)
+
         # Create uploader
         uploader = PDFBatchUploader(
             qdrant_client=qdrant,

@@ -22,14 +22,15 @@ def cli():
 @cli.command('create-collection')
 @click.argument('name')
 @click.option('--model', required=True, help='Embedding model (stella, modernbert, bge, jina-code)')
+@click.option('--type', 'collection_type', type=click.Choice(['pdf', 'code']), help='Collection type (pdf or code)')
 @click.option('--hnsw-m', type=int, default=16, help='HNSW index parameter m')
 @click.option('--hnsw-ef', type=int, default=100, help='HNSW index parameter ef_construct')
 @click.option('--on-disk', is_flag=True, help='Store vectors on disk')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def create_collection(name, model, hnsw_m, hnsw_ef, on_disk, output_json):
+def create_collection(name, model, collection_type, hnsw_m, hnsw_ef, on_disk, output_json):
     """Create Qdrant collection (from RDR-003)"""
     from arcaneum.cli.collections import create_collection_command
-    create_collection_command(name, model, hnsw_m, hnsw_ef, on_disk, output_json)
+    create_collection_command(name, model, hnsw_m, hnsw_ef, on_disk, output_json, collection_type)
 
 
 @cli.command('list-collections')
@@ -81,7 +82,7 @@ def index_pdfs(path, collection, model, workers, ocr_enabled, ocr_language, forc
 @cli.command('index-source')
 @click.argument('path', type=click.Path(exists=True))
 @click.option('--collection', required=True, help='Target collection name')
-@click.option('--model', default='jina-code', help='Embedding model')
+@click.option('--model', default='bge', help='Embedding model (default: bge for 1024D)')
 @click.option('--workers', type=int, default=4, help='Parallel workers')
 @click.option('--depth', type=int, help='Git discovery depth')
 @click.option('--force', is_flag=True, help='Force reindex all projects')

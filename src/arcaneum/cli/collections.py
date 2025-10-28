@@ -10,6 +10,12 @@ from qdrant_client.models import VectorParams, Distance, HnswConfigDiff
 
 from arcaneum.config import load_config, ArcaneumConfig, DEFAULT_MODELS
 from arcaneum.embeddings.client import EMBEDDING_MODELS
+from arcaneum.indexing.collection_metadata import (
+    set_collection_metadata,
+    get_collection_metadata,
+    get_collection_type,
+    CollectionType,
+)
 
 console = Console()
 
@@ -38,6 +44,7 @@ def create_collection_command(
     hnsw_ef: int,
     on_disk: bool,
     output_json: bool,
+    collection_type: str = None,
 ):
     """Create a new Qdrant collection with named vectors.
 
@@ -48,6 +55,7 @@ def create_collection_command(
         hnsw_ef: HNSW ef_construct parameter
         on_disk: Store vectors on disk
         output_json: Output as JSON
+        collection_type: Type of collection ("pdf" or "code")
     """
     try:
         # Parse models (support comma-separated list)
@@ -75,6 +83,10 @@ def create_collection_command(
         # Connect to Qdrant
         client = QdrantClient(url="http://localhost:6333")
 
+        # Validate collection type if provided
+        if collection_type:
+            CollectionType.validate(collection_type)
+
         # Create collection
         client.create_collection(
             collection_name=name,
@@ -83,10 +95,20 @@ def create_collection_command(
             on_disk_payload=on_disk,
         )
 
+        # Set collection metadata (including type)
+        if collection_type:
+            set_collection_metadata(
+                client=client,
+                collection_name=name,
+                collection_type=collection_type,
+                model=model
+            )
+
         # Output success
         if output_json:
             result = {
                 "collection": name,
+                "type": collection_type,
                 "models": model_list,
                 "vectors": {m: EMBEDDING_MODELS[m]["dimensions"] for m in model_list},
                 "hnsw": {"m": hnsw_m, "ef_construct": hnsw_ef},
@@ -94,7 +116,8 @@ def create_collection_command(
             }
             print(json.dumps(result, indent=2))
         else:
-            console.print(f"[green]✅ Created collection '{name}' with {len(model_list)} models[/green]")
+            type_str = f" (type: {collection_type})" if collection_type else ""
+            console.print(f"[green]✅ Created collection '{name}'{type_str} with {len(model_list)} models[/green]")
             for m in model_list:
                 dims = EMBEDDING_MODELS[m]["dimensions"]
                 console.print(f"  • {m}: {dims}D")
@@ -211,6 +234,9 @@ def info_collection_command(name: str, output_json: bool):
         client = QdrantClient(url="http://localhost:6333")
         info = client.get_collection(name)
 
+        # Get collection type
+        collection_type = get_collection_type(client, name)
+
         if output_json:
             vectors = {}
             if hasattr(info.config.params, 'vectors') and isinstance(info.config.params.vectors, dict):
@@ -221,6 +247,7 @@ def info_collection_command(name: str, output_json: bool):
                     }
             result = {
                 "name": name,
+                "type": collection_type,
                 "points_count": info.points_count,
                 "status": str(info.status),
                 "vectors": vectors,
@@ -232,6 +259,10 @@ def info_collection_command(name: str, output_json: bool):
             print(json.dumps(result, indent=2))
         else:
             console.print(f"\n[bold cyan]Collection: {name}[/bold cyan]")
+            if collection_type:
+                console.print(f"Type: [bold]{collection_type}[/bold]")
+            else:
+                console.print(f"Type: [yellow]untyped[/yellow]")
             console.print(f"Points: {info.points_count}")
             console.print(f"Status: {info.status}")
             console.print(f"\n[bold]Vectors:[/bold]")

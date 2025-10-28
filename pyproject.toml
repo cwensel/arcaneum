@@ -27,14 +27,18 @@ dependencies = [
     "pyyaml>=6.0",
     "rich>=13.0.0",
     "pydantic>=2.0.0",
+    "tenacity>=8.2.0",
+    "tqdm>=4.66.0",
     # PDF indexing dependencies (RDR-004)
     "pymupdf>=1.23.0",
     "pdfplumber>=0.10.0",
     "pytesseract>=0.3.10",
     "pdf2image>=1.16.0",
     "opencv-python-headless>=4.8.0",
-    "tenacity>=8.2.0",
-    "tqdm>=4.66.0",
+    # Source code indexing dependencies (RDR-005)
+    "tree-sitter-language-pack>=0.5.0",
+    "llama-index-core>=0.9.0",
+    "GitPython>=3.1.40",
 ]
 
 [project.optional-dependencies]

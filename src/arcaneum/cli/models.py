@@ -46,5 +46,5 @@ def list_models_command(output_json: bool):
 
         console.print(table)
         console.print("\n[cyan]Usage:[/cyan]")
-        console.print("  arc index-pdfs ~/docs --collection docs --model bge-large")
-        console.print("  arc index-source ~/code --collection code --model bge")
+        console.print("  arc index pdfs ~/docs --collection docs --model bge-large")
+        console.print("  arc index source ~/code --collection code --model bge")

@@ -76,13 +76,13 @@ def create_test_pdf(output_path: Path):
     c.drawString(100, height - 100, "Section 5: Usage Examples")
     c.setFont("Helvetica", 12)
     c.drawString(100, height - 130, "Basic indexing command:")
-    c.drawString(100, height - 150, "  bin/arc index-pdfs ./pdfs --collection docs --model stella")
+    c.drawString(100, height - 150, "  bin/arc index pdfs ./pdfs --collection docs --model stella")
 
     c.drawString(100, height - 190, "Index PDFs (OCR enabled by default):")
-    c.drawString(100, height - 210, "  bin/arc index-pdfs ./pdfs --collection docs")
+    c.drawString(100, height - 210, "  bin/arc index pdfs ./pdfs --collection docs")
 
     c.drawString(100, height - 250, "Force reindex:")
-    c.drawString(100, height - 270, "  bin/arc index-pdfs ./pdfs --collection docs --force")
+    c.drawString(100, height - 270, "  bin/arc index pdfs ./pdfs --collection docs --force")
 
     c.setFont("Helvetica-Bold", 14)
     c.drawString(100, height - 320, "Conclusion")
@@ -104,4 +104,4 @@ if __name__ == "__main__":
     create_test_pdf(output_file)
 
     print(f"✓ Test PDF ready for indexing")
-    print(f"  Run: bin/arc index-pdfs ./test_pdfs --collection pdf-test --model stella")
+    print(f"  Run: bin/arc index pdfs ./test_pdfs --collection pdf-test --model stella")

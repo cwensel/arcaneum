@@ -26,7 +26,7 @@ python -c "import pymupdf; import pdfplumber; import pytesseract; print('✓ PDF
 # Create test collection if it doesn't exist
 echo ""
 echo "Creating test collection..."
-bin/arc create-collection pdf-test --model stella --hnsw-m 16 --hnsw-ef 100 || {
+bin/arc collection create pdf-test --model stella --hnsw-m 16 --hnsw-ef 100 || {
     echo "Collection might already exist, continuing..."
 }
 
@@ -34,7 +34,7 @@ bin/arc create-collection pdf-test --model stella --hnsw-m 16 --hnsw-ef 100 || {
 echo ""
 echo "Testing PDF indexing..."
 if [ -d "./test_pdfs" ]; then
-    bin/arc index-pdfs ./test_pdfs \
+    bin/arc index pdfs ./test_pdfs \
         --collection pdf-test \
         --model stella \
         --workers 4 \

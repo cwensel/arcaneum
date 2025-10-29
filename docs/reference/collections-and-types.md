@@ -19,14 +19,14 @@ Arcaneum uses a **typed collection system** to ensure PDFs and source code are p
 **Creation:**
 ```bash
 # PDF collection
-arc create-collection docs --model stella --type pdf
+arc collection create docs --model stella --type pdf
 
 # Source code collection
-arc create-collection code --model stella --type code
+arc collection create code --model stella --type code
 
 # Names can be anything, but type is required
-arc create-collection my-work-docs --model stella --type pdf
-arc create-collection personal-code --model stella --type code
+arc collection create my-work-docs --model stella --type pdf
+arc collection create personal-code --model stella --type code
 ```
 
 ### Corpus (RDR-009)
@@ -42,11 +42,11 @@ arc create-collection personal-code --model stella --type code
 **Creation:**
 ```bash
 # Creates BOTH Qdrant collection AND MeiliSearch index
-arc create-corpus docs --type pdf
+arc corpus create docs --type pdf
 # ├─> Qdrant collection 'docs' (type=pdf)
 # └─> MeiliSearch index 'docs'
 
-arc create-corpus code --type code
+arc corpus create code --type code
 # ├─> Qdrant collection 'code' (type=code)
 # └─> MeiliSearch index 'code'
 ```
@@ -64,21 +64,21 @@ arc create-corpus code --type code
 
 **At Creation:**
 ```bash
-arc create-collection docs --model stella --type pdf
+arc collection create docs --model stella --type pdf
 # Stores: {"collection_type": "pdf", ...}
 ```
 
 **At Indexing:**
 ```bash
 # ✓ Valid: type matches
-arc index-pdfs ~/docs --collection docs
-arc index-source ~/projects --collection code
+arc index pdfs ~/docs --collection docs
+arc index source ~/projects --collection code
 
 # ✗ Invalid: type mismatch
-arc index-pdfs ~/docs --collection code
+arc index pdfs ~/docs --collection code
 # Error: Collection 'code' is type 'code', cannot index PDFs
 
-arc index-source ~/projects --collection docs
+arc index source ~/projects --collection docs
 # Error: Collection 'docs' is type 'pdf', cannot index source code
 ```
 
@@ -150,10 +150,10 @@ arc index-source ~/projects --collection docs
 
 ```bash
 # Create typed collection
-arc create-collection code --model stella --type code
+arc collection create code --model stella --type code
 
 # Index source code
-arc index-source ~/projects --collection code
+arc index source ~/projects --collection code
 
 # Search (RDR-007)
 arc search "authentication" --collection code
@@ -165,16 +165,16 @@ arc search "authentication" --collection code
 
 ```bash
 # Create typed corpus (both Qdrant + MeiliSearch)
-arc create-corpus code --type code
+arc corpus create code --type code
 
 # Sync directory (indexes to both)
-arc sync-directory ~/projects --corpus code
+arc corpus sync ~/projects --corpus code
 
 # Semantic search (Qdrant)
 arc search "authentication" --collection code
 
 # Full-text search (MeiliSearch)
-arc search-text "def authenticate" --index code
+arc search text "def authenticate" --index code
 ```
 
 **Use when:** You need both semantic similarity AND exact phrase matching
@@ -185,37 +185,37 @@ arc search-text "def authenticate" --index code
 
 ```bash
 # Personal documents (PDFs)
-arc create-collection personal-docs --model stella --type pdf
-arc index-pdfs ~/Documents --collection personal-docs
+arc collection create personal-docs --model stella --type pdf
+arc index pdfs ~/Documents --collection personal-docs
 
 # Work documents (PDFs)
-arc create-collection work-docs --model bge --type pdf
-arc index-pdfs ~/Work/PDFs --collection work-docs
+arc collection create work-docs --model bge --type pdf
+arc index pdfs ~/Work/PDFs --collection work-docs
 
 # Personal code
-arc create-collection personal-code --model stella --type code
-arc index-source ~/Code --collection personal-code
+arc collection create personal-code --model stella --type code
+arc index source ~/Code --collection personal-code
 
 # Work code
-arc create-collection work-code --model stella --type code
-arc index-source ~/Work/Projects --collection work-code
+arc collection create work-code --model stella --type code
+arc index source ~/Work/Projects --collection work-code
 ```
 
 ### Multi-Branch Code Collections
 
 ```bash
 # Single collection can have multiple branches
-arc create-collection my-app --model stella --type code
+arc collection create my-app --model stella --type code
 
 # Index main branch
 cd ~/my-app
 git checkout main
-arc index-source ~/my-app --collection my-app
+arc index source ~/my-app --collection my-app
 # Stores: my-app#main
 
 # Index feature branch
 git checkout feature-auth
-arc index-source ~/my-app --collection my-app
+arc index source ~/my-app --collection my-app
 # Stores: my-app#feature-auth
 
 # Both branches coexist in same collection
@@ -227,28 +227,28 @@ arc index-source ~/my-app --collection my-app
 ### Successful Operations
 
 ```bash
-✓ arc create-collection docs --model stella --type pdf
-✓ arc index-pdfs ~/documents --collection docs
-✓ arc create-collection code --model stella --type code
-✓ arc index-source ~/projects --collection code
+✓ arc collection create docs --model stella --type pdf
+✓ arc index pdfs ~/documents --collection docs
+✓ arc collection create code --model stella --type code
+✓ arc index source ~/projects --collection code
 ```
 
 ### Type Mismatch Errors
 
 ```bash
 # Create PDF collection
-$ arc create-collection docs --model stella --type pdf
+$ arc collection create docs --model stella --type pdf
 
 # Try to index code into it
-$ arc index-source ~/projects --collection docs
+$ arc index source ~/projects --collection docs
 ❌ Error: Collection 'docs' is type 'pdf', cannot index source code content.
    Create a new collection with --type code.
 
 # Create code collection
-$ arc create-collection code --model stella --type code
+$ arc collection create code --model stella --type code
 
 # Try to index PDFs into it
-$ arc index-pdfs ~/documents --collection code
+$ arc index pdfs ~/documents --collection code
 ❌ Error: Collection 'code' is type 'code', cannot index pdf content.
    Create a new collection with --type pdf.
 ```
@@ -257,11 +257,11 @@ $ arc index-pdfs ~/documents --collection code
 
 ```bash
 # Old collection without type
-$ arc create-collection old-collection --model stella
+$ arc collection create old-collection --model stella
 # (no --type flag used)
 
 # First index operation succeeds with warning
-$ arc index-source ~/projects --collection old-collection
+$ arc index source ~/projects --collection old-collection
 ⚠️  Warning: Collection 'old-collection' has no type. Allowing code indexing.
     Consider recreating with --type flag.
 ✓ Indexed successfully
@@ -275,15 +275,15 @@ $ arc index-source ~/projects --collection old-collection
 1. **Always specify --type** when creating collections
 2. **Use separate collections** for PDFs and code
 3. **Name collections clearly**: `docs`, `code`, `work-docs`, `my-code`
-4. **Check collection info** before indexing: `arc collection-info <name>`
+4. **Check collection info** before indexing: `arc collection info <name>`
 5. **Use corpus** for hybrid search, **collection** for semantic-only
 
 ## Terminology Summary
 
 | Term | Meaning | Example |
 |------|---------|---------|
-| **Collection** | Typed Qdrant vector database | `arc create-collection code --type code` |
-| **Corpus** | Dual-indexed (Qdrant + MeiliSearch) | `arc create-corpus docs --type pdf` |
+| **Collection** | Typed Qdrant vector database | `arc collection create code --type code` |
+| **Corpus** | Dual-indexed (Qdrant + MeiliSearch) | `arc corpus create docs --type pdf` |
 | **Collection Type** | Enforced at creation (pdf/code) | `--type code` |
 | **Store Type** | Metadata describing indexed content | `store_type: "source-code"` |
 | **Collection Name** | User-chosen name (flexible) | `docs`, `code`, `my-work` |

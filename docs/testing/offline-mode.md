@@ -11,8 +11,8 @@ export REQUESTS_CA_BUNDLE=""
 export CURL_CA_BUNDLE=""
 
 # Then run normally
-arc index-pdfs ./pdfs --collection docs --model stella
-arc index-source ./code --collection code --model jina-code
+arc index pdfs ./pdfs --collection docs --model stella
+arc index source ./code --collection code --model jina-code
 ```
 
 ## For Offline Mode (Recommended)
@@ -25,14 +25,14 @@ export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 
 # Then run (models must be pre-downloaded)
-arc index-pdfs ./pdfs --collection docs --model stella
-arc index-source ./code --collection code --model jina-code
+arc index pdfs ./pdfs --collection docs --model stella
+arc index source ./code --collection code --model jina-code
 ```
 
 Or use the `--offline` flag:
 ```bash
-arc index-pdfs ./pdfs --collection docs --model stella --offline
-arc index-source ./code --collection code --model jina-code --offline
+arc index pdfs ./pdfs --collection docs --model stella --offline
+arc index source ./code --collection code --model jina-code --offline
 ```
 
 ## When to Use
@@ -109,8 +109,8 @@ source ~/.bashrc  # or ~/.zshrc
 
 ```bash
 # Models are cached in ~/.arcaneum/models, offline mode active - no network/SSL issues!
-arc index-pdfs ./pdfs --collection docs --model stella
-arc index-source ./code --collection code --model jina-code
+arc index pdfs ./pdfs --collection docs --model stella
+arc index source ./code --collection code --model jina-code
 ```
 
 **Why environment variables?**

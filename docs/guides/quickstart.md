@@ -73,7 +73,7 @@ Qdrant started successfully
 Create a collection for code with the jina-code embedding model:
 
 ```bash
-arc create-collection MyCode --model jina-code --type code
+arc collection create MyCode --model jina-code --type code
 ```
 
 ### 3. Index Your Code
@@ -81,7 +81,7 @@ arc create-collection MyCode --model jina-code --type code
 Index a directory of source code:
 
 ```bash
-arc index-source ~/my-project --collection MyCode
+arc index source ~/my-project --collection MyCode
 ```
 
 Example output:
@@ -101,7 +101,7 @@ Indexed 247 files → 1,532 chunks
 Now search your indexed code:
 
 ```bash
-arc search "authentication logic" --collection MyCode --limit 5
+arc search semantic "authentication logic" --collection MyCode --limit 5
 ```
 
 You'll see semantically similar code chunks ranked by relevance!
@@ -112,13 +112,13 @@ You'll see semantically similar code chunks ranked by relevance!
 
 ```bash
 # Create PDF collection
-arc create-collection MyDocs --model stella --type pdf
+arc collection create MyDocs --model stella --type pdf
 
 # Index PDFs (with OCR for scanned documents)
-arc index-pdfs ~/Documents/papers --collection MyDocs
+arc index pdfs ~/Documents/papers --collection MyDocs
 
 # Search PDFs
-arc search "machine learning techniques" --collection MyDocs
+arc search semantic "machine learning techniques" --collection MyDocs
 ```
 
 ### Multi-Branch Code Indexing
@@ -127,20 +127,20 @@ Arcaneum automatically indexes all branches of git repositories:
 
 ```bash
 # Index with git-aware chunking
-arc index-source ~/projects/my-app --collection MyApp
+arc index source ~/projects/my-app --collection MyApp
 
 # Search finds code across all branches
-arc search "payment processing" --collection MyApp
+arc search semantic "payment processing" --collection MyApp
 ```
 
 ### Checking Status
 
 ```bash
 # List all collections
-arc list-collections
+arc collection list
 
 # Show collection details
-arc collection-info MyCode
+arc collection info MyCode
 
 # Check container status
 arc container status
@@ -209,7 +209,7 @@ export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 
 # Then run arc normally
-arc index-source ~/code --collection MyCode
+arc index source ~/code --collection MyCode
 ```
 
 **Option 2: Disable SSL Verification**
@@ -240,11 +240,11 @@ If you see "Collection already exists":
 
 ```bash
 # List collections
-arc list-collections
+arc collection list
 
 # Delete and recreate
-arc delete-collection MyCode --confirm
-arc create-collection MyCode --model jina-code --type code
+arc collection delete MyCode --confirm
+arc collection create MyCode --model jina-code --type code
 ```
 
 ### No Search Results
@@ -253,11 +253,11 @@ If searches return no results:
 
 ```bash
 # Verify collection has data
-arc collection-info MyCode
+arc collection info MyCode
 
 # Check if indexing completed successfully
 # Re-index with --force flag
-arc index-source ~/code --collection MyCode --force
+arc index source ~/code --collection MyCode --force
 ```
 
 ## Next Steps
@@ -271,7 +271,7 @@ arc index-source ~/code --collection MyCode --force
 ### Advanced Features
 
 - **Multiple Models**: Index with different embedding models for different use cases
-- **Incremental Indexing**: Re-run `arc index-source` to update only changed files
+- **Incremental Indexing**: Re-run `arc index source` to update only changed files
 - **Branch Tracking**: Automatically track new branches in git repositories
 - **Filter Searches**: Use metadata filters to narrow results
 
@@ -291,17 +291,17 @@ arc container stop           # Stop services
 arc container status         # Check status
 
 # Collections
-arc list-collections         # List all collections
-arc create-collection NAME --model MODEL --type TYPE
-arc delete-collection NAME --confirm
+arc collection list                    # List all collections
+arc collection create NAME --model MODEL --type TYPE
+arc collection delete NAME --confirm
 
 # Indexing
-arc index-source PATH --collection NAME
-arc index-pdfs PATH --collection NAME
+arc index source PATH --collection NAME
+arc index pdfs PATH --collection NAME
 
 # Searching
-arc search "query" --collection NAME
-arc search "query" --collection NAME --limit 20
+arc search semantic "query" --collection NAME
+arc search semantic "query" --collection NAME --limit 20
 
 # Configuration
 arc config show-cache-dir    # Show cache location
@@ -314,5 +314,5 @@ arc doctor                   # Verify setup
 2. **Use `arc container status`** - Verify services are running before indexing
 3. **Index small directories first** - Test with a small codebase before indexing large projects
 4. **Watch the dashboard** - Visit <http://localhost:6333/dashboard> to see Qdrant's UI
-5. **Check collection info** - Use `arc collection-info` to verify indexing completed
+5. **Check collection info** - Use `arc collection info` to verify indexing completed
 6. **Use --verbose** - Add `-v` flag to commands for detailed progress

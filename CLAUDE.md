@@ -29,6 +29,8 @@ Create an RDR for complex implementations, architectural decisions, framework wo
 3. Implement using RDR as guide
 4. Update status and index when complete
 
+**IMPORTANT**: RDRs are **immutable** once marked as implemented. They are historical design documents that show what was planned and why. Do NOT update RDRs to reflect current code state - they represent the design at implementation time.
+
 See `docs/rdr/README.md` for complete RDR workflow, format details, and usage guidelines.
 
 ## Source Control

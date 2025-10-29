@@ -44,13 +44,13 @@ docker compose up -d
 ### 1. Create Collection
 
 ```bash
-arc create-collection pdf-docs --model stella --hnsw-m 16 --hnsw-ef 100
+arc collection create pdf-docs --model stella --hnsw-m 16 --hnsw-ef 100
 ```
 
 ### 2. Index PDFs
 
 ```bash
-arc index-pdfs /path/to/pdfs \
+arc index pdfs /path/to/pdfs \
   --collection pdf-docs \
   --model stella \
   --workers 4
@@ -59,7 +59,7 @@ arc index-pdfs /path/to/pdfs \
 ### 3. Index PDFs with OCR disabled (if all PDFs are machine-generated text)
 
 ```bash
-arc index-pdfs /path/to/text-pdfs \
+arc index pdfs /path/to/text-pdfs \
   --collection pdf-docs \
   --model stella \
   --no-ocr \
@@ -73,7 +73,7 @@ arc index-pdfs /path/to/text-pdfs \
 ### Basic Command
 
 ```bash
-arc index-pdfs <directory> --collection <name> --model <model>
+arc index pdfs <directory> --collection <name> --model <model>
 ```
 
 ### Options
@@ -91,7 +91,7 @@ arc index-pdfs <directory> --collection <name> --model <model>
 
 **Index technical documentation:**
 ```bash
-arc index-pdfs ./docs \
+arc index pdfs ./docs \
   --collection tech-docs \
   --model stella \
   --workers 8
@@ -99,7 +99,7 @@ arc index-pdfs ./docs \
 
 **Index scanned books (OCR enabled by default):**
 ```bash
-arc index-pdfs ./books \
+arc index pdfs ./books \
   --collection book-archive \
   --model stella \
   --ocr-language eng \
@@ -108,7 +108,7 @@ arc index-pdfs ./books \
 
 **Force reindex all PDFs:**
 ```bash
-arc index-pdfs ./pdfs \
+arc index pdfs ./pdfs \
   --collection pdf-docs \
   --model stella \
   --force
@@ -116,7 +116,7 @@ arc index-pdfs ./pdfs \
 
 **JSON output for scripting:**
 ```bash
-arc index-pdfs ./pdfs \
+arc index pdfs ./pdfs \
   --collection pdf-docs \
   --model stella \
   --json > results.json
@@ -128,10 +128,10 @@ For convenience, use the `bin/arc` wrapper:
 
 ```bash
 # Direct CLI usage (development mode)
-bin/arc index-pdfs /path/to/pdfs --collection pdf-docs --model stella
+bin/arc index pdfs /path/to/pdfs --collection pdf-docs --model stella
 
 # After pip install
-arc index-pdfs /path/to/pdfs --collection pdf-docs --model stella
+arc index pdfs /path/to/pdfs --collection pdf-docs --model stella
 
 # Full test script
 ./scripts/test-pdf-indexing.sh

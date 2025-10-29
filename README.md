@@ -57,9 +57,9 @@ arc doctor
 arc container start
 
 # 3. Index and search your code
-arc create-collection MyCode --model jina-code --type code
-arc index-source ~/my-project --collection MyCode
-arc search "authentication logic" --collection MyCode
+arc collection create MyCode --model jina-code --type code
+arc index source ~/my-project --collection MyCode
+arc search semantic "authentication logic" --collection MyCode
 ```
 
 **First time?** Run `arc doctor` to check prerequisites and get setup guidance.
@@ -72,26 +72,26 @@ arc search "authentication logic" --collection MyCode
 
 ```bash
 # Create a code collection
-arc create-collection MyCode --model jina-code --type code
+arc collection create MyCode --model jina-code --type code
 
 # Index your project (git-aware, multi-branch)
-arc index-source ~/projects/my-app --collection MyCode
+arc index source ~/projects/my-app --collection MyCode
 
 # Search semantically
-arc search "authentication middleware" --collection MyCode --limit 10
+arc search semantic "authentication middleware" --collection MyCode --limit 10
 ```
 
 ### Search PDFs
 
 ```bash
 # Create a PDF collection
-arc create-collection MyDocs --model stella --type pdf
+arc collection create MyDocs --model stella --type pdf
 
 # Index PDFs (with OCR for scanned documents)
-arc index-pdfs ~/Documents/papers --collection MyDocs
+arc index pdfs ~/Documents/papers --collection MyDocs
 
 # Search for concepts
-arc search "neural network architectures" --collection MyDocs
+arc search semantic "neural network architectures" --collection MyDocs
 ```
 
 ### Manage Services

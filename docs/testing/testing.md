@@ -73,12 +73,12 @@ Commands:
 ### Test 2: Check Index PDFs Command
 
 ```bash
-bin/arc index-pdfs --help
+bin/arc index pdfs --help
 ```
 
 **Expected Output:**
 ```
-Usage: arc index-pdfs [OPTIONS] PATH
+Usage: arc index pdfs [OPTIONS] PATH
   Index PDF files to Qdrant collection (from RDR-004)
 
 Options:
@@ -96,7 +96,7 @@ Options:
 ### Test 3: List Collections
 
 ```bash
-bin/arc list-collections
+bin/arc collection list
 ```
 
 **Expected Output:**
@@ -110,7 +110,7 @@ No collections found
 ### Test 4: Create Test Collection
 
 ```bash
-bin/arc create-collection pdf-test --model stella
+bin/arc collection create pdf-test --model stella
 ```
 
 **Expected Output:**
@@ -153,7 +153,7 @@ EOF
 ### Test 6: Index PDFs (Basic)
 
 ```bash
-bin/arc index-pdfs ./test_pdfs --collection pdf-test --model stella --verbose
+bin/arc index pdfs ./test_pdfs --collection pdf-test --model stella --verbose
 ```
 
 **Expected Output:**
@@ -190,7 +190,7 @@ Indexing Results
 ### Test 7: Verify Collection Info
 
 ```bash
-bin/arc collection-info pdf-test
+bin/arc collection info pdf-test
 ```
 
 **Expected Output:**
@@ -213,7 +213,7 @@ Configuration
 ### Test 8: Incremental Indexing (Run Again)
 
 ```bash
-bin/arc index-pdfs ./test_pdfs --collection pdf-test --model stella
+bin/arc index pdfs ./test_pdfs --collection pdf-test --model stella
 ```
 
 **Expected Output:**
@@ -229,7 +229,7 @@ This proves incremental indexing works!
 ### Test 9: Force Reindex
 
 ```bash
-bin/arc index-pdfs ./test_pdfs --collection pdf-test --model stella --force
+bin/arc index pdfs ./test_pdfs --collection pdf-test --model stella --force
 ```
 
 **Expected Output:**
@@ -243,7 +243,7 @@ Files processed: 1
 ### Test 10: JSON Output (for Automation)
 
 ```bash
-bin/arc index-pdfs ./test_pdfs --collection pdf-test --model stella --json
+bin/arc index pdfs ./test_pdfs --collection pdf-test --model stella --json
 ```
 
 **Expected Output:**
@@ -267,7 +267,7 @@ bin/arc index-pdfs ./test_pdfs --collection pdf-test --model stella --json
 ```bash
 # Add a scanned PDF to test_pdfs/ first
 # OCR is enabled by default, so no flag needed
-bin/arc index-pdfs ./test_pdfs \
+bin/arc index pdfs ./test_pdfs \
   --collection pdf-test \
   --model stella \
   --ocr-language eng \
@@ -313,7 +313,7 @@ Testing PDF indexing...
 
 ```bash
 # Delete test collection
-bin/arc delete-collection pdf-test --confirm
+bin/arc collection delete pdf-test --confirm
 
 # Remove test PDFs
 rm -rf test_pdfs
@@ -366,8 +366,8 @@ Once testing is complete, you can:
 
 1. **Index your real documents:**
    ```bash
-   bin/arc create-collection my-docs --model stella
-   bin/arc index-pdfs /path/to/your/pdfs --collection my-docs --model stella
+   bin/arc collection create my-docs --model stella
+   bin/arc index pdfs /path/to/your/pdfs --collection my-docs --model stella
    ```
 
 2. **Search your documents** (requires RDR-007 implementation):

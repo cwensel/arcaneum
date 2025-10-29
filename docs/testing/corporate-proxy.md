@@ -30,8 +30,8 @@ scp -r models_cache/ user@target-machine:/path/to/arcaneum/
 On your target machine:
 
 ```bash
-bin/arc create-collection Standards --model stella
-bin/arc index-pdfs ./Standards --collection Standards --model stella
+bin/arc collection create Standards --model stella
+bin/arc index pdfs ./Standards --collection Standards --model stella
 ```
 
 Models load from cache - no network access needed!

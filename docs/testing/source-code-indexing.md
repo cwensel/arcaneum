@@ -20,10 +20,10 @@
 
 ```bash
 # Create a collection for source code (typed)
-arc create-collection code --model stella --type code
+arc collection create code --model stella --type code
 
 # Or for PDFs (separate collection)
-arc create-collection docs --model stella --type pdf
+arc collection create docs --model stella --type pdf
 ```
 
 **Important:** Collections are now typed (pdf or code). You cannot mix PDFs and source code in the same collection.
@@ -37,21 +37,21 @@ arc create-collection docs --model stella --type pdf
 
 **Index a single repository:**
 ```bash
-arc index-source /path/to/your/repo --collection code
+arc index source /path/to/your/repo --collection code
 ```
 
 **Index directory with multiple repositories:**
 ```bash
 # Index all repos in ~/projects
-arc index-source ~/projects --collection code
+arc index source ~/projects --collection code
 
 # With depth limit (only immediate subdirectories)
-arc index-source ~/projects --collection code --depth 1
+arc index source ~/projects --collection code --depth 1
 ```
 
 **Force re-index (bypass incremental sync):**
 ```bash
-arc index-source /path/to/repo --collection code --force
+arc index source /path/to/repo --collection code --force
 ```
 
 ## Features
@@ -72,11 +72,11 @@ Multiple branches of the same repository can coexist in a collection:
 # Index main branch
 cd ~/myproject
 git checkout main
-arc index-source ~ --collection code
+arc index source ~ --collection code
 
 # Index feature branch (both will exist in collection)
 git checkout feature-x
-arc index-source ~ --collection code
+arc index source ~ --collection code
 ```
 
 Result in Qdrant:
@@ -95,17 +95,17 @@ Result in Qdrant:
 
 ```bash
 # 1. Create typed collection
-arc create-collection code --model stella --type code
+arc collection create code --model stella --type code
 
 # 2. Initial index
-arc index-source ~/code --collection code
+arc index source ~/code --collection code
 
 # 3. Make some commits in your repos
 cd ~/code/project-a
 # ... make changes, commit ...
 
 # 4. Re-index (only changed projects will be re-indexed)
-arc index-source ~/code --collection code
+arc index source ~/code --collection code
 
 # Output shows:
 # ✓ project-a#main (commit abc123 already indexed) - skipped
@@ -117,7 +117,7 @@ arc index-source ~/code --collection code
 ### Check Collection Info
 
 ```bash
-arc collection-info code
+arc collection info code
 
 # Shows:
 # Collection: code
@@ -175,38 +175,38 @@ arc search "authentication logic" --collection code
 find /path/to/search -name ".git" -type d
 
 # Try increasing depth
-arc index-source /path --collection test --depth 3
+arc index source /path --collection test --depth 3
 ```
 
 ### Issue: Slow indexing
 
 ```bash
 # Use verbose mode to see bottlenecks
-arc index-source /path --collection test --verbose
+arc index source /path --collection test --verbose
 ```
 
 ### Issue: Collection already exists
 
 ```bash
 # List collections
-arc list-collections
+arc collection list
 
 # Check collection type
-arc collection-info my-collection
+arc collection info my-collection
 
 # Use existing collection or delete old one
-arc delete-collection old-collection --confirm
+arc collection delete old-collection --confirm
 ```
 
 ### Issue: Type mismatch
 
 ```bash
 # Error: Collection 'docs' is type 'pdf', cannot index source code
-arc index-source ~/projects --collection docs
+arc index source ~/projects --collection docs
 
 # Solution: Create separate typed collections
-arc create-collection code --model stella --type code
-arc index-source ~/projects --collection code
+arc collection create code --model stella --type code
+arc index source ~/projects --collection code
 ```
 
 ## Advanced Usage
@@ -215,7 +215,7 @@ arc index-source ~/projects --collection code
 
 ```bash
 # Use different model (when supported)
-arc index-source /path --collection code --model jina-code
+arc index source /path --collection code --model jina-code
 ```
 
 ### Branch-Specific Deletion

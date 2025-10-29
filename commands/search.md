@@ -1,27 +1,38 @@
 ---
-description: Search Qdrant collection semantically
-argument-hint: "<query>" --collection <name> [options]
+description: Search across collections
+argument-hint: <semantic|text> <query> [options]
 ---
 
-Perform semantic search across a Qdrant collection.
+Search your indexed content using vector-based semantic search or keyword-based full-text search.
 
-**Arguments:**
+**Subcommands:**
 
-- "<query>": Search query (required, use quotes for multi-word queries)
-- --collection <name>: Collection to search (required)
-- --vector-name <name>: Vector to use (optional, auto-detects from collection)
-- --filter <filter>: Metadata filter (key=value or JSON)
-- --limit <n>: Number of results (default: 10)
-- --score-threshold <float>: Minimum score threshold
-- --verbose: Show detailed match information
-- --json: Output JSON format
+- semantic: Vector-based semantic search (Qdrant)
+- text: Keyword-based full-text search (MeiliSearch)
+
+**Common Options:**
+
+- --limit: Number of results to return (default: 10)
+- --filter: Metadata filter (key=value or JSON)
+- --json: Output in JSON format
+- --verbose: Show detailed information
+
+**Semantic Search Options:**
+
+- --collection: Collection to search (required)
+- --vector-name: Vector name (auto-detected if not specified)
+- --score-threshold: Minimum similarity score
+
+**Full-Text Search Options:**
+
+- --index: MeiliSearch index name (required)
 
 **Examples:**
 
 ```text
-/search "authentication patterns" --collection MyCode --limit 5
-/search "machine learning" --collection Research --filter language=python
-/search "error handling" --collection Documentation --verbose
+/search semantic "authentication logic" --collection MyCode --limit 5
+/search text "def authenticate" --index MyCode-fulltext
+/search semantic "fraud detection patterns" --collection PDFs --score-threshold 0.7
 ```
 
 **Execution:**
@@ -31,12 +42,36 @@ cd ${CLAUDE_PLUGIN_ROOT}
 arc search $ARGUMENTS
 ```
 
-**Note:** Uses semantic similarity via vector embeddings to find conceptually
-related content, not just exact matches. I'll present the search results showing:
+**When to Use Each:**
 
-- Relevance scores for each match
-- Source file paths and locations
-- Matching content snippets
-- Metadata filters applied (if any)
+**Semantic Search** (vector-based):
+- Finding conceptually similar code/documents
+- Cross-language semantic matching
+- "What does this" or "How to" questions
+- Fuzzy concept matching
 
-For exact phrase matching, use /search-text instead. Full implementation in RDR-007.
+**Full-Text Search** (keyword-based):
+- Exact keyword or phrase matching
+- Function/variable name search
+- Quoted phrase search
+- Boolean operators (AND, OR, NOT)
+
+**Result Format:**
+
+Both commands show:
+- Relevance score (similarity for semantic, rank for text)
+- Source file path
+- Matching content snippet
+- Metadata (git info for code, page numbers for PDFs)
+
+**Related Commands:**
+
+- /collection list - See available collections
+- /index pdfs - Index PDFs for searching
+- /index source - Index code for searching
+
+**Implementation:**
+
+- RDR-007: Semantic search via Qdrant
+- RDR-012: Full-text search via MeiliSearch
+- RDR-006: Claude Code integration

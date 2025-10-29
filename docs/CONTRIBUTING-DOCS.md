@@ -40,7 +40,7 @@ Use the simplest command format:
 
 ```bash
 arc container start
-arc create-collection MyCode --model jina-code
+arc collection create MyCode --model jina-code
 arc search "query" --collection MyCode
 ```
 
@@ -121,14 +121,14 @@ Use full URLs for external resources:
 
 \`\`\`bash
 arc container start
-arc create-collection MyCode --model jina-code --type code
-arc index-source ~/project --collection MyCode
+arc collection create MyCode --model jina-code --type code
+arc index source ~/project --collection MyCode
 \`\`\`
 
 ## Advanced Options
 
 \`\`\`bash
-arc create-collection MyCode --model jina-code --type code --hnsw-m 32 --on-disk
+arc collection create MyCode --model jina-code --type code --hnsw-m 32 --on-disk
 \`\`\`
 ```
 
@@ -139,7 +139,7 @@ arc create-collection MyCode --model jina-code --type code --hnsw-m 32 --on-disk
 
 \`\`\`bash
 # Start with all the complex options
-arc create-collection MyCode --model jina-code --type code --hnsw-m 32 --hnsw-ef 200 --on-disk
+arc collection create MyCode --model jina-code --type code --hnsw-m 32 --hnsw-ef 200 --on-disk
 \`\`\`
 ```
 
@@ -271,7 +271,7 @@ ls -la docs/testing/offline-mode.md
 
 # 4. Test examples actually work
 arc container start
-arc list-collections
+arc collection list
 ```
 
 ## Documentation Checklist

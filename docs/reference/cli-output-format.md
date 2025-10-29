@@ -17,13 +17,13 @@ All Arcaneum CLI commands follow a consistent exit code convention:
 
 ```bash
 # Check exit code in bash
-arc create-collection test --model stella
+arc collection create test --model stella
 echo $?  # 0 = success
 
-arc create-collection test --model invalid-model
+arc collection create test --model invalid-model
 echo $?  # 2 = invalid args
 
-arc collection-info nonexistent
+arc collection info nonexistent
 echo $?  # 3 = not found
 ```
 
@@ -395,7 +395,7 @@ Claude Code can parse progress messages to track long-running operations.
 
 **Solutions:**
 1. Use one of the available models from the list
-2. Run `arc list-models` to see all available models
+2. Run `arc models list` to see all available models
 3. Check for typos in model name
 
 #### Exit Code 3: Collection Not Found
@@ -406,8 +406,8 @@ Claude Code can parse progress messages to track long-running operations.
 ```
 
 **Solutions:**
-1. List existing collections: `arc list-collections`
-2. Create the collection first: `arc create-collection Research --model stella`
+1. List existing collections: `arc collection list`
+2. Create the collection first: `arc collection create Research --model stella`
 3. Check for typos in collection name
 
 ### Verbose Mode
@@ -415,7 +415,7 @@ Claude Code can parse progress messages to track long-running operations.
 Add `--verbose` or `-v` flag to any command for detailed logging:
 
 ```bash
-arc index-source /code --collection Code --verbose
+arc index source /code --collection Code --verbose
 ```
 
 This shows:
@@ -429,7 +429,7 @@ This shows:
 Use `--json` flag to get machine-readable output for scripting:
 
 ```bash
-arc list-collections --json | jq '.data.collections[] | .name'
+arc collection list --json | jq '.data.collections[] | .name'
 ```
 
 ## Best Practices
@@ -438,7 +438,7 @@ arc list-collections --json | jq '.data.collections[] | .name'
 
 1. **Always check exit codes:**
    ```bash
-   if arc create-collection test --model stella --json; then
+   if arc collection create test --model stella --json; then
        echo "Success!"
    else
        echo "Failed with exit code: $?"
@@ -447,12 +447,12 @@ arc list-collections --json | jq '.data.collections[] | .name'
 
 2. **Parse JSON output with jq:**
    ```bash
-   arc list-models --json | jq -r '.data.models[] | select(.dimensions == 1024) | .alias'
+   arc models list --json | jq -r '.data.models[] | select(.dimensions == 1024) | .alias'
    ```
 
 3. **Use --confirm for non-interactive deletion:**
    ```bash
-   arc delete-collection old-data --confirm --json
+   arc collection delete old-data --confirm --json
    ```
 
 ### For Claude Code Integration

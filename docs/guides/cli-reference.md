@@ -23,31 +23,31 @@ arc <command> [options]
 ### Collection Management
 
 ```bash
-arc create-collection <name> --model <model>  # Create Qdrant collection
-arc list-collections                          # List all collections
-arc collection-info <name>                    # Show collection details
-arc delete-collection <name>                  # Delete collection
+arc collection create <name> --model <model>  # Create Qdrant collection
+arc collection list                          # List all collections
+arc collection info <name>                    # Show collection details
+arc collection delete <name>                  # Delete collection
 ```
 
 ### Indexing Commands
 
 ```bash
-arc index-pdfs <path> --collection <name>     # Index PDF files
-arc index-source <path> --collection <name>   # Index source code
+arc index pdfs <path> --collection <name>     # Index PDF files
+arc index source <path> --collection <name>   # Index source code
 ```
 
 ### Search Commands
 
 ```bash
 arc search <query> --collection <name>        # Semantic search
-arc search-text <query> --index <name>        # Full-text search
+arc search text <query> --index <name>        # Full-text search
 ```
 
 ### Dual Indexing (Qdrant + MeiliSearch)
 
 ```bash
-arc create-corpus <name> --type <type>        # Create dual corpus
-arc sync-directory <path> --corpus <name>     # Dual indexing
+arc corpus create <name> --type <type>        # Create dual corpus
+arc corpus sync <path> --corpus <name>     # Dual indexing
 ```
 
 ## Collection Management Examples
@@ -56,43 +56,43 @@ arc sync-directory <path> --corpus <name>     # Dual indexing
 
 ```bash
 # Create collection with single model
-arc create-collection pdf-docs --model stella
+arc collection create pdf-docs --model stella
 
 # With custom HNSW parameters
-arc create-collection pdf-docs --model stella --hnsw-m 16 --hnsw-ef 100
+arc collection create pdf-docs --model stella --hnsw-m 16 --hnsw-ef 100
 
 # Store vectors on disk (for large collections)
-arc create-collection pdf-docs --model stella --on-disk
+arc collection create pdf-docs --model stella --on-disk
 ```
 
 ### List Collections
 
 ```bash
 # Simple list
-arc list-collections
+arc collection list
 
 # Verbose output
-arc list-collections --verbose
+arc collection list --verbose
 
 # JSON output for scripting
-arc list-collections --json
+arc collection list --json
 ```
 
 ### Collection Info
 
 ```bash
-arc collection-info pdf-docs
-arc collection-info pdf-docs --json
+arc collection info pdf-docs
+arc collection info pdf-docs --json
 ```
 
 ### Delete Collection
 
 ```bash
 # With confirmation prompt
-arc delete-collection pdf-docs
+arc collection delete pdf-docs
 
 # Skip confirmation
-arc delete-collection pdf-docs --confirm
+arc collection delete pdf-docs --confirm
 ```
 
 ## PDF Indexing Examples
@@ -100,13 +100,13 @@ arc delete-collection pdf-docs --confirm
 ### Basic Usage
 
 ```bash
-arc index-pdfs /path/to/pdfs --collection pdf-docs --model stella
+arc index pdfs /path/to/pdfs --collection pdf-docs --model stella
 ```
 
 ### With OCR
 
 ```bash
-arc index-pdfs /path/to/scanned-pdfs \
+arc index pdfs /path/to/scanned-pdfs \
   --collection pdf-docs \
   --model stella \
   --ocr-language eng
@@ -115,7 +115,7 @@ arc index-pdfs /path/to/scanned-pdfs \
 ### Force Reindex
 
 ```bash
-arc index-pdfs /path/to/pdfs \
+arc index pdfs /path/to/pdfs \
   --collection pdf-docs \
   --model stella \
   --force
@@ -124,7 +124,7 @@ arc index-pdfs /path/to/pdfs \
 ### Parallel Processing
 
 ```bash
-arc index-pdfs /path/to/pdfs \
+arc index pdfs /path/to/pdfs \
   --collection pdf-docs \
   --model stella \
   --workers 8
@@ -150,32 +150,32 @@ Available models:
 arc container start
 
 # 2. Create collection
-arc create-collection my-docs --model stella --type pdf
+arc collection create my-docs --model stella --type pdf
 
 # 3. Index documents
-arc index-pdfs ./documents --collection my-docs --model stella
+arc index pdfs ./documents --collection my-docs --model stella
 ```
 
 ### Incremental Updates
 
 ```bash
 # First run: indexes all PDFs
-arc index-pdfs ./docs --collection my-docs --model stella
+arc index pdfs ./docs --collection my-docs --model stella
 
 # Add new files to ./docs/...
 
 # Second run: only indexes new/modified files
-arc index-pdfs ./docs --collection my-docs --model stella
+arc index pdfs ./docs --collection my-docs --model stella
 ```
 
 ### JSON Output for Automation
 
 ```bash
 # List collections
-arc list-collections --json | jq '.collections[].name'
+arc collection list --json | jq '.collections[].name'
 
 # Index with JSON output
-arc index-pdfs ./docs --collection my-docs --model stella --json > results.json
+arc index pdfs ./docs --collection my-docs --model stella --json > results.json
 
 # Check results
 jq '.stats.chunks' results.json

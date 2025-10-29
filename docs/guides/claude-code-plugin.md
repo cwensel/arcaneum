@@ -416,13 +416,13 @@ Always test with disposable collections:
 
 ```bash
 # Create test collection
-arc create-collection test-dev --model stella --type code
+arc collection create test-dev --model stella --type code
 
 # Test indexing with small dataset
-arc index-source ~/small-test-repo --collection test-dev
+arc index source ~/small-test-repo --collection test-dev
 
 # Clean up when done
-arc delete-collection test-dev --confirm
+arc collection delete test-dev --confirm
 ```
 
 ### 2. Use Separate Qdrant Instance (Optional)
@@ -749,10 +749,10 @@ Don't batch all changes:
 
 ```bash
 # At start of day
-arc delete-collection test-dev --confirm 2>/dev/null || true
+arc collection delete test-dev --confirm 2>/dev/null || true
 
 # At end of testing
-arc delete-collection test-* --confirm 2>/dev/null || true
+arc collection delete test-* --confirm 2>/dev/null || true
 ```
 
 ### 4. Document Bugs Immediately

@@ -54,29 +54,32 @@ arc index-source ./code --collection code --model jina-code --offline
 On a machine with working internet:
 
 ```bash
-# Download all models you'll need
-python scripts/download-models.py
+# Models will be downloaded to ~/.arcaneum/models automatically
+# Just run arc commands normally and models will be cached
 
-# Or download specific models
+# Or download specific models manually
 python -c "
 from fastembed import TextEmbedding
 from sentence_transformers import SentenceTransformer
+from pathlib import Path
+
+cache_dir = str(Path.home() / '.arcaneum' / 'models')
 
 # FastEmbed models
-TextEmbedding('BAAI/bge-large-en-v1.5', cache_dir='./models_cache')
-TextEmbedding('jinaai/jina-embeddings-v3', cache_dir='./models_cache')
+TextEmbedding('BAAI/bge-large-en-v1.5', cache_dir=cache_dir)
+TextEmbedding('jinaai/jina-embeddings-v3', cache_dir=cache_dir)
 
 # SentenceTransformers models
-SentenceTransformer('dunzhang/stella_en_1.5B_v5', cache_folder='./models_cache')
-SentenceTransformer('jinaai/jina-embeddings-v2-base-code', cache_folder='./models_cache')
+SentenceTransformer('dunzhang/stella_en_1.5B_v5', cache_folder=cache_dir)
+SentenceTransformer('jinaai/jina-embeddings-v2-base-code', cache_folder=cache_dir)
 "
 ```
 
 ### Step 2: Copy Models to Corporate Machine
 
 ```bash
-# Copy the models_cache directory
-scp -r ./models_cache/ corporate-machine:~/arcaneum/
+# Copy the ~/.arcaneum/models directory
+scp -r ~/.arcaneum/models/ corporate-machine:~/.arcaneum/
 ```
 
 ### Step 3: Set Environment Variables
@@ -105,7 +108,7 @@ source ~/.bashrc  # or ~/.zshrc
 ### Step 4: Use arc Normally
 
 ```bash
-# Models are cached, offline mode active - no network/SSL issues!
+# Models are cached in ~/.arcaneum/models, offline mode active - no network/SSL issues!
 arc index-pdfs ./pdfs --collection docs --model stella
 arc index-source ./code --collection code --model jina-code
 ```
@@ -115,6 +118,8 @@ arc index-source ./code --collection code --model jina-code
 - ✓ More reliable than runtime flags (set before Python imports)
 - ✓ Works with fastembed's early initialization
 - ✓ No code changes needed
+
+**Note:** Models are now stored in `~/.arcaneum/models/` by default. Use `arc config show-cache-dir` to verify the location.
 
 ## Verification
 

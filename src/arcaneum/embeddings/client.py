@@ -3,6 +3,7 @@
 from fastembed import TextEmbedding
 from typing import Dict, List
 import os
+from arcaneum.paths import get_models_dir
 
 # Model configurations with dimensions
 # Note: "stella" is an alias for bge-large since actual stella (dunzhang/stella_en_1.5B_v5)
@@ -81,19 +82,19 @@ EMBEDDING_MODELS = {
 class EmbeddingClient:
     """Manages embedding model instances with caching."""
 
-    def __init__(self, cache_dir: str = "./models_cache", verify_ssl: bool = True):
+    def __init__(self, cache_dir: str = None, verify_ssl: bool = True):
         """Initialize embedding client.
 
         Args:
-            cache_dir: Directory to cache downloaded models
+            cache_dir: Directory to cache downloaded models (defaults to ~/.arcaneum/models)
             verify_ssl: Whether to verify SSL certificates (set False for self-signed certs)
 
         Note: SSL configuration must be done before creating EmbeddingClient.
               Use ssl_config.check_and_configure_ssl() or disable_ssl_verification() first.
         """
-        self.cache_dir = cache_dir
+        self.cache_dir = cache_dir or str(get_models_dir())
         self.verify_ssl = verify_ssl
-        os.environ["SENTENCE_TRANSFORMERS_HOME"] = cache_dir
+        os.environ["SENTENCE_TRANSFORMERS_HOME"] = self.cache_dir
         self._models: Dict[str, TextEmbedding] = {}
 
     def get_model(self, model_name: str):

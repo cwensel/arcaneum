@@ -175,6 +175,15 @@ def doctor(verbose, output_json):
     return doctor_command(verbose, output_json)
 
 
+# Configuration and cache management commands
+from arcaneum.cli.config import config_group
+cli.add_command(config_group, name='config')
+
+# Container management commands
+from arcaneum.cli.docker import container_group
+cli.add_command(container_group, name='container')
+
+
 def main():
     """Main CLI entry point with structured error handling (RDR-006)."""
     try:

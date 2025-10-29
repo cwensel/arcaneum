@@ -9,13 +9,11 @@ services:
       - "6334:6334"  # gRPC API
 
     volumes:
-      - ./qdrant_storage:/qdrant/storage
-      - ./qdrant_snapshots:/qdrant/snapshots
-      - ./models_cache:/models
+      - ~/.arcaneum/data/qdrant:/qdrant/storage
+      - ~/.arcaneum/data/qdrant_snapshots:/qdrant/snapshots
 
     environment:
       - QDRANT__LOG_LEVEL=INFO
-      - SENTENCE_TRANSFORMERS_HOME=/models
 
     deploy:
       resources:
@@ -26,7 +24,4 @@ services:
           memory: 2G
           cpus: '1.0'
 
-volumes:
-  qdrant_storage:
-  qdrant_snapshots:
-  models_cache:
+# Volumes now use direct host paths under ~/.arcaneum/

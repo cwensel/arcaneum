@@ -2,7 +2,30 @@
 
 ## Docker Compose
 
-Start Qdrant server:
+**Note:** It's recommended to use the `arc container` CLI commands instead of running docker-compose directly.
+
+### Using the arc CLI (Recommended)
+
+```bash
+# Start services
+arc container start
+
+# Stop services
+arc container stop
+
+# Check status
+arc container status
+
+# View logs
+arc container logs
+
+# Restart services
+arc container restart
+```
+
+### Using docker-compose Directly
+
+If you prefer direct docker-compose access:
 
 ```bash
 docker compose -f deploy/docker-compose.yml up -d
@@ -18,35 +41,38 @@ docker compose up -d
 ## Configuration
 
 - **Qdrant**: Port 6333 (REST), 6334 (gRPC)
-- **Storage**: ./qdrant_storage
-- **Snapshots**: ./qdrant_snapshots
-- **Models**: ./models_cache (shared with container)
+- **Storage**: `~/.arcaneum/data/qdrant` (host path)
+- **Snapshots**: `~/.arcaneum/data/qdrant_snapshots` (host path)
 
-## Quick Commands
+**Note:** Embedding models are stored in `~/.arcaneum/models` on the host machine. Qdrant doesn't need access to these models since it only stores/searches vectors, not generates them.
 
-```bash
-# Start services
-docker compose -f deploy/docker-compose.yml up -d
+## Data Location
 
-# Stop services
-docker compose -f deploy/docker-compose.yml down
+All persistent data is stored in `~/.arcaneum/`:
 
-# View logs
-docker compose -f deploy/docker-compose.yml logs -f
-
-# Restart
-docker compose -f deploy/docker-compose.yml restart
+```
+~/.arcaneum/
+├── models/              # Embedding model cache
+├── data/
+│   ├── qdrant/         # Qdrant vector database
+│   └── qdrant_snapshots/  # Backup snapshots
 ```
 
-## Alternative: Symlink at Root
+**Benefits:**
+- Predictable, user-accessible location
+- Easy backup/restore (just backup ~/.arcaneum/)
+- Survives docker-compose down
+- No hidden Docker volumes
 
-For convenience, create a symlink:
+## Migration from Old Setup
+
+If you were using the old `./deploy/qdrant_storage` volumes:
 
 ```bash
-ln -s deploy/docker-compose.yml docker-compose.yml
-```
+# Stop services first
+arc container stop
 
-Then use standard commands:
-```bash
-docker compose up -d
+# Data should already be in ~/.arcaneum/ from migration
+# Start with new configuration
+arc container start
 ```

@@ -101,6 +101,20 @@ def print_success(message: str, json_output: bool = False, data: Optional[Dict[s
         print(message)
 
 
+def print_warning(message: str, json_output: bool = False):
+    """Print warning message with [WARNING] prefix.
+
+    Args:
+        message: Warning message
+        json_output: If True, skip output (warnings are text-only)
+
+    Note:
+        Warning messages are typically for non-fatal issues
+    """
+    if not json_output:
+        print(f"[WARNING] {message}", file=sys.stderr)
+
+
 def print_progress(current: int, total: int, message: str = "", json_output: bool = False):
     """Print progress update with percentage.
 

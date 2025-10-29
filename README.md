@@ -92,6 +92,20 @@ arcaneum/
 - Git
 - Docker (for Qdrant and MeiliSearch)
 
+### Directory Structure
+
+Arcaneum uses `~/.arcaneum/` for all persistent data:
+
+```
+~/.arcaneum/
+├── models/              # Embedding model cache (auto-managed)
+├── data/
+│   ├── qdrant/         # Qdrant vector database storage
+│   └── qdrant_snapshots/  # Qdrant backup snapshots
+```
+
+These directories are created automatically on first use. Environment variables (`TRANSFORMERS_CACHE`, `HF_HOME`) are configured automatically to use `~/.arcaneum/models/`.
+
 ### Clone Repository
 
 ```bash
@@ -114,17 +128,23 @@ pip install -e .
 
 ### 1. Start Docker Services
 
-Services will be added incrementally:
-- RDR-002: Qdrant vector database
-- RDR-008: MeiliSearch full-text search
+Start Qdrant (and MeiliSearch when available):
 
 ```bash
-# After RDR-002 implementation:
-./scripts/qdrant-manage.sh start
+# Start services
+arc container start
 
-# After RDR-008 implementation:
-./scripts/meilisearch-manage.sh start
+# Check status
+arc container status
+
+# View logs
+arc container logs
+
+# Stop services
+arc container stop
 ```
+
+**Note:** Container volumes are stored in `~/.arcaneum/data/` for easy backup and management.
 
 ### 2. Create a Corpus (Dual Indexing)
 
@@ -152,6 +172,20 @@ python -m arcaneum.cli.main search "authentication patterns" --collection MyCode
 
 # Full-text search (exact phrases)
 python -m arcaneum.cli.main search-text '"def authenticate"' --index MyCode-fulltext
+```
+
+### Configuration & Cache Management
+
+View cache locations and sizes:
+
+```bash
+arc config show-cache-dir
+```
+
+Clear model cache to free up space:
+
+```bash
+arc config clear-cache --confirm
 ```
 
 ## Claude Code Plugin

@@ -29,4 +29,11 @@ python -m arcaneum.cli.main index-source $ARGUMENTS
 ```
 
 **Note:** Git repositories are indexed from their current branch.
-Multi-branch support available. Full implementation in RDR-005.
+Multi-branch support available. I'll monitor the progress and show you:
+- Git repositories discovered
+- Files being processed with percentage completion
+- AST-aware chunking progress for each project
+- Final summary with total projects, files, and chunks indexed
+- Any parsing errors or skipped files
+
+Full implementation in RDR-005.

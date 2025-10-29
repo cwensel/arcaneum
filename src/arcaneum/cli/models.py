@@ -1,10 +1,10 @@
-"""Model listing CLI command."""
+"""Model listing CLI command (RDR-003 with RDR-006 enhancements)."""
 
-import json
 from rich.console import Console
 from rich.table import Table
 
 from arcaneum.embeddings.client import EMBEDDING_MODELS
+from arcaneum.cli.output import print_json
 
 console = Console()
 
@@ -25,7 +25,7 @@ def list_models_command(output_json: bool):
                 "dimensions": config["dimensions"],
                 "description": config.get("description", "")
             })
-        print(json.dumps(models_data, indent=2))
+        print_json("success", f"Found {len(models_data)} embedding models", {"models": models_data})
     else:
         # Table output
         table = Table(title="Available Embedding Models")

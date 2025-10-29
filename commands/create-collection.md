@@ -26,4 +26,8 @@ cd ${CLAUDE_PLUGIN_ROOT}
 python -m arcaneum.cli.main create-collection $ARGUMENTS
 ```
 
-**Note:** Full implementation in RDR-003.
+**Note:** This command typically completes in seconds. I'll verify the collection
+is created successfully and show you the configuration details including the
+embedding model, vector dimensions, and HNSW parameters.
+
+Full implementation in RDR-003.

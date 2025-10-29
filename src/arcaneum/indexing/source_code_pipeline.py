@@ -2,7 +2,7 @@
 Main orchestration pipeline for git-aware source code indexing.
 
 This module integrates all components to provide end-to-end source code
-indexing with metadata-based sync (RDR-005).
+indexing with metadata-based sync (RDR-005 with RDR-006 progress enhancements).
 """
 
 import logging
@@ -151,12 +151,12 @@ class SourceCodeIndexer:
         self.stats["projects_discovered"] = len(git_projects)
 
         if not verbose:
-            console.print(f"Found {len(git_projects)} project(s)")
+            console.print(f"[INFO] Found {len(git_projects)} projects")
         else:
             console.print(f"Found {len(git_projects)} git project(s)\n")
 
         if not git_projects:
-            console.print("No git projects found")
+            console.print("[INFO] No git projects found")
             return self.stats
 
         # Step 3: Process each project
@@ -210,12 +210,12 @@ class SourceCodeIndexer:
             console.print()
 
         if not projects_to_index:
-            console.print("All projects up to date")
+            console.print("[INFO] All projects up to date")
             return self.stats
 
         # Step 4: Index projects
         if not verbose:
-            console.print(f"Indexing {len(projects_to_index)} project(s)...")
+            console.print(f"[INFO] Indexing {len(projects_to_index)} projects...")
         else:
             console.print(f"[cyan]Indexing {len(projects_to_index)} project(s)...[/cyan]\n")
 
@@ -224,8 +224,9 @@ class SourceCodeIndexer:
 
         for idx, (project_root, git_metadata, identifier) in enumerate(projects_to_index, 1):
             if not verbose:
-                # Minimal output: simple progress line
-                console.print(f"[{idx}/{total_projects}] {identifier}", end="")
+                # Progress with percentage (RDR-006 format)
+                percentage = (idx / total_projects * 100)
+                console.print(f"[INFO] Processing {idx}/{total_projects} ({percentage:.0f}%) {identifier}", end="")
 
             self._index_project(
                 project_root,
@@ -250,9 +251,12 @@ class SourceCodeIndexer:
             console.print(f"  Chunks created: {self.stats['chunks_created']}")
             console.print(f"  Chunks uploaded: {self.stats['chunks_uploaded']}")
         else:
-            console.print(f"\n✓ Indexed {self.stats['projects_indexed']} project(s): " +
-                         f"{self.stats['files_processed']} files, " +
-                         f"{self.stats['chunks_uploaded']} chunks")
+            # RDR-006: Structured completion message
+            console.print(
+                f"\n[INFO] Complete: {self.stats['projects_indexed']} projects, "
+                f"{self.stats['files_processed']} files, "
+                f"{self.stats['chunks_uploaded']} chunks"
+            )
 
         return self.stats
 

@@ -3,6 +3,15 @@
 import sys
 import click
 from arcaneum import __version__
+from arcaneum.cli.errors import (
+    EXIT_SUCCESS,
+    EXIT_ERROR,
+    EXIT_INVALID_ARGS,
+    EXIT_NOT_FOUND,
+    ArcaneumError,
+    InvalidArgumentError,
+    ResourceNotFoundError,
+)
 
 # Version check (RDR-006: Best practice from Beads)
 MIN_PYTHON = (3, 12)
@@ -156,13 +165,43 @@ def sync_directory(directory, corpus, models, file_types, output_json):
     sync_directory_command(directory, corpus, models, file_types, output_json)
 
 
+# Diagnostics command (RDR-006 enhancement)
+@cli.command('doctor')
+@click.option('--verbose', '-v', is_flag=True, help='Show detailed diagnostic information')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def doctor(verbose, output_json):
+    """Verify Arcaneum setup and prerequisites (from RDR-006 enhancement)"""
+    from arcaneum.cli.doctor import doctor_command
+    return doctor_command(verbose, output_json)
+
+
 def main():
-    """Main CLI entry point."""
+    """Main CLI entry point with structured error handling (RDR-006)."""
     try:
         cli()
-    except Exception as e:
+        return EXIT_SUCCESS
+    except click.ClickException as e:
+        # Click handles its own exceptions (usage errors, etc.)
+        e.show()
+        return EXIT_INVALID_ARGS
+    except (InvalidArgumentError, click.BadParameter) as e:
         print(f"[ERROR] {e}", file=sys.stderr)
-        sys.exit(1)
+        return EXIT_INVALID_ARGS
+    except ResourceNotFoundError as e:
+        print(f"[ERROR] {e}", file=sys.stderr)
+        return EXIT_NOT_FOUND
+    except KeyboardInterrupt:
+        print("\n[INFO] Operation cancelled by user", file=sys.stderr)
+        return EXIT_ERROR
+    except ArcaneumError as e:
+        print(f"[ERROR] {e}", file=sys.stderr)
+        return e.exit_code
+    except Exception as e:
+        print(f"[ERROR] Unexpected error: {e}", file=sys.stderr)
+        if '--verbose' in sys.argv or '-v' in sys.argv:
+            import traceback
+            traceback.print_exc()
+        return EXIT_ERROR
 
 
 if __name__ == "__main__":

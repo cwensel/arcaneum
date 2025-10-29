@@ -26,5 +26,12 @@ cd ${CLAUDE_PLUGIN_ROOT}
 python -m arcaneum.cli.main search-text $ARGUMENTS
 ```
 
-**Note:** Uses full-text search for exact matches. For semantic similarity,
-use /search instead. Full implementation in RDR-012.
+**Note:** Uses full-text search for exact keyword and phrase matches via MeiliSearch.
+I'll present the search results showing:
+- Exact matches with highlighted keywords
+- Source file paths and locations
+- Matching text snippets with context
+- Ranking based on term frequency and relevance
+
+For semantic similarity and conceptual matches, use /search instead.
+Full implementation in RDR-012.

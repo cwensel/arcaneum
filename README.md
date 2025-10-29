@@ -44,6 +44,7 @@ arcaneum/
 │   └── marketplace.json         # Marketplace catalog
 │
 ├── commands/                    # Slash commands (*.md files)
+│   ├── doctor.md                # Setup verification
 │   ├── create-collection.md     # Create Qdrant collection
 │   ├── list-collections.md      # List collections
 │   ├── index-pdfs.md            # Index PDF files
@@ -64,9 +65,12 @@ arcaneum/
 │   ├── fulltext/               # MeiliSearch integration (RDR-008)
 │   └── schema/                 # Shared schemas (RDR-009)
 │
-├── scripts/                    # Management scripts (added per RDR)
-│   ├── qdrant-manage.sh        # Qdrant operations (RDR-002)
-│   └── meilisearch-manage.sh   # MeiliSearch operations (RDR-008)
+├── scripts/                         # Management and testing scripts
+│   ├── qdrant-manage.sh             # Qdrant operations (RDR-002)
+│   ├── meilisearch-manage.sh        # MeiliSearch operations (RDR-008)
+│   ├── validate-plugin.sh           # Plugin validation (RDR-006)
+│   ├── test-plugin-commands.sh      # Command testing (RDR-006)
+│   └── test-claude-integration.sh   # Claude integration tests (RDR-006)
 │
 ├── doc/rdr/                    # Recommendation Data Records
 │   ├── README.md               # RDR process guide
@@ -162,6 +166,7 @@ In Claude Code:
 
 ### Available Commands
 
+- `/doctor` - Verify setup and prerequisites
 - `/create-collection` - Create Qdrant collection
 - `/list-collections` - List all collections
 - `/index-pdfs` - Index PDF files
@@ -171,7 +176,7 @@ In Claude Code:
 - `/create-corpus` - Create dual corpus
 - `/sync-directory` - Dual indexing
 
-Use `/help` to see all available commands.
+Use `/help` to see all available commands or `/doctor` to check your setup.
 
 ## Development
 
@@ -190,7 +195,7 @@ Use `/help` to see all available commands.
 - ✅ **RDR-003**: Collection management (COMPLETED)
 - ✅ **RDR-004**: PDF bulk indexing (COMPLETED)
 - ✅ **RDR-005**: Source code indexing (COMPLETED)
-- ⏱️ **RDR-006**: Claude Code integration (PENDING)
+- ✅ **RDR-006**: Claude Code integration (COMPLETED)
 - ✅ **RDR-007**: Semantic search (COMPLETED)
 - ⏱️ **RDR-008**: MeiliSearch setup (PENDING)
 - ⏱️ **RDR-009**: Dual indexing strategy (PENDING)

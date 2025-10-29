@@ -30,4 +30,11 @@ python -m arcaneum.cli.main index-pdfs $ARGUMENTS
 ```
 
 **Note:** This command may take several minutes for large document collections.
-Progress will be reported in real-time. Full implementation in RDR-004.
+I'll monitor the progress in real-time and show you:
+- How many PDF files are discovered
+- Processing status for each file with percentage completion
+- OCR status for scanned documents
+- Final summary with total files indexed and chunks created
+- Any errors encountered during processing
+
+Full implementation in RDR-004.

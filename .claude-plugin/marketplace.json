@@ -7,7 +7,7 @@
   },
   "plugins": [
     {
-      "name": "arcaneum",
+      "name": "arc",
       "source": "./",
       "description": "CLI tools for semantic and full-text search with Qdrant and MeiliSearch",
       "version": "0.1.0"

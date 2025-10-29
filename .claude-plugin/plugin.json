@@ -1,5 +1,5 @@
 {
-  "name": "arcaneum",
+  "name": "arc",
   "description": "CLI tools for semantic and full-text search across Qdrant and MeiliSearch. Manage Docker instances, index PDFs and source code with AST-aware chunking, git awareness, and dual-indexing support.",
   "version": "0.1.0",
   "author": {
@@ -31,6 +31,7 @@
     "./commands/search.md",
     "./commands/search-text.md",
     "./commands/create-corpus.md",
-    "./commands/sync-directory.md"
+    "./commands/sync-directory.md",
+    "./commands/doctor.md"
   ]
 }

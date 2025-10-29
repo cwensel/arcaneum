@@ -22,4 +22,8 @@ cd ${CLAUDE_PLUGIN_ROOT}
 python -m arcaneum.cli.main list-collections $ARGUMENTS
 ```
 
-**Note:** Full implementation in RDR-003.
+**Note:** This command returns quickly. I'll present the collections in a clear
+table format showing collection names, document counts, and vector configurations.
+Use --verbose for detailed information about each collection's settings.
+
+Full implementation in RDR-003.

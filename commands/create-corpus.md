@@ -23,5 +23,9 @@ cd ${CLAUDE_PLUGIN_ROOT}
 python -m arcaneum.cli.main create-corpus $ARGUMENTS
 ```
 
+**Note:** This command creates both Qdrant collection and MeiliSearch index for
+dual search capabilities (semantic + full-text). I'll confirm both stores are
+created successfully and show you the configuration for each.
+
 **Next Step:** Use /sync-directory to index documents to this corpus.
 Full implementation in RDR-009.

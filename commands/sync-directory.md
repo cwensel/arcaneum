@@ -26,4 +26,11 @@ python -m arcaneum.cli.main sync-directory $ARGUMENTS
 ```
 
 **Note:** Requires corpus to be created first with /create-corpus.
+This command indexes to both Qdrant (semantic) and MeiliSearch (full-text).
+I'll monitor the dual indexing process and show you:
+- Files discovered and filtered by type
+- Processing progress with percentage completion
+- Indexing status for both vector and full-text stores
+- Final summary with total files and chunks indexed to both systems
+
 Full implementation in RDR-009.

@@ -28,5 +28,11 @@ cd ${CLAUDE_PLUGIN_ROOT}
 python -m arcaneum.cli.main search $ARGUMENTS
 ```
 
-**Note:** Uses semantic similarity via vector embeddings. For exact phrase matching,
-use /search-text instead. Full implementation in RDR-007.
+**Note:** Uses semantic similarity via vector embeddings to find conceptually
+related content, not just exact matches. I'll present the search results showing:
+- Relevance scores for each match
+- Source file paths and locations
+- Matching content snippets
+- Metadata filters applied (if any)
+
+For exact phrase matching, use /search-text instead. Full implementation in RDR-007.

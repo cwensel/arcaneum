@@ -1,4 +1,4 @@
-"""CLI command for semantic search (RDR-007)."""
+"""CLI command for semantic search (RDR-007 with RDR-006 enhancements)."""
 
 import click
 import logging
@@ -17,6 +17,7 @@ from ..search import (
     format_json_results,
     format_summary
 )
+from .errors import InvalidArgumentError, ResourceNotFoundError
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -78,8 +79,7 @@ def search_command(
                 if verbose:
                     logger.info(f"Filter: {filter_description}")
             except ValueError as e:
-                console.print(f"[ERROR] Invalid filter: {e}", style="red")
-                sys.exit(2)
+                raise InvalidArgumentError(f"Invalid filter: {e}")
 
         # Execute search
         if verbose:
@@ -139,13 +139,11 @@ def search_command(
         # Exit with success
         sys.exit(0)
 
+    except (InvalidArgumentError, ResourceNotFoundError):
+        raise  # Re-raise our custom exceptions for main() to handle
     except ValueError as e:
-        # User input errors (invalid collection, model, filter, etc.)
-        console.print(f"[ERROR] {e}", style="red")
-        if verbose:
-            import traceback
-            traceback.print_exc()
-        sys.exit(2)
+        # Convert ValueError to InvalidArgumentError for consistency
+        raise InvalidArgumentError(str(e))
 
     except Exception as e:
         # Unexpected errors (Qdrant connection, etc.)

@@ -1,6 +1,5 @@
-"""Collection management CLI commands (RDR-003)."""
+"""Collection management CLI commands (RDR-003 with RDR-006 enhancements)."""
 
-import json
 import sys
 from pathlib import Path
 from rich.console import Console
@@ -16,6 +15,8 @@ from arcaneum.indexing.collection_metadata import (
     get_collection_type,
     CollectionType,
 )
+from arcaneum.cli.errors import InvalidArgumentError, ResourceNotFoundError
+from arcaneum.cli.output import print_json, print_error, print_success
 
 console = Console()
 
@@ -65,11 +66,7 @@ def create_collection_command(
         for m in model_list:
             if m not in EMBEDDING_MODELS:
                 error_msg = f"Unknown model: {m}. Available: {list(EMBEDDING_MODELS.keys())}"
-                if output_json:
-                    print(json.dumps({"error": error_msg}))
-                else:
-                    console.print(f"[red]❌ {error_msg}[/red]")
-                sys.exit(1)
+                raise InvalidArgumentError(error_msg)
 
         # Build vectors config
         vectors_config = {}
@@ -105,16 +102,18 @@ def create_collection_command(
             )
 
         # Output success
+        data = {
+            "collection": name,
+            "type": collection_type,
+            "models": model_list,
+            "vectors": {m: EMBEDDING_MODELS[m]["dimensions"] for m in model_list},
+            "hnsw": {"m": hnsw_m, "ef_construct": hnsw_ef},
+            "on_disk_payload": on_disk,
+        }
+
         if output_json:
-            result = {
-                "collection": name,
-                "type": collection_type,
-                "models": model_list,
-                "vectors": {m: EMBEDDING_MODELS[m]["dimensions"] for m in model_list},
-                "hnsw": {"m": hnsw_m, "ef_construct": hnsw_ef},
-                "on_disk_payload": on_disk,
-            }
-            print(json.dumps(result, indent=2))
+            type_str = f" (type: {collection_type})" if collection_type else ""
+            print_json("success", f"Created collection '{name}'{type_str} with {len(model_list)} models", data)
         else:
             type_str = f" (type: {collection_type})" if collection_type else ""
             console.print(f"[green]✅ Created collection '{name}'{type_str} with {len(model_list)} models[/green]")
@@ -122,11 +121,10 @@ def create_collection_command(
                 dims = EMBEDDING_MODELS[m]["dimensions"]
                 console.print(f"  • {m}: {dims}D")
 
+    except (InvalidArgumentError, ResourceNotFoundError):
+        raise  # Re-raise our custom exceptions to be handled by main()
     except Exception as e:
-        if output_json:
-            print(json.dumps({"error": str(e)}))
-        else:
-            console.print(f"[red]❌ Failed to create collection: {e}[/red]")
+        print_error(f"Failed to create collection: {e}", output_json)
         sys.exit(1)
 
 
@@ -157,7 +155,7 @@ def list_collections_command(verbose: bool, output_json: bool):
                     "points_count": col_info.points_count,
                     "vectors": vectors,
                 })
-            print(json.dumps(result, indent=2))
+            print_json("success", f"Found {len(result)} collections", {"collections": result})
         else:
             table = Table(title="Qdrant Collections")
             table.add_column("Name", style="cyan")
@@ -181,10 +179,7 @@ def list_collections_command(verbose: bool, output_json: bool):
             console.print(table)
 
     except Exception as e:
-        if output_json:
-            print(json.dumps({"error": str(e)}))
-        else:
-            console.print(f"[red]❌ Failed to list collections: {e}[/red]")
+        print_error(f"Failed to list collections: {e}", output_json)
         sys.exit(1)
 
 
@@ -199,8 +194,7 @@ def delete_collection_command(name: str, confirm: bool, output_json: bool):
     try:
         if not confirm:
             if output_json:
-                console.print("[red]Error: --confirm flag required for non-interactive deletion[/red]")
-                sys.exit(1)
+                raise InvalidArgumentError("--confirm flag required for non-interactive deletion")
 
             response = console.input(f"[yellow]Delete collection '{name}'? This cannot be undone. (yes/no): [/yellow]")
             if response.lower() != 'yes':
@@ -211,15 +205,14 @@ def delete_collection_command(name: str, confirm: bool, output_json: bool):
         client.delete_collection(name)
 
         if output_json:
-            print(json.dumps({"deleted": name}))
+            print_json("success", f"Deleted collection '{name}'", {"deleted": name})
         else:
             console.print(f"[green]✅ Deleted collection '{name}'[/green]")
 
+    except (InvalidArgumentError, ResourceNotFoundError):
+        raise  # Re-raise our custom exceptions
     except Exception as e:
-        if output_json:
-            print(json.dumps({"error": str(e)}))
-        else:
-            console.print(f"[red]❌ Failed to delete collection: {e}[/red]")
+        print_error(f"Failed to delete collection: {e}", output_json)
         sys.exit(1)
 
 
@@ -245,7 +238,7 @@ def info_collection_command(name: str, output_json: bool):
                         "size": vector_params.size,
                         "distance": str(vector_params.distance),
                     }
-            result = {
+            data = {
                 "name": name,
                 "type": collection_type,
                 "points_count": info.points_count,
@@ -256,7 +249,7 @@ def info_collection_command(name: str, output_json: bool):
                     "ef_construct": info.config.hnsw_config.ef_construct,
                 },
             }
-            print(json.dumps(result, indent=2))
+            print_json("success", f"Collection '{name}' information", data)
         else:
             console.print(f"\n[bold cyan]Collection: {name}[/bold cyan]")
             if collection_type:
@@ -277,8 +270,5 @@ def info_collection_command(name: str, output_json: bool):
             console.print(f"  ef_construct: {hnsw.ef_construct}")
 
     except Exception as e:
-        if output_json:
-            print(json.dumps({"error": str(e)}))
-        else:
-            console.print(f"[red]❌ Failed to get collection info: {e}[/red]")
+        print_error(f"Failed to get collection info: {e}", output_json)
         sys.exit(1)

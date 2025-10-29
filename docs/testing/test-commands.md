@@ -6,16 +6,16 @@ Copy/paste these commands to test the PDF indexing implementation.
 
 ```bash
 # 1. Start Qdrant
-docker compose -f deploy/docker-compose.yml up -d
+arc container start
 
 # 2. Install dependencies
 pip install -e .
 
 # 3. Verify CLI works
-bin/arc --help
+arc --help
 
 # 4. (If behind corporate proxy) Pre-download models and use --offline
-#    See CORPORATE-PROXY.md for details
+#    See corporate-proxy.md for details
 ```
 
 ## Basic Test (5 commands)
@@ -71,4 +71,4 @@ rm -rf test_pdfs
 
 ## If Something Fails
 
-See **TESTING.md** for detailed troubleshooting and step-by-step instructions.
+See **testing.md** for detailed troubleshooting and step-by-step instructions.

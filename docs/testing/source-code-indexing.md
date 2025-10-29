@@ -4,8 +4,8 @@
 
 1. **Qdrant Server Running**
    ```bash
-   # Start Qdrant (see RDR-002)
-   ./scripts/qdrant-manage.sh start
+   # Start Qdrant
+   arc container start
    ```
 
 2. **Verify Installation**

@@ -132,7 +132,7 @@ Create a **single repository** that serves as:
 - Docker management scripts (future)
 - Claude Code slash commands (`commands/`)
 - Plugin marketplace metadata (`.claude-plugin/`)
-- Documentation (`doc/rdr/`)
+- Documentation (`docs/rdr/`)
 
 **Architecture Principles**:
 - **Git Clone Workflow**: Users clone repo, run scripts directly
@@ -213,7 +213,7 @@ arcaneum/                        # GitHub repo (yourorg/arcaneum)
 ├── LICENSE                      # MIT
 ├── .gitignore
 │
-└── doc/
+└── docs/
     └── rdr/                     # RDR planning documents
         ├── README.md
         └── RDR-001-project-structure.md
@@ -581,7 +581,7 @@ python -m arcaneum.cli.search "authentication patterns" --collection my-docs
 
 ## Development
 
-See [doc/rdr/README.md](doc/rdr/README.md) for RDR-based planning process.
+See [docs/rdr/README.md](docs/rdr/README.md) for RDR-based planning process.
 
 ## License
 
@@ -689,7 +689,7 @@ The minimal implementation provides:
 mkdir -p .claude-plugin
 mkdir -p commands
 mkdir -p src/arcaneum/cli
-mkdir -p doc/rdr
+mkdir -p docs/rdr
 ```
 
 **Note**: Working in existing `arcaneum/` directory.
@@ -855,8 +855,8 @@ Should execute slash command (even if placeholder).
 - `.gitignore`
 
 **Documentation** (already exists):
-- `doc/rdr/README.md`
-- `doc/rdr/RDR-001-project-structure.md`
+- `docs/rdr/README.md`
+- `docs/rdr/RDR-001-project-structure.md`
 
 ### Dependencies
 

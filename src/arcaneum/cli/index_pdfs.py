@@ -54,7 +54,7 @@ def index_pdfs_command(
         For corporate networks with SSL issues, set environment variables:
         - HF_HUB_OFFLINE=1 (offline mode)
         - PYTHONHTTPSVERIFY=0 (disable SSL verification)
-        See doc/testing/OFFLINE-MODE.md for details.
+        See docs/testing/offline-mode.md for details.
     """
     # Invert no_ocr flag to get ocr_enabled
     ocr_enabled = not no_ocr

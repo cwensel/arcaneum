@@ -1051,7 +1051,7 @@ Update documentation:
 - `src/arcaneum/cli/main.py` - Register `search-text` command
 - `.claude-plugin/plugin.json` - Add `commands/search-text.md`
 - `README.md` - Add full-text search examples
-- `doc/rdr/README.md` - Add RDR-012 reference
+- `docs/rdr/README.md` - Add RDR-012 reference
 
 ### Dependencies
 

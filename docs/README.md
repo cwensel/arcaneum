@@ -2,7 +2,7 @@
 
 ## Quick Start
 
-- **[Quick Start Guide](guides/QUICKSTART.md)** - Get started in 5 minutes
+- **[Quick Start Guide](guides/quickstart.md)** - Complete walkthrough with troubleshooting (5-10 minutes)
 
 ## User Guides
 
@@ -11,9 +11,9 @@
 
 ## Testing
 
-- **[Test Commands](testing/TEST-COMMANDS.md)** - Quick copy/paste test commands
-- **[Testing Guide](testing/TESTING.md)** - Step-by-step testing instructions
-- **[Corporate Proxy](testing/CORPORATE-PROXY.md)** - SSL certificate workaround
+- **[Test Commands](testing/test-commands.md)** - Quick copy/paste test commands
+- **[Testing Guide](testing/testing.md)** - Step-by-step testing instructions
+- **[Corporate Proxy](testing/corporate-proxy.md)** - SSL certificate workaround
 
 ## Technical Specifications
 
@@ -27,16 +27,16 @@
 ## Directory Structure
 
 ```
-doc/
+docs/
 ├── README.md              # This file
 ├── guides/                # User-facing documentation
-│   ├── QUICKSTART.md
+│   ├── quickstart.md
 │   ├── arc-cli-reference.md
 │   └── pdf-indexing.md
 ├── testing/               # Testing documentation
-│   ├── TEST-COMMANDS.md
-│   ├── TESTING.md
-│   └── CORPORATE-PROXY.md
+│   ├── test-commands.md
+│   ├── testing.md
+│   └── corporate-proxy.md
 └── rdr/                   # Technical specifications
     ├── README.md
     ├── TEMPLATE.md

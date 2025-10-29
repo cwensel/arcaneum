@@ -20,7 +20,7 @@ curl http://localhost:6333/health
 
 If not running:
 ```bash
-docker compose -f deploy/docker-compose.yml up -d
+arc container start
 ```
 
 ### 3. Install Dependencies
@@ -330,7 +330,7 @@ chmod +x bin/arc
 ### Issue: "Qdrant connection refused"
 
 ```bash
-docker compose -f deploy/docker-compose.yml up -d
+arc container start
 sleep 5  # Wait for startup
 curl http://localhost:6333/health
 ```

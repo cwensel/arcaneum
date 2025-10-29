@@ -772,9 +772,9 @@ bd create "Search filter syntax unclear in help text" \
 - **Plugin Marketplaces**: https://docs.claude.com/en/docs/claude-code/plugin-marketplaces
 - **Plugins Reference**: https://docs.claude.com/en/docs/claude-code/plugins-reference
 - **Slash Commands**: https://docs.claude.com/en/docs/claude-code/slash-commands
-- **RDR-006**: `doc/rdr/RDR-006-claude-code-integration.md`
-- **Output Format**: `doc/reference/cli-output-format.md`
-- **Compliance Report**: `doc/reference/plugin-compliance.md`
+- **RDR-006**: `docs/rdr/RDR-006-claude-code-integration.md`
+- **Output Format**: `docs/reference/cli-output-format.md`
+- **Compliance Report**: `docs/reference/plugin-compliance.md`
 - **Beads Plugin**: https://github.com/steveyegge/beads (reference implementation)
 
 ## Quick Reference

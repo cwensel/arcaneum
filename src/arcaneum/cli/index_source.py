@@ -50,7 +50,7 @@ def index_source_command(
         For corporate networks with SSL issues, set environment variables:
         - HF_HUB_OFFLINE=1 (offline mode)
         - PYTHONHTTPSVERIFY=0 (disable SSL verification)
-        See doc/testing/OFFLINE-MODE.md for details.
+        See docs/testing/offline-mode.md for details.
     """
     # Setup logging - minimal output by default
     if verbose:

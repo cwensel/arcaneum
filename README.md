@@ -1,43 +1,111 @@
 # Arcaneum
 
-CLI tools and Claude Code plugins for semantic and full-text search across Qdrant and MeiliSearch.
+CLI tools and Claude Code plugins for semantic search across Qdrant vector databases.
 
 ## Overview
 
-Arcaneum provides a unified workflow for indexing and searching documents with both semantic similarity (via Qdrant vector embeddings) and exact phrase matching (via MeiliSearch full-text search). The system supports PDF documents and source code with git-aware, AST-based chunking.
+Arcaneum provides semantic search for documents using Qdrant vector embeddings. The system supports PDF documents and source code with git-aware, AST-based chunking.
+
+**Currently Available:** Semantic search with Qdrant
+**Planned:** MeiliSearch integration for full-text search (RDR-008 through RDR-012)
 
 ## Features
 
-### Dual Search Capabilities
+### Search Capabilities
+
 - **Semantic Search (Qdrant)**: Find conceptually similar content using vector embeddings
-- **Full-Text Search (MeiliSearch)**: Find exact phrases, function names, and specific strings
-- **Cooperative Workflow**: Use semantic search for discovery, full-text for verification
+- **Full-Text Search**: Planned - MeiliSearch integration for exact phrase matching (RDR-008 through RDR-012)
 
 ### Indexing
+
 - **PDF Indexing**: OCR support for scanned documents, page-level metadata
 - **Source Code Indexing**: Git-aware with AST chunking, multi-branch support, 165+ languages
 - **Dual Indexing**: Single command to index to both search engines
 
 ### Multiple Embedding Models
+
 - stella_en_1.5B_v5 (1024D) - High-quality general embeddings
 - modernbert (1024D) - Transformer-based embeddings
 - bge-large-en-v1.5 (1024D) - BGE embeddings
 - jina-code-embeddings (768D/1536D) - Code-optimized embeddings
 
 ### CLI-First Design
+
 - All operations via command-line interface
 - JSON output mode for automation
 - Structured error messages with exit codes
 - Python >= 3.12 required
 
 ### Claude Code Integration
+
 - Slash commands for all operations (`/search`, `/search-text`, `/index-pdfs`, etc.)
 - Discoverable via `/help` command
 - No MCP overhead - direct CLI execution
 
+## Quick Start (5 Minutes)
+
+Get started with Arcaneum in just a few commands:
+
+```bash
+# 1. Install
+git clone https://github.com/cwensel/arcaneum
+cd arcaneum
+pip install -e .
+
+# 2. Verify and start services
+arc doctor
+arc container start
+
+# 3. Index and search your code
+arc create-collection MyCode --model jina-code --type code
+arc index-source ~/my-project --collection MyCode
+arc search "authentication logic" --collection MyCode
+```
+
+**First time?** Run `arc doctor` to check prerequisites and get setup guidance.
+
+👉 **[Full Quick Start Guide](docs/guides/quickstart.md)** - Detailed walkthrough with troubleshooting
+
+## Common Workflows
+
+### Search Your Code
+
+```bash
+# Create a code collection
+arc create-collection MyCode --model jina-code --type code
+
+# Index your project (git-aware, multi-branch)
+arc index-source ~/projects/my-app --collection MyCode
+
+# Search semantically
+arc search "authentication middleware" --collection MyCode --limit 10
+```
+
+### Search PDFs
+
+```bash
+# Create a PDF collection
+arc create-collection MyDocs --model stella --type pdf
+
+# Index PDFs (with OCR for scanned documents)
+arc index-pdfs ~/Documents/papers --collection MyDocs
+
+# Search for concepts
+arc search "neural network architectures" --collection MyDocs
+```
+
+### Manage Services
+
+```bash
+arc container start    # Start Qdrant
+arc container status   # Check health
+arc container logs     # View logs
+arc container stop     # Stop services
+```
+
 ## Project Structure
 
-```
+```text
 arcaneum/
 ├── .claude-plugin/              # Claude Code plugin metadata
 │   ├── plugin.json              # Plugin configuration
@@ -72,7 +140,7 @@ arcaneum/
 │   ├── test-plugin-commands.sh      # Command testing (RDR-006)
 │   └── test-claude-integration.sh   # Claude integration tests (RDR-006)
 │
-├── doc/rdr/                    # Recommendation Data Records
+├── docs/rdr/                   # Recommendation Data Records
 │   ├── README.md               # RDR process guide
 │   ├── TEMPLATE.md             # RDR template
 │   └── RDR-*.md                # Individual RDRs
@@ -88,113 +156,60 @@ arcaneum/
 
 ### Prerequisites
 
-- Python >= 3.12
-- Git
-- Docker (for Qdrant and MeiliSearch)
+- **Python 3.12+** - Check with `python --version`
+- **Git** - For cloning the repository
+- **Docker** - [Install Docker Desktop](https://docs.docker.com/get-docker/)
 
-### Directory Structure
-
-Arcaneum uses `~/.arcaneum/` for all persistent data:
-
-```
-~/.arcaneum/
-├── models/              # Embedding model cache (auto-managed)
-├── data/
-│   ├── qdrant/         # Qdrant vector database storage
-│   └── qdrant_snapshots/  # Qdrant backup snapshots
-```
-
-These directories are created automatically on first use. Environment variables (`TRANSFORMERS_CACHE`, `HF_HOME`) are configured automatically to use `~/.arcaneum/models/`.
-
-### Clone Repository
+### Install
 
 ```bash
 git clone https://github.com/yourorg/arcaneum
 cd arcaneum
-```
-
-### Install Dependencies
-
-```bash
 pip install -e .
 ```
 
-**Corporate Networks:** If behind VPN with SSL certificate issues:
-- **Recommended:** Pre-download models, then set `export HF_HUB_OFFLINE=1` in your shell
-- **Alternative:** Set SSL bypass env vars in `~/.bashrc`: `export PYTHONHTTPSVERIFY=0`
-- See `doc/testing/OFFLINE-MODE.md` for complete corporate network setup
-
-## Quick Start
-
-### 1. Start Docker Services
-
-Start Qdrant (and MeiliSearch when available):
+### Verify Setup
 
 ```bash
-# Start services
-arc container start
-
-# Check status
-arc container status
-
-# View logs
-arc container logs
-
-# Stop services
-arc container stop
+arc doctor
 ```
 
-**Note:** Container volumes are stored in `~/.arcaneum/data/` for easy backup and management.
+The `doctor` command checks your environment and guides you through any issues.
 
-### 2. Create a Corpus (Dual Indexing)
+### Data Storage
 
-After RDR-009 implementation:
+Arcaneum stores all data in `~/.arcaneum/`:
 
-```bash
-python -m arcaneum.cli.main create-corpus MyCode --type source-code
+```text
+~/.arcaneum/
+├── models/              # Embedding models (auto-downloaded, ~1-2GB)
+├── data/
+│   ├── qdrant/         # Vector database
+│   └── qdrant_snapshots/  # Backups
 ```
 
-### 3. Index Documents
+**Benefits:**
 
-```bash
-# Index source code
-python -m arcaneum.cli.main sync-directory ~/code/projects --corpus MyCode
+- Easy to backup (just backup `~/.arcaneum/`)
+- Easy to find and manage
+- No hidden Docker volumes
 
-# Or index PDFs
-python -m arcaneum.cli.main sync-directory ~/Documents/papers --corpus Research
-```
+### Corporate Networks
 
-### 4. Search
+Behind a VPN with SSL issues? See **[Corporate Network Setup](docs/testing/offline-mode.md)** for:
 
-```bash
-# Semantic search (conceptual similarity)
-python -m arcaneum.cli.main search "authentication patterns" --collection MyCode
-
-# Full-text search (exact phrases)
-python -m arcaneum.cli.main search-text '"def authenticate"' --index MyCode-fulltext
-```
-
-### Configuration & Cache Management
-
-View cache locations and sizes:
-
-```bash
-arc config show-cache-dir
-```
-
-Clear model cache to free up space:
-
-```bash
-arc config clear-cache --confirm
-```
+- Offline mode setup
+- SSL certificate workarounds
+- Model pre-downloading
 
 ## Claude Code Plugin
 
 ### Installation
 
 In Claude Code:
-```
-/plugin marketplace add yourorg/arcaneum
+
+```text
+/plugin marketplace add cwensel/arcaneum
 /plugin install arcaneum
 ```
 
@@ -206,9 +221,9 @@ In Claude Code:
 - `/index-pdfs` - Index PDF files
 - `/index-source` - Index source code
 - `/search` - Semantic search
-- `/search-text` - Full-text search
-- `/create-corpus` - Create dual corpus
-- `/sync-directory` - Dual indexing
+- `/search-text` - Full-text search (planned, RDR-012)
+- `/create-corpus` - Create dual corpus (planned, RDR-009)
+- `/sync-directory` - Dual indexing (planned, RDR-009)
 
 Use `/help` to see all available commands or `/doctor` to check your setup.
 
@@ -220,7 +235,7 @@ Use `/help` to see all available commands or `/doctor` to check your setup.
 2. **Slash Commands**: Thin wrappers calling CLI via Bash (RDR-006)
 3. **No MCP (v1)**: Avoid MCP overhead, use direct CLI execution (RDR-006)
 4. **Local Docker**: Databases run locally with volume persistence (RDR-002, RDR-008)
-5. **RDR-Based Planning**: Detailed design before implementation (doc/rdr/)
+5. **RDR-Based Planning**: Detailed design before implementation (docs/rdr/)
 
 ### Implementation Status
 
@@ -251,13 +266,32 @@ pytest --cov=arcaneum tests/
 
 ## Documentation
 
-- **RDR Process**: See `doc/rdr/README.md` for detailed planning workflow
-- **Individual RDRs**: See `doc/rdr/RDR-*.md` for feature specifications
-- **Slash Commands**: See `commands/*.md` for Claude Code usage
+### User Guides
+
+- **[Quick Start Guide](docs/guides/quickstart.md)** - Complete walkthrough with troubleshooting
+- **[CLI Reference](docs/guides/cli-reference.md)** - All commands and options
+- **[PDF Indexing Guide](docs/guides/pdf-indexing.md)** - Advanced PDF indexing with OCR
+- **[Corporate Network Setup](docs/testing/offline-mode.md)** - SSL and offline mode
+
+### Development
+
+- **[RDR Process](docs/rdr/README.md)** - Detailed planning workflow
+- **[Individual RDRs](docs/rdr/)** - Technical specifications for each feature
+- **[Slash Commands](commands/)** - Claude Code integration
 
 ## Contributing
 
-1. Read `doc/rdr/README.md` for RDR-based development workflow
+We welcome contributions! See **[CONTRIBUTING.md](CONTRIBUTING.md)** for detailed guidelines on:
+
+- Development setup and workflow
+- Using beads for task tracking
+- When to create RDRs
+- Code and documentation standards
+- Pull request process
+
+**Quick Start for Contributors:**
+
+1. Read `docs/rdr/README.md` for RDR-based development workflow
 2. Create an RDR for complex features before implementation
 3. Follow CLI-first architecture pattern
 4. Add tests for new functionality
@@ -270,4 +304,4 @@ MIT - See LICENSE file for details
 ## Acknowledgments
 
 - Inspired by [Beads](https://github.com/steveyegge/beads) for Claude Code plugin patterns
-- Built on [Qdrant](https://qdrant.tech/) and [MeiliSearch](https://www.meilisearch.com/)
+- Built on [Qdrant](https://qdrant.tech/) (MeiliSearch integration planned)

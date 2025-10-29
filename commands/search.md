@@ -6,6 +6,7 @@ argument-hint: "<query>" --collection <name> [options]
 Perform semantic search across a Qdrant collection.
 
 **Arguments:**
+
 - "<query>": Search query (required, use quotes for multi-word queries)
 - --collection <name>: Collection to search (required)
 - --vector-name <name>: Vector to use (optional, auto-detects from collection)
@@ -16,20 +17,23 @@ Perform semantic search across a Qdrant collection.
 - --json: Output JSON format
 
 **Examples:**
-```
+
+```text
 /search "authentication patterns" --collection MyCode --limit 5
 /search "machine learning" --collection Research --filter language=python
 /search "error handling" --collection Documentation --verbose
 ```
 
 **Execution:**
+
 ```bash
 cd ${CLAUDE_PLUGIN_ROOT}
-python -m arcaneum.cli.main search $ARGUMENTS
+arc search $ARGUMENTS
 ```
 
 **Note:** Uses semantic similarity via vector embeddings to find conceptually
 related content, not just exact matches. I'll present the search results showing:
+
 - Relevance scores for each match
 - Source file paths and locations
 - Matching content snippets

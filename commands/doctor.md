@@ -6,10 +6,12 @@ argument-hint: [--verbose] [--json]
 Check that all Arcaneum prerequisites are met and the system is ready for use.
 
 **Arguments:**
+
 - --verbose: Show detailed diagnostic information
 - --json: Output JSON format
 
 **Checks Performed:**
+
 - Python version (>= 3.12 required)
 - Required Python dependencies installed
 - Qdrant server connectivity and health
@@ -19,16 +21,18 @@ Check that all Arcaneum prerequisites are met and the system is ready for use.
 - Environment variable configuration
 
 **Examples:**
-```
+
+```text
 /doctor
 /doctor --verbose
 /doctor --json
 ```
 
 **Execution:**
+
 ```bash
 cd ${CLAUDE_PLUGIN_ROOT}
-python -m arcaneum.cli.main doctor $ARGUMENTS
+arc doctor $ARGUMENTS
 ```
 
 **Note:** This diagnostic command helps troubleshoot setup issues. I'll run all

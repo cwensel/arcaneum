@@ -12,7 +12,7 @@ For corporate networks with SSL issues, set environment variables in your shell:
   export HF_HUB_OFFLINE=1           # Offline mode
   export PYTHONHTTPSVERIFY=0        # Disable SSL verification
 
-See doc/testing/OFFLINE-MODE.md for details.
+See docs/testing/offline-mode.md for details.
 """
 
 import sys

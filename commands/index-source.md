@@ -6,6 +6,7 @@ argument-hint: <path> --collection <name> [options]
 Index source code from git repositories to a Qdrant collection with AST-aware chunking.
 
 **Arguments:**
+
 - <path>: Directory containing git repositories
 - --collection <name>: Target Qdrant collection name (required)
 - --model <model>: Embedding model (default: jina-code)
@@ -16,20 +17,23 @@ Index source code from git repositories to a Qdrant collection with AST-aware ch
 - --json: Output JSON format
 
 **Examples:**
-```
+
+```text
 /index-source /code/projects --collection MyCode
 /index-source ~/repos --collection OpenSource --model jina-code
 /index-source . --collection CurrentProject --depth 0
 ```
 
 **Execution:**
+
 ```bash
 cd ${CLAUDE_PLUGIN_ROOT}
-python -m arcaneum.cli.main index-source $ARGUMENTS
+arc index-source $ARGUMENTS
 ```
 
 **Note:** Git repositories are indexed from their current branch.
 Multi-branch support available. I'll monitor the progress and show you:
+
 - Git repositories discovered
 - Files being processed with percentage completion
 - AST-aware chunking progress for each project

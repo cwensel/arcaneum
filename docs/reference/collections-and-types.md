@@ -294,4 +294,4 @@ $ arc index-source ~/projects --collection old-collection
 - **RDR-004**: PDF indexing
 - **RDR-005**: Source code indexing
 - **RDR-009**: Corpus (dual indexing) workflow
-- **TESTING_SOURCE_CODE_INDEXING.md**: Testing guide
+- **[Source Code Indexing Testing](../testing/source-code-indexing.md)**: Testing guide

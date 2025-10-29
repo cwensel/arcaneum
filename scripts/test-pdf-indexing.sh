@@ -10,7 +10,7 @@ echo "Checking Qdrant server..."
 if curl -s http://localhost:6333/health > /dev/null 2>&1; then
     echo "✓ Qdrant is running"
 else
-    echo "✗ Qdrant is not running. Start with: docker compose -f deploy/docker-compose.yml up -d"
+    echo "✗ Qdrant is not running. Start with: arc container start"
     exit 1
 fi
 

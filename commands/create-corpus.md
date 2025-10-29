@@ -6,21 +6,24 @@ argument-hint: <name> --type <source-code|pdf> [options]
 Create a corpus (both Qdrant collection and MeiliSearch index) for dual search capabilities.
 
 **Arguments:**
+
 - <name>: Corpus name (required)
 - --type <type>: Corpus type (source-code or pdf) (required)
 - --models <models>: Embedding models, comma-separated (default: stella,jina)
 - --json: Output JSON format
 
 **Examples:**
-```
+
+```text
 /create-corpus MyCode --type source-code
 /create-corpus Research --type pdf --models stella,modernbert
 ```
 
 **Execution:**
+
 ```bash
 cd ${CLAUDE_PLUGIN_ROOT}
-python -m arcaneum.cli.main create-corpus $ARGUMENTS
+arc create-corpus $ARGUMENTS
 ```
 
 **Note:** This command creates both Qdrant collection and MeiliSearch index for

@@ -72,18 +72,16 @@ def get_meilisearch_data_dir() -> Path:
 def configure_model_cache_env():
     """Configure environment variables for model caching.
 
-    Sets TRANSFORMERS_CACHE and HF_HOME to ~/.arcaneum/models if not already set by the user.
+    Sets HF_HOME to ~/.arcaneum/models if not already set by the user.
     This ensures models are downloaded to a predictable, user-accessible location.
 
     Note:
         Respects existing user-set environment variables. Only sets defaults if not already configured.
+        Uses HF_HOME (not deprecated TRANSFORMERS_CACHE) per transformers v5 guidance.
     """
     models_dir_str = str(get_models_dir())
 
-    # Only set if user hasn't already configured these
-    if "TRANSFORMERS_CACHE" not in os.environ:
-        os.environ["TRANSFORMERS_CACHE"] = models_dir_str
-
+    # Only set if user hasn't already configured
     if "HF_HOME" not in os.environ:
         os.environ["HF_HOME"] = models_dir_str
 

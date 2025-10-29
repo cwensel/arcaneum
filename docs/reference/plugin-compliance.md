@@ -272,9 +272,9 @@ Following Beads best practices (RDR-006):
 
 - **Validation Script:** `scripts/validate-plugin.sh`
 - **Testing Script:** `scripts/test-plugin-commands.sh`
-- **Testing Guide:** `doc/guides/claude-code-plugin.md`
-- **Output Format:** `doc/reference/cli-output-format.md`
-- **RDR-006:** `doc/rdr/RDR-006-claude-code-integration.md`
+- **Testing Guide:** `docs/guides/claude-code-plugin.md`
+- **Output Format:** `docs/reference/cli-output-format.md`
+- **RDR-006:** `docs/rdr/RDR-006-claude-code-integration.md`
 
 ## Conclusion
 

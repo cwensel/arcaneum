@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Arcaneum is a Claude Code marketplace for skills and mcp servers to manage search across vector and full text databases.
+Arcaneum is a CLI tool for semantic and full-text search across Qdrant and MeiliSearch vector databases. It provides Claude Code integration through slash commands and plugins.
 
 This repository uses Recommendation Data Records (RDRs) for detailed technical planning before implementation.
 
@@ -14,9 +14,9 @@ This repository uses Recommendation Data Records (RDRs) for detailed technical p
 
 RDRs are detailed implementation plans created **before** coding begins. They serve as planning documents, iteration artifacts, and AI collaboration tools.
 
-- **Location**: `doc/rdr/`
-- **Template**: `doc/rdr/TEMPLATE.md`
-- **Complete guide**: `doc/rdr/README.md`
+- **Location**: `docs/rdr/`
+- **Template**: `docs/rdr/TEMPLATE.md`
+- **Complete guide**: `docs/rdr/README.md`
 
 ### When to Use RDRs
 
@@ -29,7 +29,7 @@ Create an RDR for complex implementations, architectural decisions, framework wo
 3. Implement using RDR as guide
 4. Update status and index when complete
 
-See `doc/rdr/README.md` for complete RDR workflow, format details, and usage guidelines.
+See `docs/rdr/README.md` for complete RDR workflow, format details, and usage guidelines.
 
 ## Source Control
 

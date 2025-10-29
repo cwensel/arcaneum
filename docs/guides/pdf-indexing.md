@@ -300,6 +300,6 @@ DEFAULT_MODELS = {
 
 ## Related Documentation
 
-- [RDR-004: PDF Bulk Indexing](../doc/rdr/RDR-004-pdf-bulk-indexing.md) - Full specification
-- [RDR-002: Qdrant Integration](../doc/rdr/RDR-002-qdrant-docker-compose.md) - Server setup
-- [RDR-003: Collection Management](../doc/rdr/RDR-003-qdrant-collection-creation-cli.md) - Collection creation
+- [RDR-004: PDF Bulk Indexing](../docs/rdr/RDR-004-pdf-bulk-indexing.md) - Full specification
+- [RDR-002: Qdrant Integration](../docs/rdr/RDR-002-qdrant-docker-compose.md) - Server setup
+- [RDR-003: Collection Management](../docs/rdr/RDR-003-qdrant-collection-creation-cli.md) - Collection creation

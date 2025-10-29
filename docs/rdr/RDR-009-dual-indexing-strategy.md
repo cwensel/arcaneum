@@ -801,7 +801,7 @@ optimizations.
 
 - `src/arcaneum/cli/main.py` - Register create-corpus and sync-directory
 - `README.md` - Add 2-command workflow examples
-- `doc/rdr/README.md` - Reference RDR-009
+- `docs/rdr/README.md` - Reference RDR-009
 
 ### Dependencies
 

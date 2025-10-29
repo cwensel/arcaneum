@@ -1058,7 +1058,7 @@ Update documentation:
 - `src/arcaneum/cli/index.py` - Extend `index-code` command
 - `src/arcaneum/fulltext/indexes.py` - Add SOURCE_CODE_FULLTEXT_SETTINGS
 - `README.md` - Add full-text code search examples
-- `doc/rdr/README.md` - Update RDR index
+- `docs/rdr/README.md` - Update RDR index
 
 ### Dependencies
 

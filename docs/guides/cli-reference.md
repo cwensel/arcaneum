@@ -147,10 +147,10 @@ Available models:
 
 ```bash
 # 1. Start services
-docker compose -f deploy/docker-compose.yml up -d
+arc container start
 
 # 2. Create collection
-arc create-collection my-docs --model stella
+arc create-collection my-docs --model stella --type pdf
 
 # 3. Index documents
 arc index-pdfs ./documents --collection my-docs --model stella
@@ -217,6 +217,99 @@ The `arc` CLI is the entrypoint for all Claude Code plugins and slash commands:
 
 See individual slash command files in `/commands/` directory for detailed usage.
 
+## Service Management
+
+### Container Commands
+
+Manage Qdrant and MeiliSearch container services:
+
+```bash
+# Start services
+arc container start
+
+# Stop services
+arc container stop
+
+# Check status
+arc container status
+
+# View logs
+arc container logs
+
+# Follow logs in real-time
+arc container logs --follow
+
+# Restart services
+arc container restart
+
+# Reset all data (WARNING: deletes all collections)
+arc container reset --confirm
+```
+
+**Examples:**
+
+```bash
+# Start Qdrant before indexing
+arc container start
+
+# Check if healthy
+arc container status
+
+# View recent logs
+arc container logs --tail 50
+
+# Follow logs for debugging
+arc container logs --follow
+
+# Restart if having issues
+arc container restart
+
+# Nuclear option: delete everything and start fresh
+arc container reset --confirm
+```
+
+**Data Location:**
+- All data stored in `~/.arcaneum/data/qdrant/`
+- Survives container restarts
+- Easy to backup
+
+## Configuration & Cache Management
+
+### Cache Commands
+
+Manage embedding model cache:
+
+```bash
+# Show cache location and sizes
+arc config show-cache-dir
+
+# Clear model cache to free space
+arc config clear-cache --confirm
+```
+
+**Examples:**
+
+```bash
+# Check where models are stored
+arc config show-cache-dir
+# Output:
+#   Arcaneum directories:
+#     Root:   /Users/you/.arcaneum
+#     Models: /Users/you/.arcaneum/models
+#     Data:   /Users/you/.arcaneum/data
+#     Models size: 2.5 GB
+#     Data size: 266.8 MB
+
+# Clear cache if running low on disk space
+arc config clear-cache --confirm
+```
+
+**Cache Location:**
+- Models stored in `~/.arcaneum/models/`
+- Auto-downloaded on first use
+- Shared across all arc commands
+- ~1-2GB per model
+
 ## Troubleshooting
 
 ### Command Not Found
@@ -234,10 +327,10 @@ arc --help
 
 ```bash
 # Check if running
-curl http://localhost:6333/health
+arc container status
 
 # Start if needed
-docker compose -f deploy/docker-compose.yml up -d
+arc container start
 ```
 
 ### Permission Denied
@@ -249,4 +342,4 @@ chmod +x bin/arc
 ## More Documentation
 
 - [PDF Indexing Guide](pdf-indexing.md) - Detailed PDF indexing documentation
-- [RDR Directory](../doc/rdr/) - Technical specifications for all features
+- [RDR Directory](../docs/rdr/) - Technical specifications for all features

@@ -1691,7 +1691,7 @@ arc index pdfs \
   --model stella
 \`\`\`
 
-See [RDR-004](doc/rdr/RDR-004-pdf-bulk-indexing.md) for details.
+See [RDR-004](docs/rdr/RDR-004-pdf-bulk-indexing.md) for details.
 ```
 
 **8.2: Create User Guide** (`docs/pdf-indexing-guide.md`)
@@ -1723,12 +1723,12 @@ See [RDR-004](doc/rdr/RDR-004-pdf-bulk-indexing.md) for details.
 - `tests/test_uploader.py`
 
 **Documentation**:
-- `doc/rdr/RDR-004-pdf-bulk-indexing.md` - This document
+- `docs/rdr/RDR-004-pdf-bulk-indexing.md` - This document
 - `docs/pdf-indexing-guide.md` - User guide
 
 ### Files to Modify
 
-- `doc/rdr/README.md` - Add RDR-004 to index
+- `docs/rdr/README.md` - Add RDR-004 to index
 - `README.md` - Add PDF indexing section
 - `pyproject.toml` - Add new dependencies
 
@@ -2190,7 +2190,7 @@ def test_sql_injection():
 - pymupdf4llm: https://github.com/pymupdf/RAG
 
 **OCR Engines**:
-- Tesseract Documentation: https://tesseract-ocr.github.io/tessdoc/
+- Tesseract Documentation: https://tesseract-ocr.github.io/tessdocs/
 - pytesseract PyPI: https://pypi.org/project/pytesseract/
 - EasyOCR GitHub: https://github.com/JaidedAI/EasyOCR
 - Jaided AI Docs: http://www.jaided.ai/easyocr/documentation/

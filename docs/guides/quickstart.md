@@ -260,13 +260,41 @@ arc collection info MyCode
 arc index source ~/code --collection MyCode --force
 ```
 
+## Claude Code Plugin
+
+After completing the installation above, you can use Arcaneum commands directly in Claude Code.
+
+### Plugin Installation
+
+In Claude Code, add the local marketplace and install the plugin:
+
+```text
+/plugin marketplace add /path/to/arcaneum
+/plugin install arc
+```
+
+Then restart Claude Code to activate the plugin.
+
+### Using Commands in Claude Code
+
+All `arc` commands are available as slash commands:
+
+```text
+/doctor
+/collection create MyCode --model jina-code --type code
+/index source ~/my-project --collection MyCode
+/search semantic "authentication logic" --collection MyCode
+```
+
+The plugin provides the same functionality as the CLI, but integrated into your Claude Code workflow.
+
 ## Next Steps
 
 ### Learn More
 
 - **[CLI Reference](cli-reference.md)** - Complete command documentation
 - **[PDF Indexing Guide](pdf-indexing.md)** - Advanced PDF indexing with OCR
-- **[Claude Code Plugin](claude-code-plugin.md)** - Use Arcaneum with Claude
+- **[README](../../README.md)** - Project overview and plugin documentation
 
 ### Advanced Features
 

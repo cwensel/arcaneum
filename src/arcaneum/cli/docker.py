@@ -56,7 +56,7 @@ def run_compose_command(args, check=True, capture_output=False):
     if not compose_file:
         return None
 
-    cmd = ["docker", "compose", "-f", compose_file] + args
+    cmd = ["docker", "compose", "-f", compose_file, "-p", "arcaneum"] + args
 
     try:
         result = subprocess.run(

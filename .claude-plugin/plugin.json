@@ -24,14 +24,13 @@
     "cli-tools"
   ],
   "commands": [
-    "./commands/index-pdfs.md",
-    "./commands/index-source.md",
-    "./commands/create-collection.md",
-    "./commands/list-collections.md",
-    "./commands/search.md",
-    "./commands/search-text.md",
-    "./commands/create-corpus.md",
-    "./commands/sync-directory.md",
-    "./commands/doctor.md"
+    "./commands/collection.md",
+    "./commands/config.md",
+    "./commands/container.md",
+    "./commands/corpus.md",
+    "./commands/doctor.md",
+    "./commands/index.md",
+    "./commands/models.md",
+    "./commands/search.md"
   ]
 }

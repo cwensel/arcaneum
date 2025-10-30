@@ -13,10 +13,9 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
-from tqdm import tqdm
 
 from ...embeddings.client import EmbeddingClient
-from ..common.sync import MetadataBasedSync, compute_file_hash
+from ..common.sync import MetadataBasedSync, compute_text_file_hash
 from .discovery import MarkdownDiscovery
 from .chunker import SemanticMarkdownChunker
 
@@ -99,7 +98,9 @@ class MarkdownIndexingPipeline:
             if verbose:
                 print(f"🔄 Force reindex: {len(markdown_files)} files to process")
         else:
-            markdown_files = self.sync.get_unindexed_files(collection_name, all_markdown_files)
+            markdown_files = self.sync.get_unindexed_files(
+                collection_name, all_markdown_files, hash_fn=compute_text_file_hash
+            )
             skipped = len(all_markdown_files) - len(markdown_files)
             logger.info(f"Incremental sync: {len(markdown_files)} new/modified, {skipped} already indexed")
 
@@ -136,7 +137,7 @@ class MarkdownIndexingPipeline:
         self.embeddings.get_model(model_name)
 
         if not verbose:
-            print(" ✓")
+            print(" ✓\n")  # Add newline to prevent overwriting
         else:
             print(f"✓ Model ready", flush=True)
             print()
@@ -149,30 +150,20 @@ class MarkdownIndexingPipeline:
         try:
             total_files = len(markdown_files)
 
-            # Use tqdm for verbose mode
-            if verbose:
-                pbar = tqdm(total=total_files, desc="Indexing markdown", unit="file",
-                           bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
-            else:
-                pbar = None
-
             for file_idx, file_path in enumerate(markdown_files, 1):
                 try:
-                    # Show progress
+                    # Stage 1: Read and extract metadata
                     if not verbose:
-                        print(f"[{file_idx}/{total_files}] {file_path.name}", end="", flush=True)
+                        print(f"\r[{file_idx}/{total_files}] {file_path.name} → reading{' '*20}", end="", flush=True)
                     else:
-                        print(f"\n[{file_idx}/{total_files}] Processing {file_path.name}...", flush=True)
-
-                    # Extract metadata and content
-                    if verbose:
-                        print(f"  → Extracting metadata", flush=True)
+                        print(f"\n[{file_idx}/{total_files}] {file_path.name}", flush=True)
+                        print(f"  → reading file", flush=True)
 
                     file_metadata = self.discovery.extract_metadata(file_path)
                     content, frontmatter = MarkdownDiscovery.read_file_with_frontmatter(file_path)
 
                     if verbose:
-                        print(f"  → Read {len(content)} chars", flush=True)
+                        print(f"     read {len(content)} chars", flush=True)
 
                     # Build base metadata
                     base_metadata = {
@@ -197,23 +188,27 @@ class MarkdownIndexingPipeline:
                         if file_metadata.project:
                             base_metadata['project'] = file_metadata.project
 
-                    # Chunk the content
-                    if verbose:
-                        print(f"  → Chunking text ({len(content)} chars)", flush=True)
+                    # Stage 2: Chunk the content
+                    if not verbose:
+                        print(f"\r[{file_idx}/{total_files}] {file_path.name} → chunking ({len(content)} chars){' '*15}", end="", flush=True)
+                    else:
+                        print(f"  → chunking ({len(content)} chars)", flush=True)
 
                     chunks = chunker.chunk(content, base_metadata)
                     file_chunk_count = len(chunks)
 
                     if verbose:
-                        print(f"  → Created {file_chunk_count} chunks", flush=True)
+                        print(f"     created {file_chunk_count} chunks", flush=True)
 
-                    # Generate embeddings
+                    # Stage 3: Generate embeddings
                     texts = [chunk.text for chunk in chunks]
 
-                    if verbose:
-                        print(f"  → Embedding {file_chunk_count} chunks...", flush=True)
+                    if not verbose:
+                        print(f"\r[{file_idx}/{total_files}] {file_path.name} → embedding ({file_chunk_count} chunks){' '*15}", end="", flush=True)
+                    else:
+                        print(f"  → embedding ({file_chunk_count} chunks)", flush=True)
 
-                    # Batch embedding with progress updates (matching PDF indexing style)
+                    # Batch embedding with progress updates
                     EMBEDDING_BATCH_SIZE = 100
                     embeddings = []
                     for batch_start in range(0, file_chunk_count, EMBEDDING_BATCH_SIZE):
@@ -222,16 +217,22 @@ class MarkdownIndexingPipeline:
                         batch_embeddings = self.embeddings.embed(batch_texts, model_name)
                         embeddings.extend(batch_embeddings)
 
-                        # Show progress (PDF-style: continuous updates on same line)
-                        if not verbose:
-                            # Non-verbose: show embedding progress with carriage return
-                            print(f"\r[{file_idx}/{total_files}] {file_path.name} → embedding {batch_end}/{file_chunk_count}",
-                                  end="", flush=True)
-                        elif file_chunk_count > EMBEDDING_BATCH_SIZE:
-                            # Verbose: show as separate lines for large files
-                            print(f"    Embedded {batch_end}/{file_chunk_count} chunks", flush=True)
+                        # Show progress for large files
+                        if not verbose and file_chunk_count > EMBEDDING_BATCH_SIZE:
+                            progress_line = f"[{file_idx}/{total_files}] {file_path.name} → embedding {batch_end}/{file_chunk_count}"
+                            print(f"\r{progress_line:<80}", end="", flush=True)
+                        elif verbose and file_chunk_count > EMBEDDING_BATCH_SIZE:
+                            print(f"     embedding {batch_end}/{file_chunk_count}", flush=True)
 
-                    # Create points
+                    if verbose and file_chunk_count <= EMBEDDING_BATCH_SIZE:
+                        print(f"     embedded {file_chunk_count} chunks", flush=True)
+
+                    # Stage 4: Create points and upload
+                    if not verbose:
+                        print(f"\r[{file_idx}/{total_files}] {file_path.name} → uploading ({file_chunk_count} chunks){' '*15}", end="", flush=True)
+                    else:
+                        print(f"  → uploading ({file_chunk_count} chunks)", flush=True)
+
                     for chunk, embedding in zip(chunks, embeddings):
                         payload = {
                             **chunk.metadata,
@@ -265,36 +266,33 @@ class MarkdownIndexingPipeline:
 
                     stats["files"] += 1
 
-                    # Show final status (PDF-style: uploading → done)
+                    # Stage 5: Complete
                     if not verbose:
-                        print(f"\r[{file_idx}/{total_files}] {file_path.name} → uploading" + " " * 30, end="", flush=True)
-                        print(f"\r[{file_idx}/{total_files}] {file_path.name}" + " " * 50, end="", flush=True)
-                        print(f"\r[{file_idx}/{total_files}] {file_path.name} ✓ ({file_chunk_count} chunks)")
+                        status_line = f"[{file_idx}/{total_files}] {file_path.name} ✓ ({file_chunk_count} chunks)"
+                        print(f"\r{status_line:<80}")
                     else:
-                        print(f"  ✓ Uploaded {file_chunk_count} chunks")
-
-                    if pbar:
-                        pbar.update(1)
+                        print(f"  ✓ complete ({file_chunk_count} chunks)", flush=True)
 
                 except Exception as e:
                     stats["errors"] += 1
                     logger.error(f"Error processing {file_path}: {e}")
+                    error_type = type(e).__name__
                     if not verbose:
-                        print(f" ✗ Error")
+                        status_line = f"[{file_idx}/{total_files}] {file_path.name} ✗ ({error_type})"
+                        print(f"\r{status_line:<80}")
                     else:
-                        print(f"  ✗ Error: {e}")
+                        print(f"  ✗ ERROR: {e}", flush=True)
                     continue
 
             # Upload final batch
             if batch:
+                print(f"\n→ Uploading final batch ({len(batch)} chunks)", flush=True)
                 self.qdrant.upsert(
                     collection_name=collection_name,
                     points=batch
                 )
                 stats["chunks"] += len(batch)
-
-            if pbar:
-                pbar.close()
+                print(f"  ✓ Final batch uploaded", flush=True)
 
             # Summary
             if verbose:

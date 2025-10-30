@@ -11,13 +11,36 @@ logger = logging.getLogger(__name__)
 
 
 def compute_file_hash(file_path: Path) -> str:
-    """Compute SHA256 hash of file content.
+    """Compute SHA256 hash of file content in binary mode.
 
-    Matches the hash computation in discovery.py for consistency.
-    Uses text mode with UTF-8 encoding and latin-1 fallback.
+    Uses binary mode to handle both text and binary files (PDFs, images, etc.)
+    without encoding issues. For binary files (PDFs, images), this is the
+    correct approach. For text files where normalized content matters
+    (markdown), use compute_text_file_hash instead.
 
     Args:
         file_path: Path to file
+
+    Returns:
+        Full SHA256 hash (64 characters)
+    """
+    return hashlib.sha256(file_path.read_bytes()).hexdigest()
+
+
+def compute_text_file_hash(file_path: Path) -> str:
+    """Compute SHA256 hash of text file content with normalization.
+
+    Reads file in text mode with UTF-8 encoding (latin-1 fallback), which
+    normalizes line endings (CRLF -> LF). This ensures hash matches the
+    actual content being indexed after parsing/normalization.
+
+    Use this for text files (markdown, source code) where:
+    - Line ending normalization is desired
+    - Content is parsed/processed before indexing
+    - Hash should match processed content
+
+    Args:
+        file_path: Path to text file
 
     Returns:
         Full SHA256 hash (64 characters)
@@ -130,7 +153,8 @@ class MetadataBasedSync:
             return set()
 
     def get_unindexed_files(self, collection_name: str,
-                            file_list: List[Path]) -> List[Path]:
+                            file_list: List[Path],
+                            hash_fn=None) -> List[Path]:
         """Filter file list to only unindexed or modified files.
 
         Uses batch query for efficiency instead of per-file queries.
@@ -138,10 +162,14 @@ class MetadataBasedSync:
         Args:
             collection_name: Qdrant collection name
             file_list: List of file paths to check
+            hash_fn: Optional hash function(Path) -> str. Defaults to compute_file_hash.
 
         Returns:
             List of files that need indexing
         """
+        if hash_fn is None:
+            hash_fn = compute_file_hash
+
         try:
             # Get all indexed (path, hash) pairs
             indexed = self.get_indexed_file_paths(collection_name)
@@ -149,7 +177,7 @@ class MetadataBasedSync:
             # Filter to files not in indexed set
             unindexed = []
             for file_path in file_list:
-                file_hash = compute_file_hash(file_path)
+                file_hash = hash_fn(file_path)
                 # Use absolute path to match how paths are stored during indexing
                 if (str(file_path.absolute()), file_hash) not in indexed:
                     unindexed.append(file_path)

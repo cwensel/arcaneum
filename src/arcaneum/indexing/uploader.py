@@ -4,7 +4,6 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
 from pathlib import Path
 from typing import List, Dict, Optional
-from tqdm import tqdm
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_not_exception_type
 import logging
 import os
@@ -148,7 +147,7 @@ class PDFBatchUploader:
         else:
             print()
 
-        # Process PDFs with clean progress bar
+        # Process PDFs with clear stage-based progress
         batch = []
         point_id = self._get_next_point_id(collection_name)
         stats = {"files": 0, "chunks": 0, "errors": 0}
@@ -156,36 +155,28 @@ class PDFBatchUploader:
         try:
             total_pdfs = len(pdf_files)
 
-            # Use tqdm for verbose mode, simple print for minimal mode
-            if verbose:
-                pbar = tqdm(total=total_pdfs, desc="Indexing PDFs", unit="file",
-                           bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
-            else:
-                pbar = None
-
             for pdf_idx, pdf_path in enumerate(pdf_files, 1):
                 try:
                     # Track chunks created and uploaded for this PDF
                     file_chunk_count = 0
                     chunks_uploaded_before = stats["chunks"]
 
-                    # Minimal mode: just show filename, let processing happen quietly
-                    if not verbose:
-                        print(f"[{pdf_idx}/{total_pdfs}] {pdf_path.name}", end="", flush=True)
-                    else:
-                        print(f"\n[{pdf_idx}/{total_pdfs}] Processing {pdf_path.name}...", flush=True)
-                        print(f"  → Computing hash", flush=True)
+                    # Stage 0: Computing hash (silent - too fast to show)
+                    if verbose:
+                        print(f"\n[{pdf_idx}/{total_pdfs}] {pdf_path.name}", flush=True)
+                        print(f"  → computing hash", flush=True)
 
                     # Compute file hash for incremental indexing
                     file_hash = compute_file_hash(pdf_path)
 
-                    # Extract text (suppress stderr warnings in non-verbose mode)
-                    if verbose:
-                        print(f"  → Extracting text", flush=True)
-                        text, extract_meta = self.extractor.extract(pdf_path)
-                        print(f"  → Extracted {len(text)} chars", flush=True)
+                    # Stage 1: Extract text
+                    if not verbose:
+                        print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → extracting{' '*20}", end="", flush=True)
                     else:
-                        # Suppress PyMuPDF warnings to stderr (os already imported at module level)
+                        print(f"  → extracting text", flush=True)
+
+                    if not verbose:
+                        # Suppress PyMuPDF warnings to stderr
                         stderr_fd = sys.stderr.fileno()
                         with open(os.devnull, 'w') as devnull:
                             old_stderr = os.dup(stderr_fd)
@@ -195,8 +186,11 @@ class PDFBatchUploader:
                             finally:
                                 os.dup2(old_stderr, stderr_fd)
                                 os.close(old_stderr)
+                    else:
+                        text, extract_meta = self.extractor.extract(pdf_path)
+                        print(f"     extracted {len(text)} chars", flush=True)
 
-                    # Check if OCR needed
+                    # Stage 2: OCR (if needed)
                     if self.ocr_enabled and len(text) < self.ocr_threshold:
                         # Get page count for progress display
                         import pymupdf as fitz
@@ -208,11 +202,15 @@ class PDFBatchUploader:
                             page_count = 0
 
                         if not verbose:
-                            # Show OCR indicator inline
-                            print(f" [OCR:{page_count}p]", end="", flush=True)
+                            print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → OCR ({page_count}p){' '*20}", end="", flush=True)
+                        else:
+                            print(f"  → running OCR ({page_count} pages)", flush=True)
 
                         text, ocr_meta = self.ocr.process_pdf(pdf_path, verbose=verbose)
                         extract_meta.update(ocr_meta)
+
+                        if verbose:
+                            print(f"     OCR complete", flush=True)
 
                     # Chunk text with file metadata (including hash for sync)
                     base_metadata = {
@@ -224,43 +222,47 @@ class PDFBatchUploader:
                         **extract_meta
                     }
 
-                    # Chunking (silent in minimal mode)
-                    if verbose:
-                        print(f"  → Chunking text ({len(text)} chars)", flush=True)
+                    # Stage 3: Chunking
+                    if not verbose:
+                        print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → chunking ({len(text)} chars){' '*15}", end="", flush=True)
+                    else:
+                        print(f"  → chunking ({len(text)} chars)", flush=True)
 
                     chunks = chunker.chunk(text, base_metadata)
                     file_chunk_count = len(chunks)
 
                     if verbose:
-                        print(f"  → Created {file_chunk_count} chunks", flush=True)
+                        print(f"     created {file_chunk_count} chunks", flush=True)
 
-                    # Generate embeddings in batches (handle locally to maintain line control)
+                    # Stage 4: Embedding
                     texts = [chunk.text for chunk in chunks]
                     embeddings = []
 
-                    if verbose:
-                        print(f"  → Embedding {file_chunk_count} chunks", flush=True)
+                    if not verbose:
+                        print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → embedding ({file_chunk_count} chunks){' '*15}", end="", flush=True)
+                    else:
+                        print(f"  → embedding ({file_chunk_count} chunks)", flush=True)
 
-                    # Batch embedding locally (like source code indexing does)
+                    # Batch embedding locally
                     EMBEDDING_BATCH_SIZE = 100
                     for batch_start in range(0, file_chunk_count, EMBEDDING_BATCH_SIZE):
                         batch_end = min(batch_start + EMBEDDING_BATCH_SIZE, file_chunk_count)
                         batch_texts = texts[batch_start:batch_end]
 
-                        # Update same line with batch progress
+                        # Show progress for large files
                         if not verbose and file_chunk_count > EMBEDDING_BATCH_SIZE:
-                            print(
-                                f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → embedding {batch_end}/{file_chunk_count}" + " "*20,
-                                end="",
-                                flush=True
-                            )
+                            progress_line = f"[{pdf_idx}/{total_pdfs}] {pdf_path.name} → embedding {batch_end}/{file_chunk_count}"
+                            print(f"\r{progress_line:<80}", end="", flush=True)
+                        elif verbose and file_chunk_count > EMBEDDING_BATCH_SIZE:
+                            print(f"     embedding {batch_end}/{file_chunk_count}", flush=True)
 
-                        # Call EmbeddingClient with SMALL batch (won't re-batch)
                         batch_embeddings = self.embeddings.embed(batch_texts, model_name)
                         embeddings.extend(batch_embeddings)
 
-                    # Create points (silent in minimal mode)
+                    if verbose and file_chunk_count <= EMBEDDING_BATCH_SIZE:
+                        print(f"     embedded {file_chunk_count} chunks", flush=True)
 
+                    # Stage 5: Create points and upload
                     for chunk, embedding in zip(chunks, embeddings):
                         point = PointStruct(
                             id=point_id,
@@ -276,83 +278,54 @@ class PDFBatchUploader:
                         # Upload when batch full (only if batching across files)
                         if self.batch_across_files and len(batch) >= self.batch_size:
                             if verbose:
-                                print(f"  → Uploading batch of {len(batch)} chunks", flush=True)
+                                print(f"  → uploading batch ({len(batch)} chunks)", flush=True)
                             self._upload_batch(collection_name, batch)
                             stats["chunks"] += len(batch)
                             batch = []
 
                     # Upload this PDF's chunks immediately (atomic mode - default)
                     if not self.batch_across_files and len(batch) > 0:
-                        # Show upload stage
                         if not verbose:
-                            print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → uploading" + " "*30, end="", flush=True)
+                            print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → uploading ({len(batch)} chunks){' '*15}", end="", flush=True)
                         else:
-                            print(f"  → Uploading {len(batch)} chunks", flush=True)
+                            print(f"  → uploading ({len(batch)} chunks)", flush=True)
 
                         self._upload_batch(collection_name, batch)
                         stats["chunks"] += len(batch)
                         batch = []
 
-                    if verbose:
-                        print(f"  ✓ Completed {pdf_path.name}", flush=True)
-
                     stats["files"] += 1
 
-                    # Show completion with created vs uploaded counts
-                    chunks_uploaded_this_file = stats["chunks"] - chunks_uploaded_before
-
+                    # Stage 6: Complete
                     if not verbose:
-                        if self.batch_across_files:
-                            # Batching mode: may have chunks pending
-                            chunks_in_batch = len([p for p in batch if p.payload.get('filename') == pdf_path.name])
-                            if chunks_in_batch > 0:
-                                print(f" ✓ ({file_chunk_count} chunks, {chunks_in_batch} pending)")
-                            else:
-                                print(f" ✓ ({file_chunk_count} chunks)")
-                        else:
-                            # Atomic mode: all chunks should be uploaded immediately
-                            if file_chunk_count == chunks_uploaded_this_file:
-                                print(f" ✓ ({file_chunk_count} chunks)")
-                            else:
-                                print(f" ⚠ ({file_chunk_count} created, {chunks_uploaded_this_file} uploaded - FAILED)")
+                        status_line = f"[{pdf_idx}/{total_pdfs}] {pdf_path.name} ✓ ({file_chunk_count} chunks)"
+                        print(f"\r{status_line:<80}")
                     else:
-                        chunks_in_batch = len([p for p in batch if p.payload.get('filename') == pdf_path.name])
-                        print(f"  Chunks: {file_chunk_count} created, {chunks_uploaded_this_file} uploaded, {chunks_in_batch} in batch", flush=True)
-                        if pbar:
-                            pbar.update(1)
+                        print(f"  ✓ complete ({file_chunk_count} chunks)", flush=True)
 
                 except Exception as e:
-                    # Show detailed error
+                    # Show error
                     error_msg = str(e)
+                    error_type = type(e).__name__
                     if not verbose:
-                        # Minimal: show error type
-                        error_type = type(e).__name__
-                        print(f" ✗ ({error_type})")
+                        status_line = f"[{pdf_idx}/{total_pdfs}] {pdf_path.name} ✗ ({error_type})"
+                        print(f"\r{status_line:<80}")
                     else:
-                        # Verbose: show full error
                         print(f"  ✗ ERROR: {error_msg}", file=sys.stderr, flush=True)
-                        if pbar:
-                            pbar.update(1)
 
                     stats["errors"] += 1
                     continue
 
             # Upload remaining batch (only needed if batching across files)
             if batch:
-                if verbose or not self.batch_across_files:
-                    print(f"\n  → Uploading final batch: {len(batch)} chunks", flush=True)
+                print(f"\n→ Uploading final batch ({len(batch)} chunks)", flush=True)
                 try:
                     self._upload_batch(collection_name, batch)
                     stats["chunks"] += len(batch)
-                    if verbose:
-                        print(f"  ✓ Final batch uploaded", flush=True)
+                    print(f"  ✓ Final batch uploaded", flush=True)
                 except Exception as e:
                     print(f"\nERROR: Final batch upload failed: {e}", file=sys.stderr)
                     print(f"  Lost {len(batch)} chunks from batch buffer!", file=sys.stderr)
-
-            # Close progress bar if used
-            if verbose and pbar:
-                pbar.close()
 
         except KeyboardInterrupt:
             # Let the signal handler in CLI handle it

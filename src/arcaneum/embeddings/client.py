@@ -159,9 +159,8 @@ class EmbeddingClient:
         # Handle different backends
         if hasattr(model, '_backend') and model._backend == "sentence-transformers":
             # SentenceTransformers: use encode()
-            # Show progress bar for first batch (helps during model loading)
-            show_progress = len(texts) > 10  # Only for larger batches
-            embeddings = model.encode(texts, show_progress_bar=show_progress, convert_to_numpy=False)
+            # Disable progress bar - pipeline handles progress display
+            embeddings = model.encode(texts, show_progress_bar=False, convert_to_numpy=False)
             return [emb.tolist() for emb in embeddings]
         else:
             # FastEmbed: use embed()

@@ -9,12 +9,13 @@ This module handles:
 - Graceful handling of files with/without frontmatter
 """
 
-import hashlib
 import logging
 from pathlib import Path
 from typing import List, Dict, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
+
+from ..common.sync import compute_text_file_hash
 
 try:
     import frontmatter
@@ -140,8 +141,8 @@ class MarkdownDiscovery:
             logger.warning(f"UTF-8 decode failed for {file_path}, trying latin-1")
             content = file_path.read_text(encoding='latin-1')
 
-        # Compute content hash
-        content_hash = self._compute_hash(content)
+        # Compute content hash (using common function for consistency)
+        content_hash = compute_text_file_hash(file_path)
 
         # Get file stats
         stat = file_path.stat()
@@ -234,18 +235,6 @@ class MarkdownDiscovery:
         return metadata_list
 
     @staticmethod
-    def _compute_hash(content: str) -> str:
-        """Compute SHA256 hash of content.
-
-        Args:
-            content: Text content to hash
-
-        Returns:
-            Hexadecimal hash string
-        """
-        return hashlib.sha256(content.encode('utf-8')).hexdigest()
-
-    @staticmethod
     def read_file_content(file_path: Path) -> str:
         """Read markdown file content (without frontmatter if present).
 
@@ -319,20 +308,3 @@ def discover_markdown_files(
         exclude_patterns=exclude_patterns
     )
     return discovery.discover_and_extract(directory, recursive=recursive)
-
-
-def compute_file_hash(file_path: Path) -> str:
-    """Compute SHA256 hash of a file's content.
-
-    Args:
-        file_path: Path to file
-
-    Returns:
-        Hexadecimal hash string
-    """
-    try:
-        content = file_path.read_text(encoding='utf-8')
-    except UnicodeDecodeError:
-        content = file_path.read_text(encoding='latin-1')
-
-    return hashlib.sha256(content.encode('utf-8')).hexdigest()

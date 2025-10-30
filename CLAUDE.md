@@ -33,6 +33,20 @@ Create an RDR for complex implementations, architectural decisions, framework wo
 
 See `docs/rdr/README.md` for complete RDR workflow, format details, and usage guidelines.
 
+## Markdown Files
+
+When creating or modifying markdown files in this project:
+
+- **ALWAYS** run `markdownlint <file>` to validate markdown formatting before completing the task
+- Fix any linting errors reported by markdownlint
+- Follow the project's markdown style guidelines enforced by markdownlint
+
 ## Source Control
 
-We use git to manage the project source, but Claude may never create commits, but may create commit messages.
+We use git to manage the project source. Claude Code has the following restrictions:
+
+- **NEVER** run `git add` commands to stage files
+- **NEVER** run `git commit` commands to create commits
+- **NEVER** run `git push` commands
+- Claude Code MAY draft commit messages when requested by the user
+- All git operations for staging and committing must be performed by the user manually

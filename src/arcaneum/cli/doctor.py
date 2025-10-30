@@ -43,16 +43,17 @@ def check_qdrant_connection(verbose: bool = False) -> Tuple[bool, str]:
     """Check Qdrant server connectivity."""
     try:
         from qdrant_client import QdrantClient
-        from arcaneum.config import get_qdrant_config
+    except ImportError:
+        return False, "qdrant-client not installed"
 
-        config = get_qdrant_config()
-        client = QdrantClient(**config)
+    try:
+        # Use default Qdrant URL (same as other commands)
+        qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
+        client = QdrantClient(url=qdrant_url)
 
         # Try to get collections to verify connectivity
         collections = client.get_collections()
         return True, f"Qdrant connected ({len(collections.collections)} collections)"
-    except ImportError:
-        return False, "qdrant-client not installed"
     except Exception as e:
         if verbose:
             return False, f"Qdrant connection failed: {str(e)}"
@@ -64,10 +65,14 @@ def check_meilisearch_connection(verbose: bool = False) -> Tuple[bool, str]:
     """Check MeiliSearch server connectivity (optional)."""
     try:
         from meilisearch import Client
-        from arcaneum.config import get_meilisearch_config
+    except ImportError:
+        return None, "meilisearch not installed (optional)"
 
-        config = get_meilisearch_config()
-        client = Client(**config)
+    try:
+        # Use default MeiliSearch URL
+        meilisearch_url = os.getenv("MEILISEARCH_URL", "http://localhost:7700")
+        api_key = os.getenv("MEILISEARCH_API_KEY")
+        client = Client(meilisearch_url, api_key)
 
         # Try to get health to verify connectivity
         health = client.health()
@@ -76,8 +81,6 @@ def check_meilisearch_connection(verbose: bool = False) -> Tuple[bool, str]:
             return True, f"MeiliSearch connected ({len(indexes['results'])} indexes)"
         else:
             return False, f"MeiliSearch status: {health.get('status', 'unknown')}"
-    except ImportError:
-        return None, "meilisearch not installed (optional)"
     except Exception as e:
         if verbose:
             return None, f"MeiliSearch connection failed: {str(e)} (optional)"
@@ -88,18 +91,18 @@ def check_meilisearch_connection(verbose: bool = False) -> Tuple[bool, str]:
 def check_embedding_models(verbose: bool = False) -> Tuple[bool, str]:
     """Check if embedding models can be loaded."""
     try:
-        from arcaneum.models.factory import EmbeddingModelFactory
+        from arcaneum.embeddings.client import EmbeddingClient, EMBEDDING_MODELS
 
-        # Try to get available models
-        factory = EmbeddingModelFactory()
-        available = factory.get_available_models()
+        # Get available models from the configuration
+        available = [alias for alias, config in EMBEDDING_MODELS.items()
+                    if config.get("available", True)]
 
         if len(available) > 0:
-            return True, f"Embedding models available: {', '.join(available)}"
+            return True, f"Embedding models available: {len(available)} configured"
         else:
             return False, "No embedding models configured"
     except ImportError as e:
-        return False, f"Model factory import failed: {str(e)}"
+        return False, f"Embedding client import failed: {str(e)}"
     except Exception as e:
         if verbose:
             return False, f"Model check failed: {str(e)}"

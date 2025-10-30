@@ -56,7 +56,7 @@ def create_collection_command(
         hnsw_ef: HNSW ef_construct parameter
         on_disk: Store vectors on disk
         output_json: Output as JSON
-        collection_type: Type of collection ("pdf" or "code")
+        collection_type: Type of collection ("pdf", "code", or "markdown")
     """
     try:
         # Parse models (support comma-separated list)

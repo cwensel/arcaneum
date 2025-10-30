@@ -2,7 +2,7 @@
 Collection metadata management for type enforcement.
 
 This module provides utilities to store and validate collection types,
-ensuring PDFs and source code are not mixed in the same collection.
+ensuring PDFs, source code, and markdown are not mixed in the same collection.
 """
 
 import logging
@@ -24,11 +24,12 @@ class CollectionType:
     """Valid collection types."""
     PDF = "pdf"
     CODE = "code"
+    MARKDOWN = "markdown"
 
     @classmethod
     def values(cls):
         """Get all valid types."""
-        return [cls.PDF, cls.CODE]
+        return [cls.PDF, cls.CODE, cls.MARKDOWN]
 
     @classmethod
     def validate(cls, collection_type: str):
@@ -54,7 +55,7 @@ def set_collection_metadata(
     Args:
         client: Qdrant client
         collection_name: Name of collection
-        collection_type: Type of collection ("pdf" or "code")
+        collection_type: Type of collection ("pdf", "code", or "markdown")
         model: Embedding model name
         **extra_metadata: Additional metadata to store
 
@@ -164,7 +165,7 @@ def get_collection_type(
         collection_name: Name of collection
 
     Returns:
-        Collection type ("pdf" or "code"), or None if untyped
+        Collection type ("pdf", "code", or "markdown"), or None if untyped
 
     Raises:
         Exception: If collection doesn't exist
@@ -189,7 +190,7 @@ def validate_collection_type(
     Args:
         client: Qdrant client
         collection_name: Name of collection
-        expected_type: Expected type ("pdf" or "code")
+        expected_type: Expected type ("pdf", "code", or "markdown")
         allow_untyped: If True, allow untyped collections with warning
 
     Raises:

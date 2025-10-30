@@ -19,7 +19,7 @@ This directory contains Recommendation Data Records (RDRs) - detailed technical 
 | 011 | [Git-Aware Source Code Full-Text Indexing to MeiliSearch](RDR-011-source-code-fulltext-indexing.md)     | Recommendation | High     |
 | 012 | [Claude Code Integration for Full-Text Search](RDR-012-fulltext-search-claude-integration.md)           | Recommendation | High     |
 | 013 | [Indexing Pipeline Performance Optimization](RDR-013-indexing-performance-optimization.md)               | Recommendation | High     |
-| 014 | [Markdown Content Indexing with Directory Sync and Direct Injection](RDR-014-markdown-indexing.md)      | Recommendation | High     |
+| 014 | [Markdown Content Indexing with Directory Sync and Direct Injection](RDR-014-markdown-indexing.md)      | Implemented    | High     |
 
 
 ## What are RDRs?

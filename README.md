@@ -21,6 +21,7 @@ documents and source code with git-aware, AST-based chunking.
 
 - **PDF Indexing**: OCR support for scanned documents, page-level metadata
 - **Source Code Indexing**: Git-aware with AST chunking, multi-branch support, 165+ languages
+- **Markdown Indexing**: YAML frontmatter extraction, semantic chunking, incremental sync
 - **Dual Indexing**: Single command to index to both search engines
 
 ### Multiple Embedding Models
@@ -100,6 +101,53 @@ arc index pdfs ~/Documents/papers --collection MyDocs
 # Search for concepts
 arc search semantic "neural network architectures" --collection MyDocs
 ```
+
+### Index Markdown Files
+
+```bash
+# Index documentation or notes
+arc collection create Notes --model stella --type markdown
+arc index markdown ~/obsidian-vault --collection Notes
+
+# With custom options
+arc index markdown ~/docs --collection Docs \
+  --exclude ".obsidian,templates" \
+  --chunk-size 512 \
+  --no-recursive
+
+# Search your notes
+arc search semantic "project planning" --collection Notes
+```
+
+**Features:**
+
+- YAML frontmatter extraction (title, tags, category, etc.)
+- Semantic chunking preserving document structure
+- Incremental sync (SHA256 content hashing)
+- Custom exclude patterns
+- Supports .md, .markdown, .mdown extensions
+
+### Store Agent Memory
+
+```bash
+# Store agent-generated content (for Claude skills/agents)
+arc collection create Memory --model stella --type markdown
+
+# Store from file with metadata
+arc store analysis.md --collection Memory \
+  --title "Security Analysis" \
+  --category "security" \
+  --tags "audit,findings"
+
+# Store from stdin (agent workflow)
+echo "# Research\n\nFindings..." | arc store - --collection Memory
+
+# Content persisted to: ~/.arcaneum/agent-memory/{collection}/
+# Enables re-indexing and full-text retrieval
+```
+
+**Use Case:** Designed for AI agents to store research, analysis, and synthesized
+information with rich metadata. Content is automatically persisted for durability.
 
 ### Manage Services
 
@@ -222,6 +270,7 @@ Use `/help` in Claude Code to see all available commands or `/doctor` to check y
 - ⏱️ **RDR-010**: PDF full-text indexing (PENDING)
 - ⏱️ **RDR-011**: Source code full-text indexing (PENDING)
 - ⏱️ **RDR-012**: Full-text search integration (PENDING)
+- ✅ **RDR-014**: Markdown indexing (COMPLETED)
 
 ### Testing
 

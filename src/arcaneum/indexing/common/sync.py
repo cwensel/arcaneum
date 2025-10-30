@@ -11,21 +11,24 @@ logger = logging.getLogger(__name__)
 
 
 def compute_file_hash(file_path: Path) -> str:
-    """Compute SHA256 hash of file content (first 12 chars).
+    """Compute SHA256 hash of file content.
 
-    Uses chunked reading to handle large files efficiently.
+    Matches the hash computation in discovery.py for consistency.
+    Uses text mode with UTF-8 encoding and latin-1 fallback.
 
     Args:
         file_path: Path to file
 
     Returns:
-        First 12 characters of SHA256 hash
+        Full SHA256 hash (64 characters)
     """
-    sha256 = hashlib.sha256()
-    with open(file_path, 'rb') as f:
-        for chunk in iter(lambda: f.read(8192), b''):
-            sha256.update(chunk)
-    return sha256.hexdigest()[:12]
+    try:
+        content = file_path.read_text(encoding='utf-8')
+    except UnicodeDecodeError:
+        logger.warning(f"UTF-8 decode failed for {file_path}, trying latin-1")
+        content = file_path.read_text(encoding='latin-1')
+
+    return hashlib.sha256(content.encode('utf-8')).hexdigest()
 
 
 class MetadataBasedSync:
@@ -147,7 +150,8 @@ class MetadataBasedSync:
             unindexed = []
             for file_path in file_list:
                 file_hash = compute_file_hash(file_path)
-                if (str(file_path), file_hash) not in indexed:
+                # Use absolute path to match how paths are stored during indexing
+                if (str(file_path.absolute()), file_hash) not in indexed:
                     unindexed.append(file_path)
 
             logger.info(f"Found {len(unindexed)}/{len(file_list)} "

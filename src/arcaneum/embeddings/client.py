@@ -126,6 +126,13 @@ class EmbeddingClient:
                 )
             elif backend == "sentence-transformers":
                 from sentence_transformers import SentenceTransformer
+                import sys
+
+                # Show loading indicator for models that take time
+                if not self.is_model_cached(model_name):
+                    print("   Downloading model files...", flush=True, file=sys.stderr)
+
+                # SentenceTransformer handles download progress automatically via HuggingFace
                 model_obj = SentenceTransformer(config["name"], cache_folder=self.cache_dir)
                 model_obj._backend = "sentence-transformers"
                 self._models[model_name] = model_obj
@@ -152,7 +159,9 @@ class EmbeddingClient:
         # Handle different backends
         if hasattr(model, '_backend') and model._backend == "sentence-transformers":
             # SentenceTransformers: use encode()
-            embeddings = model.encode(texts, show_progress_bar=False, convert_to_numpy=False)
+            # Show progress bar for first batch (helps during model loading)
+            show_progress = len(texts) > 10  # Only for larger batches
+            embeddings = model.encode(texts, show_progress_bar=show_progress, convert_to_numpy=False)
             return [emb.tolist() for emb in embeddings]
         else:
             # FastEmbed: use embed()
@@ -176,3 +185,37 @@ class EmbeddingClient:
                 f"Available models: {list(EMBEDDING_MODELS.keys())}"
             )
         return EMBEDDING_MODELS[model_name]["dimensions"]
+
+    def is_model_cached(self, model_name: str) -> bool:
+        """Check if a model is already cached locally.
+
+        Args:
+            model_name: Model identifier
+
+        Returns:
+            True if model is cached, False if needs download
+
+        Raises:
+            ValueError: If model_name is not recognized
+        """
+        if model_name not in EMBEDDING_MODELS:
+            raise ValueError(
+                f"Unknown model: {model_name}. "
+                f"Available models: {list(EMBEDDING_MODELS.keys())}"
+            )
+
+        config = EMBEDDING_MODELS[model_name]
+        backend = config.get("backend", "fastembed")
+        model_path = config["name"]
+
+        if backend == "sentence-transformers":
+            # Check HuggingFace cache (models--<org>--<model>)
+            safe_model_name = model_path.replace("/", "--")
+            model_dir = os.path.join(self.cache_dir, f"models--{safe_model_name}")
+            return os.path.exists(model_dir) and os.path.isdir(model_dir)
+        else:
+            # FastEmbed uses different cache structure
+            # Check if any files exist for this model
+            safe_model_name = model_path.replace("/", "--")
+            model_dir = os.path.join(self.cache_dir, safe_model_name)
+            return os.path.exists(model_dir) and os.path.isdir(model_dir)

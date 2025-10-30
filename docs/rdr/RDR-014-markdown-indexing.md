@@ -3,11 +3,12 @@
 ## Metadata
 
 - **Date**: 2025-10-30
-- **Status**: Recommendation
+- **Status**: Implemented
+- **Implemented**: 2025-10-30
 - **Type**: Feature
 - **Priority**: High
-- **Related Issues**: arcaneum-199
-- **Related Tests**: Markdown chunking tests, directory sync tests, direct injection tests
+- **Related Issues**: arcaneum-199, arcaneum-204, arcaneum-211, arcaneum-212, arcaneum-213
+- **Related Tests**: tests/unit/indexing/markdown/test_chunker.py
 
 ## Problem Statement
 

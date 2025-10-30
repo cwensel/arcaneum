@@ -37,7 +37,7 @@ def collection():
 @collection.command('create')
 @click.argument('name')
 @click.option('--model', required=True, help='Embedding model (stella, modernbert, bge, jina-code)')
-@click.option('--type', 'collection_type', type=click.Choice(['pdf', 'code']), help='Collection type (pdf or code)')
+@click.option('--type', 'collection_type', type=click.Choice(['pdf', 'code', 'markdown']), help='Collection type (pdf, code, or markdown)')
 @click.option('--hnsw-m', type=int, default=16, help='HNSW index parameter m')
 @click.option('--hnsw-ef', type=int, default=100, help='HNSW index parameter ef_construct')
 @click.option('--on-disk', is_flag=True, help='Store vectors on disk')
@@ -129,6 +129,60 @@ def index_source(path, collection, model, workers, depth, force, verbose, output
     """Index source code"""
     from arcaneum.cli.index_source import index_source_command
     index_source_command(path, collection, model, workers, depth, force, verbose, output_json)
+
+
+@index.command('markdown')
+@click.argument('path', type=click.Path(exists=True))
+@click.option('--collection', required=True, help='Target collection name')
+@click.option('--model', default='stella', help='Embedding model (default: stella for documents)')
+@click.option('--chunk-size', type=int, help='Target chunk size in tokens')
+@click.option('--chunk-overlap', type=int, help='Overlap between chunks in tokens')
+@click.option('--recursive/--no-recursive', default=True, help='Search subdirectories recursively')
+@click.option('--exclude', multiple=True, help='Patterns to exclude (e.g., node_modules, .obsidian)')
+@click.option('--qdrant-url', default='http://localhost:6333', help='Qdrant server URL')
+@click.option('--force', is_flag=True, help='Force reindex all files')
+@click.option('--offline', is_flag=True, help='Offline mode (use cached models only, no network)')
+@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def index_markdown(path, collection, model, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, force, offline, verbose, output_json):
+    """Index markdown files"""
+    from arcaneum.cli.index_markdown import index_markdown_command
+    index_markdown_command(path, collection, model, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, force, offline, verbose, output_json)
+
+
+@cli.command('store')
+@click.argument('file', type=click.Path())
+@click.option('--collection', required=True, help='Target collection name')
+@click.option('--model', default='stella', help='Embedding model (default: stella for documents)')
+@click.option('--title', help='Document title')
+@click.option('--category', help='Document category')
+@click.option('--tags', help='Comma-separated tags')
+@click.option('--metadata', help='Additional metadata as JSON')
+@click.option('--chunk-size', type=int, help='Target chunk size in tokens')
+@click.option('--chunk-overlap', type=int, help='Overlap between chunks in tokens')
+@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def store(file, collection, model, title, category, tags, metadata, chunk_size, chunk_overlap, verbose, output_json):
+    """Store agent-generated content for long-term memory.
+
+    Designed for AI agents (Claude skills) to store research, analysis, and
+    synthesized information. Content is persisted to disk for re-indexing
+    and full-text retrieval, then indexed to Qdrant for semantic search.
+
+    Storage location: ~/.arcaneum/agent-memory/{collection}/
+
+    Examples:
+      # Store from stdin (agent workflow)
+      echo "# Research\\n\\nFindings..." | arc store - --collection knowledge
+
+      # Store from file with metadata
+      arc store analysis.md --collection research \\
+          --title "Security Findings" --category security --tags "audit,critical"
+
+    For indexing existing markdown directories, use 'arc index markdown' instead.
+    """
+    from arcaneum.cli.index_markdown import store_command
+    store_command(file, collection, model, title, category, tags, metadata, chunk_size, chunk_overlap, verbose, output_json)
 
 
 # Search commands (RDR-007, RDR-012)

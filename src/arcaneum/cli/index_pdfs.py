@@ -109,8 +109,9 @@ def index_pdfs_command(
         }
 
         # Initialize clients
+        from arcaneum.paths import get_models_dir
         qdrant = QdrantClient(url="http://localhost:6333")
-        embeddings = EmbeddingClient(cache_dir="./models_cache")
+        embeddings = EmbeddingClient(cache_dir=str(get_models_dir()))
 
         # Validate collection type (must be 'pdf' or untyped)
         try:

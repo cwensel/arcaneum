@@ -8,6 +8,7 @@ Arcaneum provides semantic search for documents using Qdrant vector embeddings. 
 documents and source code with git-aware, AST-based chunking.
 
 **Currently Available:** Semantic search with Qdrant
+
 **Planned:** MeiliSearch integration for full-text search (RDR-008 through RDR-012)
 
 ## Features

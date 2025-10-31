@@ -20,6 +20,7 @@ This directory contains Recommendation Data Records (RDRs) - detailed technical 
 | 012 | [Claude Code Integration for Full-Text Search](RDR-012-fulltext-search-claude-integration.md)           | Recommendation | High     |
 | 013 | [Indexing Pipeline Performance Optimization](RDR-013-indexing-performance-optimization.md)               | Recommendation | High     |
 | 014 | [Markdown Content Indexing with Directory Sync and Direct Injection](RDR-014-markdown-indexing.md)      | Implemented    | High     |
+| 015 | [Retain Memory Management System](RDR-015-retain-memory-management.md)                                  | Recommendation | High     |
 
 
 ## What are RDRs?

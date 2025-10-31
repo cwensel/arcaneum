@@ -128,12 +128,20 @@ class EmbeddingClient:
                 from sentence_transformers import SentenceTransformer
                 import sys
 
+                # Check if model is cached to avoid unnecessary network calls
+                is_cached = self.is_model_cached(model_name)
+
                 # Show loading indicator for models that take time
-                if not self.is_model_cached(model_name):
+                if not is_cached:
                     print("   Downloading model files...", flush=True, file=sys.stderr)
 
                 # SentenceTransformer handles download progress automatically via HuggingFace
-                model_obj = SentenceTransformer(config["name"], cache_folder=self.cache_dir)
+                # Use local_files_only if cached to prevent network calls to HuggingFace Hub
+                model_obj = SentenceTransformer(
+                    config["name"],
+                    cache_folder=self.cache_dir,
+                    local_files_only=is_cached  # Skip HuggingFace Hub check if cached
+                )
                 model_obj._backend = "sentence-transformers"
                 self._models[model_name] = model_obj
 

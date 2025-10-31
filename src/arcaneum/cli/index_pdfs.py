@@ -137,6 +137,21 @@ def index_pdfs_command(
             batch_across_files=batch_across_files,
         )
 
+        # Pre-load model to avoid "hang" during first file processing (similar to markdown indexing)
+        if not output_json:
+            # Check if model is cached
+            is_cached = embeddings.is_model_cached(model)
+            if not is_cached:
+                console.print(f"⬇️  Downloading {model} model (first time only)...", style="yellow")
+            else:
+                console.print(f"📦 Loading {model} model from cache...", style="blue")
+
+        # Load model now (separate phase from file processing)
+        embeddings.get_model(model)
+
+        if not output_json:
+            console.print()
+
         # Show configuration at start
         if not output_json:
             # Get actual model name being used

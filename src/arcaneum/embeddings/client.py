@@ -120,9 +120,21 @@ class EmbeddingClient:
             backend = config.get("backend", "fastembed")
 
             if backend == "fastembed":
+                import sys
+
+                # Check if model is cached to avoid unnecessary network calls
+                is_cached = self.is_model_cached(model_name)
+
+                # Show loading indicator for models that take time
+                if not is_cached:
+                    print("   Downloading model files...", flush=True, file=sys.stderr)
+
+                # Use local_files_only if model is cached to prevent network calls
+                # This is the official FastEmbed parameter for offline mode
                 self._models[model_name] = TextEmbedding(
                     model_name=config["name"],
                     cache_dir=self.cache_dir,
+                    local_files_only=is_cached  # Skip network access if cached
                 )
             elif backend == "sentence-transformers":
                 from sentence_transformers import SentenceTransformer
@@ -221,8 +233,28 @@ class EmbeddingClient:
             model_dir = os.path.join(self.cache_dir, f"models--{safe_model_name}")
             return os.path.exists(model_dir) and os.path.isdir(model_dir)
         else:
-            # FastEmbed uses different cache structure
-            # Check if any files exist for this model
+            # FastEmbed uses HuggingFace cache structure with models-- prefix
+            # The actual cached model name may differ from config (e.g., qdrant/bge-large-en-v1.5-onnx)
+            # So we check for any model directory that starts with the model base name
+            model_base = model_path.split("/")[-1].replace("-", "_")  # e.g., "bge_large_en_v1"
+
+            # Check for exact match first (models--org--model format)
             safe_model_name = model_path.replace("/", "--")
-            model_dir = os.path.join(self.cache_dir, safe_model_name)
-            return os.path.exists(model_dir) and os.path.isdir(model_dir)
+            model_dir = os.path.join(self.cache_dir, f"models--{safe_model_name}")
+            if os.path.exists(model_dir) and os.path.isdir(model_dir):
+                return True
+
+            # Check for FastEmbed wrapped versions (models--qdrant--model-onnx format)
+            # List all model directories and check for similar names
+            if os.path.exists(self.cache_dir):
+                for item in os.listdir(self.cache_dir):
+                    item_path = os.path.join(self.cache_dir, item)
+                    if os.path.isdir(item_path) and item.startswith("models--"):
+                        # Check if this directory contains the model name parts
+                        item_lower = item.lower().replace("-", "_").replace(".", "_")
+                        model_parts = model_path.lower().replace("-", "_").replace(".", "_").replace("/", "_").split("_")
+                        # If most of the model name parts are in the directory name, consider it a match
+                        if sum(1 for part in model_parts if len(part) > 2 and part in item_lower) >= len([p for p in model_parts if len(p) > 2]) * 0.6:
+                            return True
+
+            return False

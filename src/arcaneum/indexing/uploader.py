@@ -33,6 +33,9 @@ class PDFBatchUploader:
         ocr_engine: str = 'tesseract',
         ocr_language: str = 'eng',
         ocr_threshold: int = 100,
+        ocr_workers: Optional[int] = None,
+        embedding_workers: int = 4,
+        embedding_batch_size: int = 200,
         batch_across_files: bool = False,
     ):
         """Initialize batch uploader.
@@ -47,12 +50,17 @@ class PDFBatchUploader:
             ocr_engine: OCR engine ('tesseract' or 'easyocr')
             ocr_language: OCR language code
             ocr_threshold: Trigger OCR if text < N characters
+            ocr_workers: Number of parallel OCR workers (None = cpu_count)
+            embedding_workers: Number of parallel workers for embedding generation (default: 4)
+            embedding_batch_size: Batch size for embedding generation (default: 200)
         """
         self.qdrant = qdrant_client
         self.embeddings = embedding_client
         self.batch_size = batch_size
         self.parallel_workers = parallel_workers
         self.max_retries = max_retries
+        self.embedding_workers = embedding_workers
+        self.embedding_batch_size = embedding_batch_size
 
         # Initialize components
         self.extractor = PDFExtractor(
@@ -70,7 +78,8 @@ class PDFBatchUploader:
                 language=ocr_language,
                 confidence_threshold=60.0,
                 image_dpi=300,
-                image_scale=2.0
+                image_scale=2.0,
+                ocr_workers=ocr_workers
             )
         else:
             self.ocr = None
@@ -242,30 +251,20 @@ class PDFBatchUploader:
 
                     # Stage 4: Embedding
                     texts = [chunk.text for chunk in chunks]
-                    embeddings = []
-
                     if not verbose:
-                        print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → embedding ({file_chunk_count} chunks){' '*15}", end="", flush=True)
+                        print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → embedding ({file_chunk_count} chunks, parallel){' '*15}", end="", flush=True)
                     else:
-                        print(f"  → embedding ({file_chunk_count} chunks)", flush=True)
+                        print(f"  → embedding ({file_chunk_count} chunks, parallel)", flush=True)
 
-                    # Batch embedding locally
-                    EMBEDDING_BATCH_SIZE = 200
-                    for batch_start in range(0, file_chunk_count, EMBEDDING_BATCH_SIZE):
-                        batch_end = min(batch_start + EMBEDDING_BATCH_SIZE, file_chunk_count)
-                        batch_texts = texts[batch_start:batch_end]
+                    # Parallel embedding (Phase 2 RDR-013) for 2-4x speedup
+                    embeddings = self.embeddings.embed_parallel(
+                        texts,
+                        model_name,
+                        max_workers=self.embedding_workers,
+                        batch_size=self.embedding_batch_size
+                    )
 
-                        # Show progress for large files
-                        if not verbose and file_chunk_count > EMBEDDING_BATCH_SIZE:
-                            progress_line = f"[{pdf_idx}/{total_pdfs}] {pdf_path.name} → embedding {batch_end}/{file_chunk_count}"
-                            print(f"\r{progress_line:<80}", end="", flush=True)
-                        elif verbose and file_chunk_count > EMBEDDING_BATCH_SIZE:
-                            print(f"     embedding {batch_end}/{file_chunk_count}", flush=True)
-
-                        batch_embeddings = self.embeddings.embed(batch_texts, model_name)
-                        embeddings.extend(batch_embeddings)
-
-                    if verbose and file_chunk_count <= EMBEDDING_BATCH_SIZE:
+                    if verbose:
                         print(f"     embedded {file_chunk_count} chunks", flush=True)
 
                     # Stage 5: Create points and upload

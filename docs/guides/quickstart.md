@@ -117,6 +117,9 @@ arc collection create MyDocs --model stella --type pdf
 # Index PDFs (with OCR for scanned documents)
 arc index pdfs ~/Documents/papers --collection MyDocs
 
+# Index with maximum performance (uses all CPU cores)
+arc index pdfs ~/Documents/papers --collection MyDocs --max-perf
+
 # Search PDFs
 arc search semantic "machine learning techniques" --collection MyDocs
 ```
@@ -287,6 +290,59 @@ All `arc` commands are available as slash commands:
 ```
 
 The plugin provides the same functionality as the CLI, but integrated into your Claude Code workflow.
+
+## Performance Tuning
+
+Arcaneum provides granular control over indexing performance for different workload scenarios.
+
+### Quick Start: Use Presets
+
+For maximum performance on batch workloads:
+
+```bash
+# PDF indexing with all CPU cores
+arc index pdfs ~/Documents --collection MyDocs --max-perf
+
+# Source code indexing with all CPU cores
+arc index source ~/projects --collection MyCode --max-perf
+```
+
+The `--max-perf` preset sets:
+
+- All CPU cores for parallel processing (embedding and file workers)
+- Large batch sizes (500 chunks) for better throughput
+- Low process priority (background processing, won't impact UI responsiveness)
+
+### Advanced: Granular Control
+
+For fine-tuned control, use individual flags:
+
+```bash
+# Conservative: 25% CPU, good for background processing
+arc index pdfs ~/docs --collection MyDocs \
+  --embedding-worker-mult 0.25 \
+  --process-priority low
+
+# Balanced: default settings (50% CPU)
+arc index pdfs ~/docs --collection MyDocs
+
+# Maximum: absolute control over workers
+arc index pdfs ~/docs --collection MyDocs \
+  --embedding-workers 8 \
+  --embedding-batch-size 300 \
+  --process-priority low
+```
+
+**Available Options:**
+
+- `--embedding-workers N`: Absolute number of embedding workers
+- `--embedding-worker-mult FLOAT`: Multiplier of cpu_count (e.g., 0.5 = half cores, 1.0 = all cores)
+- `--embedding-batch-size N`: Batch size for embeddings (default: 200, max-perf: 500)
+- `--file-workers N`: File processing workers (source code only)
+- `--file-worker-mult FLOAT`: File worker multiplier (source code only)
+- `--process-priority low|normal|high`: OS scheduling priority
+
+See the [CLI Reference](cli-reference.md) for complete performance tuning documentation.
 
 ## Next Steps
 

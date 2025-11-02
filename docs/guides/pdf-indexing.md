@@ -81,16 +81,29 @@ arc index pdfs <directory> --collection <name> --model <model>
 
 ### Options
 
+**Basic Options:**
+
 - `--collection`: Target Qdrant collection (required)
 - `--model`: Embedding model (stella, bge, modernbert, jina) [default: stella]
-- `--workers`: Parallel upload workers [default: 4]
-- `--no-ocr`: Disable OCR (enabled by default for scanned PDFs)
-- `--ocr-language`: OCR language code (eng, fra, spa, deu, etc.) [default: eng]
 - `--force`: Force reindex all files (bypass incremental sync)
 - `--no-gpu`: Disable GPU acceleration (GPU enabled by default for 1.5-3x speedup)
 - `--verbose`: Verbose output (show progress, suppress library warnings)
 - `--debug`: Debug mode (show all library warnings including transformers)
 - `--json`: Output JSON format
+
+**Performance Tuning:**
+
+- `--embedding-workers`: Absolute number of embedding workers (overrides multiplier)
+- `--embedding-worker-mult`: Multiplier of cpu_count for embedding workers [default: 0.5]
+- `--embedding-batch-size`: Batch size for embedding generation [default: 200]
+- `--process-priority`: Process scheduling priority (low/normal/high) [default: normal]
+- `--workers`: Parallel upload workers [default: 4]
+
+**OCR Options:**
+
+- `--no-ocr`: Disable OCR (enabled by default for scanned PDFs)
+- `--ocr-language`: OCR language code (eng, fra, spa, deu, etc.) [default: eng]
+- `--ocr-workers`: Number of parallel OCR workers for page processing [default: cpu_count]
 
 ### Examples
 
@@ -103,13 +116,14 @@ arc index pdfs ./docs \
   --workers 8
 ```
 
-**Index scanned books (OCR enabled by default):**
+**Index scanned books (OCR enabled by default with parallel page processing):**
 
 ```bash
 arc index pdfs ./books \
   --collection book-archive \
   --model stella \
   --ocr-language eng \
+  --ocr-workers 8 \
   --workers 4
 ```
 
@@ -149,6 +163,27 @@ arc index pdfs ./pdfs \
   --debug
 ```
 
+**Maximum performance (use all CPU cores):**
+
+```bash
+arc index pdfs ./pdfs \
+  --collection pdf-docs \
+  --model stella \
+  --embedding-worker-mult 1.0 \
+  --embedding-batch-size 500 \
+  --process-priority low
+```
+
+**Conservative (25% of CPU, good for background processing):**
+
+```bash
+arc index pdfs ./pdfs \
+  --collection pdf-docs \
+  --model stella \
+  --embedding-worker-mult 0.25 \
+  --process-priority low
+```
+
 ## Simplified CLI Scripts
 
 For convenience, use the `bin/arc` wrapper:
@@ -184,6 +219,7 @@ GPU acceleration is **enabled by default** for 1.5-3x faster embedding generatio
 - **Disable**: Use `--no-gpu` flag for CPU-only mode
 
 **Compatible Models** (verified with GPU support):
+
 - **stella** (recommended) - Full MPS support on Apple Silicon
 - **jina-code** - Full MPS support on Apple Silicon
 - **bge-small**, **bge-base** - CoreML support
@@ -191,6 +227,7 @@ GPU acceleration is **enabled by default** for 1.5-3x faster embedding generatio
 **Performance**: 1.5-3x speedup with GPU compared to CPU-only mode.
 
 **When to disable GPU**:
+
 - Thermal concerns (laptop getting too hot)
 - Battery life (running on battery power)
 - GPU busy with other tasks
@@ -215,10 +252,11 @@ Choose the embedding model based on your use case:
 
 ### Tesseract (Default)
 
-- **Speed**: 2s per page (CPU)
+- **Speed**: 2s per page (CPU), ~0.5s per page with parallel processing (8 workers)
 - **Accuracy**: 99%+ on clean printed text at 300 DPI
 - **Languages**: 100+ supported
-- **Best for**: High-quality scans, CPU-only environments
+- **Parallelization**: ProcessPoolExecutor for concurrent page processing (default: cpu_count workers)
+- **Best for**: High-quality scans, CPU-only environments, multi-page documents
 
 ### Trigger Logic
 
@@ -257,7 +295,7 @@ sudo apt-get install tesseract-ocr-fra tesseract-ocr-spa
 ### Throughput
 
 - **Text PDFs**: ~100 files/minute (PyMuPDF)
-- **Scanned PDFs**: ~30 pages/minute (Tesseract OCR)
+- **Scanned PDFs**: ~30 pages/minute (single-threaded Tesseract), ~120 pages/minute (parallel, 8 workers)
 - **Upload**: ~333 chunks/second (sequential), ~1,111 chunks/second (4 workers)
 
 ### Optimization
@@ -312,9 +350,10 @@ For large PDFs or many parallel workers:
 
 OCR is CPU-intensive (2s per page). To speed up:
 
-1. Disable OCR if all PDFs are machine-generated text (`--no-ocr`)
-2. Use GPU with EasyOCR (future enhancement)
-3. Process in smaller batches
+1. Enable parallel processing: `--ocr-workers 8` (default: cpu_count, provides 4x speedup)
+2. Disable OCR if all PDFs are machine-generated text (`--no-ocr`)
+3. Use GPU with EasyOCR (future enhancement)
+4. Process in smaller batches
 
 ## Architecture
 
@@ -323,11 +362,11 @@ OCR is CPU-intensive (2s per page). To speed up:
 ```text
 Phase 1: PDF Extraction (PyMuPDF + pdfplumber fallback)
     ↓
-Phase 2: OCR Processing (if needed, Tesseract)
+Phase 2: OCR Processing (if needed, Tesseract with parallel page processing)
     ↓
 Phase 3: Chunking (Traditional or Late Chunking)
     ↓
-Phase 4: Embedding Generation (FastEmbed, 200 chunks/batch)
+Phase 4: Embedding Generation (FastEmbed, 200 chunks/batch, parallel)
     ↓
 Phase 5: Batch Upload (300 chunks/batch, 4 workers, bulk mode)
 ```

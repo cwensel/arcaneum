@@ -11,6 +11,7 @@ import os
 import signal
 
 from .logging_config import setup_logging_default, setup_logging_verbose, setup_logging_debug
+from .utils import set_process_priority
 from ..config import load_config, DEFAULT_MODELS
 from ..embeddings.client import EmbeddingClient
 from ..indexing.uploader import PDFBatchUploader
@@ -26,8 +27,14 @@ def index_pdfs_command(
     collection: str,
     model: str,
     workers: int,
+    embedding_workers: int,
+    embedding_worker_mult: float,
+    embedding_batch_size: int,
     no_ocr: bool,
     ocr_language: str,
+    ocr_workers: int,
+    process_priority: str,
+    max_perf: bool,
     force: bool,
     batch_across_files: bool,
     no_gpu: bool,
@@ -43,8 +50,12 @@ def index_pdfs_command(
         collection: Target collection name
         model: Embedding model to use
         workers: Number of parallel workers
+        embedding_workers: Number of parallel workers for embedding generation
+        embedding_batch_size: Batch size for embedding generation
         no_ocr: Disable OCR (enabled by default)
         ocr_language: OCR language code
+        ocr_workers: Number of parallel OCR workers (None = cpu_count)
+        process_priority: Process scheduling priority (low, normal, high)
         force: Force reindex all files
         batch_across_files: Batch uploads across files
         no_gpu: Disable GPU acceleration (use CPU only)
@@ -61,6 +72,34 @@ def index_pdfs_command(
     """
     # Invert no_ocr flag to get ocr_enabled
     ocr_enabled = not no_ocr
+
+    # Set process priority early
+    set_process_priority(process_priority)
+
+    # Apply --max-perf preset (sets defaults before precedence logic)
+    if max_perf:
+        if embedding_worker_mult is None:
+            embedding_worker_mult = 1.0
+        if embedding_batch_size == 200:  # Default value
+            embedding_batch_size = 500
+        if process_priority == "normal":  # Default value
+            process_priority = "low"
+            set_process_priority(process_priority)  # Re-apply with new priority
+
+    # Compute embedding_workers with precedence: absolute → multiplier → default (0.5)
+    from multiprocessing import cpu_count
+    if embedding_workers is not None:
+        # Absolute value specified, use it
+        actual_embedding_workers = max(1, embedding_workers)
+        worker_source = f"{actual_embedding_workers} (absolute)"
+    elif embedding_worker_mult is not None:
+        # Multiplier specified, compute from cpu_count
+        actual_embedding_workers = max(1, int(cpu_count() * embedding_worker_mult))
+        worker_source = f"{actual_embedding_workers} (cpu_count × {embedding_worker_mult})"
+    else:
+        # Default: 0.5 multiplier (half of CPU cores)
+        actual_embedding_workers = max(1, int(cpu_count() * 0.5))
+        worker_source = f"{actual_embedding_workers} (cpu_count × 0.5, default)"
 
     # Enable offline mode if requested (blocks all HuggingFace network calls)
     if offline:
@@ -126,6 +165,9 @@ def index_pdfs_command(
             ocr_engine='tesseract',
             ocr_language=ocr_language,
             ocr_threshold=100,
+            ocr_workers=ocr_workers,
+            embedding_workers=actual_embedding_workers,
+            embedding_batch_size=embedding_batch_size,
             batch_across_files=batch_across_files,
         )
 
@@ -168,8 +210,14 @@ def index_pdfs_command(
             else:
                 console.print(f"  Device: CPU (GPU not available)")
 
+            # Show embedding configuration
+            preset_suffix = " [max-perf preset]" if max_perf else ""
+            console.print(f"  Embedding: {worker_source} workers, batch size {embedding_batch_size}{preset_suffix}")
+
             if ocr_enabled:
-                console.print(f"  OCR: tesseract ({ocr_language})")
+                from multiprocessing import cpu_count
+                workers_display = ocr_workers if ocr_workers else cpu_count()
+                console.print(f"  OCR: tesseract ({ocr_language}, {workers_display} parallel workers)")
             else:
                 console.print(f"  OCR: disabled")
             console.print(f"  Pipeline: PDF → Extract → [OCR if needed] → Chunk → Embed → Upload")
@@ -177,6 +225,11 @@ def index_pdfs_command(
                 console.print(f"  Upload: Batched across files (100 chunks)")
             else:
                 console.print(f"  Upload: Atomic per-document (safer)")
+
+            # Show process priority
+            if process_priority != "normal":
+                console.print(f"  Process Priority: {process_priority}")
+
             if offline:
                 console.print(f"  [yellow]Mode: Offline (cached models only)[/yellow]")
             # Check if offline mode set via environment

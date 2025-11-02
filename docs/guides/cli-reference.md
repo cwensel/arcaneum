@@ -131,6 +131,39 @@ arc index pdfs /path/to/pdfs \
   --workers 8
 ```
 
+### Performance Tuning
+
+**Maximum performance (use all CPU cores):**
+
+```bash
+arc index pdfs /path/to/pdfs \
+  --collection pdf-docs \
+  --model stella \
+  --embedding-worker-mult 1.0 \
+  --embedding-batch-size 500 \
+  --process-priority low
+```
+
+**Conservative (25% CPU, good for background):**
+
+```bash
+arc index pdfs /path/to/pdfs \
+  --collection pdf-docs \
+  --model stella \
+  --embedding-worker-mult 0.25 \
+  --process-priority low
+```
+
+**Absolute control (set exact worker count):**
+
+```bash
+arc index pdfs /path/to/pdfs \
+  --collection pdf-docs \
+  --model stella \
+  --embedding-workers 8 \
+  --embedding-batch-size 300
+```
+
 ### GPU Control
 
 ```bash
@@ -212,10 +245,21 @@ Most commands support:
 
 Additional options for `arc index` commands:
 
+**Basic Options:**
+
 - `--no-gpu`: Disable GPU acceleration (GPU enabled by default for MPS/CUDA)
-- `--workers N`: Number of parallel workers (default: 4)
+- `--workers N`: Number of parallel upload workers (default: 4)
 - `--force`: Force reindex all files (skip incremental sync)
 - `--offline`: Use cached models only (no network calls)
+
+**Performance Tuning:**
+
+- `--embedding-workers N`: Absolute number of embedding workers (overrides multiplier)
+- `--embedding-worker-mult FLOAT`: Multiplier of cpu_count for embedding workers [default: 0.5]
+- `--embedding-batch-size N`: Batch size for embedding generation [default: 200]
+- `--file-workers N`: Absolute number of file processing workers (source code only, overrides multiplier)
+- `--file-worker-mult FLOAT`: Multiplier of cpu_count for file workers (source code only) [default: 0.5]
+- `--process-priority low|normal|high`: Process scheduling priority [default: normal]
 
 ### GPU Acceleration
 
@@ -228,12 +272,14 @@ GPU acceleration is **enabled by default** for embedding generation:
 **Performance**: 1.5-3x speedup with GPU for embedding generation.
 
 **Compatible Models** (verified with GPU):
+
 - `stella` - Full MPS support (recommended for PDFs/markdown)
 - `jina-code` - Full MPS support (recommended for source code)
 - `bge-small` - CoreML support
 - `bge-base` - CoreML support
 
 **Disable GPU** if needed (thermal concerns, battery life, etc.):
+
 ```bash
 arc index pdfs /path/to/pdfs --collection docs --no-gpu
 ```
@@ -318,6 +364,7 @@ arc container reset --confirm
 ```
 
 **Data Location:**
+
 - All data stored in `~/.arcaneum/data/qdrant/`
 - Survives container restarts
 - Easy to backup
@@ -354,6 +401,7 @@ arc config clear-cache --confirm
 ```
 
 **Cache Location:**
+
 - Models stored in `~/.arcaneum/models/`
 - Auto-downloaded on first use
 - Shared across all arc commands

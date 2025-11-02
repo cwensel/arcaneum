@@ -9,6 +9,8 @@ import logging
 import os
 from typing import List, Optional, Set
 from pathlib import Path
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from multiprocessing import cpu_count
 
 import sys
 from rich.console import Console
@@ -24,6 +26,83 @@ from ..monitoring.cpu_stats import create_monitor
 
 logger = logging.getLogger(__name__)
 console = Console()
+
+
+def _process_file_worker(
+    file_path: str,
+    identifier: str,
+    git_metadata: GitMetadata,
+    embedding_model_id: str,
+    chunk_size: int
+) -> List[CodeChunk]:
+    """Process a single file: read, chunk, create metadata.
+
+    This is a module-level function to support pickling for ProcessPoolExecutor.
+
+    Args:
+        file_path: Path to source file
+        identifier: Git project identifier (project#branch)
+        git_metadata: Git metadata for this project
+        embedding_model_id: Embedding model identifier
+        chunk_size: Target chunk size in tokens
+
+    Returns:
+        List of CodeChunk objects with metadata (no embeddings yet)
+    """
+    try:
+        # Create chunker (thread-safe, lightweight)
+        chunker = ASTCodeChunker(chunk_size=chunk_size)
+
+        # Read file
+        with open(file_path, 'r', encoding='utf-8') as f:
+            code = f.read()
+
+        # Chunk with AST
+        chunks = chunker.chunk_code(file_path, code)
+
+        if not chunks:
+            return []
+
+        # Create metadata for each chunk
+        filename = os.path.basename(file_path)
+        file_ext = Path(file_path).suffix
+        language = chunker.detect_language(file_path) or "text"
+
+        code_chunks = []
+        for idx, chunk in enumerate(chunks):
+            metadata = CodeChunkMetadata(
+                git_project_identifier=identifier,
+                file_path=file_path,
+                filename=filename,
+                file_extension=file_ext,
+                programming_language=language,
+                file_size=len(code),
+                line_count=code.count('\n') + 1,
+                chunk_index=idx,
+                chunk_count=len(chunks),
+                text_extraction_method=chunk.method,
+                git_project_root=git_metadata.project_root,
+                git_project_name=git_metadata.project_name,
+                git_branch=git_metadata.branch,
+                git_commit_hash=git_metadata.commit_hash,
+                git_remote_url=git_metadata.remote_url,
+                ast_chunked=(chunk.method != "line_based"),
+                embedding_model=embedding_model_id
+            )
+
+            code_chunk = CodeChunk(
+                content=chunk.content,
+                metadata=metadata
+            )
+
+            code_chunks.append(code_chunk)
+
+        return code_chunks
+
+    except Exception as e:
+        # Log error and return empty list
+        logger.error(f"Error processing {file_path}: {e}")
+        return []
 
 
 class SourceCodeIndexer:
@@ -49,7 +128,10 @@ class SourceCodeIndexer:
         embedding_model_id: str,
         chunk_size: int = 400,
         extensions: Optional[List[str]] = None,
-        vector_name: Optional[str] = None
+        vector_name: Optional[str] = None,
+        parallel_workers: Optional[int] = None,
+        embedding_workers: int = 4,
+        embedding_batch_size: int = 200
     ):
         """Initialize source code indexer.
 
@@ -60,6 +142,9 @@ class SourceCodeIndexer:
             chunk_size: Target chunk size in tokens (400 for 8K, 2K-4K for 32K models)
             extensions: File extensions to index (None = default list)
             vector_name: Name of vector if using named vectors (e.g., "stella")
+            parallel_workers: Number of parallel workers for file processing (None = cpu_count // 2)
+            embedding_workers: Number of parallel workers for embedding generation (default: 4)
+            embedding_batch_size: Batch size for embedding generation (default: 200)
         """
         self.qdrant_indexer = qdrant_indexer
         self.git_discovery = GitProjectDiscovery()
@@ -70,6 +155,17 @@ class SourceCodeIndexer:
         self.embedding_client = embedding_client
         self.embedding_model_id = embedding_model_id
         self.vector_name = vector_name
+        self.chunk_size = chunk_size
+
+        # Configure parallel workers (default: cpu_count // 2 for responsive laptop)
+        if parallel_workers is None:
+            self.parallel_workers = max(1, cpu_count() // 2)
+        else:
+            self.parallel_workers = max(1, parallel_workers)
+
+        # Configure embedding parallelism
+        self.embedding_workers = max(1, embedding_workers)
+        self.embedding_batch_size = max(1, embedding_batch_size)
 
         # Default extensions (15+ languages from RDR-005)
         self.extensions = extensions or [
@@ -324,77 +420,60 @@ class SourceCodeIndexer:
 
         total_files = len(files)
 
-        # Process files with progress updates
+        # Process files in parallel using ProcessPoolExecutor (RDR-013 Phase 2)
+        # Default: cpu_count // 2 for responsive laptop
         all_chunks = []
+        files_processed = 0
 
-        for file_idx, file_path in enumerate(files, 1):
-            try:
+        # Show initial progress
+        if not verbose:
+            print(
+                f"\r[{project_num}/{total_projects}] {identifier}: "
+                f"→ processing {total_files} files (parallel, {self.parallel_workers} workers)" + " " * 20,
+                end="",
+                flush=True,
+                file=sys.stdout
+            )
+
+        with ProcessPoolExecutor(max_workers=self.parallel_workers) as executor:
+            # Submit all file processing jobs
+            future_to_file = {}
+            for file_path in files:
+                future = executor.submit(
+                    _process_file_worker,
+                    file_path,
+                    identifier,
+                    git_metadata,
+                    self.embedding_model_id,
+                    self.chunk_size
+                )
+                future_to_file[future] = file_path
+
+            # Collect results as they complete
+            for future in as_completed(future_to_file):
+                file_path = future_to_file[future]
                 filename = os.path.basename(file_path)
-                chunks_before_file = len(all_chunks)
 
-                # Read file
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    code = f.read()
+                try:
+                    file_chunks = future.result()
+                    if file_chunks:
+                        all_chunks.extend(file_chunks)
+                        files_processed += 1
 
-                # Chunk with AST
-                chunks = self.chunker.chunk_code(file_path, code)
-
-                if not chunks:
+                        # Show incremental progress
+                        if not verbose:
+                            print(
+                                f"\r[{project_num}/{total_projects}] {identifier}: "
+                                f"{files_processed}/{total_files} files ({filename}: {len(file_chunks)})    ",
+                                end="",
+                                flush=True,
+                                file=sys.stdout
+                            )
+                except Exception as e:
+                    logger.error(f"Error processing {file_path}: {e}")
                     continue
 
-                # Create metadata for each chunk
-                filename = os.path.basename(file_path)
-                file_ext = Path(file_path).suffix
-                language = self.chunker.detect_language(file_path) or "text"
-
-                for idx, chunk in enumerate(chunks):
-                    metadata = CodeChunkMetadata(
-                        git_project_identifier=identifier,
-                        file_path=file_path,
-                        filename=filename,
-                        file_extension=file_ext,
-                        programming_language=language,
-                        file_size=len(code),
-                        line_count=code.count('\n') + 1,
-                        chunk_index=idx,
-                        chunk_count=len(chunks),
-                        text_extraction_method=chunk.method,
-                        git_project_root=git_metadata.project_root,
-                        git_project_name=git_metadata.project_name,
-                        git_branch=git_metadata.branch,
-                        git_commit_hash=git_metadata.commit_hash,
-                        git_remote_url=git_metadata.remote_url,
-                        ast_chunked=(chunk.method != "line_based"),
-                        embedding_model=self.embedding_model_id
-                    )
-
-                    code_chunk = CodeChunk(
-                        content=chunk.content,
-                        metadata=metadata
-                    )
-
-                    all_chunks.append(code_chunk)
-
-                self.stats["files_processed"] += 1
-
-                # Calculate chunks for this specific file
-                file_chunks = len(all_chunks) - chunks_before_file
-
-                # Show incremental file progress (every file with filename and its chunk count)
-                if not verbose:
-                    # Use sys.stdout for proper \r overwriting
-                    # Show filename and how many chunks it generated
-                    print(
-                        f"\r[{project_num}/{total_projects}] {identifier}: "
-                        f"{file_idx}/{total_files} files ({filename}: {file_chunks})" + " " * 30,
-                        end="",
-                        flush=True,
-                        file=sys.stdout
-                    )
-
-            except Exception as e:
-                logger.error(f"Error processing {file_path}: {e}")
-                continue
+        self.stats["files_processed"] += files_processed
 
         if not all_chunks:
             logger.info(f"No chunks created for {identifier}")
@@ -402,30 +481,28 @@ class SourceCodeIndexer:
 
         self.stats["chunks_created"] += len(all_chunks)
 
-        # Generate embeddings in batches to avoid hangs
-        # Process 200 chunks at a time for better throughput (Phase 1 RDR-013)
-        EMBEDDING_BATCH_SIZE = 200
-        all_embeddings = []
-
+        # Generate embeddings in parallel batches (Phase 2 RDR-013)
+        # Using embed_parallel() for 2-4x speedup with ThreadPoolExecutor
         total_chunks = len(all_chunks)
-        for batch_start in range(0, total_chunks, EMBEDDING_BATCH_SIZE):
-            batch_end = min(batch_start + EMBEDDING_BATCH_SIZE, total_chunks)
-            batch_chunks = all_chunks[batch_start:batch_end]
 
-            # Show embedding progress
-            if not verbose:
-                print(
-                    f"\r[{project_num}/{total_projects}] {identifier}: "
-                    f"→ embedding {batch_end}/{total_chunks} chunks" + " " * 30,
-                    end="",
-                    flush=True,
-                    file=sys.stdout
-                )
+        # Show embedding progress
+        if not verbose:
+            print(
+                f"\r[{project_num}/{total_projects}] {identifier}: "
+                f"→ embedding {total_chunks} chunks (parallel)" + " " * 30,
+                end="",
+                flush=True,
+                file=sys.stdout
+            )
 
-            # Embed this batch
-            texts = [chunk.content for chunk in batch_chunks]
-            batch_embeddings = self.embedding_client.embed(texts, self.embedding_model_id)
-            all_embeddings.extend(batch_embeddings)
+        # Embed all texts in parallel
+        texts = [chunk.content for chunk in all_chunks]
+        all_embeddings = self.embedding_client.embed_parallel(
+            texts,
+            self.embedding_model_id,
+            max_workers=self.embedding_workers,
+            batch_size=self.embedding_batch_size
+        )
 
         # Attach embeddings to chunks
         for chunk, embedding in zip(all_chunks, all_embeddings):

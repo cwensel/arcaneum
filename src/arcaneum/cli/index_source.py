@@ -10,6 +10,7 @@ from rich.console import Console
 from rich import print as rprint
 
 from .logging_config import setup_logging_default, setup_logging_verbose, setup_logging_debug
+from .utils import set_process_priority
 from arcaneum.indexing.source_code_pipeline import SourceCodeIndexer
 from arcaneum.indexing.qdrant_indexer import QdrantIndexer, create_qdrant_client
 from arcaneum.indexing.collection_metadata import (
@@ -29,7 +30,14 @@ def index_source_command(
     collection: str,
     model: str,
     workers: int,
+    embedding_workers: int,
+    embedding_worker_mult: float,
+    embedding_batch_size: int,
+    file_workers: Optional[int],
+    file_worker_mult: float,
     depth: Optional[int],
+    process_priority: str,
+    max_perf: bool,
     force: bool,
     no_gpu: bool,
     verbose: bool,
@@ -42,8 +50,12 @@ def index_source_command(
         path: Directory containing git repositories
         collection: Target collection name
         model: Embedding model (jina-code, jina-v2-code, stella)
-        workers: Parallel workers (not yet implemented)
+        workers: Parallel workers (deprecated, use file_workers)
+        embedding_workers: Number of parallel workers for embedding generation
+        embedding_batch_size: Batch size for embedding generation
+        file_workers: Number of parallel workers for file processing (None = cpu_count // 2)
         depth: Git discovery depth (None = unlimited)
+        process_priority: Process scheduling priority (low, normal, high)
         force: Force reindex all projects
         no_gpu: Disable GPU acceleration (use CPU only)
         verbose: Verbose output
@@ -65,6 +77,50 @@ def index_source_command(
         setup_logging_default()
 
     logger = logging.getLogger(__name__)
+
+    # Set process priority early
+    set_process_priority(process_priority)
+
+    # Apply --max-perf preset (sets defaults before precedence logic)
+    if max_perf:
+        if embedding_worker_mult is None:
+            embedding_worker_mult = 1.0
+        if file_worker_mult is None:
+            file_worker_mult = 1.0
+        if embedding_batch_size == 200:  # Default value
+            embedding_batch_size = 500
+        if process_priority == "normal":  # Default value
+            process_priority = "low"
+            set_process_priority(process_priority)  # Re-apply with new priority
+
+    # Compute embedding_workers with precedence: absolute → multiplier → default (0.5)
+    from multiprocessing import cpu_count
+    if embedding_workers is not None:
+        # Absolute value specified, use it
+        actual_embedding_workers = max(1, embedding_workers)
+        embedding_worker_source = f"{actual_embedding_workers} (absolute)"
+    elif embedding_worker_mult is not None:
+        # Multiplier specified, compute from cpu_count
+        actual_embedding_workers = max(1, int(cpu_count() * embedding_worker_mult))
+        embedding_worker_source = f"{actual_embedding_workers} (cpu_count × {embedding_worker_mult})"
+    else:
+        # Default: 0.5 multiplier (half of CPU cores)
+        actual_embedding_workers = max(1, int(cpu_count() * 0.5))
+        embedding_worker_source = f"{actual_embedding_workers} (cpu_count × 0.5, default)"
+
+    # Compute file_workers with precedence: absolute → multiplier → default (0.5)
+    if file_workers is not None:
+        # Absolute value specified, use it
+        actual_file_workers = max(1, file_workers)
+        file_worker_source = f"{actual_file_workers} (absolute)"
+    elif file_worker_mult is not None:
+        # Multiplier specified, compute from cpu_count
+        actual_file_workers = max(1, int(cpu_count() * file_worker_mult))
+        file_worker_source = f"{actual_file_workers} (cpu_count × {file_worker_mult})"
+    else:
+        # Default: 0.5 multiplier (half of CPU cores)
+        actual_file_workers = max(1, int(cpu_count() * 0.5))
+        file_worker_source = f"{actual_file_workers} (cpu_count × 0.5, default)"
 
     # Set up signal handler for Ctrl-C
     def signal_handler(sig, frame):
@@ -97,6 +153,32 @@ def index_source_command(
             cache_dir=str(get_models_dir()),
             use_gpu=not no_gpu
         )
+
+        # Show configuration at start (if verbose)
+        if verbose:
+            console.print(f"\n[bold blue]Source Code Indexing Configuration[/bold blue]")
+            console.print(f"  Collection: {collection} (type: code)")
+            console.print(f"  Model: {model}")
+
+            # Show GPU/CPU info
+            device_info = embedding_client.get_device_info()
+            if no_gpu:
+                console.print(f"  Device: CPU (GPU acceleration disabled)")
+            elif device_info['gpu_available']:
+                console.print(f"  [green]Device: {device_info['device'].upper()} (GPU acceleration enabled)[/green]")
+            else:
+                console.print(f"  Device: CPU (GPU not available)")
+
+            # Show parallelism configuration
+            preset_suffix = " [max-perf preset]" if max_perf else ""
+            console.print(f"  File processing: {file_worker_source} workers{preset_suffix}")
+            console.print(f"  Embedding: {embedding_worker_source} workers, batch size {embedding_batch_size}{preset_suffix}")
+
+            # Show process priority
+            if process_priority != "normal":
+                console.print(f"  Process Priority: {process_priority}")
+
+            console.print()
 
         # Check/create collection and determine vector name
         if not qdrant_indexer.collection_exists(collection):
@@ -181,7 +263,10 @@ def index_source_command(
             embedding_client=embedding_client,
             embedding_model_id=model,  # Use model ID (e.g., "jina-code", "stella")
             chunk_size=400,  # 400 tokens for 8K context models
-            vector_name=vector_name  # Use auto-detected or specified vector name
+            vector_name=vector_name,  # Use auto-detected or specified vector name
+            parallel_workers=actual_file_workers,  # File processing parallelism
+            embedding_workers=actual_embedding_workers,  # Embedding generation parallelism
+            embedding_batch_size=embedding_batch_size  # Embedding batch size
         )
 
         # Index directory

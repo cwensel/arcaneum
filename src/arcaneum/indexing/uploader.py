@@ -14,6 +14,7 @@ from .common.sync import MetadataBasedSync, compute_file_hash
 from .pdf.extractor import PDFExtractor
 from .pdf.ocr import OCREngine
 from .pdf.chunker import PDFChunker
+from ..monitoring.cpu_stats import create_monitor
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,11 @@ class PDFBatchUploader:
         """
         # Suppress tokenizers fork warning
         os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
+
+        # Start CPU monitoring (RDR-013 Phase 1)
+        cpu_monitor = create_monitor()
+        if cpu_monitor:
+            cpu_monitor.start()
 
         # Initialize chunker
         chunker = PDFChunker(
@@ -341,12 +347,25 @@ class PDFBatchUploader:
             logger.info(f"Files processed: {stats['files']}")
             logger.info(f"Chunks uploaded: {stats['chunks']}")
             logger.info(f"Errors: {stats['errors']}")
+
+            # Show CPU statistics (RDR-013 Phase 1)
+            if cpu_monitor:
+                logger.info("")
+                cpu_stats = cpu_monitor.get_stats()
+                logger.info(f"CPU usage: {cpu_stats['cpu_percent']:.1f}% total ({cpu_stats['cpu_percent_per_core']:.1f}% per core)")
+                logger.info(f"Threads: {cpu_stats['num_threads']} | Cores: {cpu_stats['num_cores']}")
+                logger.info(f"Elapsed: {cpu_stats['elapsed_time']:.1f}s")
+
             logger.info("=" * 60)
         else:
             # Normal mode: clean summary
             print(f"✅ Indexed {stats['files']} PDFs → {stats['chunks']} chunks")
             if stats['errors'] > 0:
                 print(f"⚠️  {stats['errors']} errors")
+
+            # Show CPU stats in compact mode (RDR-013 Phase 1)
+            if cpu_monitor:
+                print(f"ℹ️  {cpu_monitor.get_summary()}")
 
         return stats
 

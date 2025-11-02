@@ -20,6 +20,7 @@ from .git_metadata_sync import GitMetadataSync
 from .ast_chunker import ASTCodeChunker
 from .qdrant_indexer import QdrantIndexer
 from .types import CodeChunk, CodeChunkMetadata, GitMetadata
+from ..monitoring.cpu_stats import create_monitor
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -116,6 +117,11 @@ class SourceCodeIndexer:
             ... )
             >>> print(f"Indexed {stats['projects_indexed']} projects")
         """
+        # Start CPU monitoring (RDR-013 Phase 1)
+        cpu_monitor = create_monitor()
+        if cpu_monitor:
+            cpu_monitor.start()
+
         # Show configuration at start
         console.print(f"\n[bold blue]Source Code Indexing Configuration[/bold blue]")
         console.print(f"  Collection: {collection_name} (type: code)")
@@ -250,6 +256,14 @@ class SourceCodeIndexer:
             console.print(f"  Files processed: {self.stats['files_processed']}")
             console.print(f"  Chunks created: {self.stats['chunks_created']}")
             console.print(f"  Chunks uploaded: {self.stats['chunks_uploaded']}")
+
+            # Show CPU statistics (RDR-013 Phase 1)
+            if cpu_monitor:
+                console.print(f"\nPerformance:")
+                stats = cpu_monitor.get_stats()
+                console.print(f"  CPU usage: {stats['cpu_percent']:.1f}% total ({stats['cpu_percent_per_core']:.1f}% per core)")
+                console.print(f"  Threads: {stats['num_threads']} | Cores: {stats['num_cores']}")
+                console.print(f"  Elapsed: {stats['elapsed_time']:.1f}s")
         else:
             # RDR-006: Structured completion message
             console.print(
@@ -257,6 +271,10 @@ class SourceCodeIndexer:
                 f"{self.stats['files_processed']} files, "
                 f"{self.stats['chunks_uploaded']} chunks"
             )
+
+            # Show CPU stats in compact mode (RDR-013 Phase 1)
+            if cpu_monitor:
+                console.print(f"[INFO] {cpu_monitor.get_summary()}")
 
         return self.stats
 

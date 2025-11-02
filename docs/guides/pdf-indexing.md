@@ -87,7 +87,9 @@ arc index pdfs <directory> --collection <name> --model <model>
 - `--no-ocr`: Disable OCR (enabled by default for scanned PDFs)
 - `--ocr-language`: OCR language code (eng, fra, spa, deu, etc.) [default: eng]
 - `--force`: Force reindex all files (bypass incremental sync)
-- `--verbose`: Verbose output
+- `--no-gpu`: Disable GPU acceleration (GPU enabled by default for 1.5-3x speedup)
+- `--verbose`: Verbose output (show progress, suppress library warnings)
+- `--debug`: Debug mode (show all library warnings including transformers)
 - `--json`: Output JSON format
 
 ### Examples
@@ -129,6 +131,24 @@ arc index pdfs ./pdfs \
   --json > results.json
 ```
 
+**Disable GPU for CPU-only mode:**
+
+```bash
+arc index pdfs ./pdfs \
+  --collection pdf-docs \
+  --model stella \
+  --no-gpu
+```
+
+**Debug mode (show all warnings):**
+
+```bash
+arc index pdfs ./pdfs \
+  --collection pdf-docs \
+  --model stella \
+  --debug
+```
+
 ## Simplified CLI Scripts
 
 For convenience, use the `bin/arc` wrapper:
@@ -154,16 +174,42 @@ The system automatically tracks indexed files using metadata queries:
 
 To bypass incremental sync and reindex everything, use `--force`.
 
+## GPU Acceleration
+
+GPU acceleration is **enabled by default** for 1.5-3x faster embedding generation:
+
+- **Apple Silicon**: Uses MPS (Metal Performance Shaders) backend
+- **NVIDIA GPUs**: Uses CUDA backend
+- **CPU Fallback**: Automatic when GPU unavailable
+- **Disable**: Use `--no-gpu` flag for CPU-only mode
+
+**Compatible Models** (verified with GPU support):
+- **stella** (recommended) - Full MPS support on Apple Silicon
+- **jina-code** - Full MPS support on Apple Silicon
+- **bge-small**, **bge-base** - CoreML support
+
+**Performance**: 1.5-3x speedup with GPU compared to CPU-only mode.
+
+**When to disable GPU**:
+- Thermal concerns (laptop getting too hot)
+- Battery life (running on battery power)
+- GPU busy with other tasks
+
+```bash
+# Force CPU-only mode
+arc index pdfs ./pdfs --collection docs --model stella --no-gpu
+```
+
 ## Model Selection
 
 Choose the embedding model based on your use case:
 
-| Model | Best For | Chunk Size | Late Chunking |
-|-------|----------|------------|---------------|
-| **stella** | Long documents, general purpose | 768 tokens | ✅ Yes |
-| **bge** | Precision, short documents | 460 tokens | ❌ No |
-| **modernbert** | Long context, recent content | 1536 tokens | ✅ Yes |
-| **jina** | Code + text, multilingual | 1536 tokens | ✅ Yes |
+| Model | Best For | Chunk Size | Late Chunking | GPU Support |
+|-------|----------|------------|---------------|-------------|
+| **stella** | Long documents, general purpose | 768 tokens | ✅ Yes | ✅ MPS |
+| **bge** | Precision, short documents | 460 tokens | ❌ No | ⚠️ CoreML |
+| **modernbert** | Long context, recent content | 1536 tokens | ✅ Yes | ✅ MPS |
+| **jina** | Code + text, multilingual | 1536 tokens | ✅ Yes | ✅ MPS |
 
 ## OCR Configuration
 

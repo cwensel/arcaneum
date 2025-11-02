@@ -9,9 +9,7 @@ import json
 import os
 import signal
 
-# Suppress tokenizers parallelism warning
-os.environ['TOKENIZERS_PARALLELISM'] = 'false'
-
+from .logging_config import setup_logging_default, setup_logging_verbose, setup_logging_debug
 from ..config import load_config, DEFAULT_MODELS
 from ..embeddings.client import EmbeddingClient
 from ..indexing.markdown.pipeline import MarkdownIndexingPipeline
@@ -34,6 +32,7 @@ def index_markdown_command(
     force: bool,
     offline: bool,
     verbose: bool,
+    debug: bool,
     output_json: bool
 ):
     """Index markdown files to Qdrant collection.
@@ -47,6 +46,7 @@ def index_markdown_command(
         force: Force reindex all files
         offline: Use cached models only (no network calls)
         verbose: Verbose output
+        debug: Debug mode (show all library warnings)
         output_json: Output JSON format
     """
     # Enable offline mode if requested
@@ -55,22 +55,13 @@ def index_markdown_command(
         os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
         os.environ['TRANSFORMERS_OFFLINE'] = '1'
 
-    # Setup logging
-    if verbose:
-        logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-        logging.getLogger('httpx').setLevel(logging.WARNING)
-        logging.getLogger('httpcore').setLevel(logging.WARNING)
-        logging.getLogger('qdrant_client').setLevel(logging.INFO)
+    # Setup logging (centralized configuration)
+    if debug:
+        setup_logging_debug()
+    elif verbose:
+        setup_logging_verbose()
     else:
-        logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
-        logging.getLogger('arcaneum').setLevel(logging.WARNING)
-        logging.getLogger('httpx').setLevel(logging.ERROR)
-        logging.getLogger('qdrant_client').setLevel(logging.ERROR)
-        logging.getLogger('fastembed').setLevel(logging.WARNING)
-
-    # Allow HuggingFace/transformers download progress to show through
-    logging.getLogger('transformers').setLevel(logging.WARNING)
-    logging.getLogger('huggingface_hub').setLevel(logging.WARNING)
+        setup_logging_default()
 
     # Set up signal handler for Ctrl-C
     def signal_handler(sig, frame):

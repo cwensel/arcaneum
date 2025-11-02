@@ -107,13 +107,15 @@ def index():
 @click.option('--ocr-language', default='eng', help='OCR language code')
 @click.option('--force', is_flag=True, help='Force reindex all files')
 @click.option('--batch-across-files', is_flag=True, help='Batch uploads across files (faster but less atomic)')
+@click.option('--no-gpu', is_flag=True, help='Disable GPU acceleration (use CPU only)')
 @click.option('--offline', is_flag=True, help='Offline mode (use cached models only, no network)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
+@click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_pdfs(path, collection, model, workers, no_ocr, ocr_language, force, batch_across_files, offline, verbose, output_json):
+def index_pdfs(path, collection, model, workers, no_ocr, ocr_language, force, batch_across_files, no_gpu, offline, verbose, debug, output_json):
     """Index PDF files"""
     from arcaneum.cli.index_pdfs import index_pdfs_command
-    index_pdfs_command(path, collection, model, workers, no_ocr, ocr_language, force, batch_across_files, offline, verbose, output_json)
+    index_pdfs_command(path, collection, model, workers, no_ocr, ocr_language, force, batch_across_files, no_gpu, offline, verbose, debug, output_json)
 
 
 @index.command('source')
@@ -123,12 +125,14 @@ def index_pdfs(path, collection, model, workers, no_ocr, ocr_language, force, ba
 @click.option('--workers', type=int, default=4, help='Parallel workers')
 @click.option('--depth', type=int, help='Git discovery depth')
 @click.option('--force', is_flag=True, help='Force reindex all projects')
+@click.option('--no-gpu', is_flag=True, help='Disable GPU acceleration (use CPU only)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
+@click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_source(path, collection, model, workers, depth, force, verbose, output_json):
+def index_source(path, collection, model, workers, depth, force, no_gpu, verbose, debug, output_json):
     """Index source code"""
     from arcaneum.cli.index_source import index_source_command
-    index_source_command(path, collection, model, workers, depth, force, verbose, output_json)
+    index_source_command(path, collection, model, workers, depth, force, no_gpu, verbose, debug, output_json)
 
 
 @index.command('markdown')
@@ -143,11 +147,12 @@ def index_source(path, collection, model, workers, depth, force, verbose, output
 @click.option('--force', is_flag=True, help='Force reindex all files')
 @click.option('--offline', is_flag=True, help='Offline mode (use cached models only, no network)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
+@click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_markdown(path, collection, model, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, force, offline, verbose, output_json):
+def index_markdown(path, collection, model, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, force, offline, verbose, debug, output_json):
     """Index markdown files"""
     from arcaneum.cli.index_markdown import index_markdown_command
-    index_markdown_command(path, collection, model, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, force, offline, verbose, output_json)
+    index_markdown_command(path, collection, model, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, force, offline, verbose, debug, output_json)
 
 
 @cli.command('store')

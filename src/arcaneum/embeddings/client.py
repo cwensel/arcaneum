@@ -80,22 +80,58 @@ EMBEDDING_MODELS = {
 
 
 class EmbeddingClient:
-    """Manages embedding model instances with caching."""
+    """Manages embedding model instances with caching and GPU acceleration (RDR-013 Phase 2)."""
 
-    def __init__(self, cache_dir: str = None, verify_ssl: bool = True):
+    def __init__(self, cache_dir: str = None, verify_ssl: bool = True, use_gpu: bool = False):
         """Initialize embedding client.
 
         Args:
             cache_dir: Directory to cache downloaded models (defaults to ~/.arcaneum/models)
             verify_ssl: Whether to verify SSL certificates (set False for self-signed certs)
+            use_gpu: Enable GPU acceleration (MPS for Apple Silicon, CUDA for NVIDIA)
+                     Default: False (CPU only for backward compatibility)
 
         Note: SSL configuration must be done before creating EmbeddingClient.
               Use ssl_config.check_and_configure_ssl() or disable_ssl_verification() first.
+
+        GPU Support (RDR-013):
+            - SentenceTransformers models (stella, jina-code): MPS on Apple Silicon, CUDA on NVIDIA
+            - FastEmbed models (bge-*): CoreML on Apple Silicon (partial support)
         """
         self.cache_dir = cache_dir or str(get_models_dir())
         self.verify_ssl = verify_ssl
+        self.use_gpu = use_gpu
+        self._device = self._detect_device() if use_gpu else "cpu"
         os.environ["SENTENCE_TRANSFORMERS_HOME"] = self.cache_dir
         self._models: Dict[str, TextEmbedding] = {}
+
+    def _detect_device(self) -> str:
+        """Detect best available GPU device (RDR-013 Phase 2).
+
+        Returns:
+            "mps" for Apple Silicon, "cuda" for NVIDIA, "cpu" if no GPU available
+        """
+        try:
+            import torch
+            if torch.backends.mps.is_available():
+                return "mps"  # Apple Silicon GPU
+            elif torch.cuda.is_available():
+                return "cuda"  # NVIDIA GPU
+        except ImportError:
+            pass
+        return "cpu"
+
+    def get_device_info(self) -> Dict[str, str]:
+        """Get information about the device being used (RDR-013 Phase 2).
+
+        Returns:
+            Dictionary with device information
+        """
+        return {
+            "device": self._device,
+            "gpu_enabled": self.use_gpu,
+            "gpu_available": self._device != "cpu"
+        }
 
     def get_model(self, model_name: str):
         """Get or initialize embedding model.
@@ -129,12 +165,25 @@ class EmbeddingClient:
                 if not is_cached:
                     print("   Downloading model files...", flush=True, file=sys.stderr)
 
+                # Configure ONNX Runtime providers for GPU (RDR-013 Phase 2)
+                providers = None
+                if self.use_gpu and self._device == "mps":
+                    try:
+                        import onnxruntime as ort
+                        available_providers = ort.get_available_providers()
+                        if "CoreMLExecutionProvider" in available_providers:
+                            providers = ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+                            # Note: Some models may show CoreML warnings but will run in hybrid mode
+                    except Exception:
+                        pass  # Fallback to CPU if CoreML setup fails
+
                 # Use local_files_only if model is cached to prevent network calls
                 # This is the official FastEmbed parameter for offline mode
                 self._models[model_name] = TextEmbedding(
                     model_name=config["name"],
                     cache_dir=self.cache_dir,
-                    local_files_only=is_cached  # Skip network access if cached
+                    local_files_only=is_cached,  # Skip network access if cached
+                    providers=providers  # GPU acceleration if available
                 )
             elif backend == "sentence-transformers":
                 from sentence_transformers import SentenceTransformer
@@ -149,10 +198,12 @@ class EmbeddingClient:
 
                 # SentenceTransformer handles download progress automatically via HuggingFace
                 # Use local_files_only if cached to prevent network calls to HuggingFace Hub
+                # GPU acceleration via device parameter (RDR-013 Phase 2)
                 model_obj = SentenceTransformer(
                     config["name"],
                     cache_folder=self.cache_dir,
-                    local_files_only=is_cached  # Skip HuggingFace Hub check if cached
+                    local_files_only=is_cached,  # Skip HuggingFace Hub check if cached
+                    device=self._device  # "mps", "cuda", or "cpu"
                 )
                 model_obj._backend = "sentence-transformers"
                 self._models[model_name] = model_obj

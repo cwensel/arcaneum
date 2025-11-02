@@ -17,7 +17,9 @@ Index PDFs, markdown, or source code into Qdrant collections for semantic search
 - --model: Embedding model (auto-selected by content type)
 - --workers: Parallel workers (default: 4)
 - --force: Force reindex all files
-- --verbose: Show detailed progress
+- --no-gpu: Disable GPU acceleration (GPU enabled by default)
+- --verbose: Show detailed progress (suppress library warnings)
+- --debug: Show all library warnings including transformers
 - --json: Output in JSON format
 
 **PDF Indexing Options:**
@@ -40,11 +42,20 @@ Index PDFs, markdown, or source code into Qdrant collections for semantic search
 **Examples:**
 
 ```text
+# Basic indexing (GPU enabled by default)
 /index pdfs ~/Documents/Research --collection PDFs --model stella
 /index markdown ~/notes --collection Notes --model stella
 /index source ~/projects/myapp --collection MyCode --model jina-code
+
+# With options
 /index markdown ~/docs --collection Docs --chunk-size 512 --verbose
 /index pdfs ~/scanned-docs --collection Scans --no-ocr --offline
+
+# Force CPU-only mode (disable GPU)
+/index pdfs ~/Documents/Research --collection PDFs --model stella --no-gpu
+
+# Debug mode (show all warnings)
+/index pdfs ~/Documents/Research --collection PDFs --model stella --debug
 ```
 
 **Execution:**
@@ -94,6 +105,20 @@ arc index $ARGUMENTS
 - Source: 100-200 files/second (depends on file size)
 - Batch upload: 100-200 chunks per batch
 - Parallel workers: 4 (adjustable with --workers for PDF/source)
+- **GPU acceleration**: 1.5-3x speedup (enabled by default, use --no-gpu to disable)
+
+**GPU Acceleration:**
+
+GPU acceleration is **enabled by default** for faster embedding generation:
+- **Apple Silicon**: MPS (Metal Performance Shaders) backend
+- **NVIDIA GPUs**: CUDA backend
+- **CPU fallback**: Automatic if GPU unavailable
+- **Disable GPU**: Use --no-gpu flag (for thermal/battery concerns)
+
+**Compatible models** (verified with GPU support):
+- stella (recommended for PDFs/markdown) - Full MPS support
+- jina-code (recommended for source code) - Full MPS support
+- bge-small, bge-base - CoreML support
 
 **Offline Mode:**
 
@@ -108,9 +133,18 @@ Use --offline for corporate proxies or SSL issues:
 - /search semantic - Search indexed content
 - /corpus create - Create both vector + full-text indexes
 
+**Debug Mode:**
+
+Use --debug to troubleshoot indexing issues:
+- Shows all library warnings (including HuggingFace transformers)
+- Displays detailed stack traces
+- Helps diagnose model loading or GPU issues
+- Use --verbose for user-facing progress without library warnings
+
 **Implementation:**
 
 - RDR-004: PDF bulk indexing
 - RDR-005: Git-aware source code indexing
+- RDR-013: Performance optimization with GPU acceleration
 - RDR-014: Markdown content indexing
 - RDR-006: Claude Code integration

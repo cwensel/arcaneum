@@ -100,6 +100,7 @@ arc collection delete pdf-docs --confirm
 ### Basic Usage
 
 ```bash
+# GPU acceleration enabled by default
 arc index pdfs /path/to/pdfs --collection pdf-docs --model stella
 ```
 
@@ -128,6 +129,23 @@ arc index pdfs /path/to/pdfs \
   --collection pdf-docs \
   --model stella \
   --workers 8
+```
+
+### GPU Control
+
+```bash
+# Default: GPU acceleration enabled (MPS on Apple Silicon, CUDA on NVIDIA)
+arc index pdfs /path/to/pdfs --collection pdf-docs --model stella
+
+# Disable GPU for CPU-only mode
+arc index pdfs /path/to/pdfs --collection pdf-docs --model stella --no-gpu
+```
+
+### Debug Mode
+
+```bash
+# Show all library warnings (including HuggingFace transformers)
+arc index pdfs /path/to/pdfs --collection pdf-docs --model stella --debug
 ```
 
 ## Model Selection
@@ -186,8 +204,39 @@ jq '.stats.chunks' results.json
 Most commands support:
 
 - `--json`: Output JSON format (for scripting)
-- `--verbose` / `-v`: Verbose output
+- `--verbose` / `-v`: Verbose output (show progress and stats, suppress library warnings)
+- `--debug`: Debug mode (show all library warnings including transformers)
 - `--help`: Show command help
+
+### Indexing Options
+
+Additional options for `arc index` commands:
+
+- `--no-gpu`: Disable GPU acceleration (GPU enabled by default for MPS/CUDA)
+- `--workers N`: Number of parallel workers (default: 4)
+- `--force`: Force reindex all files (skip incremental sync)
+- `--offline`: Use cached models only (no network calls)
+
+### GPU Acceleration
+
+GPU acceleration is **enabled by default** for embedding generation:
+
+- **Apple Silicon**: Uses MPS (Metal Performance Shaders) backend
+- **NVIDIA GPUs**: Uses CUDA backend
+- **No GPU**: Automatically falls back to CPU
+
+**Performance**: 1.5-3x speedup with GPU for embedding generation.
+
+**Compatible Models** (verified with GPU):
+- `stella` - Full MPS support (recommended for PDFs/markdown)
+- `jina-code` - Full MPS support (recommended for source code)
+- `bge-small` - CoreML support
+- `bge-base` - CoreML support
+
+**Disable GPU** if needed (thermal concerns, battery life, etc.):
+```bash
+arc index pdfs /path/to/pdfs --collection docs --no-gpu
+```
 
 ## Exit Codes
 

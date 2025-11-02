@@ -13,9 +13,9 @@ from pathlib import Path
 import sys
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
-from fastembed import TextEmbedding
 
 from .git_operations import GitProjectDiscovery
+from ..embeddings.client import EmbeddingClient
 from .git_metadata_sync import GitMetadataSync
 from .ast_chunker import ASTCodeChunker
 from .qdrant_indexer import QdrantIndexer
@@ -45,7 +45,8 @@ class SourceCodeIndexer:
     def __init__(
         self,
         qdrant_indexer: QdrantIndexer,
-        embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2",
+        embedding_client: EmbeddingClient,
+        embedding_model_id: str,
         chunk_size: int = 400,
         extensions: Optional[List[str]] = None,
         vector_name: Optional[str] = None
@@ -54,7 +55,8 @@ class SourceCodeIndexer:
 
         Args:
             qdrant_indexer: Configured QdrantIndexer
-            embedding_model: FastEmbed model name
+            embedding_client: EmbeddingClient instance (with GPU support if enabled)
+            embedding_model_id: Model identifier for EmbeddingClient (e.g., "jina-code", "stella")
             chunk_size: Target chunk size in tokens (400 for 8K, 2K-4K for 32K models)
             extensions: File extensions to index (None = default list)
             vector_name: Name of vector if using named vectors (e.g., "stella")
@@ -64,9 +66,9 @@ class SourceCodeIndexer:
         self.chunker = ASTCodeChunker(chunk_size=chunk_size)
         self.sync = GitMetadataSync(qdrant_indexer.client)
 
-        # Initialize embedding model
-        self.embedding_model_name = embedding_model
-        self.embedder = TextEmbedding(model_name=embedding_model)
+        # Use provided embedding client
+        self.embedding_client = embedding_client
+        self.embedding_model_id = embedding_model_id
         self.vector_name = vector_name
 
         # Default extensions (15+ languages from RDR-005)
@@ -125,9 +127,19 @@ class SourceCodeIndexer:
         # Show configuration at start
         console.print(f"\n[bold blue]Source Code Indexing Configuration[/bold blue]")
         console.print(f"  Collection: {collection_name} (type: code)")
-        console.print(f"  Embedding: {self.embedding_model_name}")
+        console.print(f"  Embedding: {self.embedding_model_id}")
         if self.vector_name:
             console.print(f"  Vector: {self.vector_name}")
+
+        # Show device info (GPU enabled by default)
+        device_info = self.embedding_client.get_device_info()
+        if not device_info['gpu_enabled']:
+            console.print(f"  Device: CPU (GPU acceleration disabled)")
+        elif device_info['gpu_available']:
+            console.print(f"  [green]Device: {device_info['device'].upper()} (GPU acceleration enabled)[/green]")
+        else:
+            console.print(f"  Device: CPU (GPU not available)")
+
         console.print(f"  Pipeline: Git Discover → AST Chunk → Embed (batched) → Upload")
         if depth is not None:
             console.print(f"  Depth: {depth}")
@@ -353,7 +365,7 @@ class SourceCodeIndexer:
                         git_commit_hash=git_metadata.commit_hash,
                         git_remote_url=git_metadata.remote_url,
                         ast_chunked=(chunk.method != "line_based"),
-                        embedding_model=self.embedding_model_name
+                        embedding_model=self.embedding_model_id
                     )
 
                     code_chunk = CodeChunk(
@@ -412,12 +424,12 @@ class SourceCodeIndexer:
 
             # Embed this batch
             texts = [chunk.content for chunk in batch_chunks]
-            batch_embeddings = list(self.embedder.embed(texts))
+            batch_embeddings = self.embedding_client.embed(texts, self.embedding_model_id)
             all_embeddings.extend(batch_embeddings)
 
         # Attach embeddings to chunks
         for chunk, embedding in zip(all_chunks, all_embeddings):
-            chunk.embedding = embedding.tolist()
+            chunk.embedding = embedding  # Already a list from EmbeddingClient
 
         # Show upload progress
         if not verbose:

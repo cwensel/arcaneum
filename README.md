@@ -27,10 +27,17 @@ documents and source code with git-aware, AST-based chunking.
 
 ### Multiple Embedding Models
 
-- stella_en_1.5B_v5 (1024D) - High-quality general embeddings
-- modernbert (1024D) - Transformer-based embeddings
+- stella_en_1.5B_v5 (1024D) - High-quality general embeddings (GPU-compatible)
+- modernbert (1024D) - Transformer-based embeddings (GPU-compatible)
 - bge-large-en-v1.5 (1024D) - BGE embeddings
-- jina-code-embeddings (768D/1536D) - Code-optimized embeddings
+- jina-code-embeddings (768D/1536D) - Code-optimized embeddings (GPU-compatible)
+
+### GPU Acceleration
+
+- **Enabled by default** for 1.5-3x faster embedding generation
+- Supports Apple Silicon (MPS) and NVIDIA GPUs (CUDA)
+- Automatic CPU fallback when GPU unavailable
+- Use `--no-gpu` flag to force CPU-only mode
 
 ### CLI-First Design
 

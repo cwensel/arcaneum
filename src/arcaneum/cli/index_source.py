@@ -6,12 +6,10 @@ import logging
 import signal
 from typing import Optional
 
-# Suppress tokenizers parallelism warning
-os.environ['TOKENIZERS_PARALLELISM'] = 'false'
-
 from rich.console import Console
 from rich import print as rprint
 
+from .logging_config import setup_logging_default, setup_logging_verbose, setup_logging_debug
 from arcaneum.indexing.source_code_pipeline import SourceCodeIndexer
 from arcaneum.indexing.qdrant_indexer import QdrantIndexer, create_qdrant_client
 from arcaneum.indexing.collection_metadata import (
@@ -20,6 +18,8 @@ from arcaneum.indexing.collection_metadata import (
     get_vector_names,
     CollectionType
 )
+from arcaneum.embeddings.client import EmbeddingClient
+from arcaneum.paths import get_models_dir
 
 console = Console()
 
@@ -31,7 +31,9 @@ def index_source_command(
     workers: int,
     depth: Optional[int],
     force: bool,
+    no_gpu: bool,
     verbose: bool,
+    debug: bool,
     output_json: bool
 ):
     """Index source code to Qdrant collection (from RDR-005).
@@ -43,7 +45,9 @@ def index_source_command(
         workers: Parallel workers (not yet implemented)
         depth: Git discovery depth (None = unlimited)
         force: Force reindex all projects
+        no_gpu: Disable GPU acceleration (use CPU only)
         verbose: Verbose output
+        debug: Debug mode (show all library warnings)
         output_json: Output JSON format
 
     Note:
@@ -52,29 +56,13 @@ def index_source_command(
         - PYTHONHTTPSVERIFY=0 (disable SSL verification)
         See docs/testing/offline-mode.md for details.
     """
-    # Setup logging - minimal output by default
-    if verbose:
-        # Verbose: Show INFO but not DEBUG (too noisy)
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(levelname)s: %(message)s'
-        )
-        # Suppress DEBUG from libraries
-        logging.getLogger('httpx').setLevel(logging.WARNING)
-        logging.getLogger('httpcore').setLevel(logging.WARNING)
-        logging.getLogger('qdrant_client').setLevel(logging.INFO)
+    # Setup logging (centralized configuration)
+    if debug:
+        setup_logging_debug()
+    elif verbose:
+        setup_logging_verbose()
     else:
-        # Default: Only warnings and errors, no INFO logs
-        logging.basicConfig(
-            level=logging.WARNING,
-            format='%(levelname)s: %(message)s'
-        )
-        # Suppress all library INFO logs
-        logging.getLogger('arcaneum').setLevel(logging.WARNING)
-        logging.getLogger('httpx').setLevel(logging.ERROR)
-        logging.getLogger('qdrant_client').setLevel(logging.ERROR)
-        # Keep fastembed at WARNING to allow download progress bars
-        logging.getLogger('fastembed').setLevel(logging.WARNING)
+        setup_logging_default()
 
     logger = logging.getLogger(__name__)
 
@@ -102,6 +90,13 @@ def index_source_command(
         )
 
         qdrant_indexer = QdrantIndexer(qdrant_client)
+
+        # Create embedding client with GPU support (RDR-013 Phase 2)
+        # GPU enabled by default, disabled with --no-gpu flag
+        embedding_client = EmbeddingClient(
+            cache_dir=str(get_models_dir()),
+            use_gpu=not no_gpu
+        )
 
         # Check/create collection and determine vector name
         if not qdrant_indexer.collection_exists(collection):
@@ -180,10 +175,11 @@ def index_source_command(
                 embedding_model = model_map.get(model, model)
                 console.print(f"[green]✓ Collection '{collection}' exists (type: code)[/green]")
 
-        # Create indexer
+        # Create indexer (pass embedding client for GPU support)
         indexer = SourceCodeIndexer(
             qdrant_indexer=qdrant_indexer,
-            embedding_model=embedding_model,
+            embedding_client=embedding_client,
+            embedding_model_id=model,  # Use model ID (e.g., "jina-code", "stella")
             chunk_size=400,  # 400 tokens for 8K context models
             vector_name=vector_name  # Use auto-detected or specified vector name
         )

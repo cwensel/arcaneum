@@ -10,9 +10,7 @@ import json
 import os
 import signal
 
-# Suppress tokenizers parallelism warning
-os.environ['TOKENIZERS_PARALLELISM'] = 'false'
-
+from .logging_config import setup_logging_default, setup_logging_verbose, setup_logging_debug
 from ..config import load_config, DEFAULT_MODELS
 from ..embeddings.client import EmbeddingClient
 from ..indexing.uploader import PDFBatchUploader
@@ -32,8 +30,10 @@ def index_pdfs_command(
     ocr_language: str,
     force: bool,
     batch_across_files: bool,
+    no_gpu: bool,
     offline: bool,
     verbose: bool,
+    debug: bool,
     output_json: bool
 ):
     """Index PDF files to Qdrant collection.
@@ -46,8 +46,11 @@ def index_pdfs_command(
         no_ocr: Disable OCR (enabled by default)
         ocr_language: OCR language code
         force: Force reindex all files
+        batch_across_files: Batch uploads across files
+        no_gpu: Disable GPU acceleration (use CPU only)
         offline: Use cached models only (no network calls)
         verbose: Verbose output
+        debug: Debug mode (show all library warnings)
         output_json: Output JSON format
 
     Note:
@@ -65,24 +68,13 @@ def index_pdfs_command(
         os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
         os.environ['TRANSFORMERS_OFFLINE'] = '1'
 
-    # Setup logging
-    if verbose:
-        # Verbose: Show INFO but not DEBUG (too noisy)
-        logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-        # Suppress DEBUG from libraries
-        logging.getLogger('httpx').setLevel(logging.WARNING)
-        logging.getLogger('httpcore').setLevel(logging.WARNING)
-        logging.getLogger('qdrant_client').setLevel(logging.INFO)
+    # Setup logging (centralized configuration)
+    if debug:
+        setup_logging_debug()
+    elif verbose:
+        setup_logging_verbose()
     else:
-        # Normal: Clean output, only warnings and errors
-        logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
-
-        # Suppress all INFO logs for clean output
-        logging.getLogger('arcaneum').setLevel(logging.WARNING)
-        logging.getLogger('httpx').setLevel(logging.ERROR)
-        logging.getLogger('qdrant_client').setLevel(logging.ERROR)
-        # Keep fastembed at WARNING to allow download progress bars
-        logging.getLogger('fastembed').setLevel(logging.WARNING)
+        setup_logging_default()
 
     # Set up signal handler for Ctrl-C
     def signal_handler(sig, frame):
@@ -111,7 +103,7 @@ def index_pdfs_command(
         # Initialize clients
         from arcaneum.paths import get_models_dir
         qdrant = QdrantClient(url="http://localhost:6333")
-        embeddings = EmbeddingClient(cache_dir=str(get_models_dir()))
+        embeddings = EmbeddingClient(cache_dir=str(get_models_dir()), use_gpu=not no_gpu)
 
         # Validate collection type (must be 'pdf' or untyped)
         try:
@@ -166,6 +158,16 @@ def index_pdfs_command(
                 console.print(f"    ({model_desc})")
             else:
                 console.print(f"  Embedding: {actual_model}")
+
+            # Show GPU/CPU info
+            device_info = embeddings.get_device_info()
+            if no_gpu:
+                console.print(f"  Device: CPU (GPU acceleration disabled)")
+            elif device_info['gpu_available']:
+                console.print(f"  [green]Device: {device_info['device'].upper()} (GPU acceleration enabled)[/green]")
+            else:
+                console.print(f"  Device: CPU (GPU not available)")
+
             if ocr_enabled:
                 console.print(f"  OCR: tesseract ({ocr_language})")
             else:

@@ -17,11 +17,13 @@ The PDF indexing pipeline supports:
 ### System Dependencies
 
 **macOS:**
+
 ```bash
 brew install tesseract poppler
 ```
 
 **Ubuntu/Debian:**
+
 ```bash
 sudo apt-get install tesseract-ocr tesseract-ocr-eng poppler-utils
 ```
@@ -29,6 +31,7 @@ sudo apt-get install tesseract-ocr tesseract-ocr-eng poppler-utils
 ### Python Dependencies
 
 Already included in `pyproject.toml`:
+
 ```bash
 pip install -e .
 ```
@@ -90,6 +93,7 @@ arc index pdfs <directory> --collection <name> --model <model>
 ### Examples
 
 **Index technical documentation:**
+
 ```bash
 arc index pdfs ./docs \
   --collection tech-docs \
@@ -98,6 +102,7 @@ arc index pdfs ./docs \
 ```
 
 **Index scanned books (OCR enabled by default):**
+
 ```bash
 arc index pdfs ./books \
   --collection book-archive \
@@ -107,6 +112,7 @@ arc index pdfs ./books \
 ```
 
 **Force reindex all PDFs:**
+
 ```bash
 arc index pdfs ./pdfs \
   --collection pdf-docs \
@@ -115,6 +121,7 @@ arc index pdfs ./pdfs \
 ```
 
 **JSON output for scripting:**
+
 ```bash
 arc index pdfs ./pdfs \
   --collection pdf-docs \
@@ -170,14 +177,17 @@ Choose the embedding model based on your use case:
 ### Trigger Logic
 
 OCR is enabled by default and automatically triggered when:
+
 - Extracted text < 100 characters (scanned PDFs)
 
 To disable OCR completely (if all PDFs are machine-generated text):
+
 - Use `--no-ocr` flag
 
 ### Supported Languages
 
 Common language codes:
+
 - `eng` - English
 - `fra` - French
 - `spa` - Spanish
@@ -187,6 +197,7 @@ Common language codes:
 - `jpn` - Japanese
 
 Install additional languages:
+
 ```bash
 # macOS
 brew install tesseract-lang
@@ -205,19 +216,20 @@ sudo apt-get install tesseract-ocr-fra tesseract-ocr-spa
 
 ### Optimization
 
-- **Batch size**: 100-200 chunks per batch (default: 100)
+- **Batch size**: 200-300 chunks per batch (default: 200 for embeddings, 300 for uploads)
 - **Parallel workers**: 4 recommended (default: 4)
-- **HNSW indexing**: Disable during bulk upload (`m=0`), re-enable after
+- **HNSW indexing**: Disable during bulk upload (`m=0`), re-enable after (RDR-013 bulk mode)
 
 ## Troubleshooting
 
 ### Tesseract Not Found
 
-```
+```text
 Error: Tesseract not installed
 ```
 
 **Solution:**
+
 ```bash
 # macOS
 brew install tesseract
@@ -228,11 +240,12 @@ sudo apt-get install tesseract-ocr
 
 ### Poppler Not Found (pdf2image)
 
-```
+```text
 Error: Unable to get page count. Is poppler installed?
 ```
 
 **Solution:**
+
 ```bash
 # macOS
 brew install poppler
@@ -261,16 +274,16 @@ OCR is CPU-intensive (2s per page). To speed up:
 
 ### Pipeline Phases
 
-```
+```text
 Phase 1: PDF Extraction (PyMuPDF + pdfplumber fallback)
     ↓
 Phase 2: OCR Processing (if needed, Tesseract)
     ↓
 Phase 3: Chunking (Traditional or Late Chunking)
     ↓
-Phase 4: Embedding Generation (FastEmbed)
+Phase 4: Embedding Generation (FastEmbed, 200 chunks/batch)
     ↓
-Phase 5: Batch Upload (100-200 chunks, 4 workers)
+Phase 5: Batch Upload (300 chunks/batch, 4 workers, bulk mode)
 ```
 
 ### Modules

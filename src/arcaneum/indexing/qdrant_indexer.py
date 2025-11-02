@@ -16,6 +16,7 @@ from qdrant_client.models import (
     FieldCondition,
     Filter,
     MatchValue,
+    OptimizersConfigDiff,
     PointStruct,
     VectorParams,
 )
@@ -41,7 +42,7 @@ class QdrantIndexer:
     - gRPC support for faster uploads
     """
 
-    DEFAULT_BATCH_SIZE = 150  # Optimized for Qdrant
+    DEFAULT_BATCH_SIZE = 300  # Optimized for Qdrant (Phase 1 RDR-013)
     MAX_RETRIES = 3
     INITIAL_RETRY_WAIT = 1  # seconds
 
@@ -184,7 +185,8 @@ class QdrantIndexer:
         collection_name: str,
         chunks: List[CodeChunk],
         show_progress: bool = False,
-        vector_name: Optional[str] = None
+        vector_name: Optional[str] = None,
+        bulk_mode: bool = False
     ) -> int:
         """Upload multiple chunks in optimized batches.
 
@@ -193,6 +195,7 @@ class QdrantIndexer:
             chunks: List of CodeChunk objects with embeddings
             show_progress: If True, show progress bar (requires tqdm)
             vector_name: Name of vector if using named vectors
+            bulk_mode: If True, disable indexing during upload for 1.3-1.5x speedup (RDR-013)
 
         Returns:
             Total number of chunks uploaded
@@ -200,29 +203,45 @@ class QdrantIndexer:
         if not chunks:
             return 0
 
-        total_uploaded = 0
+        # Enable bulk mode if requested
+        if bulk_mode:
+            self.enable_bulk_mode(collection_name)
 
-        # Optional progress bar
-        if show_progress:
-            try:
-                from tqdm import tqdm
-                chunk_iter = tqdm(
-                    range(0, len(chunks), self.batch_size),
-                    desc="Uploading chunks",
-                    unit="batch"
-                )
-            except ImportError:
+        try:
+            total_uploaded = 0
+
+            # Optional progress bar
+            if show_progress:
+                try:
+                    from tqdm import tqdm
+                    chunk_iter = tqdm(
+                        range(0, len(chunks), self.batch_size),
+                        desc="Uploading chunks",
+                        unit="batch"
+                    )
+                except ImportError:
+                    chunk_iter = range(0, len(chunks), self.batch_size)
+            else:
                 chunk_iter = range(0, len(chunks), self.batch_size)
-        else:
-            chunk_iter = range(0, len(chunks), self.batch_size)
 
-        # Upload in batches
-        for i in chunk_iter:
-            batch = chunks[i:i + self.batch_size]
-            uploaded = self.upload_chunks_batch(collection_name, batch, vector_name=vector_name)
-            total_uploaded += uploaded
+            # Upload in batches with wait=False for bulk mode
+            for i in chunk_iter:
+                batch = chunks[i:i + self.batch_size]
+                uploaded = self.upload_chunks_batch(
+                    collection_name,
+                    batch,
+                    wait=not bulk_mode,  # Don't wait if bulk mode
+                    vector_name=vector_name
+                )
+                total_uploaded += uploaded
 
-        logger.info(f"Uploaded {total_uploaded} chunks in {(total_uploaded + self.batch_size - 1) // self.batch_size} batches")
+            logger.info(f"Uploaded {total_uploaded} chunks in {(total_uploaded + self.batch_size - 1) // self.batch_size} batches")
+
+        finally:
+            # Always disable bulk mode if it was enabled
+            if bulk_mode:
+                self.disable_bulk_mode(collection_name)
+
         return total_uploaded
 
     def create_collection(
@@ -325,6 +344,55 @@ class QdrantIndexer:
         except Exception as e:
             logger.error(f"Error counting chunks: {e}")
             return 0
+
+    def enable_bulk_mode(self, collection_name: str):
+        """Enable bulk upload mode for faster indexing (RDR-013 Phase 1).
+
+        Disables HNSW index construction during bulk uploads by setting
+        indexing_threshold=0. This provides 1.3-1.5x speedup for large uploads.
+        Must call disable_bulk_mode() afterwards to rebuild the index.
+
+        Args:
+            collection_name: Name of collection
+        """
+        logger.info(f"Enabling bulk mode for {collection_name}")
+
+        try:
+            self.client.update_collection(
+                collection_name=collection_name,
+                optimizer_config=OptimizersConfigDiff(
+                    indexing_threshold=0  # Disable indexing during upload
+                )
+            )
+            logger.info(f"Bulk mode enabled for {collection_name}")
+
+        except Exception as e:
+            logger.error(f"Error enabling bulk mode: {e}")
+            raise
+
+    def disable_bulk_mode(self, collection_name: str):
+        """Disable bulk upload mode and rebuild index (RDR-013 Phase 1).
+
+        Re-enables HNSW index construction by restoring indexing_threshold to
+        default (20000). This triggers index rebuild for all uploaded points.
+
+        Args:
+            collection_name: Name of collection
+        """
+        logger.info(f"Disabling bulk mode for {collection_name}, rebuilding index...")
+
+        try:
+            self.client.update_collection(
+                collection_name=collection_name,
+                optimizer_config=OptimizersConfigDiff(
+                    indexing_threshold=20000  # Restore default
+                )
+            )
+            logger.info(f"Bulk mode disabled for {collection_name}, index rebuild complete")
+
+        except Exception as e:
+            logger.error(f"Error disabling bulk mode: {e}")
+            raise
 
     def delete_collection(self, collection_name: str):
         """Delete a collection.

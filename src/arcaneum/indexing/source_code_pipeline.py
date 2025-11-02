@@ -373,8 +373,8 @@ class SourceCodeIndexer:
         self.stats["chunks_created"] += len(all_chunks)
 
         # Generate embeddings in batches to avoid hangs
-        # Process 100 chunks at a time to prevent FastEmbed from hanging
-        EMBEDDING_BATCH_SIZE = 100
+        # Process 200 chunks at a time for better throughput (Phase 1 RDR-013)
+        EMBEDDING_BATCH_SIZE = 200
         all_embeddings = []
 
         total_chunks = len(all_chunks)

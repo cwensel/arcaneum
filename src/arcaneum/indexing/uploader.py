@@ -244,7 +244,7 @@ class PDFBatchUploader:
                         print(f"  → embedding ({file_chunk_count} chunks)", flush=True)
 
                     # Batch embedding locally
-                    EMBEDDING_BATCH_SIZE = 100
+                    EMBEDDING_BATCH_SIZE = 200
                     for batch_start in range(0, file_chunk_count, EMBEDDING_BATCH_SIZE):
                         batch_end = min(batch_start + EMBEDDING_BATCH_SIZE, file_chunk_count)
                         batch_texts = texts[batch_start:batch_end]

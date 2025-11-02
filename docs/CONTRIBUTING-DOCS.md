@@ -122,7 +122,7 @@ Use full URLs for external resources:
 \`\`\`bash
 arc container start
 arc collection create MyCode --model jina-code --type code
-arc index source ~/project --collection MyCode
+arc index code ~/project --collection MyCode
 \`\`\`
 
 ## Advanced Options

@@ -31,7 +31,7 @@ On your target machine:
 
 ```bash
 bin/arc collection create Standards --model stella
-bin/arc index pdfs ./Standards --collection Standards --model stella
+bin/arc index pdf ./Standards --collection Standards --model stella
 ```
 
 Models load from cache - no network access needed!

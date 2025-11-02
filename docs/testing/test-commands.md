@@ -29,13 +29,13 @@ mkdir -p test_pdfs
 # (Add some PDFs to test_pdfs/ or use the generator below)
 
 # 3. Index PDFs
-bin/arc index pdfs ./test_pdfs --collection pdf-test --model stella --verbose
+bin/arc index pdf ./test_pdfs --collection pdf-test --model stella --verbose
 
 # 4. Check results
 bin/arc collection info pdf-test
 
 # 5. Test incremental indexing (should skip already-indexed files)
-bin/arc index pdfs ./test_pdfs --collection pdf-test --model stella
+bin/arc index pdf ./test_pdfs --collection pdf-test --model stella
 ```
 
 ## Generate Test PDF (Optional)

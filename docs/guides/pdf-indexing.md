@@ -53,7 +53,7 @@ arc collection create pdf-docs --model stella --hnsw-m 16 --hnsw-ef 100
 ### 2. Index PDFs
 
 ```bash
-arc index pdfs /path/to/pdfs \
+arc index pdf /path/to/pdfs \
   --collection pdf-docs \
   --model stella \
   --workers 4
@@ -62,7 +62,7 @@ arc index pdfs /path/to/pdfs \
 ### 3. Index PDFs with OCR disabled (if all PDFs are machine-generated text)
 
 ```bash
-arc index pdfs /path/to/text-pdfs \
+arc index pdf /path/to/text-pdfs \
   --collection pdf-docs \
   --model stella \
   --no-ocr \
@@ -76,7 +76,7 @@ arc index pdfs /path/to/text-pdfs \
 ### Basic Command
 
 ```bash
-arc index pdfs <directory> --collection <name> --model <model>
+arc index pdf <directory> --collection <name> --model <model>
 ```
 
 ### Options
@@ -111,7 +111,7 @@ arc index pdfs <directory> --collection <name> --model <model>
 **Index technical documentation:**
 
 ```bash
-arc index pdfs ./docs \
+arc index pdf ./docs \
   --collection tech-docs \
   --model stella \
   --workers 8
@@ -120,7 +120,7 @@ arc index pdfs ./docs \
 **Index scanned books (OCR enabled by default with parallel page processing):**
 
 ```bash
-arc index pdfs ./books \
+arc index pdf ./books \
   --collection book-archive \
   --model stella \
   --ocr-language eng \
@@ -131,7 +131,7 @@ arc index pdfs ./books \
 **Force reindex all PDFs:**
 
 ```bash
-arc index pdfs ./pdfs \
+arc index pdf ./pdfs \
   --collection pdf-docs \
   --model stella \
   --force
@@ -140,7 +140,7 @@ arc index pdfs ./pdfs \
 **JSON output for scripting:**
 
 ```bash
-arc index pdfs ./pdfs \
+arc index pdf ./pdfs \
   --collection pdf-docs \
   --model stella \
   --json > results.json
@@ -149,7 +149,7 @@ arc index pdfs ./pdfs \
 **Disable GPU for CPU-only mode:**
 
 ```bash
-arc index pdfs ./pdfs \
+arc index pdf ./pdfs \
   --collection pdf-docs \
   --model stella \
   --no-gpu
@@ -158,7 +158,7 @@ arc index pdfs ./pdfs \
 **Debug mode (show all warnings):**
 
 ```bash
-arc index pdfs ./pdfs \
+arc index pdf ./pdfs \
   --collection pdf-docs \
   --model stella \
   --debug
@@ -167,7 +167,7 @@ arc index pdfs ./pdfs \
 **Maximum performance (use all CPU cores):**
 
 ```bash
-arc index pdfs ./pdfs \
+arc index pdf ./pdfs \
   --collection pdf-docs \
   --model stella \
   --embedding-worker-mult 1.0 \
@@ -178,7 +178,7 @@ arc index pdfs ./pdfs \
 **Conservative (25% of CPU, good for background processing):**
 
 ```bash
-arc index pdfs ./pdfs \
+arc index pdf ./pdfs \
   --collection pdf-docs \
   --model stella \
   --embedding-worker-mult 0.25 \
@@ -191,10 +191,10 @@ For convenience, use the `bin/arc` wrapper:
 
 ```bash
 # Direct CLI usage (development mode)
-bin/arc index pdfs /path/to/pdfs --collection pdf-docs --model stella
+bin/arc index pdf /path/to/pdfs --collection pdf-docs --model stella
 
 # After pip install
-arc index pdfs /path/to/pdfs --collection pdf-docs --model stella
+arc index pdf /path/to/pdfs --collection pdf-docs --model stella
 
 # Full test script
 ./scripts/test-pdf-indexing.sh
@@ -235,7 +235,7 @@ GPU acceleration is **enabled by default** for 1.5-3x faster embedding generatio
 
 ```bash
 # Force CPU-only mode
-arc index pdfs ./pdfs --collection docs --model stella --no-gpu
+arc index pdf ./pdfs --collection docs --model stella --no-gpu
 ```
 
 ## Model Selection

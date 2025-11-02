@@ -73,12 +73,12 @@ Commands:
 ### Test 2: Check Index PDFs Command
 
 ```bash
-bin/arc index pdfs --help
+bin/arc index pdf --help
 ```
 
 **Expected Output:**
 ```
-Usage: arc index pdfs [OPTIONS] PATH
+Usage: arc index pdf [OPTIONS] PATH
   Index PDF files to Qdrant collection (from RDR-004)
 
 Options:
@@ -153,7 +153,7 @@ EOF
 ### Test 6: Index PDFs (Basic)
 
 ```bash
-bin/arc index pdfs ./test_pdfs --collection pdf-test --model stella --verbose
+bin/arc index pdf ./test_pdfs --collection pdf-test --model stella --verbose
 ```
 
 **Expected Output:**
@@ -213,7 +213,7 @@ Configuration
 ### Test 8: Incremental Indexing (Run Again)
 
 ```bash
-bin/arc index pdfs ./test_pdfs --collection pdf-test --model stella
+bin/arc index pdf ./test_pdfs --collection pdf-test --model stella
 ```
 
 **Expected Output:**
@@ -229,7 +229,7 @@ This proves incremental indexing works!
 ### Test 9: Force Reindex
 
 ```bash
-bin/arc index pdfs ./test_pdfs --collection pdf-test --model stella --force
+bin/arc index pdf ./test_pdfs --collection pdf-test --model stella --force
 ```
 
 **Expected Output:**
@@ -243,7 +243,7 @@ Files processed: 1
 ### Test 10: JSON Output (for Automation)
 
 ```bash
-bin/arc index pdfs ./test_pdfs --collection pdf-test --model stella --json
+bin/arc index pdf ./test_pdfs --collection pdf-test --model stella --json
 ```
 
 **Expected Output:**
@@ -267,7 +267,7 @@ bin/arc index pdfs ./test_pdfs --collection pdf-test --model stella --json
 ```bash
 # Add a scanned PDF to test_pdfs/ first
 # OCR is enabled by default, so no flag needed
-bin/arc index pdfs ./test_pdfs \
+bin/arc index pdf ./test_pdfs \
   --collection pdf-test \
   --model stella \
   --ocr-language eng \
@@ -367,7 +367,7 @@ Once testing is complete, you can:
 1. **Index your real documents:**
    ```bash
    bin/arc collection create my-docs --model stella
-   bin/arc index pdfs /path/to/your/pdfs --collection my-docs --model stella
+   bin/arc index pdf /path/to/your/pdfs --collection my-docs --model stella
    ```
 
 2. **Search your documents** (requires RDR-007 implementation):

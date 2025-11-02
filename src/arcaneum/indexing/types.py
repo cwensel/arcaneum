@@ -80,7 +80,7 @@ class CodeChunkMetadata:
 
     # Embedding metadata
     embedding_model: str = "jina-embeddings-v2-base-code"
-    store_type: str = "source-code"
+    store_type: str = "code"
 
     def to_payload(self) -> dict:
         """Convert to Qdrant payload dictionary.
@@ -135,7 +135,7 @@ class CodeChunkMetadata:
             has_classes=payload.get("has_classes", False),
             has_imports=payload.get("has_imports", False),
             embedding_model=payload.get("embedding_model", "jina-embeddings-v2-base-code"),
-            store_type=payload.get("store_type", "source-code"),
+            store_type=payload.get("store_type", "code"),
         )
 
 

@@ -33,7 +33,8 @@ def _process_file_worker(
     identifier: str,
     git_metadata: GitMetadata,
     embedding_model_id: str,
-    chunk_size: int
+    chunk_size: int,
+    chunk_overlap: int
 ) -> List[CodeChunk]:
     """Process a single file: read, chunk, create metadata.
 
@@ -45,13 +46,14 @@ def _process_file_worker(
         git_metadata: Git metadata for this project
         embedding_model_id: Embedding model identifier
         chunk_size: Target chunk size in tokens
+        chunk_overlap: Overlap between chunks in tokens
 
     Returns:
         List of CodeChunk objects with metadata (no embeddings yet)
     """
     try:
         # Create chunker (thread-safe, lightweight)
-        chunker = ASTCodeChunker(chunk_size=chunk_size)
+        chunker = ASTCodeChunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
 
         # Read file
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -127,6 +129,7 @@ class SourceCodeIndexer:
         embedding_client: EmbeddingClient,
         embedding_model_id: str,
         chunk_size: int = 400,
+        chunk_overlap: int = 20,
         extensions: Optional[List[str]] = None,
         vector_name: Optional[str] = None,
         parallel_workers: Optional[int] = None,
@@ -140,6 +143,7 @@ class SourceCodeIndexer:
             embedding_client: EmbeddingClient instance (with GPU support if enabled)
             embedding_model_id: Model identifier for EmbeddingClient (e.g., "jina-code", "stella")
             chunk_size: Target chunk size in tokens (400 for 8K, 2K-4K for 32K models)
+            chunk_overlap: Overlap between chunks in tokens (default: 20)
             extensions: File extensions to index (None = default list)
             vector_name: Name of vector if using named vectors (e.g., "stella")
             parallel_workers: Number of parallel workers for file processing (None = cpu_count // 2)
@@ -148,7 +152,7 @@ class SourceCodeIndexer:
         """
         self.qdrant_indexer = qdrant_indexer
         self.git_discovery = GitProjectDiscovery()
-        self.chunker = ASTCodeChunker(chunk_size=chunk_size)
+        self.chunker = ASTCodeChunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         self.sync = GitMetadataSync(qdrant_indexer.client)
 
         # Use provided embedding client
@@ -445,7 +449,8 @@ class SourceCodeIndexer:
                     identifier,
                     git_metadata,
                     self.embedding_model_id,
-                    self.chunk_size
+                    self.chunk_size,
+                    self.chunker.chunk_overlap  # Pass chunk_overlap from initialized chunker
                 )
                 future_to_file[future] = file_path
 

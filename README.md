@@ -75,7 +75,7 @@ arc container start
 
 # 4. Index and search your code
 arc collection create MyCode --model jina-code --type code
-arc index source ~/my-project --collection MyCode
+arc index code ~/my-project --collection MyCode
 arc search semantic "authentication logic" --collection MyCode
 ```
 
@@ -92,7 +92,7 @@ arc search semantic "authentication logic" --collection MyCode
 arc collection create MyCode --model jina-code --type code
 
 # Index your project (git-aware, multi-branch)
-arc index source ~/projects/my-app --collection MyCode
+arc index code ~/projects/my-app --collection MyCode
 
 # Search semantically
 arc search semantic "authentication middleware" --collection MyCode --limit 10
@@ -105,10 +105,10 @@ arc search semantic "authentication middleware" --collection MyCode --limit 10
 arc collection create MyDocs --model stella --type pdf
 
 # Index PDFs (with OCR for scanned documents)
-arc index pdfs ~/Documents/papers --collection MyDocs
+arc index pdf ~/Documents/papers --collection MyDocs
 
 # Index with maximum performance (uses all CPU cores)
-arc index pdfs ~/Documents/papers --collection MyDocs --max-perf
+arc index pdf ~/Documents/papers --collection MyDocs --max-perf
 
 # Search for concepts
 arc search semantic "neural network architectures" --collection MyDocs
@@ -252,7 +252,7 @@ Then restart Claude Code to activate the plugin.
 - `/container` - Manage Docker containers (start, stop, status, logs)
 - `/corpus` - Manage dual-index corpora (vector + full-text)
 - `/doctor` - Verify setup and prerequisites
-- `/index` - Index PDFs or source code into collections
+- `/index` - Index PDF, code, or markdown into collections
 - `/models` - List available embedding models
 - `/search` - Semantic or full-text search
 

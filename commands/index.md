@@ -1,15 +1,15 @@
 ---
 description: Index content into collections
-argument-hint: <pdfs|source|markdown> <path> [options]
+argument-hint: <pdf|code|markdown> <path> [options]
 ---
 
 Index PDFs, markdown, or source code into Qdrant collections for semantic search.
 
 **Subcommands:**
 
-- pdfs: Index PDF documents (with OCR support)
+- pdf: Index PDF documents (with OCR support)
 - markdown: Index markdown files (with frontmatter extraction)
-- source: Index source code repositories (git-aware)
+- code: Index source code repositories (git-aware)
 
 **Common Options:**
 
@@ -43,19 +43,19 @@ Index PDFs, markdown, or source code into Qdrant collections for semantic search
 
 ```text
 # Basic indexing (GPU enabled by default)
-/index pdfs ~/Documents/Research --collection PDFs --model stella
+/index pdf ~/Documents/Research --collection PDFs --model stella
 /index markdown ~/notes --collection Notes --model stella
-/index source ~/projects/myapp --collection MyCode --model jina-code
+/index code ~/projects/myapp --collection MyCode --model jina-code
 
 # With options
 /index markdown ~/docs --collection Docs --chunk-size 512 --verbose
-/index pdfs ~/scanned-docs --collection Scans --no-ocr --offline
+/index pdf ~/scanned-docs --collection Scans --no-ocr --offline
 
 # Force CPU-only mode (disable GPU)
-/index pdfs ~/Documents/Research --collection PDFs --model stella --no-gpu
+/index pdf ~/Documents/Research --collection PDFs --model stella --no-gpu
 
 # Debug mode (show all warnings)
-/index pdfs ~/Documents/Research --collection PDFs --model stella --debug
+/index pdf ~/Documents/Research --collection PDFs --model stella --debug
 ```
 
 **Execution:**

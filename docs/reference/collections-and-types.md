@@ -71,15 +71,15 @@ arc collection create docs --model stella --type pdf
 **At Indexing:**
 ```bash
 # ✓ Valid: type matches
-arc index pdfs ~/docs --collection docs
-arc index source ~/projects --collection code
+arc index pdf ~/docs --collection docs
+arc index code ~/projects --collection code
 
 # ✗ Invalid: type mismatch
-arc index pdfs ~/docs --collection code
+arc index pdf ~/docs --collection code
 # Error: Collection 'code' is type 'code', cannot index PDFs
 
-arc index source ~/projects --collection docs
-# Error: Collection 'docs' is type 'pdf', cannot index source code
+arc index code ~/projects --collection docs
+# Error: Collection 'docs' is type 'pdf', cannot index code code
 ```
 
 ### Metadata Schema
@@ -153,7 +153,7 @@ arc index source ~/projects --collection docs
 arc collection create code --model stella --type code
 
 # Index source code
-arc index source ~/projects --collection code
+arc index code ~/projects --collection code
 
 # Search (RDR-007)
 arc search "authentication" --collection code
@@ -186,19 +186,19 @@ arc search text "def authenticate" --index code
 ```bash
 # Personal documents (PDFs)
 arc collection create personal-docs --model stella --type pdf
-arc index pdfs ~/Documents --collection personal-docs
+arc index pdf ~/Documents --collection personal-docs
 
 # Work documents (PDFs)
 arc collection create work-docs --model bge --type pdf
-arc index pdfs ~/Work/PDFs --collection work-docs
+arc index pdf ~/Work/PDFs --collection work-docs
 
 # Personal code
 arc collection create personal-code --model stella --type code
-arc index source ~/Code --collection personal-code
+arc index code ~/Code --collection personal-code
 
 # Work code
 arc collection create work-code --model stella --type code
-arc index source ~/Work/Projects --collection work-code
+arc index code ~/Work/Projects --collection work-code
 ```
 
 ### Multi-Branch Code Collections
@@ -210,12 +210,12 @@ arc collection create my-app --model stella --type code
 # Index main branch
 cd ~/my-app
 git checkout main
-arc index source ~/my-app --collection my-app
+arc index code ~/my-app --collection my-app
 # Stores: my-app#main
 
 # Index feature branch
 git checkout feature-auth
-arc index source ~/my-app --collection my-app
+arc index code ~/my-app --collection my-app
 # Stores: my-app#feature-auth
 
 # Both branches coexist in same collection
@@ -228,9 +228,9 @@ arc index source ~/my-app --collection my-app
 
 ```bash
 ✓ arc collection create docs --model stella --type pdf
-✓ arc index pdfs ~/documents --collection docs
+✓ arc index pdf ~/documents --collection docs
 ✓ arc collection create code --model stella --type code
-✓ arc index source ~/projects --collection code
+✓ arc index code ~/projects --collection code
 ```
 
 ### Type Mismatch Errors
@@ -240,15 +240,15 @@ arc index source ~/my-app --collection my-app
 $ arc collection create docs --model stella --type pdf
 
 # Try to index code into it
-$ arc index source ~/projects --collection docs
-❌ Error: Collection 'docs' is type 'pdf', cannot index source code content.
+$ arc index code ~/projects --collection docs
+❌ Error: Collection 'docs' is type 'pdf', cannot index code code content.
    Create a new collection with --type code.
 
 # Create code collection
 $ arc collection create code --model stella --type code
 
 # Try to index PDFs into it
-$ arc index pdfs ~/documents --collection code
+$ arc index pdf ~/documents --collection code
 ❌ Error: Collection 'code' is type 'code', cannot index pdf content.
    Create a new collection with --type pdf.
 ```
@@ -261,7 +261,7 @@ $ arc collection create old-collection --model stella
 # (no --type flag used)
 
 # First index operation succeeds with warning
-$ arc index source ~/projects --collection old-collection
+$ arc index code ~/projects --collection old-collection
 ⚠️  Warning: Collection 'old-collection' has no type. Allowing code indexing.
     Consider recreating with --type flag.
 ✓ Indexed successfully

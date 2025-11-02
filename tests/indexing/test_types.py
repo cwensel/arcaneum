@@ -117,7 +117,7 @@ class TestCodeChunkMetadata:
         assert metadata.has_classes is False
         assert metadata.has_imports is False
         assert metadata.embedding_model == "jina-embeddings-v2-base-code"
-        assert metadata.store_type == "source-code"
+        assert metadata.store_type == "code"
 
     def test_to_payload(self):
         """Test conversion to Qdrant payload dictionary."""

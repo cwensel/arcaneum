@@ -81,7 +81,7 @@ arc collection create MyCode --model jina-code --type code
 Index a directory of source code:
 
 ```bash
-arc index source ~/my-project --collection MyCode
+arc index code ~/my-project --collection MyCode
 ```
 
 Example output:
@@ -115,10 +115,10 @@ You'll see semantically similar code chunks ranked by relevance!
 arc collection create MyDocs --model stella --type pdf
 
 # Index PDFs (with OCR for scanned documents)
-arc index pdfs ~/Documents/papers --collection MyDocs
+arc index pdf ~/Documents/papers --collection MyDocs
 
 # Index with maximum performance (uses all CPU cores)
-arc index pdfs ~/Documents/papers --collection MyDocs --max-perf
+arc index pdf ~/Documents/papers --collection MyDocs --max-perf
 
 # Search PDFs
 arc search semantic "machine learning techniques" --collection MyDocs
@@ -130,7 +130,7 @@ Arcaneum automatically indexes all branches of git repositories:
 
 ```bash
 # Index with git-aware chunking
-arc index source ~/projects/my-app --collection MyApp
+arc index code ~/projects/my-app --collection MyApp
 
 # Search finds code across all branches
 arc search semantic "payment processing" --collection MyApp
@@ -212,7 +212,7 @@ export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 
 # Then run arc normally
-arc index source ~/code --collection MyCode
+arc index code ~/code --collection MyCode
 ```
 
 **Option 2: Disable SSL Verification**
@@ -260,7 +260,7 @@ arc collection info MyCode
 
 # Check if indexing completed successfully
 # Re-index with --force flag
-arc index source ~/code --collection MyCode --force
+arc index code ~/code --collection MyCode --force
 ```
 
 ## Claude Code Plugin
@@ -285,7 +285,7 @@ All `arc` commands are available as slash commands:
 ```text
 /doctor
 /collection create MyCode --model jina-code --type code
-/index source ~/my-project --collection MyCode
+/index code ~/my-project --collection MyCode
 /search semantic "authentication logic" --collection MyCode
 ```
 
@@ -301,10 +301,10 @@ For maximum performance on batch workloads:
 
 ```bash
 # PDF indexing with all CPU cores
-arc index pdfs ~/Documents --collection MyDocs --max-perf
+arc index pdf ~/Documents --collection MyDocs --max-perf
 
 # Source code indexing with all CPU cores
-arc index source ~/projects --collection MyCode --max-perf
+arc index code ~/projects --collection MyCode --max-perf
 ```
 
 The `--max-perf` preset sets:
@@ -320,15 +320,15 @@ For fine-tuned control, use individual flags:
 
 ```bash
 # Conservative: 25% CPU, good for background processing
-arc index pdfs ~/docs --collection MyDocs \
+arc index pdf ~/docs --collection MyDocs \
   --embedding-worker-mult 0.25 \
   --process-priority low
 
 # Balanced: default settings (50% CPU)
-arc index pdfs ~/docs --collection MyDocs
+arc index pdf ~/docs --collection MyDocs
 
 # Maximum: absolute control over workers
-arc index pdfs ~/docs --collection MyDocs \
+arc index pdf ~/docs --collection MyDocs \
   --embedding-workers 8 \
   --embedding-batch-size 300 \
   --process-priority low
@@ -356,7 +356,7 @@ See the [CLI Reference](cli-reference.md) for complete performance tuning docume
 ### Advanced Features
 
 - **Multiple Models**: Index with different embedding models for different use cases
-- **Incremental Indexing**: Re-run `arc index source` to update only changed files
+- **Incremental Indexing**: Re-run `arc index code` to update only changed files
 - **Branch Tracking**: Automatically track new branches in git repositories
 - **Filter Searches**: Use metadata filters to narrow results
 
@@ -381,8 +381,8 @@ arc collection create NAME --model MODEL --type TYPE
 arc collection delete NAME --confirm
 
 # Indexing
-arc index source PATH --collection NAME
-arc index pdfs PATH --collection NAME
+arc index code PATH --collection NAME
+arc index pdf PATH --collection NAME
 
 # Searching
 arc search semantic "query" --collection NAME

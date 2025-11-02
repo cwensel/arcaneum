@@ -86,8 +86,8 @@ python -c "from sentence_transformers import SentenceTransformer; SentenceTransf
 **Related Commands:**
 
 - /collection create - Create collection with specific model
-- /index pdfs - Index with model selection
-- /index source - Index with model selection
+- /index pdf - Index with model selection
+- /index code - Index with model selection
 
 **Implementation:**
 

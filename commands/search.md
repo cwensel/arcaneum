@@ -67,8 +67,8 @@ Both commands show:
 **Related Commands:**
 
 - /collection list - See available collections
-- /index pdfs - Index PDFs for searching
-- /index source - Index code for searching
+- /index pdf - Index PDFs for searching
+- /index code - Index code for searching
 
 **Implementation:**
 

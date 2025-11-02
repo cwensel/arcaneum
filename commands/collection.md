@@ -47,8 +47,8 @@ Collections should specify a type (pdf or code) to ensure content matches:
 
 **Related Commands:**
 
-- /index pdfs - Index PDFs into a collection
-- /index source - Index source code into a collection
+- /index pdf - Index PDFs into a collection
+- /index code - Index source code into a collection
 - /corpus create - Create both vector and full-text indexes
 
 **Implementation:**

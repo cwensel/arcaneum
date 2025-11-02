@@ -34,6 +34,8 @@ def index_source_command(
     embedding_workers: int,
     embedding_worker_mult: float,
     embedding_batch_size: int,
+    chunk_size: Optional[int],
+    chunk_overlap: Optional[int],
     depth: Optional[int],
     process_priority: str,
     max_perf: bool,
@@ -49,12 +51,16 @@ def index_source_command(
         path: Directory containing git repositories
         collection: Target collection name
         model: Embedding model (jina-code, jina-v2-code, stella)
-        workers: Parallel workers (deprecated, use file_workers)
-        embedding_workers: Number of parallel workers for embedding generation
-        embedding_batch_size: Batch size for embedding generation
         file_workers: Number of parallel workers for file processing (None = cpu_count // 2)
+        file_worker_mult: File worker multiplier
+        embedding_workers: Number of parallel workers for embedding generation
+        embedding_worker_mult: Embedding worker multiplier
+        embedding_batch_size: Batch size for embedding generation
+        chunk_size: Target chunk size in tokens (default: 400)
+        chunk_overlap: Overlap between chunks in tokens (default: 20)
         depth: Git discovery depth (None = unlimited)
         process_priority: Process scheduling priority (low, normal, high)
+        max_perf: Maximum performance preset
         force: Force reindex all projects
         no_gpu: Disable GPU acceleration (use CPU only)
         verbose: Verbose output
@@ -260,7 +266,8 @@ def index_source_command(
             qdrant_indexer=qdrant_indexer,
             embedding_client=embedding_client,
             embedding_model_id=model,  # Use model ID (e.g., "jina-code", "stella")
-            chunk_size=400,  # 400 tokens for 8K context models
+            chunk_size=chunk_size or 400,  # Default: 400 tokens for 8K context models
+            chunk_overlap=chunk_overlap or 20,  # Default: 20 tokens overlap
             vector_name=vector_name,  # Use auto-detected or specified vector name
             parallel_workers=actual_file_workers,  # File processing parallelism
             embedding_workers=actual_embedding_workers,  # Embedding generation parallelism

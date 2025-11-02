@@ -17,7 +17,7 @@ Manage corpora that combine both vector search (Qdrant) and full-text search (Me
 **Create Options:**
 
 - name: Corpus name (required)
-- --type: Corpus type - source-code or pdf (required)
+- --type: Corpus type - code or pdf (required)
 - --models: Embedding models, comma-separated (default: stella,jina)
 
 **Sync Options:**
@@ -32,7 +32,7 @@ Manage corpora that combine both vector search (Qdrant) and full-text search (Me
 ```text
 /corpus create MyDocs --type pdf --models stella
 /corpus sync ~/Documents --corpus MyDocs
-/corpus create CodeBase --type source-code
+/corpus create CodeBase --type code
 /corpus sync ~/projects --corpus CodeBase --file-types .py,.js,.md
 ```
 
@@ -86,8 +86,8 @@ Corpus sync is approximately 2x slower than single-system indexing due to dual u
 **Related Commands:**
 
 - /collection create - Create vector-only collection
-- /index pdfs - Index PDFs to vector only
-- /index source - Index code to vector only
+- /index pdf - Index PDFs to vector only
+- /index code - Index code to vector only
 - /search semantic - Search vector index
 - /search text - Search full-text index
 

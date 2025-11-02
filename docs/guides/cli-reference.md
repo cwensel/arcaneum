@@ -32,8 +32,8 @@ arc collection delete <name>                  # Delete collection
 ### Indexing Commands
 
 ```bash
-arc index pdfs <path> --collection <name>     # Index PDF files
-arc index source <path> --collection <name>   # Index source code
+arc index pdf <path> --collection <name>     # Index PDF files
+arc index code <path> --collection <name>   # Index source code
 ```
 
 ### Search Commands
@@ -101,13 +101,13 @@ arc collection delete pdf-docs --confirm
 
 ```bash
 # GPU acceleration enabled by default
-arc index pdfs /path/to/pdfs --collection pdf-docs --model stella
+arc index pdf /path/to/pdfs --collection pdf-docs --model stella
 ```
 
 ### With OCR
 
 ```bash
-arc index pdfs /path/to/scanned-pdfs \
+arc index pdf /path/to/scanned-pdfs \
   --collection pdf-docs \
   --model stella \
   --ocr-language eng
@@ -116,7 +116,7 @@ arc index pdfs /path/to/scanned-pdfs \
 ### Force Reindex
 
 ```bash
-arc index pdfs /path/to/pdfs \
+arc index pdf /path/to/pdfs \
   --collection pdf-docs \
   --model stella \
   --force
@@ -125,7 +125,7 @@ arc index pdfs /path/to/pdfs \
 ### Parallel Processing
 
 ```bash
-arc index pdfs /path/to/pdfs \
+arc index pdf /path/to/pdfs \
   --collection pdf-docs \
   --model stella \
   --workers 8
@@ -136,7 +136,7 @@ arc index pdfs /path/to/pdfs \
 **Maximum performance (use all CPU cores):**
 
 ```bash
-arc index pdfs /path/to/pdfs \
+arc index pdf /path/to/pdfs \
   --collection pdf-docs \
   --model stella \
   --embedding-worker-mult 1.0 \
@@ -147,7 +147,7 @@ arc index pdfs /path/to/pdfs \
 **Conservative (25% CPU, good for background):**
 
 ```bash
-arc index pdfs /path/to/pdfs \
+arc index pdf /path/to/pdfs \
   --collection pdf-docs \
   --model stella \
   --embedding-worker-mult 0.25 \
@@ -157,7 +157,7 @@ arc index pdfs /path/to/pdfs \
 **Absolute control (set exact worker count):**
 
 ```bash
-arc index pdfs /path/to/pdfs \
+arc index pdf /path/to/pdfs \
   --collection pdf-docs \
   --model stella \
   --embedding-workers 8 \
@@ -168,17 +168,17 @@ arc index pdfs /path/to/pdfs \
 
 ```bash
 # Default: GPU acceleration enabled (MPS on Apple Silicon, CUDA on NVIDIA)
-arc index pdfs /path/to/pdfs --collection pdf-docs --model stella
+arc index pdf /path/to/pdfs --collection pdf-docs --model stella
 
 # Disable GPU for CPU-only mode
-arc index pdfs /path/to/pdfs --collection pdf-docs --model stella --no-gpu
+arc index pdf /path/to/pdfs --collection pdf-docs --model stella --no-gpu
 ```
 
 ### Debug Mode
 
 ```bash
 # Show all library warnings (including HuggingFace transformers)
-arc index pdfs /path/to/pdfs --collection pdf-docs --model stella --debug
+arc index pdf /path/to/pdfs --collection pdf-docs --model stella --debug
 ```
 
 ## Model Selection
@@ -204,19 +204,19 @@ arc container start
 arc collection create my-docs --model stella --type pdf
 
 # 3. Index documents
-arc index pdfs ./documents --collection my-docs --model stella
+arc index pdf ./documents --collection my-docs --model stella
 ```
 
 ### Incremental Updates
 
 ```bash
 # First run: indexes all PDFs
-arc index pdfs ./docs --collection my-docs --model stella
+arc index pdf ./docs --collection my-docs --model stella
 
 # Add new files to ./docs/...
 
 # Second run: only indexes new/modified files
-arc index pdfs ./docs --collection my-docs --model stella
+arc index pdf ./docs --collection my-docs --model stella
 ```
 
 ### JSON Output for Automation
@@ -226,7 +226,7 @@ arc index pdfs ./docs --collection my-docs --model stella
 arc collection list --json | jq '.collections[].name'
 
 # Index with JSON output
-arc index pdfs ./docs --collection my-docs --model stella --json > results.json
+arc index pdf ./docs --collection my-docs --model stella --json > results.json
 
 # Check results
 jq '.stats.chunks' results.json
@@ -285,7 +285,7 @@ GPU acceleration is **enabled by default** for embedding generation:
 **Disable GPU** if needed (thermal concerns, battery life, etc.):
 
 ```bash
-arc index pdfs /path/to/pdfs --collection docs --no-gpu
+arc index pdf /path/to/pdfs --collection docs --no-gpu
 ```
 
 ## Exit Codes

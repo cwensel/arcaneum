@@ -34,7 +34,7 @@ bin/arc collection create pdf-test --model stella --hnsw-m 16 --hnsw-ef 100 || {
 echo ""
 echo "Testing PDF indexing..."
 if [ -d "./test_pdfs" ]; then
-    bin/arc index pdfs ./test_pdfs \
+    bin/arc index pdf ./test_pdfs \
         --collection pdf-test \
         --model stella \
         --workers 4 \

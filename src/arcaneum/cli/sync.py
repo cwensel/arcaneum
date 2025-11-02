@@ -15,7 +15,7 @@ def sync_directory_command(
     error_msg = (
         "The 'sync-directory' command is not yet implemented (RDR-009).\n\n"
         "For now, use 'index-pdfs' instead:\n"
-        f"  bin/arc index pdfs {directory} --collection {corpus} --model stella"
+        f"  bin/arc index pdf {directory} --collection {corpus} --model stella"
     )
 
     if output_json:

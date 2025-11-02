@@ -11,7 +11,7 @@ def create_corpus_command(name: str, corpus_type: str, models: str, output_json:
         "For now, use 'create-collection' instead:\n"
         f"  bin/arc collection create {name} --model stella\n\n"
         "Then index with:\n"
-        f"  bin/arc index pdfs <path> --collection {name} --model stella"
+        f"  bin/arc index pdf <path> --collection {name} --model stella"
     )
 
     if output_json:

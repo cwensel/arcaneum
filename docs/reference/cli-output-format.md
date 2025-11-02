@@ -415,7 +415,7 @@ Claude Code can parse progress messages to track long-running operations.
 Add `--verbose` or `-v` flag to any command for detailed logging:
 
 ```bash
-arc index source /code --collection Code --verbose
+arc index code /code --collection Code --verbose
 ```
 
 This shows:

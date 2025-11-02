@@ -419,7 +419,7 @@ Always test with disposable collections:
 arc collection create test-dev --model stella --type code
 
 # Test indexing with small dataset
-arc index source ~/small-test-repo --collection test-dev
+arc index code ~/small-test-repo --collection test-dev
 
 # Clean up when done
 arc collection delete test-dev --confirm

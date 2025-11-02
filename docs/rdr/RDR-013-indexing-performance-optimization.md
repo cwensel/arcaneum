@@ -2,11 +2,17 @@
 
 ## Metadata
 - **Date**: 2025-10-29
-- **Status**: Recommendation
+- **Implementation Date**: 2025-11-02
+- **Status**: Implemented (Phases 1-2 Complete, Phase 3 Deferred)
 - **Type**: Technical Debt
 - **Priority**: High
-- **Related Issues**: arcaneum-198
-- **Related Tests**: To be created as part of implementation
+- **Related Issues**: arcaneum-198, arcaneum-108, arcaneum-ce28, arcaneum-e4e7, arcaneum-f13e
+- **Related Tests**: Manual testing completed
+- **Implementation Notes**:
+  - ✅ Phase 1 Complete: CPU monitoring, batch size configuration, process priority
+  - ✅ Phase 2 Complete: GPU acceleration (default), parallel embedding generation, file-level parallelism (PDF/source/markdown), parallel OCR
+  - ❌ Phase 2.5 Deferred: Progress bars/ETAs (basic progress implemented, tqdm not added)
+  - ❌ Phase 3 Deferred: Embedding cache, Qdrant bulk mode, metadata sync optimization (future enhancements)
 
 ## Problem Statement
 

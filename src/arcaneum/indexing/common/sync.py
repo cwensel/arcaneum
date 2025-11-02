@@ -176,11 +176,22 @@ class MetadataBasedSync:
 
             # Filter to files not in indexed set
             unindexed = []
-            for file_path in file_list:
+            total_files = len(file_list)
+
+            # Show progress for large file sets
+            show_progress = total_files > 100
+
+            for idx, file_path in enumerate(file_list, 1):
+                if show_progress and idx % 100 == 0:
+                    print(f"\r  Computing hashes: {idx}/{total_files} files...", end="", flush=True)
+
                 file_hash = hash_fn(file_path)
                 # Use absolute path to match how paths are stored during indexing
                 if (str(file_path.absolute()), file_hash) not in indexed:
                     unindexed.append(file_path)
+
+            if show_progress:
+                print(f"\r  Computing hashes: {total_files}/{total_files} files... done")
 
             logger.info(f"Found {len(unindexed)}/{len(file_list)} "
                        f"files to index ({len(file_list) - len(unindexed)} "

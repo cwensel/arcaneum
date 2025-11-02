@@ -93,11 +93,12 @@ arc index pdfs <directory> --collection <name> --model <model>
 
 **Performance Tuning:**
 
+- `--file-workers`: Absolute number of PDF files to process in parallel (overrides multiplier)
+- `--file-worker-mult`: Multiplier of cpu_count for file processing [default: 0.5]
 - `--embedding-workers`: Absolute number of embedding workers (overrides multiplier)
 - `--embedding-worker-mult`: Multiplier of cpu_count for embedding workers [default: 0.5]
 - `--embedding-batch-size`: Batch size for embedding generation [default: 200]
 - `--process-priority`: Process scheduling priority (low/normal/high) [default: normal]
-- `--workers`: Parallel upload workers [default: 4]
 
 **OCR Options:**
 

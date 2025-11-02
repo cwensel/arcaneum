@@ -10,7 +10,8 @@ This module orchestrates the complete markdown indexing workflow:
 
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
 
@@ -31,6 +32,9 @@ class MarkdownIndexingPipeline:
         embedding_client: EmbeddingClient,
         batch_size: int = 100,
         exclude_patterns: List[str] = None,
+        file_workers: int = 1,
+        embedding_workers: int = 4,
+        embedding_batch_size: int = 200,
     ):
         """Initialize markdown indexing pipeline.
 
@@ -39,16 +43,150 @@ class MarkdownIndexingPipeline:
             embedding_client: Embedding client instance
             batch_size: Number of points per upload batch
             exclude_patterns: Patterns to exclude from discovery (default: node_modules, .git, venv)
+            file_workers: Number of markdown files to process in parallel (default: 1)
+            embedding_workers: Number of parallel workers for embedding generation (default: 4)
+            embedding_batch_size: Batch size for embedding generation (default: 200)
         """
         self.qdrant = qdrant_client
         self.embeddings = embedding_client
         self.batch_size = batch_size
+        self.file_workers = file_workers
+        self.embedding_workers = embedding_workers
+        self.embedding_batch_size = embedding_batch_size
 
         # Initialize components with custom or default exclude patterns
         if exclude_patterns is None:
             exclude_patterns = ['**/node_modules/**', '**/.git/**', '**/venv/**']
         self.discovery = MarkdownDiscovery(exclude_patterns=exclude_patterns)
         self.sync = MetadataBasedSync(qdrant_client)
+
+    def _process_single_markdown(
+        self,
+        file_path: Path,
+        collection_name: str,
+        model_name: str,
+        model_config: Dict,
+        chunker: SemanticMarkdownChunker,
+        point_id_start: int,
+        verbose: bool,
+        file_idx: int,
+        total_files: int
+    ) -> Tuple[List[PointStruct], int, Optional[str]]:
+        """Process a single markdown file: read, chunk, embed, create points.
+
+        Args:
+            file_path: Path to markdown file
+            collection_name: Collection name (for metadata)
+            model_name: Embedding model name
+            model_config: Model configuration
+            chunker: SemanticMarkdownChunker instance
+            point_id_start: Starting point ID for this file
+            verbose: Verbose output flag
+            file_idx: Current file index (for progress)
+            total_files: Total number of files (for progress)
+
+        Returns:
+            Tuple of (points list, chunk count, error message or None)
+        """
+        try:
+            # Stage 1: Read and extract metadata
+            if not verbose:
+                print(f"\r[{file_idx}/{total_files}] {file_path.name} → reading{' '*20}", end="", flush=True)
+            else:
+                print(f"\n[{file_idx}/{total_files}] {file_path.name}", flush=True)
+                print(f"  → reading file", flush=True)
+
+            file_metadata = self.discovery.extract_metadata(file_path)
+            content, frontmatter = MarkdownDiscovery.read_file_with_frontmatter(file_path)
+
+            if verbose:
+                print(f"     read {len(content)} chars", flush=True)
+
+            # Build base metadata
+            base_metadata = {
+                'filename': file_metadata.file_name,
+                'file_path': file_metadata.file_path,
+                'file_hash': file_metadata.content_hash,
+                'file_size': file_metadata.file_size,
+                'store_type': 'markdown',
+                'has_frontmatter': file_metadata.has_frontmatter,
+            }
+
+            # Add frontmatter fields if present
+            if file_metadata.has_frontmatter:
+                if file_metadata.title:
+                    base_metadata['title'] = file_metadata.title
+                if file_metadata.author:
+                    base_metadata['author'] = file_metadata.author
+                if file_metadata.tags:
+                    base_metadata['tags'] = file_metadata.tags
+                if file_metadata.category:
+                    base_metadata['category'] = file_metadata.category
+                if file_metadata.project:
+                    base_metadata['project'] = file_metadata.project
+
+            # Stage 2: Chunk the content
+            if not verbose:
+                print(f"\r[{file_idx}/{total_files}] {file_path.name} → chunking ({len(content)} chars){' '*15}", end="", flush=True)
+            else:
+                print(f"  → chunking ({len(content)} chars)", flush=True)
+
+            chunks = chunker.chunk(content, base_metadata)
+            file_chunk_count = len(chunks)
+
+            if verbose:
+                print(f"     created {file_chunk_count} chunks", flush=True)
+
+            # Stage 3: Generate embeddings (parallel)
+            texts = [chunk.text for chunk in chunks]
+
+            if not verbose:
+                print(f"\r[{file_idx}/{total_files}] {file_path.name} → embedding ({file_chunk_count} chunks){' '*15}", end="", flush=True)
+            else:
+                print(f"  → embedding ({file_chunk_count} chunks)", flush=True)
+
+            # Generate embeddings in parallel using ThreadPoolExecutor
+            embeddings = self.embeddings.embed_parallel(
+                texts,
+                model_name,
+                max_workers=self.embedding_workers,
+                batch_size=self.embedding_batch_size
+            )
+
+            if verbose:
+                print(f"     embedded {file_chunk_count} chunks", flush=True)
+
+            # Stage 4: Create points
+            points = []
+            point_id = point_id_start
+            for chunk, embedding in zip(chunks, embeddings):
+                payload = {
+                    **chunk.metadata,
+                    'text': chunk.text,
+                }
+
+                # Handle named vectors if needed
+                vector_name = model_config.get('vector_name')
+                if vector_name:
+                    vector = {vector_name: embedding}
+                else:
+                    vector = embedding
+
+                point = PointStruct(
+                    id=point_id,
+                    vector=vector,
+                    payload=payload
+                )
+
+                points.append(point)
+                point_id += 1
+
+            return (points, file_chunk_count, None)
+
+        except Exception as e:
+            error_msg = str(e)
+            error_type = type(e).__name__
+            return ([], 0, f"{error_type}: {error_msg}")
 
     def index_directory(
         self,
@@ -142,157 +280,117 @@ class MarkdownIndexingPipeline:
             print(f"✓ Model ready", flush=True)
             print()
 
-        # Process files with progress tracking
-        batch = []
+        # Process files with optional parallel processing (arcaneum-ce28)
         point_id = self._get_next_point_id(collection_name)
         stats = {"files": 0, "chunks": 0, "errors": 0}
 
         try:
             total_files = len(markdown_files)
 
-            for file_idx, file_path in enumerate(markdown_files, 1):
-                try:
-                    # Stage 1: Read and extract metadata
-                    if not verbose:
-                        print(f"\r[{file_idx}/{total_files}] {file_path.name} → reading{' '*20}", end="", flush=True)
-                    else:
-                        print(f"\n[{file_idx}/{total_files}] {file_path.name}", flush=True)
-                        print(f"  → reading file", flush=True)
+            # Use parallel processing if file_workers > 1
+            if self.file_workers > 1:
+                # Parallel mode: Use ThreadPoolExecutor to process multiple files concurrently
+                # Pre-allocate point ID ranges (generous allocation: 500 chunks per file)
+                point_id_step = 500
 
-                    file_metadata = self.discovery.extract_metadata(file_path)
-                    content, frontmatter = MarkdownDiscovery.read_file_with_frontmatter(file_path)
-
-                    if verbose:
-                        print(f"     read {len(content)} chars", flush=True)
-
-                    # Build base metadata
-                    base_metadata = {
-                        'filename': file_metadata.file_name,
-                        'file_path': file_metadata.file_path,
-                        'file_hash': file_metadata.content_hash,
-                        'file_size': file_metadata.file_size,
-                        'store_type': 'markdown',
-                        'has_frontmatter': file_metadata.has_frontmatter,
-                    }
-
-                    # Add frontmatter fields if present
-                    if file_metadata.has_frontmatter:
-                        if file_metadata.title:
-                            base_metadata['title'] = file_metadata.title
-                        if file_metadata.author:
-                            base_metadata['author'] = file_metadata.author
-                        if file_metadata.tags:
-                            base_metadata['tags'] = file_metadata.tags
-                        if file_metadata.category:
-                            base_metadata['category'] = file_metadata.category
-                        if file_metadata.project:
-                            base_metadata['project'] = file_metadata.project
-
-                    # Stage 2: Chunk the content
-                    if not verbose:
-                        print(f"\r[{file_idx}/{total_files}] {file_path.name} → chunking ({len(content)} chars){' '*15}", end="", flush=True)
-                    else:
-                        print(f"  → chunking ({len(content)} chars)", flush=True)
-
-                    chunks = chunker.chunk(content, base_metadata)
-                    file_chunk_count = len(chunks)
-
-                    if verbose:
-                        print(f"     created {file_chunk_count} chunks", flush=True)
-
-                    # Stage 3: Generate embeddings
-                    texts = [chunk.text for chunk in chunks]
-
-                    if not verbose:
-                        print(f"\r[{file_idx}/{total_files}] {file_path.name} → embedding ({file_chunk_count} chunks){' '*15}", end="", flush=True)
-                    else:
-                        print(f"  → embedding ({file_chunk_count} chunks)", flush=True)
-
-                    # Batch embedding with progress updates
-                    EMBEDDING_BATCH_SIZE = 100
-                    embeddings = []
-                    for batch_start in range(0, file_chunk_count, EMBEDDING_BATCH_SIZE):
-                        batch_end = min(batch_start + EMBEDDING_BATCH_SIZE, file_chunk_count)
-                        batch_texts = texts[batch_start:batch_end]
-                        batch_embeddings = self.embeddings.embed(batch_texts, model_name)
-                        embeddings.extend(batch_embeddings)
-
-                        # Show progress for large files
-                        if not verbose and file_chunk_count > EMBEDDING_BATCH_SIZE:
-                            progress_line = f"[{file_idx}/{total_files}] {file_path.name} → embedding {batch_end}/{file_chunk_count}"
-                            print(f"\r{progress_line:<80}", end="", flush=True)
-                        elif verbose and file_chunk_count > EMBEDDING_BATCH_SIZE:
-                            print(f"     embedding {batch_end}/{file_chunk_count}", flush=True)
-
-                    if verbose and file_chunk_count <= EMBEDDING_BATCH_SIZE:
-                        print(f"     embedded {file_chunk_count} chunks", flush=True)
-
-                    # Stage 4: Create points and upload
-                    if not verbose:
-                        print(f"\r[{file_idx}/{total_files}] {file_path.name} → uploading ({file_chunk_count} chunks){' '*15}", end="", flush=True)
-                    else:
-                        print(f"  → uploading ({file_chunk_count} chunks)", flush=True)
-
-                    for chunk, embedding in zip(chunks, embeddings):
-                        payload = {
-                            **chunk.metadata,
-                            'text': chunk.text,
-                        }
-
-                        # Handle named vectors if needed
-                        vector_name = model_config.get('vector_name')
-                        if vector_name:
-                            vector = {vector_name: embedding}
-                        else:
-                            vector = embedding
-
-                        point = PointStruct(
-                            id=point_id,
-                            vector=vector,
-                            payload=payload
+                with ThreadPoolExecutor(max_workers=self.file_workers) as executor:
+                    # Submit all file processing jobs
+                    future_to_file = {}
+                    for file_idx, file_path in enumerate(markdown_files, 1):
+                        future = executor.submit(
+                            self._process_single_markdown,
+                            file_path,
+                            collection_name,
+                            model_name,
+                            model_config,
+                            chunker,
+                            point_id + (file_idx - 1) * point_id_step,
+                            verbose,
+                            file_idx,
+                            total_files
                         )
+                        future_to_file[future] = (file_idx, file_path)
 
-                        batch.append(point)
-                        point_id += 1
+                    # Collect results as they complete and upload
+                    for future in as_completed(future_to_file):
+                        file_idx, file_path = future_to_file[future]
+                        points, file_chunk_count, error = future.result()
 
-                        # Upload batch if full
-                        if len(batch) >= self.batch_size:
+                        if error:
+                            # Show error
+                            if not verbose:
+                                status_line = f"[{file_idx}/{total_files}] {file_path.name} ✗ ({error.split(':')[0]})"
+                                print(f"\r{status_line:<80}")
+                            else:
+                                print(f"  ✗ ERROR: {error}", flush=True)
+                            stats["errors"] += 1
+                        else:
+                            # Upload this file's chunks
+                            if points:
+                                if not verbose:
+                                    print(f"\r[{file_idx}/{total_files}] {file_path.name} → uploading ({len(points)} chunks){' '*15}", end="", flush=True)
+                                else:
+                                    print(f"  → uploading ({len(points)} chunks)", flush=True)
+
+                                self.qdrant.upsert(
+                                    collection_name=collection_name,
+                                    points=points
+                                )
+                                stats["chunks"] += len(points)
+                                stats["files"] += 1
+
+                                # Complete
+                                if not verbose:
+                                    status_line = f"[{file_idx}/{total_files}] {file_path.name} ✓ ({file_chunk_count} chunks)"
+                                    print(f"\r{status_line:<80}")
+                                else:
+                                    print(f"  ✓ complete ({file_chunk_count} chunks)", flush=True)
+
+            else:
+                # Sequential mode: Process files one at a time
+                for file_idx, file_path in enumerate(markdown_files, 1):
+                    points, file_chunk_count, error = self._process_single_markdown(
+                        file_path,
+                        collection_name,
+                        model_name,
+                        model_config,
+                        chunker,
+                        point_id,
+                        verbose,
+                        file_idx,
+                        total_files
+                    )
+
+                    if error:
+                        # Show error
+                        if not verbose:
+                            status_line = f"[{file_idx}/{total_files}] {file_path.name} ✗ ({error.split(':')[0]})"
+                            print(f"\r{status_line:<80}")
+                        else:
+                            print(f"  ✗ ERROR: {error}", flush=True)
+                        stats["errors"] += 1
+                    else:
+                        # Upload this file's chunks
+                        if points:
+                            if not verbose:
+                                print(f"\r[{file_idx}/{total_files}] {file_path.name} → uploading ({len(points)} chunks){' '*15}", end="", flush=True)
+                            else:
+                                print(f"  → uploading ({len(points)} chunks)", flush=True)
+
                             self.qdrant.upsert(
                                 collection_name=collection_name,
-                                points=batch
+                                points=points
                             )
-                            stats["chunks"] += len(batch)
-                            batch = []
+                            stats["chunks"] += len(points)
+                            stats["files"] += 1
+                            point_id += len(points)
 
-                    stats["files"] += 1
-
-                    # Stage 5: Complete
-                    if not verbose:
-                        status_line = f"[{file_idx}/{total_files}] {file_path.name} ✓ ({file_chunk_count} chunks)"
-                        print(f"\r{status_line:<80}")
-                    else:
-                        print(f"  ✓ complete ({file_chunk_count} chunks)", flush=True)
-
-                except Exception as e:
-                    stats["errors"] += 1
-                    logger.error(f"Error processing {file_path}: {e}")
-                    error_type = type(e).__name__
-                    if not verbose:
-                        status_line = f"[{file_idx}/{total_files}] {file_path.name} ✗ ({error_type})"
-                        print(f"\r{status_line:<80}")
-                    else:
-                        print(f"  ✗ ERROR: {e}", flush=True)
-                    continue
-
-            # Upload final batch
-            if batch:
-                print(f"\n→ Uploading final batch ({len(batch)} chunks)", flush=True)
-                self.qdrant.upsert(
-                    collection_name=collection_name,
-                    points=batch
-                )
-                stats["chunks"] += len(batch)
-                print(f"  ✓ Final batch uploaded", flush=True)
+                            # Complete
+                            if not verbose:
+                                status_line = f"[{file_idx}/{total_files}] {file_path.name} ✓ ({file_chunk_count} chunks)"
+                                print(f"\r{status_line:<80}")
+                            else:
+                                print(f"  ✓ complete ({file_chunk_count} chunks)", flush=True)
 
             # Summary
             if verbose:
@@ -356,9 +454,14 @@ class MarkdownIndexingPipeline:
         # Chunk content
         chunks = chunker.chunk(content, base_metadata)
 
-        # Generate embeddings
+        # Generate embeddings (parallel)
         texts = [chunk.text for chunk in chunks]
-        embeddings = self.embeddings.embed(texts, model_name)
+        embeddings = self.embeddings.embed_parallel(
+            texts,
+            model_name,
+            max_workers=self.embedding_workers,
+            batch_size=self.embedding_batch_size
+        )
 
         # Create points
         point_id = self._get_next_point_id(collection_name)

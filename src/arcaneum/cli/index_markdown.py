@@ -24,12 +24,20 @@ def index_markdown_command(
     path: str,
     collection: str,
     model: str,
+    file_workers: int,
+    file_worker_mult: float,
+    embedding_workers: int,
+    embedding_worker_mult: float,
+    embedding_batch_size: int,
     chunk_size: int,
     chunk_overlap: int,
     recursive: bool,
     exclude: tuple,
     qdrant_url: str,
+    process_priority: str,
+    max_perf: bool,
     force: bool,
+    no_gpu: bool,
     offline: bool,
     verbose: bool,
     debug: bool,
@@ -41,14 +49,67 @@ def index_markdown_command(
         path: Directory containing markdown files
         collection: Target collection name
         model: Embedding model to use
+        file_workers: Number of files to process in parallel
+        file_worker_mult: File worker multiplier
+        embedding_workers: Parallel workers for embedding generation
+        embedding_worker_mult: Embedding worker multiplier
+        embedding_batch_size: Batch size for embedding generation
         chunk_size: Target chunk size in tokens
         chunk_overlap: Overlap between chunks in tokens
+        process_priority: Process scheduling priority
+        max_perf: Maximum performance preset
         force: Force reindex all files
+        no_gpu: Disable GPU acceleration
         offline: Use cached models only (no network calls)
         verbose: Verbose output
         debug: Debug mode (show all library warnings)
         output_json: Output JSON format
     """
+    # Import utilities
+    from .utils import set_process_priority
+
+    # Set process priority early
+    set_process_priority(process_priority)
+
+    # Apply --max-perf preset (sets defaults before precedence logic)
+    if max_perf:
+        if embedding_worker_mult is None:
+            embedding_worker_mult = 1.0
+        if embedding_batch_size == 200:  # Default value
+            embedding_batch_size = 500
+        if process_priority == "normal":  # Default value
+            process_priority = "low"
+            set_process_priority(process_priority)  # Re-apply with new priority
+
+    # Compute file_workers with precedence: absolute → multiplier → default (1)
+    from multiprocessing import cpu_count
+    if file_workers is not None:
+        # Absolute value specified, use it
+        actual_file_workers = max(1, file_workers)
+        file_worker_source = f"{actual_file_workers} (absolute)"
+    elif file_worker_mult is not None:
+        # Multiplier specified, compute from cpu_count
+        actual_file_workers = max(1, int(cpu_count() * file_worker_mult))
+        file_worker_source = f"{actual_file_workers} (cpu_count × {file_worker_mult})"
+    else:
+        # Default: 1 worker (sequential processing)
+        actual_file_workers = 1
+        file_worker_source = f"{actual_file_workers} (default, sequential)"
+
+    # Compute embedding_workers with precedence: absolute → multiplier → default (0.5)
+    if embedding_workers is not None:
+        # Absolute value specified, use it
+        actual_embedding_workers = max(1, embedding_workers)
+        embedding_worker_source = f"{actual_embedding_workers} (absolute)"
+    elif embedding_worker_mult is not None:
+        # Multiplier specified, compute from cpu_count
+        actual_embedding_workers = max(1, int(cpu_count() * embedding_worker_mult))
+        embedding_worker_source = f"{actual_embedding_workers} (cpu_count × {embedding_worker_mult})"
+    else:
+        # Default: 0.5 multiplier (half of CPU cores)
+        actual_embedding_workers = max(1, int(cpu_count() * 0.5))
+        embedding_worker_source = f"{actual_embedding_workers} (cpu_count × 0.5, default)"
+
     # Enable offline mode if requested
     if offline:
         os.environ['HF_HUB_OFFLINE'] = '1'
@@ -89,7 +150,7 @@ def index_markdown_command(
         # Initialize clients
         from arcaneum.paths import get_models_dir
         qdrant = QdrantClient(url=qdrant_url)
-        embeddings = EmbeddingClient(cache_dir=str(get_models_dir()))
+        embeddings = EmbeddingClient(cache_dir=str(get_models_dir()), use_gpu=not no_gpu)
 
         # Validate collection type (must be 'markdown' or untyped)
         try:
@@ -119,12 +180,15 @@ def index_markdown_command(
             if pattern not in exclude_patterns:
                 exclude_patterns.append(pattern)
 
-        # Create pipeline with custom exclude patterns
+        # Create pipeline with custom exclude patterns and worker configuration
         pipeline = MarkdownIndexingPipeline(
             qdrant_client=qdrant,
             embedding_client=embeddings,
             batch_size=100,
             exclude_patterns=exclude_patterns,
+            file_workers=actual_file_workers,
+            embedding_workers=actual_embedding_workers,
+            embedding_batch_size=embedding_batch_size,
         )
 
         # Show configuration
@@ -140,9 +204,32 @@ def index_markdown_command(
                 console.print(f"    ({model_desc})")
             else:
                 console.print(f"  Model: {actual_model}")
+
+            # Show GPU/CPU info
+            device_info = embeddings.get_device_info()
+            if no_gpu:
+                console.print(f"  Device: CPU (GPU acceleration disabled)")
+            elif device_info['gpu_available']:
+                console.print(f"  [green]Device: {device_info['device'].upper()} (GPU acceleration enabled)[/green]")
+            else:
+                console.print(f"  Device: CPU (GPU not available)")
+
+            # Show parallelism configuration
+            preset_suffix = " [max-perf preset]" if max_perf else ""
+            console.print(f"  File processing: {file_worker_source} workers{preset_suffix} (sequential, parallelism planned)")
+            console.print(f"  Embedding: {embedding_worker_source} workers, batch size {embedding_batch_size}{preset_suffix}")
+
             console.print(f"  Chunk size: {model_dict['chunk_size']} tokens")
             console.print(f"  Chunk overlap: {model_dict['chunk_overlap']} tokens")
             console.print(f"  Mode: {'Force reindex' if force else 'Incremental sync'}")
+
+            # Show process priority
+            if process_priority != "normal":
+                console.print(f"  Process Priority: {process_priority}")
+
+            if offline or os.environ.get('HF_HUB_OFFLINE') == '1':
+                console.print(f"  [yellow]Mode: Offline (cached models only)[/yellow]")
+
             console.print()
 
         # Index directory

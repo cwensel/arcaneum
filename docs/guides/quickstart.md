@@ -309,9 +309,10 @@ arc index source ~/projects --collection MyCode --max-perf
 
 The `--max-perf` preset sets:
 
-- All CPU cores for parallel processing (embedding and file workers)
+- All CPU cores for parallel embedding generation (via --embedding-worker-mult 1.0)
 - Large batch sizes (500 chunks) for better throughput
 - Low process priority (background processing, won't impact UI responsiveness)
+- File workers are NOT changed by --max-perf (defaults to 1 for sequential processing)
 
 ### Advanced: Granular Control
 
@@ -338,8 +339,8 @@ arc index pdfs ~/docs --collection MyDocs \
 - `--embedding-workers N`: Absolute number of embedding workers
 - `--embedding-worker-mult FLOAT`: Multiplier of cpu_count (e.g., 0.5 = half cores, 1.0 = all cores)
 - `--embedding-batch-size N`: Batch size for embeddings (default: 200, max-perf: 500)
-- `--file-workers N`: File processing workers (source code only)
-- `--file-worker-mult FLOAT`: File worker multiplier (source code only)
+- `--file-workers N`: Number of files to process in parallel (default: 1)
+- `--file-worker-mult FLOAT`: File worker multiplier (overridden by --file-workers)
 - `--process-priority low|normal|high`: OS scheduling priority
 
 See the [CLI Reference](cli-reference.md) for complete performance tuning documentation.

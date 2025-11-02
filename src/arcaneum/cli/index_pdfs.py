@@ -26,7 +26,8 @@ def index_pdfs_command(
     path: str,
     collection: str,
     model: str,
-    workers: int,
+    file_workers: int,
+    file_worker_mult: float,
     embedding_workers: int,
     embedding_worker_mult: float,
     embedding_batch_size: int,
@@ -86,20 +87,34 @@ def index_pdfs_command(
             process_priority = "low"
             set_process_priority(process_priority)  # Re-apply with new priority
 
-    # Compute embedding_workers with precedence: absolute → multiplier → default (0.5)
+    # Compute file_workers with precedence: absolute → multiplier → default (1)
     from multiprocessing import cpu_count
+    if file_workers is not None:
+        # Absolute value specified, use it
+        actual_file_workers = max(1, file_workers)
+        file_worker_source = f"{actual_file_workers} (absolute)"
+    elif file_worker_mult is not None:
+        # Multiplier specified, compute from cpu_count
+        actual_file_workers = max(1, int(cpu_count() * file_worker_mult))
+        file_worker_source = f"{actual_file_workers} (cpu_count × {file_worker_mult})"
+    else:
+        # Default: 1 worker (sequential processing)
+        actual_file_workers = 1
+        file_worker_source = f"{actual_file_workers} (default, sequential)"
+
+    # Compute embedding_workers with precedence: absolute → multiplier → default (0.5)
     if embedding_workers is not None:
         # Absolute value specified, use it
         actual_embedding_workers = max(1, embedding_workers)
-        worker_source = f"{actual_embedding_workers} (absolute)"
+        embedding_worker_source = f"{actual_embedding_workers} (absolute)"
     elif embedding_worker_mult is not None:
         # Multiplier specified, compute from cpu_count
         actual_embedding_workers = max(1, int(cpu_count() * embedding_worker_mult))
-        worker_source = f"{actual_embedding_workers} (cpu_count × {embedding_worker_mult})"
+        embedding_worker_source = f"{actual_embedding_workers} (cpu_count × {embedding_worker_mult})"
     else:
         # Default: 0.5 multiplier (half of CPU cores)
         actual_embedding_workers = max(1, int(cpu_count() * 0.5))
-        worker_source = f"{actual_embedding_workers} (cpu_count × 0.5, default)"
+        embedding_worker_source = f"{actual_embedding_workers} (cpu_count × 0.5, default)"
 
     # Enable offline mode if requested (blocks all HuggingFace network calls)
     if offline:
@@ -154,12 +169,12 @@ def index_pdfs_command(
                 console.print(f"[red]❌ {e}[/red]")
             sys.exit(1)
 
-        # Create uploader
+        # Create uploader with file parallelism (arcaneum-108)
         uploader = PDFBatchUploader(
             qdrant_client=qdrant,
             embedding_client=embeddings,
             batch_size=100,
-            parallel_workers=workers,
+            parallel_workers=4,  # Upload parallelism (implementation detail)
             max_retries=5,
             ocr_enabled=ocr_enabled,
             ocr_engine='tesseract',
@@ -169,6 +184,7 @@ def index_pdfs_command(
             embedding_workers=actual_embedding_workers,
             embedding_batch_size=embedding_batch_size,
             batch_across_files=batch_across_files,
+            file_workers=actual_file_workers,  # PDF file parallelism
         )
 
         # Pre-load model to avoid "hang" during first file processing (similar to markdown indexing)
@@ -210,9 +226,10 @@ def index_pdfs_command(
             else:
                 console.print(f"  Device: CPU (GPU not available)")
 
-            # Show embedding configuration
+            # Show parallelism configuration
             preset_suffix = " [max-perf preset]" if max_perf else ""
-            console.print(f"  Embedding: {worker_source} workers, batch size {embedding_batch_size}{preset_suffix}")
+            console.print(f"  File processing: {file_worker_source} workers{preset_suffix}")
+            console.print(f"  Embedding: {embedding_worker_source} workers, batch size {embedding_batch_size}{preset_suffix}")
 
             if ocr_enabled:
                 from multiprocessing import cpu_count

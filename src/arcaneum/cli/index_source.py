@@ -29,12 +29,11 @@ def index_source_command(
     path: str,
     collection: str,
     model: str,
-    workers: int,
+    file_workers: Optional[int],
+    file_worker_mult: float,
     embedding_workers: int,
     embedding_worker_mult: float,
     embedding_batch_size: int,
-    file_workers: Optional[int],
-    file_worker_mult: float,
     depth: Optional[int],
     process_priority: str,
     max_perf: bool,
@@ -85,8 +84,6 @@ def index_source_command(
     if max_perf:
         if embedding_worker_mult is None:
             embedding_worker_mult = 1.0
-        if file_worker_mult is None:
-            file_worker_mult = 1.0
         if embedding_batch_size == 200:  # Default value
             embedding_batch_size = 500
         if process_priority == "normal":  # Default value
@@ -108,7 +105,8 @@ def index_source_command(
         actual_embedding_workers = max(1, int(cpu_count() * 0.5))
         embedding_worker_source = f"{actual_embedding_workers} (cpu_count × 0.5, default)"
 
-    # Compute file_workers with precedence: absolute → multiplier → default (0.5)
+    # Compute file_workers with precedence: absolute → multiplier → default (1)
+    # Note: Source code DOES use file parallelism (ProcessPoolExecutor in source_code_pipeline.py)
     if file_workers is not None:
         # Absolute value specified, use it
         actual_file_workers = max(1, file_workers)
@@ -118,9 +116,9 @@ def index_source_command(
         actual_file_workers = max(1, int(cpu_count() * file_worker_mult))
         file_worker_source = f"{actual_file_workers} (cpu_count × {file_worker_mult})"
     else:
-        # Default: 0.5 multiplier (half of CPU cores)
-        actual_file_workers = max(1, int(cpu_count() * 0.5))
-        file_worker_source = f"{actual_file_workers} (cpu_count × 0.5, default)"
+        # Default: 1 worker (sequential processing)
+        actual_file_workers = 1
+        file_worker_source = f"{actual_file_workers} (default, sequential)"
 
     # Set up signal handler for Ctrl-C
     def signal_handler(sig, frame):

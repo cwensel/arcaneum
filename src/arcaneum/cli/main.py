@@ -102,7 +102,8 @@ def index():
 @click.argument('path', type=click.Path(exists=True))
 @click.option('--collection', required=True, help='Target collection name')
 @click.option('--model', default='stella', help='Embedding model (default: stella for documents)')
-@click.option('--workers', type=int, default=4, help='Parallel workers')
+@click.option('--file-workers', type=int, default=None, help='Number of PDF files to process in parallel (absolute, overrides multiplier)')
+@click.option('--file-worker-mult', type=float, default=None, help='File worker multiplier of cpu_count (e.g., 1.0 = all cores, 0.5 = half cores)')
 @click.option('--embedding-workers', type=int, default=None, help='Parallel workers for embedding generation (absolute, overrides multiplier)')
 @click.option('--embedding-worker-mult', type=float, default=None, help='Embedding worker multiplier of cpu_count (e.g., 1.0 = all cores, 0.5 = half cores)')
 @click.option('--embedding-batch-size', type=int, default=200, help='Batch size for embedding generation (default: 200)')
@@ -118,22 +119,21 @@ def index():
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 @click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_pdfs(path, collection, model, workers, embedding_workers, embedding_worker_mult, embedding_batch_size, no_ocr, ocr_language, ocr_workers, process_priority, max_perf, force, batch_across_files, no_gpu, offline, verbose, debug, output_json):
+def index_pdfs(path, collection, model, file_workers, file_worker_mult, embedding_workers, embedding_worker_mult, embedding_batch_size, no_ocr, ocr_language, ocr_workers, process_priority, max_perf, force, batch_across_files, no_gpu, offline, verbose, debug, output_json):
     """Index PDF files"""
     from arcaneum.cli.index_pdfs import index_pdfs_command
-    index_pdfs_command(path, collection, model, workers, embedding_workers, embedding_worker_mult, embedding_batch_size, no_ocr, ocr_language, ocr_workers, process_priority, max_perf, force, batch_across_files, no_gpu, offline, verbose, debug, output_json)
+    index_pdfs_command(path, collection, model, file_workers, file_worker_mult, embedding_workers, embedding_worker_mult, embedding_batch_size, no_ocr, ocr_language, ocr_workers, process_priority, max_perf, force, batch_across_files, no_gpu, offline, verbose, debug, output_json)
 
 
 @index.command('source')
 @click.argument('path', type=click.Path(exists=True))
 @click.option('--collection', required=True, help='Target collection name')
 @click.option('--model', default='jina-code', help='Embedding model (default: jina-code for source code)')
-@click.option('--workers', type=int, default=4, help='Parallel workers (deprecated, use --file-workers)')
+@click.option('--file-workers', type=int, default=None, help='Number of source files to process in parallel within each repo (absolute, overrides multiplier)')
+@click.option('--file-worker-mult', type=float, default=None, help='File worker multiplier of cpu_count (e.g., 1.0 = all cores, 0.5 = half cores)')
 @click.option('--embedding-workers', type=int, default=None, help='Parallel workers for embedding generation (absolute, overrides multiplier)')
 @click.option('--embedding-worker-mult', type=float, default=None, help='Embedding worker multiplier of cpu_count (e.g., 1.0 = all cores, 0.5 = half cores)')
 @click.option('--embedding-batch-size', type=int, default=200, help='Batch size for embedding generation (default: 200)')
-@click.option('--file-workers', type=int, default=None, help='Parallel workers for file processing (absolute, overrides multiplier)')
-@click.option('--file-worker-mult', type=float, default=None, help='File worker multiplier of cpu_count (e.g., 1.0 = all cores, 0.5 = half cores)')
 @click.option('--depth', type=int, help='Git discovery depth')
 @click.option('--process-priority', type=click.Choice(['low', 'normal', 'high']), default='normal', help='Process scheduling priority (default: normal)')
 @click.option('--max-perf', is_flag=True, help='Maximum performance preset (1.0 worker mult, batch 500, low priority)')
@@ -142,30 +142,38 @@ def index_pdfs(path, collection, model, workers, embedding_workers, embedding_wo
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 @click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_source(path, collection, model, workers, embedding_workers, embedding_worker_mult, embedding_batch_size, file_workers, file_worker_mult, depth, process_priority, max_perf, force, no_gpu, verbose, debug, output_json):
+def index_source(path, collection, model, file_workers, file_worker_mult, embedding_workers, embedding_worker_mult, embedding_batch_size, depth, process_priority, max_perf, force, no_gpu, verbose, debug, output_json):
     """Index source code"""
     from arcaneum.cli.index_source import index_source_command
-    index_source_command(path, collection, model, workers, embedding_workers, embedding_worker_mult, embedding_batch_size, file_workers, file_worker_mult, depth, process_priority, max_perf, force, no_gpu, verbose, debug, output_json)
+    index_source_command(path, collection, model, file_workers, file_worker_mult, embedding_workers, embedding_worker_mult, embedding_batch_size, depth, process_priority, max_perf, force, no_gpu, verbose, debug, output_json)
 
 
 @index.command('markdown')
 @click.argument('path', type=click.Path(exists=True))
 @click.option('--collection', required=True, help='Target collection name')
 @click.option('--model', default='stella', help='Embedding model (default: stella for documents)')
+@click.option('--file-workers', type=int, default=None, help='Number of markdown files to process in parallel (absolute, overrides multiplier)')
+@click.option('--file-worker-mult', type=float, default=None, help='File worker multiplier of cpu_count (e.g., 1.0 = all cores, 0.5 = half cores)')
+@click.option('--embedding-workers', type=int, default=None, help='Parallel workers for embedding generation (absolute, overrides multiplier)')
+@click.option('--embedding-worker-mult', type=float, default=None, help='Embedding worker multiplier of cpu_count (e.g., 1.0 = all cores, 0.5 = half cores)')
+@click.option('--embedding-batch-size', type=int, default=200, help='Batch size for embedding generation (default: 200)')
 @click.option('--chunk-size', type=int, help='Target chunk size in tokens')
 @click.option('--chunk-overlap', type=int, help='Overlap between chunks in tokens')
 @click.option('--recursive/--no-recursive', default=True, help='Search subdirectories recursively')
 @click.option('--exclude', multiple=True, help='Patterns to exclude (e.g., node_modules, .obsidian)')
 @click.option('--qdrant-url', default='http://localhost:6333', help='Qdrant server URL')
+@click.option('--process-priority', type=click.Choice(['low', 'normal', 'high']), default='normal', help='Process scheduling priority (default: normal)')
+@click.option('--max-perf', is_flag=True, help='Maximum performance preset (1.0 worker mult, batch 500, low priority)')
 @click.option('--force', is_flag=True, help='Force reindex all files')
+@click.option('--no-gpu', is_flag=True, help='Disable GPU acceleration (use CPU only)')
 @click.option('--offline', is_flag=True, help='Offline mode (use cached models only, no network)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 @click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_markdown(path, collection, model, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, force, offline, verbose, debug, output_json):
+def index_markdown(path, collection, model, file_workers, file_worker_mult, embedding_workers, embedding_worker_mult, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, max_perf, force, no_gpu, offline, verbose, debug, output_json):
     """Index markdown files"""
     from arcaneum.cli.index_markdown import index_markdown_command
-    index_markdown_command(path, collection, model, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, force, offline, verbose, debug, output_json)
+    index_markdown_command(path, collection, model, file_workers, file_worker_mult, embedding_workers, embedding_worker_mult, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, max_perf, force, no_gpu, offline, verbose, debug, output_json)
 
 
 @cli.command('store')

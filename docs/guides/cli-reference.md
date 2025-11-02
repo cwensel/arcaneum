@@ -254,12 +254,16 @@ Additional options for `arc index` commands:
 
 **Performance Tuning:**
 
+- `--file-workers N`: Absolute number of files to process in parallel (overrides multiplier) [default: 1]
+  - PDF: Number of PDF files to process in parallel
+  - Source: Number of source files to process in parallel within each repo
+  - Markdown: Number of markdown files to process in parallel
+- `--file-worker-mult FLOAT`: Multiplier of cpu_count for file processing (overridden by --file-workers)
 - `--embedding-workers N`: Absolute number of embedding workers (overrides multiplier)
 - `--embedding-worker-mult FLOAT`: Multiplier of cpu_count for embedding workers [default: 0.5]
 - `--embedding-batch-size N`: Batch size for embedding generation [default: 200]
-- `--file-workers N`: Absolute number of file processing workers (source code only, overrides multiplier)
-- `--file-worker-mult FLOAT`: Multiplier of cpu_count for file workers (source code only) [default: 0.5]
 - `--process-priority low|normal|high`: Process scheduling priority [default: normal]
+- `--max-perf`: Preset that sets embedding-worker-mult=1.0, batch-size=500, priority=low (does NOT change file workers)
 
 ### GPU Acceleration
 

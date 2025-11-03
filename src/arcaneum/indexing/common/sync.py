@@ -1,8 +1,10 @@
 """Metadata-based sync for incremental indexing (RDR-004)."""
 
 import hashlib
+import os
+import multiprocessing as mp
 from pathlib import Path
-from typing import List, Set
+from typing import List, Set, Callable, Tuple
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 import logging
@@ -52,6 +54,85 @@ def compute_text_file_hash(file_path: Path) -> str:
         content = file_path.read_text(encoding='latin-1')
 
     return hashlib.sha256(content.encode('utf-8')).hexdigest()
+
+
+def _compute_hash_worker(args: Tuple[Path, Callable]) -> Tuple[Path, str]:
+    """Worker function for parallel hash computation.
+
+    Sets low process priority and computes hash for a single file.
+
+    Args:
+        args: Tuple of (file_path, hash_function)
+
+    Returns:
+        Tuple of (file_path, file_hash)
+    """
+    file_path, hash_fn = args
+
+    # Set low priority (nice level 19 on Unix, IDLE on Windows)
+    try:
+        if hasattr(os, 'nice'):
+            os.nice(19)  # Unix/Linux/macOS
+    except (AttributeError, OSError):
+        pass  # Windows or permission denied
+
+    try:
+        file_hash = hash_fn(file_path)
+        return (file_path, file_hash)
+    except Exception as e:
+        logger.warning(f"Failed to hash {file_path}: {e}")
+        return (file_path, None)
+
+
+def _compute_hashes_parallel(file_list: List[Path],
+                             hash_fn: Callable,
+                             num_workers: int = None) -> dict:
+    """Compute file hashes in parallel using all CPU cores at low priority.
+
+    Args:
+        file_list: List of file paths to hash
+        hash_fn: Hash function to use (compute_file_hash or compute_text_file_hash)
+        num_workers: Number of worker processes (defaults to CPU count)
+
+    Returns:
+        Dict mapping file_path to file_hash (absolute path as string)
+    """
+    if num_workers is None:
+        num_workers = mp.cpu_count()
+
+    total_files = len(file_list)
+    file_hashes = {}
+
+    # Show progress for large file sets
+    show_progress = total_files > 100
+
+    # Prepare work items
+    work_items = [(f, hash_fn) for f in file_list]
+
+    # Use multiprocessing pool with chunksize for better progress feedback
+    chunksize = max(1, total_files // (num_workers * 10))
+
+    with mp.Pool(processes=num_workers) as pool:
+        if show_progress:
+            # Use imap for incremental results with progress tracking
+            results = pool.imap(_compute_hash_worker, work_items, chunksize=chunksize)
+
+            for idx, (file_path, file_hash) in enumerate(results, 1):
+                if file_hash is not None:
+                    file_hashes[str(file_path.absolute())] = file_hash
+
+                if idx % 100 == 0:
+                    print(f"\r  Computing hashes: {idx}/{total_files} files...", end="", flush=True)
+
+            print(f"\r  Computing hashes: {total_files}/{total_files} files... done")
+        else:
+            # No progress for small file sets
+            results = pool.map(_compute_hash_worker, work_items, chunksize=chunksize)
+            for file_path, file_hash in results:
+                if file_hash is not None:
+                    file_hashes[str(file_path.absolute())] = file_hash
+
+    return file_hashes
 
 
 class MetadataBasedSync:
@@ -157,7 +238,8 @@ class MetadataBasedSync:
                             hash_fn=None) -> List[Path]:
         """Filter file list to only unindexed or modified files.
 
-        Uses batch query for efficiency instead of per-file queries.
+        Uses batch query for efficiency and parallel hash computation.
+        Hash computation runs at low priority across all CPU cores.
 
         Args:
             collection_name: Qdrant collection name
@@ -174,24 +256,21 @@ class MetadataBasedSync:
             # Get all indexed (path, hash) pairs
             indexed = self.get_indexed_file_paths(collection_name)
 
+            # Compute hashes in parallel at low priority
+            file_hashes = _compute_hashes_parallel(file_list, hash_fn)
+
             # Filter to files not in indexed set
             unindexed = []
-            total_files = len(file_list)
+            for file_path in file_list:
+                file_path_str = str(file_path.absolute())
+                file_hash = file_hashes.get(file_path_str)
 
-            # Show progress for large file sets
-            show_progress = total_files > 100
+                if file_hash is None:
+                    # Hash computation failed, skip this file
+                    continue
 
-            for idx, file_path in enumerate(file_list, 1):
-                if show_progress and idx % 100 == 0:
-                    print(f"\r  Computing hashes: {idx}/{total_files} files...", end="", flush=True)
-
-                file_hash = hash_fn(file_path)
-                # Use absolute path to match how paths are stored during indexing
-                if (str(file_path.absolute()), file_hash) not in indexed:
+                if (file_path_str, file_hash) not in indexed:
                     unindexed.append(file_path)
-
-            if show_progress:
-                print(f"\r  Computing hashes: {total_files}/{total_files} files... done")
 
             logger.info(f"Found {len(unindexed)}/{len(file_list)} "
                        f"files to index ({len(file_list) - len(unindexed)} "

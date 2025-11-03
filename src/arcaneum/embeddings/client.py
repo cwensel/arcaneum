@@ -5,6 +5,7 @@ from typing import Dict, List
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from arcaneum.paths import get_models_dir
+import threading
 
 # Model configurations with dimensions
 # Note: "stella" is an alias for bge-large since actual stella (dunzhang/stella_en_1.5B_v5)
@@ -105,6 +106,9 @@ class EmbeddingClient:
         self._device = self._detect_device() if use_gpu else "cpu"
         os.environ["SENTENCE_TRANSFORMERS_HOME"] = self.cache_dir
         self._models: Dict[str, TextEmbedding] = {}
+
+        # Thread lock for GPU operations (prevents segfaults when multiple threads use GPU models)
+        self._gpu_lock = threading.Lock() if use_gpu else None
 
     def _detect_device(self) -> str:
         """Detect best available GPU device (RDR-013 Phase 2).
@@ -226,6 +230,23 @@ class EmbeddingClient:
         Raises:
             ValueError: If model_name is not recognized
         """
+        # Use lock for GPU operations to prevent thread-unsafe access
+        if self._gpu_lock:
+            with self._gpu_lock:
+                return self._embed_impl(texts, model_name)
+        else:
+            return self._embed_impl(texts, model_name)
+
+    def _embed_impl(self, texts: List[str], model_name: str) -> List[List[float]]:
+        """Internal implementation of embedding (called with or without lock).
+
+        Args:
+            texts: List of text strings to embed
+            model_name: Model identifier
+
+        Returns:
+            List of embedding vectors
+        """
         model = self.get_model(model_name)
 
         # Handle different backends
@@ -236,7 +257,16 @@ class EmbeddingClient:
             return [emb.tolist() for emb in embeddings]
         else:
             # FastEmbed: use embed()
-            return list(model.embed(texts))
+            # Process in batches to prevent hangs
+            BATCH_SIZE = 100
+            all_embeddings = []
+
+            for i in range(0, len(texts), BATCH_SIZE):
+                batch = texts[i:i + BATCH_SIZE]
+                batch_embeddings = list(model.embed(batch))
+                all_embeddings.extend(batch_embeddings)
+
+            return all_embeddings
 
     def embed_parallel(
         self,
@@ -312,6 +342,95 @@ class EmbeddingClient:
             )
 
         return all_embeddings
+
+    def release_model(self, model_name: str):
+        """Release a specific model from memory to free resources.
+
+        Args:
+            model_name: Model identifier to release
+
+        Note:
+            After calling this, the model will be reloaded on next use.
+            GPU cache (CUDA/MPS) is cleared if GPU was enabled.
+        """
+        if model_name in self._models:
+            model = self._models[model_name]
+
+            # Delete the model object
+            del self._models[model_name]
+            del model
+
+            # Force garbage collection
+            import gc
+            gc.collect()
+
+            # Clear GPU cache if using GPU
+            if self.use_gpu and self._device != "cpu":
+                self._clear_gpu_cache()
+
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"Released model: {model_name}")
+
+    def release_all_models(self):
+        """Release all loaded models from memory.
+
+        Note:
+            Models will be reloaded on next use.
+            GPU cache (CUDA/MPS) is cleared if GPU was enabled.
+        """
+        model_names = list(self._models.keys())
+
+        for model_name in model_names:
+            model = self._models[model_name]
+            del model
+
+        self._models.clear()
+
+        # Force garbage collection
+        import gc
+        gc.collect()
+
+        # Clear GPU cache if using GPU
+        if self.use_gpu and self._device != "cpu":
+            self._clear_gpu_cache()
+
+        import logging
+        logger = logging.getLogger(__name__)
+        if model_names:
+            logger.info(f"Released {len(model_names)} models: {', '.join(model_names)}")
+
+    def _clear_gpu_cache(self):
+        """Clear GPU memory cache (CUDA or MPS).
+
+        Note:
+            This helps free GPU memory after releasing models.
+        """
+        try:
+            import torch
+            if self._device == "cuda":
+                torch.cuda.empty_cache()
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.debug("Cleared CUDA cache")
+            elif self._device == "mps":
+                torch.mps.empty_cache()
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.debug("Cleared MPS cache")
+        except Exception as e:
+            # Not fatal if cache clearing fails
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.debug(f"Could not clear GPU cache: {e}")
+
+    def get_loaded_models(self) -> List[str]:
+        """Get list of currently loaded models.
+
+        Returns:
+            List of model names currently in memory
+        """
+        return list(self._models.keys())
 
     def get_dimensions(self, model_name: str) -> int:
         """Get vector dimensions for a model.

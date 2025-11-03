@@ -16,6 +16,7 @@ from .pdf.extractor import PDFExtractor
 from .pdf.ocr import OCREngine
 from .pdf.chunker import PDFChunker
 from ..monitoring.cpu_stats import create_monitor
+from ..utils.memory import calculate_safe_workers, log_memory_stats
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class PDFBatchUploader:
         embedding_batch_size: int = 200,
         batch_across_files: bool = False,
         file_workers: int = 1,
+        max_memory_gb: Optional[float] = None,
     ):
         """Initialize batch uploader.
 
@@ -57,6 +59,7 @@ class PDFBatchUploader:
             embedding_batch_size: Batch size for embedding generation (default: 200)
             batch_across_files: Whether to batch uploads across files
             file_workers: Number of PDF files to process in parallel (default: 1)
+            max_memory_gb: Maximum memory to use in GB (None = auto-calculate from available)
         """
         self.qdrant = qdrant_client
         self.embeddings = embedding_client
@@ -65,7 +68,33 @@ class PDFBatchUploader:
         self.max_retries = max_retries
         self.embedding_workers = embedding_workers
         self.embedding_batch_size = embedding_batch_size
-        self.file_workers = max(1, file_workers)
+        self.max_memory_gb = max_memory_gb
+
+        # Apply memory-aware worker limits
+        # Estimate 500MB per PDF file worker (images, OCR, embeddings)
+        safe_file_workers, warning = calculate_safe_workers(
+            requested_workers=max(1, file_workers),
+            estimated_memory_per_worker_mb=500,
+            max_memory_gb=max_memory_gb,
+            min_workers=1
+        )
+        self.file_workers = safe_file_workers
+
+        if warning:
+            logger.warning(warning)
+            print(warning, flush=True)
+
+        # Warn if GPU is enabled with multiple file workers
+        # GPU models are thread-locked for safety, so parallel file processing
+        # will serialize at the embedding step (still safe, but less parallel)
+        if embedding_client.use_gpu and self.file_workers > 1:
+            gpu_warning = (
+                f"⚠️  GPU acceleration with {self.file_workers} file workers: "
+                f"Embedding operations are serialized for thread-safety.\n"
+                f"   GPU provides internal parallelism. Consider --file-workers 1 for simpler execution."
+            )
+            logger.info(gpu_warning)
+            print(gpu_warning, flush=True)
 
         # Initialize components
         self.extractor = PDFExtractor(
@@ -84,10 +113,14 @@ class PDFBatchUploader:
                 confidence_threshold=60.0,
                 image_dpi=300,
                 image_scale=2.0,
-                ocr_workers=ocr_workers
+                ocr_workers=ocr_workers,
+                max_memory_gb=max_memory_gb
             )
         else:
             self.ocr = None
+
+        # Log memory stats at initialization
+        log_memory_stats("Initialization: ")
 
         # Metadata-based sync (queries Qdrant directly, no separate DB)
         self.sync = MetadataBasedSync(qdrant_client)
@@ -210,9 +243,13 @@ class PDFBatchUploader:
             if verbose:
                 print(f"     embedded {file_chunk_count} chunks", flush=True)
 
-            # Stage 5: Create points
-            points = []
+            # Stage 5: Create and upload points in batches (streaming upload)
+            # This avoids holding all points in memory at once
+            UPLOAD_BATCH_SIZE = 1000
+            points_batch = []
             point_id = point_id_start
+            uploaded_count = 0
+
             for chunk, embedding in zip(chunks, embeddings):
                 point = PointStruct(
                     id=point_id,
@@ -222,10 +259,43 @@ class PDFBatchUploader:
                         **chunk.metadata
                     }
                 )
-                points.append(point)
+                points_batch.append(point)
                 point_id += 1
 
-            return (points, file_chunk_count, None)
+                # Upload batch when threshold reached
+                if len(points_batch) >= UPLOAD_BATCH_SIZE:
+                    if not verbose:
+                        print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → uploading batch ({uploaded_count}/{file_chunk_count}){' '*15}", end="", flush=True)
+                    else:
+                        print(f"  → uploading batch ({len(points_batch)} chunks, {uploaded_count}/{file_chunk_count} total)", flush=True)
+
+                    self._upload_batch(collection_name, points_batch)
+                    uploaded_count += len(points_batch)
+
+                    # Clear batch and free memory
+                    points_batch.clear()
+                    import gc
+                    gc.collect()
+
+            # Upload remaining points
+            if points_batch:
+                if not verbose:
+                    print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → uploading final batch ({uploaded_count}/{file_chunk_count}){' '*15}", end="", flush=True)
+                else:
+                    print(f"  → uploading final batch ({len(points_batch)} chunks)", flush=True)
+
+                self._upload_batch(collection_name, points_batch)
+                uploaded_count += len(points_batch)
+                points_batch.clear()
+
+            # Clear large lists to free memory
+            del texts, embeddings, chunks
+            import gc
+            gc.collect()
+
+            # Return empty list since we already uploaded
+            # uploaded_count is used for stats
+            return ([], uploaded_count, None)
 
         except Exception as e:
             error_msg = str(e)
@@ -352,15 +422,10 @@ class PDFBatchUploader:
                                 print(f"  ✗ ERROR: {error}", file=sys.stderr, flush=True)
                             stats["errors"] += 1
                         else:
-                            # Upload this PDF's chunks (atomic mode)
-                            if points:
-                                if not verbose:
-                                    print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → uploading ({len(points)} chunks){' '*15}", end="", flush=True)
-                                else:
-                                    print(f"  → uploading ({len(points)} chunks)", flush=True)
-
-                                self._upload_batch(collection_name, points)
-                                stats["chunks"] += len(points)
+                            # Points are already uploaded via streaming (points list will be empty)
+                            # Just update stats and show completion
+                            if file_chunk_count > 0:
+                                stats["chunks"] += file_chunk_count
                                 stats["files"] += 1
 
                                 # Complete
@@ -394,17 +459,12 @@ class PDFBatchUploader:
                             print(f"  ✗ ERROR: {error}", file=sys.stderr, flush=True)
                         stats["errors"] += 1
                     else:
-                        # Upload this PDF's chunks (atomic mode)
-                        if points:
-                            if not verbose:
-                                print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → uploading ({len(points)} chunks){' '*15}", end="", flush=True)
-                            else:
-                                print(f"  → uploading ({len(points)} chunks)", flush=True)
-
-                            self._upload_batch(collection_name, points)
-                            stats["chunks"] += len(points)
+                        # Points are already uploaded via streaming (points list will be empty)
+                        # Just update stats and show completion
+                        if file_chunk_count > 0:
+                            stats["chunks"] += file_chunk_count
                             stats["files"] += 1
-                            point_id += len(points)
+                            point_id += file_chunk_count
 
                             # Complete
                             if not verbose:

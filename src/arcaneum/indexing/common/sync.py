@@ -76,8 +76,10 @@ def _compute_hashes_parallel(file_list: List[Path],
     import os
 
     if num_workers is None:
-        # Use 2x CPU count since hashing is mix of CPU and I/O
-        num_workers = (os.cpu_count() or 4) * 2
+        # For large files (2-10MB), hashing is I/O-bound, not CPU-bound.
+        # Need more threads to saturate disk I/O while other threads wait.
+        # Use 8x CPU count for good I/O parallelism on modern SSDs.
+        num_workers = (os.cpu_count() or 4) * 8
 
     total_files = len(file_list)
     file_hashes = {}

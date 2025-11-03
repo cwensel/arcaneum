@@ -1,10 +1,9 @@
 """Metadata-based sync for incremental indexing (RDR-004)."""
 
 import hashlib
-import os
-import multiprocessing as mp
 from pathlib import Path
-from typing import List, Set, Callable, Tuple
+from typing import List, Set, Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 import logging
@@ -56,49 +55,29 @@ def compute_text_file_hash(file_path: Path) -> str:
     return hashlib.sha256(content.encode('utf-8')).hexdigest()
 
 
-def _compute_hash_worker(args: Tuple[Path, Callable]) -> Tuple[Path, str]:
-    """Worker function for parallel hash computation.
-
-    Sets low process priority and computes hash for a single file.
-
-    Args:
-        args: Tuple of (file_path, hash_function)
-
-    Returns:
-        Tuple of (file_path, file_hash)
-    """
-    file_path, hash_fn = args
-
-    # Set low priority (nice level 19 on Unix, IDLE on Windows)
-    try:
-        if hasattr(os, 'nice'):
-            os.nice(19)  # Unix/Linux/macOS
-    except (AttributeError, OSError):
-        pass  # Windows or permission denied
-
-    try:
-        file_hash = hash_fn(file_path)
-        return (file_path, file_hash)
-    except Exception as e:
-        logger.warning(f"Failed to hash {file_path}: {e}")
-        return (file_path, None)
-
-
 def _compute_hashes_parallel(file_list: List[Path],
                              hash_fn: Callable,
                              num_workers: int = None) -> dict:
-    """Compute file hashes in parallel using all CPU cores at low priority.
+    """Compute file hashes in parallel using threading.
+
+    Uses ThreadPoolExecutor for concurrent hash computation. Threading works
+    well here because hashlib releases the GIL during hash computation, and
+    file I/O also releases the GIL. This provides good parallelism without
+    the overhead and platform issues of multiprocessing.
 
     Args:
         file_list: List of file paths to hash
         hash_fn: Hash function to use (compute_file_hash or compute_text_file_hash)
-        num_workers: Number of worker processes (defaults to CPU count)
+        num_workers: Number of worker threads (defaults to 2x CPU count for I/O-bound work)
 
     Returns:
         Dict mapping file_path to file_hash (absolute path as string)
     """
+    import os
+
     if num_workers is None:
-        num_workers = mp.cpu_count()
+        # Use 2x CPU count since hashing is mix of CPU and I/O
+        num_workers = (os.cpu_count() or 4) * 2
 
     total_files = len(file_list)
     file_hashes = {}
@@ -106,31 +85,37 @@ def _compute_hashes_parallel(file_list: List[Path],
     # Show progress for large file sets
     show_progress = total_files > 100
 
-    # Prepare work items
-    work_items = [(f, hash_fn) for f in file_list]
+    def hash_with_path(file_path: Path):
+        """Hash a file and return (path, hash) tuple."""
+        try:
+            file_hash = hash_fn(file_path)
+            return (str(file_path.absolute()), file_hash)
+        except Exception as e:
+            logger.warning(f"Failed to hash {file_path}: {e}")
+            return (str(file_path.absolute()), None)
 
-    # Use multiprocessing pool with chunksize for better progress feedback
-    chunksize = max(1, total_files // (num_workers * 10))
-
-    with mp.Pool(processes=num_workers) as pool:
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
         if show_progress:
-            # Use imap for incremental results with progress tracking
-            results = pool.imap(_compute_hash_worker, work_items, chunksize=chunksize)
+            # Submit all tasks and track completion
+            futures = {executor.submit(hash_with_path, f): f for f in file_list}
+            completed = 0
 
-            for idx, (file_path, file_hash) in enumerate(results, 1):
+            for future in as_completed(futures):
+                file_path_str, file_hash = future.result()
                 if file_hash is not None:
-                    file_hashes[str(file_path.absolute())] = file_hash
+                    file_hashes[file_path_str] = file_hash
 
-                if idx % 100 == 0:
-                    print(f"\r  Computing hashes: {idx}/{total_files} files...", end="", flush=True)
+                completed += 1
+                if completed % 100 == 0:
+                    print(f"\r  Computing hashes: {completed}/{total_files} files...", end="", flush=True)
 
             print(f"\r  Computing hashes: {total_files}/{total_files} files... done")
         else:
-            # No progress for small file sets
-            results = pool.map(_compute_hash_worker, work_items, chunksize=chunksize)
-            for file_path, file_hash in results:
+            # No progress for small file sets - just map and collect
+            results = executor.map(hash_with_path, file_list)
+            for file_path_str, file_hash in results:
                 if file_hash is not None:
-                    file_hashes[str(file_path.absolute())] = file_hash
+                    file_hashes[file_path_str] = file_hash
 
     return file_hashes
 

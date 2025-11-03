@@ -183,6 +183,7 @@ class SourceCodeIndexer:
             "projects_discovered": 0,
             "projects_indexed": 0,
             "projects_skipped": 0,
+            "projects_empty": 0,
             "files_processed": 0,
             "chunks_created": 0,
             "chunks_uploaded": 0,
@@ -364,7 +365,9 @@ class SourceCodeIndexer:
             console.print(f"\nStatistics:")
             console.print(f"  Projects discovered: {self.stats['projects_discovered']}")
             console.print(f"  Projects indexed: {self.stats['projects_indexed']}")
-            console.print(f"  Projects skipped: {self.stats['projects_skipped']}")
+            console.print(f"  Projects skipped: {self.stats['projects_skipped']} (already up to date)")
+            if self.stats['projects_empty'] > 0:
+                console.print(f"  Projects empty: {self.stats['projects_empty']} (no indexable files)")
             console.print(f"  Files processed: {self.stats['files_processed']}")
             console.print(f"  Chunks created: {self.stats['chunks_created']}")
             console.print(f"  Chunks uploaded: {self.stats['chunks_uploaded']}")
@@ -378,11 +381,15 @@ class SourceCodeIndexer:
                 console.print(f"  Elapsed: {stats['elapsed_time']:.1f}s")
         else:
             # RDR-006: Structured completion message
-            console.print(
-                f"\n[INFO] Complete: {self.stats['projects_indexed']} projects, "
-                f"{self.stats['files_processed']} files, "
-                f"{self.stats['chunks_uploaded']} chunks"
-            )
+            msg = f"\n[INFO] Complete: {self.stats['projects_indexed']} projects, "
+            msg += f"{self.stats['files_processed']} files, "
+            msg += f"{self.stats['chunks_uploaded']} chunks"
+
+            # Add context if projects were processed but empty
+            if self.stats['projects_empty'] > 0:
+                msg += f" ({self.stats['projects_empty']} projects had no indexable files)"
+
+            console.print(msg)
 
             # Show CPU stats in compact mode (RDR-013 Phase 1)
             if cpu_monitor:
@@ -419,7 +426,17 @@ class SourceCodeIndexer:
         files = self.git_discovery.get_tracked_files(project_root, self.extensions)
 
         if not files:
-            logger.info(f"No files to index in {identifier}")
+            ext_list = ", ".join(self.extensions[:5]) + ("..." if len(self.extensions) > 5 else "")
+            logger.info(f"No indexable files in {identifier} (looking for: {ext_list})")
+            self.stats["projects_empty"] += 1
+            if not verbose:
+                print(
+                    f"\r[{project_num}/{total_projects}] {identifier}: "
+                    f"⊘ (no indexable files)" + " " * 30,
+                    flush=True,
+                    file=sys.stdout
+                )
+                print()
             return
 
         total_files = len(files)

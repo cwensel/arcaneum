@@ -149,7 +149,7 @@ class GitProjectDiscovery:
             )
 
         except InvalidGitRepositoryError:
-            logger.error(f"Not a valid git repository: {project_root}")
+            logger.warning(f"Not a valid git repository: {project_root}")
             return None
         except Exception as e:
             logger.error(f"Error extracting metadata from {project_root}: {e}")

@@ -11,7 +11,7 @@ import os
 import signal
 
 from .logging_config import setup_logging_default, setup_logging_verbose, setup_logging_debug
-from .utils import set_process_priority
+from .utils import set_process_priority, create_qdrant_client
 from ..config import load_config, DEFAULT_MODELS
 from ..embeddings.client import EmbeddingClient
 from ..indexing.uploader import PDFBatchUploader
@@ -156,7 +156,7 @@ def index_pdfs_command(
 
         # Initialize clients
         from arcaneum.paths import get_models_dir
-        qdrant = QdrantClient(url="http://localhost:6333")
+        qdrant = create_qdrant_client()
         embeddings = EmbeddingClient(cache_dir=str(get_models_dir()), use_gpu=not no_gpu)
 
         # Validate collection type (must be 'pdf' or untyped)

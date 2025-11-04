@@ -9,6 +9,7 @@ from rich.table import Table
 
 from arcaneum.cli.output import print_json, print_info, print_error
 from arcaneum.cli.errors import EXIT_SUCCESS, EXIT_ERROR
+from arcaneum.cli.utils import create_qdrant_client
 
 
 def check_python_version() -> Tuple[bool, str]:
@@ -47,9 +48,8 @@ def check_qdrant_connection(verbose: bool = False) -> Tuple[bool, str]:
         return False, "qdrant-client not installed"
 
     try:
-        # Use default Qdrant URL (same as other commands)
-        qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
-        client = QdrantClient(url=qdrant_url)
+        # Use helper to create client with proper timeout
+        client = create_qdrant_client()
 
         # Try to get collections to verify connectivity
         collections = client.get_collections()

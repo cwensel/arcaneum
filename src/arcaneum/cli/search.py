@@ -5,7 +5,6 @@ import logging
 import sys
 import time
 from pathlib import Path
-from qdrant_client import QdrantClient
 from rich.console import Console
 
 from ..search import (
@@ -18,6 +17,7 @@ from ..search import (
     format_summary
 )
 from .errors import InvalidArgumentError, ResourceNotFoundError
+from .utils import create_qdrant_client
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -59,10 +59,8 @@ def search_command(
         logging.getLogger('qdrant_client').setLevel(logging.ERROR)
 
     try:
-        # Initialize Qdrant client
-        # TODO: Make Qdrant URL configurable via environment or config file
-        qdrant_url = "http://localhost:6333"
-        client = QdrantClient(url=qdrant_url)
+        # Initialize Qdrant client with proper timeout and retry configuration
+        client = create_qdrant_client(for_search=True)
 
         # Initialize embedder
         # TODO: Make cache dir configurable

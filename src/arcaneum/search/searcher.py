@@ -2,10 +2,20 @@
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
+import logging
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    before_sleep_log
+)
 
 from .embedder import SearchEmbedder
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -50,6 +60,12 @@ def format_location(metadata: Dict[str, Any]) -> str:
     return file_path or f"[id:{metadata.get('id', '?')}]"
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    retry=retry_if_exception_type((ConnectionError, OSError, TimeoutError)),
+    before_sleep=before_sleep_log(logger, logging.WARNING)
+)
 def search_collection(
     client: QdrantClient,
     embedder: SearchEmbedder,
@@ -68,6 +84,8 @@ def search_collection(
     3. Executes the semantic search with optional filters
     4. Returns formatted results
 
+    Retries up to 3 times on connection/timeout errors with exponential backoff.
+
     Args:
         client: Qdrant client instance
         embedder: SearchEmbedder for query embeddings
@@ -83,7 +101,8 @@ def search_collection(
 
     Raises:
         ValueError: If collection doesn't exist, has no vectors, or model not found
-        Exception: For Qdrant connection errors
+        ConnectionError, OSError, TimeoutError: After 3 retry attempts
+        Exception: For other Qdrant connection errors
     """
     # Step 1: Generate query embedding with auto-detected or specified model
     # This will validate the collection exists and has vectors

@@ -17,6 +17,7 @@ from arcaneum.indexing.collection_metadata import (
 )
 from arcaneum.cli.errors import InvalidArgumentError, ResourceNotFoundError
 from arcaneum.cli.output import print_json, print_error, print_success
+from arcaneum.cli.utils import create_qdrant_client
 
 console = Console()
 
@@ -78,7 +79,7 @@ def create_collection_command(
             )
 
         # Connect to Qdrant
-        client = QdrantClient(url="http://localhost:6333")
+        client = create_qdrant_client()
 
         # Validate collection type if provided
         if collection_type:
@@ -136,7 +137,7 @@ def list_collections_command(verbose: bool, output_json: bool):
         output_json: Output as JSON
     """
     try:
-        client = QdrantClient(url="http://localhost:6333")
+        client = create_qdrant_client()
         collections = client.get_collections()
 
         if output_json:
@@ -201,7 +202,7 @@ def delete_collection_command(name: str, confirm: bool, output_json: bool):
                 console.print("Cancelled.")
                 return
 
-        client = QdrantClient(url="http://localhost:6333")
+        client = create_qdrant_client()
         client.delete_collection(name)
 
         if output_json:
@@ -224,7 +225,7 @@ def info_collection_command(name: str, output_json: bool):
         output_json: Output as JSON
     """
     try:
-        client = QdrantClient(url="http://localhost:6333")
+        client = create_qdrant_client()
         info = client.get_collection(name)
 
         # Get collection type

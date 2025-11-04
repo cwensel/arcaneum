@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 from pathlib import Path
 from typing import Tuple, Optional, Dict
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed, TimeoutError
 from multiprocessing import cpu_count
 import io
 import logging
@@ -150,7 +150,8 @@ class OCREngine:
         image_scale: float = 2.0,
         ocr_workers: Optional[int] = None,
         page_batch_size: int = 20,
-        max_memory_gb: Optional[float] = None
+        max_memory_gb: Optional[float] = None,
+        page_timeout: int = 60
     ):
         """Initialize OCR engine.
 
@@ -163,6 +164,7 @@ class OCREngine:
             ocr_workers: Number of parallel workers for page processing (None = cpu_count)
             page_batch_size: Number of pages to process in each batch (for memory efficiency)
             max_memory_gb: Maximum memory to use in GB (None = auto-calculate from available)
+            page_timeout: Timeout in seconds for processing a single page (default: 60)
         """
         self.engine = engine
         self.language = language
@@ -171,6 +173,7 @@ class OCREngine:
         self.image_scale = image_scale
         self.page_batch_size = page_batch_size
         self.max_memory_gb = max_memory_gb
+        self.page_timeout = page_timeout
 
         # Configure parallel workers with memory-aware limits
         # Estimate 50MB per OCR worker (processed images, OCR models)
@@ -333,7 +336,7 @@ class OCREngine:
                 for future in as_completed(future_to_page):
                     page_num = future_to_page[future]
                     try:
-                        result_page_num, page_text, page_conf = future.result()
+                        result_page_num, page_text, page_conf = future.result(timeout=self.page_timeout)
                         batch_results[result_page_num] = (page_text, page_conf)
 
                         # Show per-page progress
@@ -343,6 +346,9 @@ class OCREngine:
                         # Release future reference immediately
                         del future
 
+                    except TimeoutError:
+                        logger.error(f"OCR timeout for page {page_num} (exceeded {self.page_timeout}s)")
+                        batch_results[page_num] = ("", 0.0)
                     except Exception as e:
                         logger.error(f"OCR failed for page {page_num}: {e}")
                         batch_results[page_num] = ("", 0.0)

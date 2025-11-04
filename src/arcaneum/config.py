@@ -47,6 +47,10 @@ class PDFProcessingConfig(BaseModel):
     ocr_threshold: int = 100
     batch_size: int = 100
     parallel_workers: int = 4
+    # Timeout settings (seconds)
+    pdf_timeout: int = 600  # Total timeout per PDF file
+    ocr_page_timeout: int = 60  # Timeout per OCR page
+    embedding_timeout: int = 300  # Timeout for embedding generation
 
 
 class ArcaneumConfig(BaseModel):

@@ -8,12 +8,16 @@ from typing import List, Set, Callable, Tuple, Dict
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue, FilterSelector
 import logging
+import xxhash
 
 logger = logging.getLogger(__name__)
 
 
 def compute_file_hash(file_path: Path) -> str:
-    """Compute SHA256 hash of file content in binary mode.
+    """Compute xxHash (xxh3_128) of file content in binary mode with streaming.
+
+    Uses xxHash for fast non-cryptographic hashing (20-50 GB/s vs SHA256's 500 MB/s).
+    Streams file in 64KB chunks to avoid memory issues with large files.
 
     Uses binary mode to handle both text and binary files (PDFs, images, etc.)
     without encoding issues. For binary files (PDFs, images), this is the
@@ -24,13 +28,19 @@ def compute_file_hash(file_path: Path) -> str:
         file_path: Path to file
 
     Returns:
-        Full SHA256 hash (64 characters)
+        xxh3_128 hash (32 hex characters)
     """
-    return hashlib.sha256(file_path.read_bytes()).hexdigest()
+    hasher = xxhash.xxh3_128()
+    with open(file_path, 'rb') as f:
+        while chunk := f.read(65536):  # 64KB chunks
+            hasher.update(chunk)
+    return hasher.hexdigest()
 
 
 def compute_text_file_hash(file_path: Path) -> str:
-    """Compute SHA256 hash of text file content with normalization.
+    """Compute xxHash (xxh3_128) of text file content with normalization.
+
+    Uses xxHash for fast non-cryptographic hashing (20-50 GB/s vs SHA256's 500 MB/s).
 
     Reads file in text mode with UTF-8 encoding (latin-1 fallback), which
     normalizes line endings (CRLF -> LF). This ensures hash matches the
@@ -45,7 +55,7 @@ def compute_text_file_hash(file_path: Path) -> str:
         file_path: Path to text file
 
     Returns:
-        Full SHA256 hash (64 characters)
+        xxh3_128 hash (32 hex characters)
     """
     try:
         content = file_path.read_text(encoding='utf-8')
@@ -53,7 +63,7 @@ def compute_text_file_hash(file_path: Path) -> str:
         logger.warning(f"UTF-8 decode failed for {file_path}, trying latin-1")
         content = file_path.read_text(encoding='latin-1')
 
-    return hashlib.sha256(content.encode('utf-8')).hexdigest()
+    return xxhash.xxh3_128(content.encode('utf-8')).hexdigest()
 
 
 def _compute_hash_worker(args: Tuple[Path, Callable]) -> Tuple[Path, str]:

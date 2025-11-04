@@ -3,7 +3,7 @@
 from fastembed import TextEmbedding
 from typing import Dict, List
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 from arcaneum.paths import get_models_dir
 import threading
 
@@ -273,7 +273,8 @@ class EmbeddingClient:
         texts: List[str],
         model_name: str,
         max_workers: int = 4,
-        batch_size: int = 200
+        batch_size: int = 200,
+        timeout: int = 300
     ) -> List[List[float]]:
         """Generate embeddings in parallel batches using ThreadPoolExecutor.
 
@@ -285,6 +286,7 @@ class EmbeddingClient:
             model_name: Model identifier (stella, jina, modernbert, bge)
             max_workers: Number of concurrent workers (default: 4)
             batch_size: Chunk size for each batch (default: 200)
+            timeout: Timeout in seconds for batch processing (default: 300)
 
         Returns:
             List of embedding vectors in original order
@@ -323,9 +325,16 @@ class EmbeddingClient:
             for future in as_completed(future_to_batch):
                 start_idx, end_idx = future_to_batch[future]
                 try:
-                    batch_embeddings = future.result()
+                    batch_embeddings = future.result(timeout=timeout)
                     # Place results in correct position
                     all_embeddings[start_idx:end_idx] = batch_embeddings
+                except TimeoutError:
+                    # Log timeout error
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Batch {start_idx}-{end_idx} timed out (exceeded {timeout}s)")
+                    # Fill with None to indicate failure
+                    all_embeddings[start_idx:end_idx] = [None] * (end_idx - start_idx)
                 except Exception as e:
                     # Log error but don't fail entire batch
                     import logging

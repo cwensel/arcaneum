@@ -185,6 +185,9 @@ def index_pdfs_command(
             embedding_batch_size=embedding_batch_size,
             batch_across_files=batch_across_files,
             file_workers=actual_file_workers,  # PDF file parallelism
+            pdf_timeout=600,  # 10 minute timeout per PDF
+            ocr_page_timeout=60,  # 1 minute timeout per OCR page
+            embedding_timeout=300,  # 5 minute timeout for embeddings
         )
 
         # Pre-load model to avoid "hang" during first file processing (similar to markdown indexing)

@@ -5,7 +5,7 @@ from qdrant_client.models import PointStruct
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_not_exception_type
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 import logging
 import os
 import sys
@@ -41,6 +41,9 @@ class PDFBatchUploader:
         batch_across_files: bool = False,
         file_workers: int = 1,
         max_memory_gb: Optional[float] = None,
+        pdf_timeout: int = 600,
+        ocr_page_timeout: int = 60,
+        embedding_timeout: int = 300,
     ):
         """Initialize batch uploader.
 
@@ -60,6 +63,9 @@ class PDFBatchUploader:
             batch_across_files: Whether to batch uploads across files
             file_workers: Number of PDF files to process in parallel (default: 1)
             max_memory_gb: Maximum memory to use in GB (None = auto-calculate from available)
+            pdf_timeout: Timeout in seconds for processing a single PDF (default: 600)
+            ocr_page_timeout: Timeout in seconds for OCR processing a single page (default: 60)
+            embedding_timeout: Timeout in seconds for embedding generation (default: 300)
         """
         self.qdrant = qdrant_client
         self.embeddings = embedding_client
@@ -69,6 +75,9 @@ class PDFBatchUploader:
         self.embedding_workers = embedding_workers
         self.embedding_batch_size = embedding_batch_size
         self.max_memory_gb = max_memory_gb
+        self.pdf_timeout = pdf_timeout
+        self.ocr_page_timeout = ocr_page_timeout
+        self.embedding_timeout = embedding_timeout
 
         # Apply memory-aware worker limits
         # Estimate 500MB per PDF file worker (images, OCR, embeddings)
@@ -114,7 +123,8 @@ class PDFBatchUploader:
                 image_dpi=300,
                 image_scale=2.0,
                 ocr_workers=ocr_workers,
-                max_memory_gb=max_memory_gb
+                max_memory_gb=max_memory_gb,
+                page_timeout=ocr_page_timeout
             )
         else:
             self.ocr = None
@@ -237,7 +247,8 @@ class PDFBatchUploader:
                 texts,
                 model_name,
                 max_workers=self.embedding_workers,
-                batch_size=self.embedding_batch_size
+                batch_size=self.embedding_batch_size,
+                timeout=self.embedding_timeout
             )
 
             if verbose:
@@ -419,7 +430,11 @@ class PDFBatchUploader:
                     # Collect results as they complete
                     for future in as_completed(future_to_pdf):
                         pdf_idx, pdf_path = future_to_pdf[future]
-                        points, file_chunk_count, error = future.result()
+                        try:
+                            points, file_chunk_count, error = future.result(timeout=self.pdf_timeout)
+                        except TimeoutError:
+                            error = f"TimeoutError: PDF processing exceeded {self.pdf_timeout}s"
+                            points, file_chunk_count = [], 0
 
                         if error:
                             # Show error

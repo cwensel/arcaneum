@@ -4,9 +4,9 @@ import hashlib
 import os
 import multiprocessing as mp
 from pathlib import Path
-from typing import List, Set, Callable, Tuple
+from typing import List, Set, Callable, Tuple, Dict
 from qdrant_client import QdrantClient
-from qdrant_client.models import Filter, FieldCondition, MatchValue
+from qdrant_client.models import Filter, FieldCondition, MatchValue, FilterSelector
 import logging
 
 logger = logging.getLogger(__name__)
@@ -194,18 +194,18 @@ class MetadataBasedSync:
             logger.warning(f"Error querying collection: {e}")
             return False
 
-    def get_indexed_file_paths(self, collection_name: str) -> Set[tuple]:
-        """Get all (file_path, file_hash) pairs from collection.
+    def get_indexed_file_paths(self, collection_name: str) -> Dict[str, List[str]]:
+        """Get all indexed files organized by hash.
 
-        Returns set of tuples for fast lookup.
+        Returns dict mapping file_hash to list of file_paths for rename detection.
 
         Args:
             collection_name: Qdrant collection name
 
         Returns:
-            Set of (file_path, file_hash) tuples
+            Dict mapping file_hash to list of file_paths
         """
-        indexed = set()
+        indexed_by_hash = {}
         offset = None
 
         try:
@@ -226,24 +226,27 @@ class MetadataBasedSync:
                         path = point.payload.get("file_path")
                         hash_val = point.payload.get("file_hash")
                         if path and hash_val:
-                            indexed.add((path, hash_val))
+                            if hash_val not in indexed_by_hash:
+                                indexed_by_hash[hash_val] = []
+                            if path not in indexed_by_hash[hash_val]:
+                                indexed_by_hash[hash_val].append(path)
 
                 if offset is None:
                     break
 
-            return indexed
+            return indexed_by_hash
 
         except Exception as e:
             logger.warning(f"Error scrolling collection: {e}")
-            return set()
+            return {}
 
     def get_unindexed_files(self, collection_name: str,
                             file_list: List[Path],
-                            hash_fn=None) -> List[Path]:
-        """Filter file list to only unindexed or modified files.
+                            hash_fn=None) -> Tuple[List[Path], List[Tuple[str, str]], List[Path]]:
+        """Filter file list to unindexed, renamed, or already-indexed files.
 
-        Uses batch query for efficiency and parallel hash computation.
-        Hash computation runs at low priority across all CPU cores.
+        Uses hash-first lookup to detect file renames without reindexing.
+        When a file's hash exists but path differs, it's a rename candidate.
 
         Args:
             collection_name: Qdrant collection name
@@ -251,20 +254,26 @@ class MetadataBasedSync:
             hash_fn: Optional hash function(Path) -> str. Defaults to compute_file_hash.
 
         Returns:
-            List of files that need indexing
+            Tuple of:
+            - unindexed: Files that need full indexing
+            - renames: List of (old_path, new_path) tuples for rename candidates
+            - already_indexed: Files already indexed with matching path and hash
         """
         if hash_fn is None:
             hash_fn = compute_file_hash
 
         try:
-            # Get all indexed (path, hash) pairs
-            indexed = self.get_indexed_file_paths(collection_name)
+            # Get indexed files organized by hash
+            indexed_by_hash = self.get_indexed_file_paths(collection_name)
 
             # Compute hashes in parallel at low priority
             file_hashes = _compute_hashes_parallel(file_list, hash_fn)
 
-            # Filter to files not in indexed set
+            # Categorize files using hash-first lookup
             unindexed = []
+            renames = []
+            already_indexed = []
+
             for file_path in file_list:
                 file_path_str = str(file_path.absolute())
                 file_hash = file_hashes.get(file_path_str)
@@ -273,15 +282,78 @@ class MetadataBasedSync:
                     # Hash computation failed, skip this file
                     continue
 
-                if (file_path_str, file_hash) not in indexed:
+                if file_hash not in indexed_by_hash:
+                    # Hash not found - file needs full indexing
                     unindexed.append(file_path)
+                else:
+                    # Hash exists - check if path matches
+                    stored_paths = indexed_by_hash[file_hash]
 
-            logger.info(f"Found {len(unindexed)}/{len(file_list)} "
-                       f"files to index ({len(file_list) - len(unindexed)} "
-                       f"already indexed)")
-            return unindexed
+                    if file_path_str in stored_paths:
+                        # Exact match - already indexed
+                        already_indexed.append(file_path)
+                    else:
+                        # Hash exists but path differs - rename detected
+                        if len(stored_paths) == 1:
+                            # Single path - safe to update
+                            renames.append((stored_paths[0], file_path_str))
+                        else:
+                            # Multiple paths with same hash - ambiguous, treat as new file
+                            unindexed.append(file_path)
+
+            logger.info(f"Found {len(unindexed)} new, {len(renames)} renamed, "
+                       f"{len(already_indexed)} already indexed "
+                       f"(total {len(file_list)} files)")
+            return (unindexed, renames, already_indexed)
 
         except Exception as e:
             logger.warning(f"Error querying collection: {e}, "
                           "processing all files")
-            return file_list
+            return (file_list, [], [])
+
+    def handle_renames(self, collection_name: str,
+                      renames: List[Tuple[str, str]]) -> int:
+        """Update file_path metadata for renamed files.
+
+        Updates all chunks with old_path to use new_path. This avoids
+        reindexing the entire file when only the path changed.
+
+        Args:
+            collection_name: Qdrant collection name
+            renames: List of (old_path, new_path) tuples
+
+        Returns:
+            Number of files successfully renamed
+        """
+        if not renames:
+            return 0
+
+        renamed_count = 0
+
+        for old_path, new_path in renames:
+            try:
+                # Update all chunks with old_path to use new_path
+                self.qdrant.set_payload(
+                    collection_name=collection_name,
+                    payload={"file_path": new_path},
+                    points=FilterSelector(
+                        filter=Filter(
+                            must=[
+                                FieldCondition(
+                                    key="file_path",
+                                    match=MatchValue(value=old_path)
+                                )
+                            ]
+                        )
+                    )
+                )
+                renamed_count += 1
+                logger.info(f"Renamed: {old_path} -> {new_path}")
+
+            except Exception as e:
+                logger.warning(f"Failed to rename {old_path} -> {new_path}: {e}")
+
+        if renamed_count > 0:
+            logger.info(f"Successfully renamed {renamed_count}/{len(renames)} files")
+
+        return renamed_count

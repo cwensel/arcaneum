@@ -236,14 +236,22 @@ class MarkdownIndexingPipeline:
             if verbose:
                 print(f"🔄 Force reindex: {len(markdown_files)} files to process")
         else:
-            markdown_files = self.sync.get_unindexed_files(
+            markdown_files, renames, already_indexed = self.sync.get_unindexed_files(
                 collection_name, all_markdown_files, hash_fn=compute_text_file_hash
             )
-            skipped = len(all_markdown_files) - len(markdown_files)
-            logger.info(f"Incremental sync: {len(markdown_files)} new/modified, {skipped} already indexed")
+
+            # Handle renames first (metadata update only, no reindexing)
+            if renames:
+                self.sync.handle_renames(collection_name, renames)
+
+            logger.info(f"Incremental sync: {len(markdown_files)} new/modified, "
+                       f"{len(renames)} renamed, {len(already_indexed)} already indexed")
 
             if verbose:
-                print(f"📊 Found {len(all_markdown_files)} files: {len(markdown_files)} new/modified, {skipped} already indexed")
+                if renames:
+                    print(f"📝 Renamed {len(renames)} files (metadata updated)")
+                print(f"📊 Found {len(all_markdown_files)} files: {len(markdown_files)} new/modified, "
+                      f"{len(renames)} renamed, {len(already_indexed)} already indexed")
 
         if not markdown_files:
             logger.info("No markdown files to index")

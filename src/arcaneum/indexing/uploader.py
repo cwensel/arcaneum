@@ -355,12 +355,20 @@ class PDFBatchUploader:
             if verbose:
                 print(f"🔄 Force reindex: {len(pdf_files)} PDFs to process")
         else:
-            pdf_files = self.sync.get_unindexed_files(collection_name, all_pdf_files)
-            skipped = len(all_pdf_files) - len(pdf_files)
-            logger.info(f"Incremental sync: {len(pdf_files)} new/modified, {skipped} already indexed")
+            pdf_files, renames, already_indexed = self.sync.get_unindexed_files(collection_name, all_pdf_files)
+
+            # Handle renames first (metadata update only, no reindexing)
+            if renames:
+                self.sync.handle_renames(collection_name, renames)
+
+            logger.info(f"Incremental sync: {len(pdf_files)} new/modified, "
+                       f"{len(renames)} renamed, {len(already_indexed)} already indexed")
 
             if verbose:
-                print(f"📊 Found {len(all_pdf_files)} PDFs: {len(pdf_files)} new/modified, {skipped} already indexed")
+                if renames:
+                    print(f"📝 Renamed {len(renames)} PDFs (metadata updated)")
+                print(f"📊 Found {len(all_pdf_files)} PDFs: {len(pdf_files)} new/modified, "
+                      f"{len(renames)} renamed, {len(already_indexed)} already indexed")
 
         if not pdf_files:
             logger.info("No PDFs to index")

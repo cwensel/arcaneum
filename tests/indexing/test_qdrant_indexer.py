@@ -6,7 +6,7 @@ import pytest
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance
 
-from arcaneum.indexing.qdrant_indexer import QdrantIndexer, create_qdrant_client
+from arcaneum.indexing.qdrant_indexer import QdrantIndexer
 from arcaneum.indexing.types import CodeChunk, CodeChunkMetadata
 
 
@@ -276,56 +276,6 @@ class TestQdrantIndexer:
 
         # Should have been called MAX_RETRIES times (3)
         assert mock_qdrant.upsert.call_count == 3
-
-
-class TestCreateQdrantClient:
-    """Tests for create_qdrant_client helper function."""
-
-    @patch('arcaneum.indexing.qdrant_indexer.QdrantClient')
-    def test_create_client_with_grpc(self, mock_client_class):
-        """Test creating client with gRPC enabled."""
-        create_qdrant_client(
-            url="localhost",
-            port=6333,
-            grpc_port=6334,
-            prefer_grpc=True
-        )
-
-        mock_client_class.assert_called_once()
-        call_kwargs = mock_client_class.call_args.kwargs
-
-        assert call_kwargs["host"] == "localhost"
-        assert call_kwargs["port"] == 6333
-        assert call_kwargs["grpc_port"] == 6334
-        assert call_kwargs["prefer_grpc"] is True
-
-    @patch('arcaneum.indexing.qdrant_indexer.QdrantClient')
-    def test_create_client_without_grpc(self, mock_client_class):
-        """Test creating client with gRPC disabled."""
-        create_qdrant_client(
-            url="localhost",
-            port=6333,
-            prefer_grpc=False
-        )
-
-        mock_client_class.assert_called_once()
-        call_kwargs = mock_client_class.call_args.kwargs
-
-        assert call_kwargs["host"] == "localhost"
-        assert call_kwargs["port"] == 6333
-        assert "grpc_port" not in call_kwargs
-        assert "prefer_grpc" not in call_kwargs
-
-    @patch('arcaneum.indexing.qdrant_indexer.QdrantClient')
-    def test_create_client_with_api_key(self, mock_client_class):
-        """Test creating client with API key."""
-        create_qdrant_client(
-            url="cloud.qdrant.io",
-            api_key="test-key-123"
-        )
-
-        call_kwargs = mock_client_class.call_args.kwargs
-        assert call_kwargs["api_key"] == "test-key-123"
 
 
 class TestCodeChunkConversion:

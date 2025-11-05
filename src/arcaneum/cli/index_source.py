@@ -10,9 +10,9 @@ from rich.console import Console
 from rich import print as rprint
 
 from .logging_config import setup_logging_default, setup_logging_verbose, setup_logging_debug
-from .utils import set_process_priority
+from .utils import set_process_priority, create_qdrant_client
 from arcaneum.indexing.source_code_pipeline import SourceCodeIndexer
-from arcaneum.indexing.qdrant_indexer import QdrantIndexer, create_qdrant_client
+from arcaneum.indexing.qdrant_indexer import QdrantIndexer
 from arcaneum.indexing.collection_metadata import (
     validate_collection_type,
     set_collection_metadata,
@@ -137,17 +137,12 @@ def index_source_command(
         # Connect to Qdrant (use defaults)
         qdrant_url = 'localhost'
         qdrant_port = 6333
-        qdrant_grpc_port = 6334
-
         if verbose:
             console.print(f"[cyan]Connecting to Qdrant:[/cyan] {qdrant_url}:{qdrant_port}")
 
-        qdrant_client = create_qdrant_client(
-            url=qdrant_url,
-            port=qdrant_port,
-            grpc_port=qdrant_grpc_port,
-            prefer_grpc=True
-        )
+        # Use HTTP client (consistent with other CLI commands)
+        qdrant_url_full = f"http://{qdrant_url}:{qdrant_port}"
+        qdrant_client = create_qdrant_client(url=qdrant_url_full)
 
         qdrant_indexer = QdrantIndexer(qdrant_client)
 

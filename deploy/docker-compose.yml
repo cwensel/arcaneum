@@ -1,6 +1,6 @@
 services:
   qdrant:
-    image: qdrant/qdrant:v1.15.4
+    image: qdrant/qdrant:v1.15.5
     container_name: qdrant-arcaneum
     restart: unless-stopped
 
@@ -9,8 +9,8 @@ services:
       - "6334:6334"  # gRPC API
 
     volumes:
-      - ~/.arcaneum/data/qdrant:/qdrant/storage
-      - ~/.arcaneum/data/qdrant_snapshots:/qdrant/snapshots
+      - qdrant-arcaneum-storage:/qdrant/storage
+      - qdrant-arcaneum-snapshots:/qdrant/snapshots
 
     environment:
       - QDRANT__LOG_LEVEL=INFO
@@ -24,4 +24,8 @@ services:
           memory: 2G
           cpus: '1.0'
 
-# Volumes now use direct host paths under ~/.arcaneum/
+volumes:
+  qdrant-arcaneum-storage:
+    driver: local
+  qdrant-arcaneum-snapshots:
+    driver: local

@@ -35,18 +35,24 @@ def check_docker_available():
 
 def get_compose_file():
     """Get the path to docker-compose.yml."""
-    # Try current directory first, then deploy/
+    # Find the repository root directory
+    # This file is at: src/arcaneum/cli/docker.py
+    # We need to go up 3 levels to get to repo root: cli/ -> arcaneum/ -> src/ -> root/
+    repo_root = Path(__file__).parent.parent.parent.parent
+
+    # Try repo deploy/ directory first, then current directory as fallback
     compose_paths = [
+        repo_root / "deploy" / "docker-compose.yml",
         Path("docker-compose.yml"),
         Path("deploy/docker-compose.yml"),
     ]
 
     for path in compose_paths:
         if path.exists():
-            return str(path)
+            return str(path.resolve())
 
     print_error("docker-compose.yml not found")
-    print_info("Expected locations: ./docker-compose.yml or ./deploy/docker-compose.yml")
+    print_info(f"Expected locations: {repo_root}/deploy/docker-compose.yml or ./docker-compose.yml")
     return None
 
 
@@ -161,17 +167,55 @@ def status_command():
     else:
         print_error("Qdrant: Unhealthy or not running")
 
-    # Show data directory sizes
-    data_dir = get_data_dir()
-    if data_dir.exists():
-        print()
-        print_info("Data Directory:")
-        print(f"  Location: {data_dir}")
+    # Show Docker volume information
+    print()
+    print_info("Docker Volumes:")
 
-        qdrant_dir = data_dir / "qdrant"
-        if qdrant_dir.exists():
-            size = get_dir_size(qdrant_dir)
-            print(f"  Qdrant: {format_size(size)}")
+    # Get volume information including sizes using docker system df
+    try:
+        import json
+
+        df_result = subprocess.run(
+            ["docker", "system", "df", "-v", "--format", "json"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        df_data = json.loads(df_result.stdout)
+        volumes_data = {v['Name']: v for v in df_data.get('Volumes', [])}
+
+        # List volumes for this project
+        result = subprocess.run(
+            ["docker", "volume", "ls", "--filter", "name=arcaneum", "--format", "{{.Name}}"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        volumes = result.stdout.strip().split('\n')
+        for volume in volumes:
+            if volume:
+                # Get volume details
+                volume_info = volumes_data.get(volume, {})
+                size = volume_info.get('Size', 'unknown')
+
+                # Get mountpoint
+                inspect_result = subprocess.run(
+                    ["docker", "volume", "inspect", volume, "--format", "{{.Mountpoint}}"],
+                    capture_output=True,
+                    text=True,
+                    check=False
+                )
+
+                print(f"  {volume}")
+                if size != 'unknown':
+                    print(f"    Size: {size}")
+                if inspect_result.returncode == 0:
+                    mountpoint = inspect_result.stdout.strip()
+                    print(f"    Mountpoint: {mountpoint}")
+    except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
+        print_warning(f"Could not retrieve volume information: {e}")
 
 
 @container_group.command('logs')

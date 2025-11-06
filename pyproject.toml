@@ -31,8 +31,9 @@ dependencies = [
     "tqdm>=4.67.1",
     "psutil>=6.1.0",  # CPU monitoring (RDR-013 Phase 1)
     "xxhash>=3.5.0",  # Fast non-cryptographic hashing for file deduplication
-    # PDF indexing dependencies (RDR-004)
-    "pymupdf>=1.26.5",
+    # PDF indexing dependencies (RDR-004, RDR-016)
+    "pymupdf>=1.26.6",
+    "pymupdf4llm>=0.1.7",
     "pdfplumber>=0.11.7",
     "pytesseract>=0.3.13",
     "pdf2image>=1.17.0",

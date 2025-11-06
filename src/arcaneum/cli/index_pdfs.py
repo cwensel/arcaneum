@@ -34,6 +34,8 @@ def index_pdfs_command(
     no_ocr: bool,
     ocr_language: str,
     ocr_workers: int,
+    normalize_only: bool,
+    preserve_images: bool,
     process_priority: str,
     max_perf: bool,
     force: bool,
@@ -56,6 +58,8 @@ def index_pdfs_command(
         no_ocr: Disable OCR (enabled by default)
         ocr_language: OCR language code
         ocr_workers: Number of parallel OCR workers (None = cpu_count)
+        normalize_only: Skip markdown conversion, only normalize whitespace (RDR-016)
+        preserve_images: Extract images for multimodal search (RDR-016)
         process_priority: Process scheduling priority (low, normal, high)
         force: Force reindex all files
         batch_across_files: Batch uploads across files
@@ -169,7 +173,7 @@ def index_pdfs_command(
                 console.print(f"[red]❌ {e}[/red]")
             sys.exit(1)
 
-        # Create uploader with file parallelism (arcaneum-108)
+        # Create uploader with file parallelism (arcaneum-108, RDR-016)
         uploader = PDFBatchUploader(
             qdrant_client=qdrant,
             embedding_client=embeddings,
@@ -188,6 +192,8 @@ def index_pdfs_command(
             pdf_timeout=600,  # 10 minute timeout per PDF
             ocr_page_timeout=60,  # 1 minute timeout per OCR page
             embedding_timeout=300,  # 5 minute timeout for embeddings
+            markdown_conversion=not normalize_only,  # RDR-016: markdown by default
+            preserve_images=preserve_images,  # RDR-016: images off by default
         )
 
         # Pre-load model to avoid "hang" during first file processing (similar to markdown indexing)
@@ -233,6 +239,15 @@ def index_pdfs_command(
             preset_suffix = " [max-perf preset]" if max_perf else ""
             console.print(f"  File processing: {file_worker_source} workers{preset_suffix}")
             console.print(f"  Embedding: {embedding_worker_source} workers, batch size {embedding_batch_size}{preset_suffix}")
+
+            # Show extraction strategy (RDR-016)
+            if normalize_only:
+                console.print(f"  Extraction: Normalization-only (47-48% token savings, no structure)")
+            else:
+                console.print(f"  Extraction: Markdown conversion (quality-first, semantic structure)")
+
+            if preserve_images:
+                console.print(f"  Images: Preserved for multimodal search")
 
             if ocr_enabled:
                 from multiprocessing import cpu_count

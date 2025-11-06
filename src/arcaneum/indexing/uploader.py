@@ -44,6 +44,8 @@ class PDFBatchUploader:
         pdf_timeout: int = 600,
         ocr_page_timeout: int = 60,
         embedding_timeout: int = 300,
+        markdown_conversion: bool = True,
+        preserve_images: bool = False,
     ):
         """Initialize batch uploader.
 
@@ -66,6 +68,8 @@ class PDFBatchUploader:
             pdf_timeout: Timeout in seconds for processing a single PDF (default: 600)
             ocr_page_timeout: Timeout in seconds for OCR processing a single page (default: 60)
             embedding_timeout: Timeout in seconds for embedding generation (default: 300)
+            markdown_conversion: Convert PDF to markdown with structure (default: True, RDR-016)
+            preserve_images: Extract images for multimodal search (default: False, RDR-016)
         """
         self.qdrant = qdrant_client
         self.embeddings = embedding_client
@@ -105,10 +109,12 @@ class PDFBatchUploader:
             logger.info(gpu_warning)
             print(gpu_warning, flush=True)
 
-        # Initialize components
+        # Initialize components (RDR-016: markdown conversion default)
         self.extractor = PDFExtractor(
             fallback_enabled=True,
-            table_validation=True
+            table_validation=True,
+            markdown_conversion=markdown_conversion,
+            preserve_images=preserve_images,
         )
 
         self.ocr_enabled = ocr_enabled

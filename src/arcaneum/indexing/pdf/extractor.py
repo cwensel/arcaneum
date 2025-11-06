@@ -1,6 +1,7 @@
-"""PDF text extraction with PyMuPDF and pdfplumber fallback (RDR-004)."""
+"""PDF text extraction with PyMuPDF and pdfplumber fallback (RDR-004, RDR-016)."""
 
 import pymupdf
+import pymupdf4llm
 import pdfplumber
 from pathlib import Path
 from typing import Tuple, Optional
@@ -8,6 +9,7 @@ import logging
 import warnings
 import sys
 import os
+import re
 
 # Suppress PyMuPDF warnings about invalid PDF values
 warnings.filterwarnings('ignore', message='.*Cannot set.*is an invalid.*')
@@ -22,34 +24,43 @@ logger = logging.getLogger(__name__)
 class PDFExtractor:
     """Extract text from PDFs using PyMuPDF with pdfplumber fallback."""
 
-    def __init__(self, fallback_enabled: bool = True, table_validation: bool = True):
+    def __init__(
+        self,
+        fallback_enabled: bool = True,
+        table_validation: bool = True,
+        markdown_conversion: bool = True,
+        ignore_images: bool = True,
+        preserve_images: bool = False,
+    ):
         """Initialize PDF extractor.
 
         Args:
             fallback_enabled: Enable pdfplumber fallback for complex tables
             table_validation: Validate table extraction quality
+            markdown_conversion: Convert PDF to markdown with structure (default: True, RDR-016)
+            ignore_images: Skip image processing for performance (default: True, RDR-016)
+            preserve_images: Extract images for multimodal search (default: False, RDR-016)
         """
         self.fallback_enabled = fallback_enabled
         self.table_validation = table_validation
+        self.markdown_conversion = markdown_conversion
+        self.ignore_images = ignore_images and not preserve_images
+        self.preserve_images = preserve_images
 
     def extract(self, pdf_path: Path) -> Tuple[str, dict]:
-        """Extract text from PDF.
+        """Extract text from PDF with optional markdown conversion (RDR-016).
 
         Returns:
             Tuple of (text, metadata)
-            metadata includes: extraction_method, is_image_pdf, page_count
+            metadata includes: extraction_method, is_image_pdf, page_count, format
         """
         try:
-            # Primary: PyMuPDF (95x faster)
-            text, metadata = self._extract_with_pymupdf(pdf_path)
-
-            # Validate extraction quality
-            if self.table_validation and self._has_complex_tables(pdf_path):
-                # Fallback to pdfplumber for table-heavy documents
-                logger.info(f"Complex tables detected in {pdf_path.name}, using pdfplumber")
-                text, metadata = self._extract_with_pdfplumber(pdf_path)
-
-            return text, metadata
+            # RDR-016: Use markdown conversion by default for quality-first approach
+            if self.markdown_conversion:
+                return self._extract_with_markdown(pdf_path)
+            else:
+                # Normalization-only mode for maximum token savings
+                return self._extract_with_pymupdf_normalized(pdf_path)
 
         except Exception as e:
             logger.error(f"PDF extraction failed for {pdf_path}: {e}")
@@ -157,3 +168,115 @@ class PDFExtractor:
             lines.insert(1, "|" + "|".join([" --- " for _ in table[0]]) + "|")
 
         return '\n'.join(lines)
+
+    def _normalize_whitespace_edge_cases(self, text: str) -> str:
+        """Handle whitespace edge cases not covered by PyMuPDF4LLM (RDR-016).
+
+        PyMuPDF4LLM already handles:
+        - Double space collapsing
+        - Trailing spaces before newlines
+        - Triple newline reduction to double
+        - Leading/trailing whitespace trimming
+
+        This function handles remaining edge cases:
+        - Tabs
+        - Unicode whitespace characters (non-breaking spaces, etc.)
+        - 4+ consecutive newlines
+        """
+        if not text:
+            return text
+
+        # Convert tabs to spaces (PyMuPDF4LLM doesn't handle tabs)
+        text = text.replace('\t', ' ')
+
+        # Normalize Unicode whitespace characters
+        # Includes non-breaking space, thin space, etc.
+        text = re.sub(r'[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]+', ' ', text)
+
+        # Handle 4+ newlines (PyMuPDF4LLM only reduces 3 to 2)
+        text = re.sub(r'\n{4,}', '\n\n\n', text)
+
+        return text.strip()
+
+    def _extract_with_markdown(self, pdf_path: Path) -> Tuple[str, dict]:
+        """Extract text as markdown using PyMuPDF4LLM (RDR-016 default).
+
+        This is the quality-first approach that provides semantic structure
+        (headers, lists, tables) while still achieving token savings through
+        built-in whitespace normalization.
+        """
+        # Convert entire document to markdown
+        # PyMuPDF4LLM includes built-in whitespace normalization
+        md_text = pymupdf4llm.to_markdown(
+            str(pdf_path),
+            ignore_images=self.ignore_images,  # Default: True for performance
+            write_images=self.preserve_images,  # Default: False
+            force_text=True,  # Extract all text (default)
+            table_strategy="lines_strict",  # Accurate table detection
+        )
+
+        # Handle edge cases not covered by PyMuPDF4LLM
+        # (tabs, Unicode whitespace, 4+ newlines)
+        md_text = self._normalize_whitespace_edge_cases(md_text)
+
+        with pymupdf.open(pdf_path) as doc:
+            page_count = len(doc)
+
+        metadata = {
+            'extraction_method': 'pymupdf4llm_markdown',
+            'is_image_pdf': False,
+            'page_count': page_count,
+            'file_size': pdf_path.stat().st_size,
+            'format': 'markdown',
+        }
+
+        return md_text, metadata
+
+    def _extract_with_pymupdf_normalized(self, pdf_path: Path) -> Tuple[str, dict]:
+        """Extract text with normalization only (RDR-016 opt-in for maximum savings).
+
+        This is the maximum token savings approach (47-48% reduction) without
+        adding structural markup. Use when cost optimization is the primary goal.
+        """
+        text_parts = []
+        page_boundaries = []
+        current_pos = 0
+
+        with pymupdf.open(pdf_path) as doc:
+            page_count = len(doc)
+
+            for page_num, page in enumerate(doc):
+                page_text = page.get_text(sort=True)
+
+                if page_text.strip():
+                    page_boundaries.append({
+                        'page_number': page_num + 1,
+                        'start_char': current_pos,
+                        'page_text_length': len(page_text)
+                    })
+                    text_parts.append(page_text)
+                    current_pos += len(page_text) + 1
+
+        text = '\n'.join(text_parts)
+
+        # Apply comprehensive normalization
+        # Note: Raw PyMuPDF extraction doesn't normalize (unlike PyMuPDF4LLM)
+        # Collapse multiple spaces
+        text = re.sub(r' +', ' ', text)
+        # Reduce excessive newlines
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        # Remove trailing whitespace from lines
+        text = '\n'.join(line.rstrip() for line in text.split('\n'))
+        # Handle edge cases (tabs, Unicode whitespace)
+        text = self._normalize_whitespace_edge_cases(text)
+
+        metadata = {
+            'extraction_method': 'pymupdf_normalized',
+            'is_image_pdf': False,
+            'page_count': page_count,
+            'file_size': pdf_path.stat().st_size,
+            'format': 'normalized',
+            'page_boundaries': page_boundaries,
+        }
+
+        return text, metadata

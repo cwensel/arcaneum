@@ -76,6 +76,15 @@ def delete_collection(name, confirm, output_json):
     delete_collection_command(name, confirm, output_json)
 
 
+@collection.command('items')
+@click.argument('name')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def collection_items(name, output_json):
+    """List all indexed files/repos in collection"""
+    from arcaneum.cli.collections import items_collection_command
+    items_collection_command(name, output_json)
+
+
 # Models commands
 @cli.group()
 def models():

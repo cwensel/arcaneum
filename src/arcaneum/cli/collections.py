@@ -273,3 +273,148 @@ def info_collection_command(name: str, output_json: bool):
     except Exception as e:
         print_error(f"Failed to get collection info: {e}", output_json)
         sys.exit(1)
+
+
+def items_collection_command(name: str, output_json: bool):
+    """List all indexed files/repos in a collection.
+
+    Args:
+        name: Collection name
+        output_json: Output as JSON
+    """
+    try:
+        client = create_qdrant_client()
+
+        # Get collection type to determine how to list items
+        collection_type = get_collection_type(client, name)
+
+        # Scroll through collection and collect unique items
+        items_by_id = {}  # Use dict to deduplicate
+        offset = None
+
+        while True:
+            # Determine which fields to fetch based on collection type
+            if collection_type == "pdf" or collection_type == "markdown":
+                payload_fields = ["file_path", "file_hash", "file_size", "page_count", "filename"]
+            elif collection_type == "code":
+                payload_fields = ["git_project_name", "git_project_identifier", "git_branch",
+                                "git_commit_hash", "git_remote_url", "file_path"]
+            else:
+                # Untyped collection - try to get both file and git fields
+                payload_fields = ["file_path", "file_hash", "filename", "git_project_name",
+                                "git_project_identifier", "git_branch", "git_commit_hash"]
+
+            points, offset = client.scroll(
+                collection_name=name,
+                limit=100,
+                offset=offset,
+                with_payload=payload_fields,
+                with_vectors=False
+            )
+
+            if not points:
+                break
+
+            # Collect unique items based on type
+            for point in points:
+                if not point.payload:
+                    continue
+
+                if collection_type == "code":
+                    # For source code, group by git_project_identifier
+                    identifier = point.payload.get("git_project_identifier")
+                    if identifier and identifier not in items_by_id:
+                        items_by_id[identifier] = {
+                            "git_project_name": point.payload.get("git_project_name"),
+                            "git_project_identifier": identifier,
+                            "git_branch": point.payload.get("git_branch"),
+                            "git_commit_hash": point.payload.get("git_commit_hash"),
+                            "git_remote_url": point.payload.get("git_remote_url"),
+                            "chunk_count": 1
+                        }
+                    elif identifier:
+                        items_by_id[identifier]["chunk_count"] += 1
+                else:
+                    # For PDF/markdown, group by file_path
+                    file_path = point.payload.get("file_path")
+                    if file_path and file_path not in items_by_id:
+                        items_by_id[file_path] = {
+                            "file_path": file_path,
+                            "file_hash": point.payload.get("file_hash"),
+                            "file_size": point.payload.get("file_size"),
+                            "page_count": point.payload.get("page_count"),
+                            "filename": point.payload.get("filename"),
+                            "chunk_count": 1
+                        }
+                    elif file_path:
+                        items_by_id[file_path]["chunk_count"] += 1
+
+            if offset is None:
+                break
+
+        items_list = list(items_by_id.values())
+
+        # Output results
+        if output_json:
+            data = {
+                "collection": name,
+                "type": collection_type,
+                "item_count": len(items_list),
+                "items": items_list
+            }
+            print_json("success", f"Found {len(items_list)} items in collection '{name}'", data)
+        else:
+            console.print(f"\n[bold cyan]Collection: {name}[/bold cyan]")
+            type_str = f"[bold]{collection_type}[/bold]" if collection_type else "[yellow]untyped[/yellow]"
+            console.print(f"Type: {type_str}")
+            console.print(f"Items: {len(items_list)}\n")
+
+            if collection_type == "code":
+                # Display as table for source code
+                table = Table(title="Indexed Repositories")
+                table.add_column("Project", style="cyan")
+                table.add_column("Branch", style="green")
+                table.add_column("Commit", style="yellow")
+                table.add_column("Chunks", style="magenta")
+
+                for item in sorted(items_list, key=lambda x: x["git_project_name"]):
+                    table.add_row(
+                        item["git_project_name"],
+                        item["git_branch"],
+                        item["git_commit_hash"][:12] if item["git_commit_hash"] else "N/A",
+                        str(item["chunk_count"])
+                    )
+                console.print(table)
+            else:
+                # Display as table for PDFs/markdown
+                table = Table(title="Indexed Files")
+                table.add_column("File", style="cyan", no_wrap=False)
+                table.add_column("Size", style="yellow")
+                table.add_column("Chunks", style="magenta")
+
+                for item in sorted(items_list, key=lambda x: x.get("filename", x["file_path"])):
+                    # Format file size
+                    size = item.get("file_size", 0)
+                    if size:
+                        if size > 1024 * 1024:
+                            size_str = f"{size / (1024 * 1024):.1f}MB"
+                        elif size > 1024:
+                            size_str = f"{size / 1024:.1f}KB"
+                        else:
+                            size_str = f"{size}B"
+                    else:
+                        size_str = "N/A"
+
+                    # Show filename or full path
+                    display_name = item.get("filename") or item["file_path"]
+
+                    table.add_row(
+                        display_name,
+                        size_str,
+                        str(item["chunk_count"])
+                    )
+                console.print(table)
+
+    except Exception as e:
+        print_error(f"Failed to list collection items: {e}", output_json)
+        sys.exit(1)

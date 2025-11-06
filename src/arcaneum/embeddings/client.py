@@ -204,11 +204,13 @@ class EmbeddingClient:
                 # SentenceTransformer handles download progress automatically via HuggingFace
                 # Use local_files_only if cached to prevent network calls to HuggingFace Hub
                 # GPU acceleration via device parameter (RDR-013 Phase 2)
+                # trust_remote_code=True allows custom model architectures like stella
                 model_obj = SentenceTransformer(
                     config["name"],
                     cache_folder=self.cache_dir,
                     local_files_only=is_cached,  # Skip HuggingFace Hub check if cached
-                    device=self._device  # "mps", "cuda", or "cpu"
+                    device=self._device,  # "mps", "cuda", or "cpu"
+                    trust_remote_code=True  # Required for stella and other custom models
                 )
                 model_obj._backend = "sentence-transformers"
                 self._models[model_name] = model_obj

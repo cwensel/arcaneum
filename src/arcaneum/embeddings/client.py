@@ -184,12 +184,31 @@ class EmbeddingClient:
 
                 # Use local_files_only if model is cached to prevent network calls
                 # This is the official FastEmbed parameter for offline mode
-                self._models[model_name] = TextEmbedding(
-                    model_name=config["name"],
-                    cache_dir=self.cache_dir,
-                    local_files_only=is_cached,  # Skip network access if cached
-                    providers=providers  # GPU acceleration if available
-                )
+                try:
+                    self._models[model_name] = TextEmbedding(
+                        model_name=config["name"],
+                        cache_dir=self.cache_dir,
+                        local_files_only=is_cached,  # Skip network access if cached
+                        providers=providers  # GPU acceleration if available
+                    )
+                except Exception as e:
+                    # Detect and report network/SSL errors with helpful messages
+                    error_msg = str(e).lower()
+                    if "ssl" in error_msg or "certificate" in error_msg:
+                        raise RuntimeError(
+                            f"SSL certificate verification failed while downloading model '{model_name}'.\n"
+                            f"If you are using a VPN, please disable it and try again.\n\n"
+                            f"Original error: {e}"
+                        ) from e
+                    elif "connection" in error_msg or "network" in error_msg or "timeout" in error_msg:
+                        raise RuntimeError(
+                            f"Network connection failed while downloading model '{model_name}'.\n"
+                            f"Please check your internet connection. If using a VPN, try disabling it.\n\n"
+                            f"Original error: {e}"
+                        ) from e
+                    else:
+                        # Re-raise other errors as-is
+                        raise
             elif backend == "sentence-transformers":
                 from sentence_transformers import SentenceTransformer
                 import sys
@@ -205,15 +224,34 @@ class EmbeddingClient:
                 # Use local_files_only if cached to prevent network calls to HuggingFace Hub
                 # GPU acceleration via device parameter (RDR-013 Phase 2)
                 # trust_remote_code=True allows custom model architectures like stella
-                model_obj = SentenceTransformer(
-                    config["name"],
-                    cache_folder=self.cache_dir,
-                    local_files_only=is_cached,  # Skip HuggingFace Hub check if cached
-                    device=self._device,  # "mps", "cuda", or "cpu"
-                    trust_remote_code=True  # Required for stella and other custom models
-                )
-                model_obj._backend = "sentence-transformers"
-                self._models[model_name] = model_obj
+                try:
+                    model_obj = SentenceTransformer(
+                        config["name"],
+                        cache_folder=self.cache_dir,
+                        local_files_only=is_cached,  # Skip HuggingFace Hub check if cached
+                        device=self._device,  # "mps", "cuda", or "cpu"
+                        trust_remote_code=True  # Required for stella and other custom models
+                    )
+                    model_obj._backend = "sentence-transformers"
+                    self._models[model_name] = model_obj
+                except Exception as e:
+                    # Detect and report network/SSL errors with helpful messages
+                    error_msg = str(e).lower()
+                    if "ssl" in error_msg or "certificate" in error_msg:
+                        raise RuntimeError(
+                            f"SSL certificate verification failed while downloading model '{model_name}'.\n"
+                            f"If you are using a VPN, please disable it and try again.\n\n"
+                            f"Original error: {e}"
+                        ) from e
+                    elif "connection" in error_msg or "network" in error_msg or "timeout" in error_msg:
+                        raise RuntimeError(
+                            f"Network connection failed while downloading model '{model_name}'.\n"
+                            f"Please check your internet connection. If using a VPN, try disabling it.\n\n"
+                            f"Original error: {e}"
+                        ) from e
+                    else:
+                        # Re-raise other errors as-is
+                        raise
 
         return self._models[model_name]
 

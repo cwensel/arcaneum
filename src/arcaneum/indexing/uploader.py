@@ -222,7 +222,7 @@ class PDFBatchUploader:
             # Chunk text with file metadata
             base_metadata = {
                 'filename': pdf_path.name,
-                'file_path': str(pdf_path),
+                'file_path': str(pdf_path.absolute()),  # Always store absolute path for consistent lookups
                 'file_hash': file_hash,
                 'file_size': pdf_path.stat().st_size,
                 'store_type': 'pdf',

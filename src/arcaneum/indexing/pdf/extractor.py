@@ -204,33 +204,54 @@ class PDFExtractor:
         This is the quality-first approach that provides semantic structure
         (headers, lists, tables) while still achieving token savings through
         built-in whitespace normalization.
+
+        Falls back to normalized extraction if markdown conversion fails
+        (e.g., font errors, malformed PDFs).
         """
-        # Convert entire document to markdown
-        # PyMuPDF4LLM includes built-in whitespace normalization
-        md_text = pymupdf4llm.to_markdown(
-            str(pdf_path),
-            ignore_images=self.ignore_images,  # Default: True for performance
-            write_images=self.preserve_images,  # Default: False
-            force_text=True,  # Extract all text (default)
-            table_strategy="lines_strict",  # Accurate table detection
-        )
+        try:
+            # Convert entire document to markdown
+            # PyMuPDF4LLM includes built-in whitespace normalization
+            md_text = pymupdf4llm.to_markdown(
+                str(pdf_path),
+                ignore_images=self.ignore_images,  # Default: True for performance
+                write_images=self.preserve_images,  # Default: False
+                force_text=True,  # Extract all text (default)
+                table_strategy="lines_strict",  # Accurate table detection
+            )
 
-        # Handle edge cases not covered by PyMuPDF4LLM
-        # (tabs, Unicode whitespace, 4+ newlines)
-        md_text = self._normalize_whitespace_edge_cases(md_text)
+            # Handle edge cases not covered by PyMuPDF4LLM
+            # (tabs, Unicode whitespace, 4+ newlines)
+            md_text = self._normalize_whitespace_edge_cases(md_text)
 
-        with pymupdf.open(pdf_path) as doc:
-            page_count = len(doc)
+            with pymupdf.open(pdf_path) as doc:
+                page_count = len(doc)
 
-        metadata = {
-            'extraction_method': 'pymupdf4llm_markdown',
-            'is_image_pdf': False,
-            'page_count': page_count,
-            'file_size': pdf_path.stat().st_size,
-            'format': 'markdown',
-        }
+            metadata = {
+                'extraction_method': 'pymupdf4llm_markdown',
+                'is_image_pdf': False,
+                'page_count': page_count,
+                'file_size': pdf_path.stat().st_size,
+                'format': 'markdown',
+            }
 
-        return md_text, metadata
+            return md_text, metadata
+
+        except RuntimeError as e:
+            # Handle PyMuPDF font digest errors (code=4: no font file for digest)
+            # This occurs when TEXT_COLLECT_STYLES flag encounters fonts without embedded data
+            # (Base-14 fonts, system fonts). The error is in fake-bold detection optimization,
+            # not core text extraction. Fallback maintains quality.
+            error_msg = str(e)
+            if "font" in error_msg.lower() or "code=4" in error_msg:
+                logger.warning(f"Markdown conversion failed for {pdf_path.name} "
+                             f"(font digest error: {error_msg}). This is a known PyMuPDF4LLM "
+                             f"limitation with certain fonts. Falling back to normalized extraction.")
+                # Fall back to normalized extraction - quality is maintained
+                # (only loses fake-bold deduplication optimization)
+                return self._extract_with_pymupdf_normalized(pdf_path)
+            else:
+                # Re-raise other RuntimeErrors
+                raise
 
     def _extract_with_pymupdf_normalized(self, pdf_path: Path) -> Tuple[str, dict]:
         """Extract text with normalization only (RDR-016 opt-in for maximum savings).

@@ -61,6 +61,8 @@ def setup_logging_default():
     warnings.filterwarnings('ignore', message='Some weights of.*were not initialized.*')
     warnings.filterwarnings('ignore', message='.*BertSdpaSelfAttention.*')
     warnings.filterwarnings('ignore', category=FutureWarning, module='transformers')
+    # Suppress optimum library warnings from custom model code (jina models)
+    warnings.filterwarnings('ignore', message='.*optimum is not installed.*')
 
 
 def setup_logging_verbose():
@@ -114,6 +116,8 @@ def setup_logging_verbose():
     warnings.filterwarnings('ignore', message='Some weights of.*were not initialized.*')
     warnings.filterwarnings('ignore', message='.*BertSdpaSelfAttention.*')
     warnings.filterwarnings('ignore', category=FutureWarning, module='transformers')
+    # Suppress optimum library warnings from custom model code (jina models)
+    warnings.filterwarnings('ignore', message='.*optimum is not installed.*')
 
 
 def setup_logging_debug():

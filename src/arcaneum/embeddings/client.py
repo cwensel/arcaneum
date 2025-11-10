@@ -224,34 +224,60 @@ class EmbeddingClient:
                 # Use local_files_only if cached to prevent network calls to HuggingFace Hub
                 # GPU acceleration via device parameter (RDR-013 Phase 2)
                 # trust_remote_code=True allows custom model architectures like stella
-                try:
-                    model_obj = SentenceTransformer(
-                        config["name"],
-                        cache_folder=self.cache_dir,
-                        local_files_only=is_cached,  # Skip HuggingFace Hub check if cached
-                        device=self._device,  # "mps", "cuda", or "cpu"
-                        trust_remote_code=True  # Required for stella and other custom models
-                    )
-                    model_obj._backend = "sentence-transformers"
-                    self._models[model_name] = model_obj
-                except Exception as e:
-                    # Detect and report network/SSL errors with helpful messages
-                    error_msg = str(e).lower()
-                    if "ssl" in error_msg or "certificate" in error_msg:
-                        raise RuntimeError(
-                            f"SSL certificate verification failed while downloading model '{model_name}'.\n"
-                            f"If you are using a VPN, please disable it and try again.\n\n"
-                            f"Original error: {e}"
-                        ) from e
-                    elif "connection" in error_msg or "network" in error_msg or "timeout" in error_msg:
-                        raise RuntimeError(
-                            f"Network connection failed while downloading model '{model_name}'.\n"
-                            f"Please check your internet connection. If using a VPN, try disabling it.\n\n"
-                            f"Original error: {e}"
-                        ) from e
-                    else:
-                        # Re-raise other errors as-is
-                        raise
+                model_obj = None
+                last_error = None
+
+                # Try with local_files_only=True first if cache exists (fast path, no network)
+                if is_cached:
+                    try:
+                        model_obj = SentenceTransformer(
+                            config["name"],
+                            cache_folder=self.cache_dir,
+                            local_files_only=True,  # Skip HuggingFace Hub check if cached
+                            device=self._device,  # "mps", "cuda", or "cpu"
+                            trust_remote_code=True  # Required for stella and other custom models
+                        )
+                        model_obj._backend = "sentence-transformers"
+                        self._models[model_name] = model_obj
+                    except Exception as e:
+                        # If local_files_only fails, cache may be incomplete (e.g., missing custom code)
+                        # Save error and try with network access
+                        last_error = e
+
+                # If not cached or local_files_only failed, try with network access
+                if model_obj is None:
+                    try:
+                        # If we're retrying after local_files_only failure, show message
+                        if last_error is not None:
+                            print("   Downloading additional model files...", flush=True, file=sys.stderr)
+
+                        model_obj = SentenceTransformer(
+                            config["name"],
+                            cache_folder=self.cache_dir,
+                            local_files_only=False,  # Allow network access to complete download
+                            device=self._device,  # "mps", "cuda", or "cpu"
+                            trust_remote_code=True  # Required for stella and other custom models
+                        )
+                        model_obj._backend = "sentence-transformers"
+                        self._models[model_name] = model_obj
+                    except Exception as e:
+                        # Detect and report network/SSL errors with helpful messages
+                        error_msg = str(e).lower()
+                        if "ssl" in error_msg or "certificate" in error_msg:
+                            raise RuntimeError(
+                                f"SSL certificate verification failed while downloading model '{model_name}'.\n"
+                                f"If you are using a VPN, please disable it and try again.\n\n"
+                                f"Original error: {e}"
+                            ) from e
+                        elif "connection" in error_msg or "network" in error_msg or "timeout" in error_msg:
+                            raise RuntimeError(
+                                f"Network connection failed while downloading model '{model_name}'.\n"
+                                f"Please check your internet connection. If using a VPN, try disabling it.\n\n"
+                                f"Original error: {e}"
+                            ) from e
+                        else:
+                            # Re-raise other errors as-is
+                            raise
 
         return self._models[model_name]
 
@@ -526,7 +552,47 @@ class EmbeddingClient:
             # Check HuggingFace cache (models--<org>--<model>)
             safe_model_name = model_path.replace("/", "--")
             model_dir = os.path.join(self.cache_dir, f"models--{safe_model_name}")
-            return os.path.exists(model_dir) and os.path.isdir(model_dir)
+
+            # Check if main model cache exists
+            if not (os.path.exists(model_dir) and os.path.isdir(model_dir)):
+                return False
+
+            # For models with trust_remote_code=True, also check transformers_modules cache
+            # These models may have custom Python code in a separate cache location
+            # Example: jina models store custom code in ~/.cache/huggingface/modules/transformers_modules/
+            # or ~/.arcaneum/models/modules/transformers_modules/
+            # We conservatively return False to allow network access for downloading custom code
+            # This ensures models work correctly even with custom architectures
+
+            # Check two possible locations for transformers_modules:
+            # 1. Inside cache_dir (e.g., ~/.arcaneum/models/modules/)
+            # 2. Sibling to cache_dir (e.g., ~/.cache/huggingface/modules/)
+            transformers_modules_dir = os.path.join(self.cache_dir, "modules", "transformers_modules")
+            if not os.path.exists(transformers_modules_dir):
+                # Try sibling directory
+                transformers_modules_dir = os.path.join(
+                    os.path.dirname(self.cache_dir),
+                    "modules",
+                    "transformers_modules"
+                )
+
+            # If transformers_modules directory doesn't exist at all, model may need custom code
+            # Return False to allow download attempt
+            if not os.path.exists(transformers_modules_dir):
+                return False
+
+            # Check if there's a cached module for this model's organization
+            # Extract org name from model path (e.g., "jinaai" from "jinaai/jina-embeddings-v2-base-code")
+            if "/" in model_path:
+                org_name = model_path.split("/")[0]
+                org_modules_dir = os.path.join(transformers_modules_dir, org_name)
+
+                # If org directory doesn't exist, model may need custom code
+                if not os.path.exists(org_modules_dir):
+                    return False
+
+            # Both main cache and transformers_modules exist, model is fully cached
+            return True
         else:
             # FastEmbed uses HuggingFace cache structure with models-- prefix
             # The actual cached model name may differ from config (e.g., qdrant/bge-large-en-v1.5-onnx)

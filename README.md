@@ -28,10 +28,14 @@ documents and source code with git-aware, AST-based chunking.
 
 ### Multiple Embedding Models
 
-- stella_en_1.5B_v5 (1024D) - High-quality general embeddings (GPU-compatible)
-- modernbert (1024D) - Transformer-based embeddings (GPU-compatible)
-- bge-large-en-v1.5 (1024D) - BGE embeddings
-- jina-code-embeddings (768D/1536D) - Code-optimized embeddings (GPU-compatible)
+- **stella** (1024D) - High-quality general purpose embeddings, optimized for PDFs and documents
+- **jina-code** (768D) - Code-specific embeddings, optimized for source code analysis
+- **bge-large** (1024D) - BGE large embeddings, balanced performance
+- **jina-v3** (1024D) - Multilingual embeddings with extended 8K context
+- **bge-base** (768D) - BGE base embeddings, balanced performance and speed
+- **bge-small** (384D) - BGE small embeddings, fastest for size-constrained scenarios
+
+See `arc models list` for complete model information and recommendations.
 
 ### GPU Acceleration
 
@@ -49,11 +53,11 @@ documents and source code with git-aware, AST-based chunking.
 
 ### Claude Code Integration
 
-- Slash commands for all operations (`/search`, `/search-text`, `/index-pdfs`, etc.)
-- Discoverable via `/help` command
+- Slash commands for all operations (`/arc:search`, `/arc:index`, `/arc:collection`, etc.)
+- Discoverable via `/help` or `/commands` in Claude Code
 - No MCP overhead - direct CLI execution
 
-## Quick Start (5 Minutes)
+## Quick Start
 
 Get started with Arcaneum in just a few commands:
 
@@ -176,7 +180,7 @@ arc container stop     # Stop services
 
 - **Python 3.12+** - Check with `python --version`
 - **Git** - For cloning the repository
-- **Docker** - [Install Docker Desktop](https://docs.docker.com/get-docker/)
+- **Docker** - [Install Docker Desktop](https://docs.docker.com/get-docker/) (Mac/Windows) or Docker Engine (Linux)
 
 ### Install
 
@@ -198,21 +202,36 @@ The `doctor` command checks your environment and guides you through any issues.
 
 ### Data Storage
 
-Arcaneum stores all data in `~/.arcaneum/`:
+Arcaneum stores data across two locations:
+
+**Embedding Models:**
 
 ```text
-~/.arcaneum/
-├── models/              # Embedding models (auto-downloaded, ~1-2GB)
-├── data/
-│   ├── qdrant/         # Vector database
-│   └── qdrant_snapshots/  # Backups
+~/.arcaneum/models/     # Auto-downloaded, ~1-2GB per model
 ```
+
+**Vector Database:**
+
+Qdrant uses Docker named volumes for data persistence and safety:
+
+```text
+qdrant-arcaneum-storage    # Main vector database storage
+qdrant-arcaneum-snapshots  # Backup snapshots
+```
+
+Named volumes store data on a Linux ext4 filesystem inside Docker, providing better
+reliability and performance than bind mounts.
+
+**Migration Note:** If you're upgrading from bind mounts to named volumes, see
+**[Qdrant Migration Guide](docs/guides/qdrant-migration.md)** for detailed migration
+steps.
 
 **Benefits:**
 
-- Easy to backup (just backup `~/.arcaneum/`)
-- Easy to find and manage
-- No hidden Docker volumes
+- Reliable data persistence across container restarts
+- Better performance compared to bind mounts
+- Easy backup via Qdrant snapshots
+- Native Linux filesystem (ext4) for data safety
 
 ### Corporate Networks
 
@@ -240,23 +259,36 @@ In Claude Code, add the local marketplace and install the plugin:
 
 ```text
 /plugin marketplace add /path/to/arcaneum
-/plugin install arc
+/plugin install arc@arcaneum-marketplace
 ```
 
 Then restart Claude Code to activate the plugin.
 
 ### Available Commands
 
-- `/collection` - Manage Qdrant collections (create, list, info, delete)
-- `/config` - Manage configuration and cache
-- `/container` - Manage Docker containers (start, stop, status, logs)
-- `/corpus` - Manage dual-index corpora (vector + full-text)
-- `/doctor` - Verify setup and prerequisites
-- `/index` - Index PDF, code, or markdown into collections
-- `/models` - List available embedding models
-- `/search` - Semantic or full-text search
+All commands use the `arc:` namespace prefix:
 
-Use `/help` in Claude Code to see all available commands or `/doctor` to check your setup.
+- `/arc:collection` - Manage Qdrant collections (create, list, info, delete)
+- `/arc:config` - Manage configuration and cache
+- `/arc:container` - Manage Docker containers (start, stop, status, logs)
+- `/arc:corpus` - Manage dual-index corpora (vector + full-text)
+- `/arc:doctor` - Verify setup and prerequisites
+- `/arc:index` - Index PDF, code, or markdown into collections
+- `/arc:models` - List available embedding models
+- `/arc:search` - Semantic or full-text search
+
+**Usage Examples:**
+
+```text
+/arc:collection create my-docs --model stella --type pdf
+/arc:index pdf ~/Documents --collection my-docs
+/arc:search "example query" --collection my-docs
+/arc:models list
+```
+
+Use `/help` in Claude Code to see all available commands or `/arc:doctor` to check your setup.
+
+**For Developers:** See **[Claude Code Plugin Testing Guide](docs/guides/claude-code-plugin.md)** for local testing instructions.
 
 ## Development
 
@@ -300,16 +332,19 @@ pytest --cov=arcaneum tests/
 
 ### User Guides
 
-- **[Quick Start Guide](docs/guides/quickstart.md)** - Complete walkthrough with troubleshooting
-- **[CLI Reference](docs/guides/cli-reference.md)** - All commands and options
+- **[Quick Start Guide](docs/guides/quickstart.md)** - Installation, setup, and your first search
+- **[CLI Reference](docs/guides/cli-reference.md)** - Complete command documentation and options
 - **[PDF Indexing Guide](docs/guides/pdf-indexing.md)** - Advanced PDF indexing with OCR
-- **[Corporate Network Setup](docs/testing/offline-mode.md)** - SSL and offline mode
+  support, performance tuning, and troubleshooting
+- **[Qdrant Migration Guide](docs/guides/qdrant-migration.md)** - Migrate from bind mounts to Docker named volumes
+- **[Corporate Network Setup](docs/testing/offline-mode.md)** - Setup for VPN, SSL certificates, and offline mode
+- **[Claude Code Plugin Testing Guide](docs/guides/claude-code-plugin.md)** - Local development and testing for plugin developers
 
 ### Development
 
-- **[RDR Process](docs/rdr/README.md)** - Detailed planning workflow
-- **[Individual RDRs](docs/rdr/)** - Technical specifications for each feature
-- **[Slash Commands](commands/)** - Claude Code integration
+- **[RDR Process](docs/rdr/README.md)** - Recommendation Data Records workflow for complex features
+- **[Individual RDRs](docs/rdr/)** - Technical specifications and design decisions for each feature
+- **[Slash Commands](commands/)** - Claude Code plugin command implementations
 
 ## Contributing
 

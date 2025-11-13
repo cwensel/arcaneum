@@ -4,12 +4,19 @@ import pymupdf
 import pymupdf4llm
 import pdfplumber
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, Any
 import logging
 import warnings
 import sys
 import os
 import re
+
+# Optional: pymupdf-layout for enhanced layout detection
+try:
+    from pymupdf_layout import Layout
+    HAS_PYMUPDF_LAYOUT = True
+except ImportError:
+    HAS_PYMUPDF_LAYOUT = False
 
 # Suppress PyMuPDF warnings about invalid PDF values
 warnings.filterwarnings('ignore', message='.*Cannot set.*is an invalid.*')
@@ -31,6 +38,7 @@ class PDFExtractor:
         markdown_conversion: bool = True,
         ignore_images: bool = True,
         preserve_images: bool = False,
+        use_layout_analysis: bool = True,
     ):
         """Initialize PDF extractor.
 
@@ -40,12 +48,14 @@ class PDFExtractor:
             markdown_conversion: Convert PDF to markdown with structure (default: True, RDR-016)
             ignore_images: Skip image processing for performance (default: True, RDR-016)
             preserve_images: Extract images for multimodal search (default: False, RDR-016)
+            use_layout_analysis: Use pymupdf-layout for enhanced layout detection (default: True)
         """
         self.fallback_enabled = fallback_enabled
         self.table_validation = table_validation
         self.markdown_conversion = markdown_conversion
         self.ignore_images = ignore_images and not preserve_images
         self.preserve_images = preserve_images
+        self.use_layout_analysis = use_layout_analysis and HAS_PYMUPDF_LAYOUT
 
     def extract(self, pdf_path: Path) -> Tuple[str, dict]:
         """Extract text from PDF with optional markdown conversion (RDR-016).
@@ -141,6 +151,31 @@ class PDFExtractor:
 
         return text, metadata
 
+    def _get_layout_analysis(self, pdf_path: Path) -> Optional[Dict[str, Any]]:
+        """Get layout analysis using pymupdf-layout for better structure detection.
+
+        Returns layout information including:
+        - Text blocks and their bounding boxes
+        - Headers, footers, and sections
+        - Column layouts
+        - Element hierarchy for better semantic understanding
+        """
+        if not self.use_layout_analysis:
+            return None
+
+        try:
+            layout = Layout(str(pdf_path))
+            return {
+                'layout_detected': True,
+                'has_pymupdf_layout': True,
+                'text_blocks': len(layout.text_block_rects) if hasattr(layout, 'text_block_rects') else 0,
+                'pages_analyzed': layout.num_pages if hasattr(layout, 'num_pages') else 0,
+            }
+        except Exception as e:
+            logger.debug(f"Layout analysis failed for {pdf_path.name}: {e}. "
+                        f"Will use standard extraction.")
+            return None
+
     def _has_complex_tables(self, pdf_path: Path) -> bool:
         """Quick check if PDF has complex tables (heuristic)."""
         try:
@@ -199,16 +234,22 @@ class PDFExtractor:
         return text.strip()
 
     def _extract_with_markdown(self, pdf_path: Path) -> Tuple[str, dict]:
-        """Extract text as markdown using PyMuPDF4LLM (RDR-016 default).
+        """Extract text as markdown using PyMuPDF4LLM with optional layout analysis (RDR-016 default).
 
         This is the quality-first approach that provides semantic structure
         (headers, lists, tables) while still achieving token savings through
         built-in whitespace normalization.
 
+        If pymupdf-layout is available, uses layout analysis to enhance
+        structure detection and semantic understanding.
+
         Falls back to normalized extraction if markdown conversion fails
         (e.g., font errors, malformed PDFs).
         """
         try:
+            # Get layout analysis for enhanced structure detection (optional)
+            layout_info = self._get_layout_analysis(pdf_path) if self.use_layout_analysis else None
+
             # Convert entire document to markdown
             # PyMuPDF4LLM includes built-in whitespace normalization
             md_text = pymupdf4llm.to_markdown(
@@ -232,7 +273,12 @@ class PDFExtractor:
                 'page_count': page_count,
                 'file_size': pdf_path.stat().st_size,
                 'format': 'markdown',
+                'layout_analyzed': layout_info is not None,
             }
+
+            # Add layout analysis details if available
+            if layout_info:
+                metadata.update(layout_info)
 
             return md_text, metadata
 

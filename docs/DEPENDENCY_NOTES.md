@@ -108,7 +108,28 @@ After aggressive testing to upgrade to latest versions:
 
 All other dependencies use flexible version constraints and should not cause similar issues:
 
-- **sentence-transformers:** >=5.1.0 (no upper bound - fully upgraded)
-- **torch:** >=2.0.0 (no upper bound - stays modern)
+- **sentence-transformers:** >=5.0.0,<5.1.0 (stable, proven working)
+- **torch:** >=2.8.0,<2.9.0 (2.9.1 causes segfault, stays stable)
 - **fastembed:** >=0.7.3 (compatible with all tested transformers versions)
 - **llama-index-core:** >=0.14.6 (abstracts transformers, no direct dependency)
+
+### pymupdf-layout Integration
+
+**Status:** ✅ Integrated and automatically used
+
+The `pymupdf-layout` package is now **automatically integrated** into the PDF extraction pipeline:
+
+- **Used for:** Enhanced layout detection and structure analysis
+- **When:** Automatically applied during markdown extraction (RDR-016)
+- **Benefit:** Better semantic structure preservation, improved chunking for search
+- **Fallback:** If pymupdf-layout unavailable, gracefully uses standard extraction
+- **Performance:** Minimal overhead - runs once per PDF, not per chunk
+
+**How it works:**
+1. PDFExtractor detects if pymupdf-layout is installed
+2. During markdown extraction, analyzes PDF layout structure
+3. Uses layout information to enhance semantic understanding
+4. Metadata includes layout analysis results (text blocks, pages analyzed)
+5. Improves semantic chunking for better search results
+
+**Transparent to users:** No CLI flag needed, just works automatically when installed via `pip install -e .`

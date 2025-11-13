@@ -70,10 +70,10 @@ Qdrant started successfully
 
 ### 2. Create a Collection
 
-Create a collection for code with the jina-code embedding model:
+Create a collection for code (model automatically inferred from type):
 
 ```bash
-arc collection create MyCode --model jina-code --type code
+arc collection create MyCode --type code
 ```
 
 ### 3. Index Your Code
@@ -111,8 +111,8 @@ You'll see semantically similar code chunks ranked by relevance!
 ### Indexing PDFs
 
 ```bash
-# Create PDF collection
-arc collection create MyDocs --model stella --type pdf
+# Create PDF collection (model inferred from type)
+arc collection create MyDocs --type pdf
 
 # Index PDFs (with OCR for scanned documents)
 arc index pdf ~/Documents/papers --collection MyDocs
@@ -129,11 +129,11 @@ arc search semantic "machine learning techniques" --collection MyDocs
 Arcaneum automatically indexes all branches of git repositories:
 
 ```bash
-# Index with git-aware chunking
-arc index code ~/projects/my-app --collection MyApp
+# Index with git-aware chunking (uses the model from collection)
+arc index code ~/projects/my-app --collection MyCode
 
 # Search finds code across all branches
-arc search semantic "payment processing" --collection MyApp
+arc search semantic "payment processing" --collection MyCode
 ```
 
 ### Checking Status

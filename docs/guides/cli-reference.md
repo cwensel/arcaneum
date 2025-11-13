@@ -55,35 +55,57 @@ arc corpus sync <path> --corpus <name>     # Dual indexing
 ### Create Collection
 
 ```bash
-# Create collection with single model
-arc collection create pdf-docs --model stella
+# Create collection with type (model inferred automatically)
+arc collection create pdf-docs --type pdf
+
+# Create with specific model (optional override)
+arc collection create pdf-docs --type pdf --model stella
 
 # With custom HNSW parameters
-arc collection create pdf-docs --model stella --hnsw-m 16 --hnsw-ef 100
+arc collection create pdf-docs --type pdf --hnsw-m 16 --hnsw-ef 100
 
 # Store vectors on disk (for large collections)
-arc collection create pdf-docs --model stella --on-disk
+arc collection create pdf-docs --type pdf --on-disk
 ```
+
+**Model Inference:** If `--model` is not specified, the model is automatically inferred from `--type`:
+
+- `--type pdf` → `stella` (optimized for documents)
+- `--type code` → `jina-code` (optimized for source code)
+- `--type markdown` → `stella` (optimized for documents)
 
 ### List Collections
 
 ```bash
-# Simple list
+# Simple list (shows name, model, and point count)
 arc collection list
 
-# Verbose output
+# Verbose output (adds collection type and vector details)
 arc collection list --verbose
 
 # JSON output for scripting
 arc collection list --json
 ```
 
+**Output includes:**
+
+- **Name**: Collection name
+- **Model**: Embedding model used (e.g., stella, jina-code)
+- **Points**: Number of indexed documents
+- **Type** (verbose): Collection type (pdf, code, markdown)
+- **Vectors** (verbose): Vector dimensions and distance metrics
+
 ### Collection Info
 
 ```bash
+# Show collection details (including model and type)
 arc collection info pdf-docs
+
+# JSON output
 arc collection info pdf-docs --json
 ```
+
+Shows detailed information including collection type, model, point count, vector configuration, and HNSW index parameters.
 
 ### Delete Collection
 
@@ -101,7 +123,8 @@ arc collection delete pdf-docs --confirm
 
 ```bash
 # GPU acceleration enabled by default
-arc index pdf /path/to/pdfs --collection pdf-docs --model stella
+# Model is automatically retrieved from collection metadata
+arc index pdf /path/to/pdfs --collection pdf-docs
 ```
 
 ### With OCR
@@ -109,7 +132,6 @@ arc index pdf /path/to/pdfs --collection pdf-docs --model stella
 ```bash
 arc index pdf /path/to/scanned-pdfs \
   --collection pdf-docs \
-  --model stella \
   --ocr-language eng
 ```
 
@@ -118,7 +140,6 @@ arc index pdf /path/to/scanned-pdfs \
 ```bash
 arc index pdf /path/to/pdfs \
   --collection pdf-docs \
-  --model stella \
   --force
 ```
 
@@ -127,8 +148,7 @@ arc index pdf /path/to/pdfs \
 ```bash
 arc index pdf /path/to/pdfs \
   --collection pdf-docs \
-  --model stella \
-  --workers 8
+  --embedding-workers 8
 ```
 
 ### Performance Tuning
@@ -138,7 +158,6 @@ arc index pdf /path/to/pdfs \
 ```bash
 arc index pdf /path/to/pdfs \
   --collection pdf-docs \
-  --model stella \
   --embedding-worker-mult 1.0 \
   --embedding-batch-size 500 \
   --process-priority low
@@ -149,7 +168,6 @@ arc index pdf /path/to/pdfs \
 ```bash
 arc index pdf /path/to/pdfs \
   --collection pdf-docs \
-  --model stella \
   --embedding-worker-mult 0.25 \
   --process-priority low
 ```
@@ -159,7 +177,6 @@ arc index pdf /path/to/pdfs \
 ```bash
 arc index pdf /path/to/pdfs \
   --collection pdf-docs \
-  --model stella \
   --embedding-workers 8 \
   --embedding-batch-size 300
 ```
@@ -168,17 +185,20 @@ arc index pdf /path/to/pdfs \
 
 ```bash
 # Default: GPU acceleration enabled (MPS on Apple Silicon, CUDA on NVIDIA)
-arc index pdf /path/to/pdfs --collection pdf-docs --model stella
+arc index pdf /path/to/pdfs --collection pdf-docs
 
 # Disable GPU for CPU-only mode
-arc index pdf /path/to/pdfs --collection pdf-docs --model stella --no-gpu
+arc index pdf /path/to/pdfs --collection pdf-docs --no-gpu
 ```
+
+**Note:** The `--model` flag is deprecated. Models are now set at collection
+creation time with `arc collection create --type pdf`.
 
 ### Debug Mode
 
 ```bash
 # Show all library warnings (including HuggingFace transformers)
-arc index pdf /path/to/pdfs --collection pdf-docs --model stella --debug
+arc index pdf /path/to/pdfs --collection pdf-docs --debug
 ```
 
 ## Model Selection
@@ -200,23 +220,23 @@ Available models:
 # 1. Start services
 arc container start
 
-# 2. Create collection
-arc collection create my-docs --model stella --type pdf
+# 2. Create collection (model inferred from type)
+arc collection create my-docs --type pdf
 
-# 3. Index documents
-arc index pdf ./documents --collection my-docs --model stella
+# 3. Index documents (model retrieved from collection)
+arc index pdf ./documents --collection my-docs
 ```
 
 ### Incremental Updates
 
 ```bash
 # First run: indexes all PDFs
-arc index pdf ./docs --collection my-docs --model stella
+arc index pdf ./docs --collection my-docs
 
 # Add new files to ./docs/...
 
 # Second run: only indexes new/modified files
-arc index pdf ./docs --collection my-docs --model stella
+arc index pdf ./docs --collection my-docs
 ```
 
 ### JSON Output for Automation
@@ -226,7 +246,7 @@ arc index pdf ./docs --collection my-docs --model stella
 arc collection list --json | jq '.collections[].name'
 
 # Index with JSON output
-arc index pdf ./docs --collection my-docs --model stella --json > results.json
+arc index pdf ./docs --collection my-docs --json > results.json
 
 # Check results
 jq '.stats.chunks' results.json

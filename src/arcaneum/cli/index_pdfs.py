@@ -146,6 +146,28 @@ def index_pdfs_command(
         if not pdf_dir.exists():
             raise ValueError(f"Path does not exist: {path}")
 
+        # Initialize Qdrant client early to retrieve model from collection metadata
+        from arcaneum.paths import get_models_dir
+        qdrant = create_qdrant_client()
+
+        # Retrieve model from collection metadata if not provided
+        if model is None:
+            from arcaneum.indexing.collection_metadata import get_collection_metadata
+            metadata = get_collection_metadata(qdrant, collection)
+            if not metadata or 'model' not in metadata:
+                raise ValueError(
+                    f"Collection '{collection}' has no model metadata. "
+                    "Please create the collection with 'arc collection create --type pdf' first."
+                )
+            model = metadata['model']
+        else:
+            # Warn about deprecated --model flag
+            console.print(
+                "[yellow]⚠️  Warning: --model flag is deprecated. "
+                "Model is now set at collection creation time. "
+                "Please use 'arc collection create --type pdf' instead.[/yellow]"
+            )
+
         # Use default model config
         if model not in DEFAULT_MODELS:
             raise ValueError(f"Unknown model: {model}. Available: {list(DEFAULT_MODELS.keys())}")
@@ -158,9 +180,7 @@ def index_pdfs_command(
             'late_chunking': model in ['stella', 'modernbert', 'jina'],  # bge doesn't support
         }
 
-        # Initialize clients
-        from arcaneum.paths import get_models_dir
-        qdrant = create_qdrant_client()
+        # Initialize embedding client
         embeddings = EmbeddingClient(cache_dir=str(get_models_dir()), use_gpu=not no_gpu)
 
         # Validate collection type (must be 'pdf' or untyped)

@@ -52,7 +52,7 @@ def create_collection_command(
 
     Args:
         name: Collection name
-        model: Embedding model to use (or comma-separated list)
+        model: Embedding model to use (or comma-separated list). If None, inferred from collection_type.
         hnsw_m: HNSW m parameter
         hnsw_ef: HNSW ef_construct parameter
         on_disk: Store vectors on disk
@@ -60,6 +60,24 @@ def create_collection_command(
         collection_type: Type of collection ("pdf", "code", or "markdown")
     """
     try:
+        # Infer model from collection_type if not provided
+        if model is None:
+            if collection_type is None:
+                raise InvalidArgumentError(
+                    "Either --model must be specified, or --type must be specified to infer the model. "
+                    "Model inference works with: --type pdf (stella), --type code (jina-code), --type markdown (stella)"
+                )
+
+            # Map collection type to default model
+            type_to_model = {
+                "pdf": "stella",
+                "code": "jina-code",
+                "markdown": "stella"
+            }
+            model = type_to_model.get(collection_type)
+            if model is None:
+                raise InvalidArgumentError(f"Unknown collection type: {collection_type}")
+
         # Parse models (support comma-separated list)
         model_list = [m.strip() for m in model.split(',')]
 
@@ -144,6 +162,7 @@ def list_collections_command(verbose: bool, output_json: bool):
             result = []
             for col in collections.collections:
                 col_info = client.get_collection(col.name)
+                metadata = get_collection_metadata(client, col.name)
                 vectors = {}
                 if hasattr(col_info.config.params, 'vectors') and isinstance(col_info.config.params.vectors, dict):
                     for vector_name, vector_params in col_info.config.params.vectors.items():
@@ -153,6 +172,8 @@ def list_collections_command(verbose: bool, output_json: bool):
                         }
                 result.append({
                     "name": col.name,
+                    "model": metadata.get("model"),
+                    "type": metadata.get("collection_type"),
                     "points_count": col_info.points_count,
                     "vectors": vectors,
                 })
@@ -160,15 +181,21 @@ def list_collections_command(verbose: bool, output_json: bool):
         else:
             table = Table(title="Qdrant Collections")
             table.add_column("Name", style="cyan")
+            table.add_column("Model", style="magenta")
             table.add_column("Points", style="yellow")
             if verbose:
+                table.add_column("Type", style="blue")
                 table.add_column("Vectors", style="green")
 
             for col in collections.collections:
                 col_info = client.get_collection(col.name)
-                row = [col.name, str(col_info.points_count)]
+                metadata = get_collection_metadata(client, col.name)
+                model = metadata.get("model", "—")
+                collection_type = metadata.get("collection_type", "—")
+                row = [col.name, model, str(col_info.points_count)]
 
                 if verbose:
+                    row.append(collection_type)
                     vectors_str = ""
                     if hasattr(col_info.config.params, 'vectors') and isinstance(col_info.config.params.vectors, dict):
                         vectors_list = [f"{name}({params.size}D)" for name, params in col_info.config.params.vectors.items()]
@@ -228,8 +255,10 @@ def info_collection_command(name: str, output_json: bool):
         client = create_qdrant_client()
         info = client.get_collection(name)
 
-        # Get collection type
-        collection_type = get_collection_type(client, name)
+        # Get collection metadata (includes type and model)
+        metadata = get_collection_metadata(client, name)
+        collection_type = metadata.get("collection_type")
+        model = metadata.get("model")
 
         if output_json:
             vectors = {}
@@ -242,6 +271,7 @@ def info_collection_command(name: str, output_json: bool):
             data = {
                 "name": name,
                 "type": collection_type,
+                "model": model,
                 "points_count": info.points_count,
                 "status": str(info.status),
                 "vectors": vectors,
@@ -257,6 +287,10 @@ def info_collection_command(name: str, output_json: bool):
                 console.print(f"Type: [bold]{collection_type}[/bold]")
             else:
                 console.print(f"Type: [yellow]untyped[/yellow]")
+            if model:
+                console.print(f"Model: [bold magenta]{model}[/bold magenta]")
+            else:
+                console.print(f"Model: [yellow]not set[/yellow]")
             console.print(f"Points: {info.points_count}")
             console.print(f"Status: {info.status}")
             console.print(f"\n[bold]Vectors:[/bold]")

@@ -144,6 +144,24 @@ def index_source_command(
         qdrant_url_full = f"http://{qdrant_url}:{qdrant_port}"
         qdrant_client = create_qdrant_client(url=qdrant_url_full)
 
+        # Retrieve model from collection metadata if not provided
+        if model is None:
+            from arcaneum.indexing.collection_metadata import get_collection_metadata
+            metadata = get_collection_metadata(qdrant_client, collection)
+            if not metadata or 'model' not in metadata:
+                raise ValueError(
+                    f"Collection '{collection}' has no model metadata. "
+                    "Please create the collection with 'arc collection create --type code' first."
+                )
+            model = metadata['model']
+        else:
+            # Warn about deprecated --model flag
+            console.print(
+                "[yellow]⚠️  Warning: --model flag is deprecated. "
+                "Model is now set at collection creation time. "
+                "Please use 'arc collection create --type code' instead.[/yellow]"
+            )
+
         qdrant_indexer = QdrantIndexer(qdrant_client)
 
         # Create embedding client with GPU support (RDR-013 Phase 2)

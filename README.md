@@ -78,7 +78,7 @@ arc doctor
 arc container start
 
 # 4. Index and search your code
-arc collection create MyCode --model jina-code --type code
+arc collection create MyCode --type code
 arc index code ~/my-project --collection MyCode
 arc search semantic "authentication logic" --collection MyCode
 ```
@@ -92,8 +92,8 @@ arc search semantic "authentication logic" --collection MyCode
 ### Search Your Code
 
 ```bash
-# Create a code collection
-arc collection create MyCode --model jina-code --type code
+# Create a code collection (model inferred from type)
+arc collection create MyCode --type code
 
 # Index your project (git-aware, multi-branch)
 arc index code ~/projects/my-app --collection MyCode
@@ -105,8 +105,8 @@ arc search semantic "authentication middleware" --collection MyCode --limit 10
 ### Search PDFs
 
 ```bash
-# Create a PDF collection
-arc collection create MyDocs --model stella --type pdf
+# Create a PDF collection (model inferred from type)
+arc collection create MyDocs --type pdf
 
 # Index PDFs (with OCR for scanned documents)
 arc index pdf ~/Documents/papers --collection MyDocs
@@ -121,8 +121,8 @@ arc search semantic "neural network architectures" --collection MyDocs
 ### Index Markdown Files
 
 ```bash
-# Index documentation or notes
-arc collection create Notes --model stella --type markdown
+# Index documentation or notes (model inferred from type)
+arc collection create Notes --type markdown
 arc index markdown ~/obsidian-vault --collection Notes
 
 # With custom options
@@ -147,7 +147,7 @@ arc search semantic "project planning" --collection Notes
 
 ```bash
 # Store agent-generated content (for Claude skills/agents)
-arc collection create Memory --model stella --type markdown
+arc collection create Memory --type markdown
 
 # Store from file with metadata
 arc store analysis.md --collection Memory \

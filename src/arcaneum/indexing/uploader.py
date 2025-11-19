@@ -85,13 +85,24 @@ class PDFBatchUploader:
 
         # Apply memory-aware worker limits
         # Estimate 500MB per PDF file worker (images, OCR, embeddings)
+        # NOTE: All workers share the same embedding model instance (locked for thread-safety).
+        # No additional memory per worker needed (arcaneum-3fs3).
+        memory_per_worker_mb = 500
+
         safe_file_workers, warning = calculate_safe_workers(
             requested_workers=max(1, file_workers),
-            estimated_memory_per_worker_mb=500,
+            estimated_memory_per_worker_mb=memory_per_worker_mb,
             max_memory_gb=max_memory_gb,
             min_workers=1
         )
         self.file_workers = safe_file_workers
+
+        # Lock for thread-safe access to embedding client (arcaneum-3fs3)
+        # SentenceTransformer models are NOT thread-safe. Multiple workers accessing
+        # the same model instance can cause GPU memory conflicts and state corruption.
+        # Solution: Serialize access to embedding operations with a lock.
+        import threading
+        self._embedding_lock = threading.Lock()
 
         if warning:
             logger.warning(warning)
@@ -246,14 +257,30 @@ class PDFBatchUploader:
             else:
                 print(f"  → embedding ({file_chunk_count} chunks, parallel)", flush=True)
 
-            # Parallel embedding (Phase 2 RDR-013)
-            embeddings = self.embeddings.embed_parallel(
-                texts,
-                model_name,
-                max_workers=self.embedding_workers,
-                batch_size=self.embedding_batch_size,
-                timeout=self.embedding_timeout
-            )
+            # CRITICAL FIX (arcaneum-3fs3): Lock access to shared embedding client for multi-worker mode
+            # SentenceTransformer models are NOT thread-safe. Multiple workers using the same
+            # model instance causes GPU memory conflicts and state corruption.
+            # Solution: Serialize embedding operations with a lock while reusing the shared model.
+            # This avoids the overhead of loading separate model instances per worker.
+            if self.file_workers > 1:
+                # Multi-worker mode: use lock to serialize access to shared model
+                with self._embedding_lock:
+                    embeddings = self.embeddings.embed_parallel(
+                        texts,
+                        model_name,
+                        max_workers=self.embedding_workers,
+                        batch_size=self.embedding_batch_size,
+                        timeout=self.embedding_timeout
+                    )
+            else:
+                # Single-worker mode: no locking needed (no contention)
+                embeddings = self.embeddings.embed_parallel(
+                    texts,
+                    model_name,
+                    max_workers=self.embedding_workers,
+                    batch_size=self.embedding_batch_size,
+                    timeout=self.embedding_timeout
+                )
 
             if verbose:
                 print(f"     embedded {file_chunk_count} chunks", flush=True)

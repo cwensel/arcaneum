@@ -11,7 +11,7 @@ import os
 import sys
 
 from ..embeddings.client import EmbeddingClient
-from .common.sync import MetadataBasedSync, compute_file_hash
+from .common.sync import MetadataBasedSync, compute_file_hash, compute_quick_hash
 from .pdf.extractor import PDFExtractor
 from .pdf.ocr import OCREngine
 from .pdf.chunker import PDFChunker
@@ -179,11 +179,14 @@ class PDFBatchUploader:
             Tuple of (points list, chunk count, error message or None)
         """
         try:
-            # Stage 0: Computing hash
+            # Stage 0: Computing hashes (two-pass sync)
             if verbose:
                 print(f"\n[{pdf_idx}/{total_pdfs}] {pdf_path.name}", flush=True)
-                print(f"  → computing hash", flush=True)
+                print(f"  → computing hashes", flush=True)
 
+            # Pass 1: Fast metadata hash (mtime+size)
+            quick_hash = compute_quick_hash(pdf_path)
+            # Pass 2: Full content hash for storage and deep verification
             file_hash = compute_file_hash(pdf_path)
 
             # Stage 1: Extract text
@@ -228,11 +231,12 @@ class PDFBatchUploader:
                 if verbose:
                     print(f"     OCR complete", flush=True)
 
-            # Chunk text with file metadata
+            # Chunk text with file metadata (two-pass sync support)
             base_metadata = {
                 'filename': pdf_path.name,
                 'file_path': str(pdf_path.absolute()),  # Always store absolute path for consistent lookups
-                'file_hash': file_hash,
+                'quick_hash': quick_hash,  # Pass 1: Fast metadata-based hash (mtime+size)
+                'file_hash': file_hash,     # Pass 2: Full content hash (for deep verification)
                 'file_size': pdf_path.stat().st_size,
                 'store_type': 'pdf',
                 **extract_meta

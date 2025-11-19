@@ -108,9 +108,10 @@ def main():
                 # Index PDFs
                 print(f"Indexing {args.pdfs} PDFs ({args.pages} pages each)...")
                 stats = uploader.index_directory(
-                    pdf_directory=tmpdir,
+                    pdf_dir=tmpdir,
                     collection_name=collection_name,
                     model_name="stella",
+                    model_config={"chunk_size": 512, "chunk_overlap": 50},
                     force_reindex=True,
                     verbose=False
                 )

@@ -45,7 +45,7 @@ class PDFProcessingConfig(BaseModel):
     ocr_engine: str = "tesseract"
     ocr_language: str = "eng"
     ocr_threshold: int = 100
-    batch_size: int = 100
+    batch_size: int = 300  # Optimized from 100 (arcaneum-9kgg)
     parallel_workers: int = 4
     # Timeout settings (seconds)
     pdf_timeout: int = 600  # Total timeout per PDF file

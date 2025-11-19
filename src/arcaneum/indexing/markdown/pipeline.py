@@ -30,22 +30,22 @@ class MarkdownIndexingPipeline:
         self,
         qdrant_client: QdrantClient,
         embedding_client: EmbeddingClient,
-        batch_size: int = 100,
+        batch_size: int = 300,
         exclude_patterns: List[str] = None,
         file_workers: int = 1,
         embedding_workers: int = 4,
-        embedding_batch_size: int = 200,
+        embedding_batch_size: int = 256,
     ):
         """Initialize markdown indexing pipeline.
 
         Args:
             qdrant_client: Qdrant client instance
             embedding_client: Embedding client instance
-            batch_size: Number of points per upload batch
+            batch_size: Number of points per upload batch (default: 300, optimized from 100)
             exclude_patterns: Patterns to exclude from discovery (default: node_modules, .git, venv)
             file_workers: Number of markdown files to process in parallel (default: 1)
             embedding_workers: Number of parallel workers for embedding generation (default: 4)
-            embedding_batch_size: Batch size for embedding generation (default: 200)
+            embedding_batch_size: Batch size for embedding generation (default: 256, optimized from 200 per arcaneum-9kgg)
         """
         self.qdrant = qdrant_client
         self.embeddings = embedding_client

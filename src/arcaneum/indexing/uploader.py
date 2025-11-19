@@ -28,7 +28,7 @@ class PDFBatchUploader:
         self,
         qdrant_client: QdrantClient,
         embedding_client: EmbeddingClient,
-        batch_size: int = 100,
+        batch_size: int = 300,
         parallel_workers: int = 4,
         max_retries: int = 5,
         ocr_enabled: bool = True,
@@ -37,7 +37,7 @@ class PDFBatchUploader:
         ocr_threshold: int = 100,
         ocr_workers: Optional[int] = None,
         embedding_workers: int = 4,
-        embedding_batch_size: int = 200,
+        embedding_batch_size: int = 256,
         batch_across_files: bool = False,
         file_workers: int = 1,
         max_memory_gb: Optional[float] = None,
@@ -52,7 +52,7 @@ class PDFBatchUploader:
         Args:
             qdrant_client: Qdrant client instance
             embedding_client: Embedding client instance
-            batch_size: Number of points per batch
+            batch_size: Number of points per batch (default: 300, optimized from 100)
             parallel_workers: Number of parallel upload workers
             max_retries: Maximum retry attempts for failed uploads
             ocr_enabled: Enable OCR for scanned PDFs (default: True)
@@ -61,7 +61,7 @@ class PDFBatchUploader:
             ocr_threshold: Trigger OCR if text < N characters
             ocr_workers: Number of parallel OCR workers (None = cpu_count)
             embedding_workers: Number of parallel workers for embedding generation (default: 4)
-            embedding_batch_size: Batch size for embedding generation (default: 200)
+            embedding_batch_size: Batch size for embedding generation (default: 256, optimized from 200 per arcaneum-9kgg)
             batch_across_files: Whether to batch uploads across files
             file_workers: Number of PDF files to process in parallel (default: 1)
             max_memory_gb: Maximum memory to use in GB (None = auto-calculate from available)
@@ -97,17 +97,15 @@ class PDFBatchUploader:
             logger.warning(warning)
             print(warning, flush=True)
 
-        # Warn if GPU is enabled with multiple file workers
-        # GPU models are thread-locked for safety, so parallel file processing
-        # will serialize at the embedding step (still safe, but less parallel)
-        if embedding_client.use_gpu and self.file_workers > 1:
-            gpu_warning = (
-                f"⚠️  GPU acceleration with {self.file_workers} file workers: "
-                f"Embedding operations are serialized for thread-safety.\n"
-                f"   GPU provides internal parallelism. Consider --file-workers 1 for simpler execution."
+        # GPU + file workers now works efficiently
+        # Single-threaded embedding with larger batches (arcaneum-m7hg)
+        # No serialization penalty - GPU has internal parallelism per batch
+        if embedding_client.use_gpu and self.file_workers > 1 and False:  # Disabled: no longer a bottleneck
+            gpu_info = (
+                f"ℹ️  GPU acceleration with {self.file_workers} file workers: "
+                f"Efficient batching strategy (single-threaded per batch for internal GPU parallelism)"
             )
-            logger.info(gpu_warning)
-            print(gpu_warning, flush=True)
+            logger.debug(gpu_info)
 
         # Initialize components (RDR-016: markdown conversion default)
         self.extractor = PDFExtractor(
@@ -289,10 +287,8 @@ class PDFBatchUploader:
                     self._upload_batch(collection_name, points_batch)
                     uploaded_count += len(points_batch)
 
-                    # Clear batch and free memory
+                    # Clear batch (no gc.collect per batch - do once per file instead)
                     points_batch.clear()
-                    import gc
-                    gc.collect()
 
             # Upload remaining points
             if points_batch:
@@ -305,8 +301,9 @@ class PDFBatchUploader:
                 uploaded_count += len(points_batch)
                 points_batch.clear()
 
-            # Clear large lists to free memory
-            del texts, embeddings, chunks
+            # Clear large lists to free memory and garbage collect ONCE per file (arcaneum-d432)
+            # This reduces gc.collect() overhead from 100+ calls to ~1 per file
+            del texts, embeddings, chunks, points_batch
             import gc
             gc.collect()
 

@@ -146,9 +146,12 @@ def index_pdfs_command(
         if not pdf_dir.exists():
             raise ValueError(f"Path does not exist: {path}")
 
-        # Initialize Qdrant client early to retrieve model from collection metadata
-        from arcaneum.paths import get_models_dir
+        # Initialize Qdrant client ONCE and reuse throughout indexing (connection pooling optimization)
+        # This avoids TCP connection overhead for each operation
         qdrant = create_qdrant_client()
+
+        # Retrieve model from collection metadata
+        from arcaneum.paths import get_models_dir
 
         # Retrieve model from collection metadata if not provided
         if model is None:

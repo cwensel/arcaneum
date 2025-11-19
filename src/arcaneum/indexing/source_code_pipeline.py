@@ -134,7 +134,7 @@ class SourceCodeIndexer:
         vector_name: Optional[str] = None,
         parallel_workers: Optional[int] = None,
         embedding_workers: int = 4,
-        embedding_batch_size: int = 200
+        embedding_batch_size: int = 256
     ):
         """Initialize source code indexer.
 

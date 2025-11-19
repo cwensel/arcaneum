@@ -107,8 +107,10 @@ class EmbeddingClient:
         os.environ["SENTENCE_TRANSFORMERS_HOME"] = self.cache_dir
         self._models: Dict[str, TextEmbedding] = {}
 
-        # Thread lock for GPU operations (prevents segfaults when multiple threads use GPU models)
-        self._gpu_lock = threading.Lock() if use_gpu else None
+        # GPU operations use single-threaded batching for optimal performance
+        # GPU models have built-in parallelism; ThreadPoolExecutor + locks cause serialization
+        # See: RDR-013 Phase 2, arcaneum-m7hg
+        self._gpu_lock = None  # Deprecated: no longer needed with single-threaded embedding
 
     def _detect_device(self) -> str:
         """Detect best available GPU device (RDR-013 Phase 2).
@@ -286,6 +288,9 @@ class EmbeddingClient:
 
         Processes in batches of 100 to prevent FastEmbed hangs on large batches.
 
+        Note: Single-threaded for GPU models - ThreadPoolExecutor with locks causes serialization.
+        GPU models have internal parallelism within batch processing. See arcaneum-m7hg.
+
         Args:
             texts: List of text strings to embed
             model_name: Model identifier (stella, jina, modernbert, bge)
@@ -296,12 +301,9 @@ class EmbeddingClient:
         Raises:
             ValueError: If model_name is not recognized
         """
-        # Use lock for GPU operations to prevent thread-unsafe access
-        if self._gpu_lock:
-            with self._gpu_lock:
-                return self._embed_impl(texts, model_name)
-        else:
-            return self._embed_impl(texts, model_name)
+        # No lock needed - single-threaded embedding is faster for GPU models
+        # GPU parallelism is via large batches (256-512), not thread-level parallelism
+        return self._embed_impl(texts, model_name)
 
     def _embed_impl(self, texts: List[str], model_name: str) -> List[List[float]]:
         """Internal implementation of embedding (called with or without lock).
@@ -339,20 +341,25 @@ class EmbeddingClient:
         texts: List[str],
         model_name: str,
         max_workers: int = 4,
-        batch_size: int = 200,
+        batch_size: int = 256,
         timeout: int = 300
     ) -> List[List[float]]:
-        """Generate embeddings in parallel batches using ThreadPoolExecutor.
+        """Generate embeddings with smart parallelism strategy.
 
-        This method provides 2-4x speedup by processing multiple embedding batches
-        concurrently. Particularly effective for large text collections.
+        Strategy:
+        - GPU models: Single-threaded with larger batches (256-512) for optimal throughput
+          GPU models have built-in parallelism; ThreadPoolExecutor adds overhead without gain
+        - CPU models: ThreadPoolExecutor (optional, tested performance-dependent)
+
+        Current implementation: Single-threaded with configurable batch sizes.
+        GPU models process 256+ embeddings/batch internally for maximum efficiency.
 
         Args:
             texts: List of text strings to embed
             model_name: Model identifier (stella, jina, modernbert, bge)
-            max_workers: Number of concurrent workers (default: 4)
-            batch_size: Chunk size for each batch (default: 200)
-            timeout: Timeout in seconds for batch processing (default: 300)
+            max_workers: Number of concurrent workers (ignored for GPU, kept for API compatibility)
+            batch_size: Chunk size for batches (default: 200, consider 256-512 for GPU)
+            timeout: Timeout in seconds (ignored in single-threaded mode)
 
         Returns:
             List of embedding vectors in original order
@@ -360,63 +367,82 @@ class EmbeddingClient:
         Raises:
             ValueError: If model_name is not recognized
 
+        Note:
+            After profiling (arcaneum-c128), single-threaded approach is faster for GPU models
+            due to GPU's internal parallelism within batch. See arcaneum-m7hg for details.
+
         Example:
             >>> client = EmbeddingClient()
             >>> texts = ["text1", "text2", ..., "text1000"]
-            >>> embeddings = client.embed_parallel(texts, "stella", max_workers=4)
+            >>> embeddings = client.embed_parallel(texts, "stella", batch_size=512)
         """
-        # Pre-allocate result list to maintain order
-        all_embeddings = [None] * len(texts)
-
-        # Thread-safe: get model before parallel processing
-        # Model loading is done once, shared across threads
+        # Get model once
         _ = self.get_model(model_name)
 
-        # Create batches with their start indices
-        batches = []
-        for start_idx in range(0, len(texts), batch_size):
-            end_idx = min(start_idx + batch_size, len(texts))
-            batch_texts = texts[start_idx:end_idx]
-            batches.append((start_idx, end_idx, batch_texts))
+        # For GPU models: single-threaded batching is faster than ThreadPoolExecutor
+        # GPU internal parallelism is optimized within batch, not at thread level
+        if self.use_gpu:
+            # Single-threaded approach: process all batches sequentially
+            # GPU provides internal parallelism for the batch
+            all_embeddings = []
+            for start_idx in range(0, len(texts), batch_size):
+                end_idx = min(start_idx + batch_size, len(texts))
+                batch_texts = texts[start_idx:end_idx]
+                batch_embeddings = self.embed(batch_texts, model_name)
+                all_embeddings.extend(batch_embeddings)
+            return all_embeddings
 
-        # Process batches in parallel
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all batch jobs
-            future_to_batch = {}
-            for start_idx, end_idx, batch_texts in batches:
-                future = executor.submit(self.embed, batch_texts, model_name)
-                future_to_batch[future] = (start_idx, end_idx)
+        # For CPU models: ThreadPoolExecutor can provide speedup
+        # This is experimental - benchmark results will determine if kept
+        else:
+            # Pre-allocate result list to maintain order
+            all_embeddings = [None] * len(texts)
 
-            # Collect results as they complete
-            for future in as_completed(future_to_batch):
-                start_idx, end_idx = future_to_batch[future]
-                try:
-                    batch_embeddings = future.result(timeout=timeout)
-                    # Place results in correct position
-                    all_embeddings[start_idx:end_idx] = batch_embeddings
-                except TimeoutError:
-                    # Log timeout error
-                    import logging
-                    logger = logging.getLogger(__name__)
-                    logger.error(f"Batch {start_idx}-{end_idx} timed out (exceeded {timeout}s)")
-                    # Fill with None to indicate failure
-                    all_embeddings[start_idx:end_idx] = [None] * (end_idx - start_idx)
-                except Exception as e:
-                    # Log error but don't fail entire batch
-                    import logging
-                    logger = logging.getLogger(__name__)
-                    logger.error(f"Batch {start_idx}-{end_idx} failed: {e}")
-                    # Fill with None to indicate failure
-                    all_embeddings[start_idx:end_idx] = [None] * (end_idx - start_idx)
+            # Create batches with their start indices
+            batches = []
+            for start_idx in range(0, len(texts), batch_size):
+                end_idx = min(start_idx + batch_size, len(texts))
+                batch_texts = texts[start_idx:end_idx]
+                batches.append((start_idx, end_idx, batch_texts))
 
-        # Check for any failures
-        if None in all_embeddings:
-            failed_indices = [i for i, emb in enumerate(all_embeddings) if emb is None]
-            raise RuntimeError(
-                f"Failed to generate embeddings for {len(failed_indices)} texts at indices: {failed_indices[:10]}..."
-            )
+            # Process batches in parallel for CPU models
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all batch jobs
+                future_to_batch = {}
+                for start_idx, end_idx, batch_texts in batches:
+                    future = executor.submit(self.embed, batch_texts, model_name)
+                    future_to_batch[future] = (start_idx, end_idx)
 
-        return all_embeddings
+                # Collect results as they complete
+                for future in as_completed(future_to_batch):
+                    start_idx, end_idx = future_to_batch[future]
+                    try:
+                        batch_embeddings = future.result(timeout=timeout)
+                        # Place results in correct position
+                        all_embeddings[start_idx:end_idx] = batch_embeddings
+                    except TimeoutError:
+                        # Log timeout error
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.error(f"Batch {start_idx}-{end_idx} timed out (exceeded {timeout}s)")
+                        # Fill with None to indicate failure
+                        all_embeddings[start_idx:end_idx] = [None] * (end_idx - start_idx)
+                    except Exception as e:
+                        # Log error but don't fail entire batch
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.error(f"Batch {start_idx}-{end_idx} failed: {e}")
+                        # Fill with None to indicate failure
+                        all_embeddings[start_idx:end_idx] = [None] * (end_idx - start_idx)
+
+            # Check for any failures
+            if None in all_embeddings:
+                failed_indices = [i for i, emb in enumerate(all_embeddings) if emb is None]
+                raise RuntimeError(
+                    f"Failed to generate embeddings for {len(failed_indices)} texts at indices: {failed_indices[:10]}..."
+                )
+
+            return all_embeddings
 
     def release_model(self, model_name: str):
         """Release a specific model from memory to free resources.

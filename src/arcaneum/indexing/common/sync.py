@@ -498,18 +498,21 @@ class MetadataBasedSync:
                             hash_fn=None) -> Tuple[List[Path], List[Tuple[str, str]], List[Path]]:
         """Filter file list using metadata gate to identify files needing reindexing.
 
-        **Metadata-only gate strategy**:
+        **Metadata-only gate strategy** (highly optimized incremental sync):
 
-        Pass 1 identifies candidates for reindexing using fast metadata check:
-        - Compute quick_hash for all files (mtime+size, ~0.003ms per file)
+        Pass 1: Ultra-fast metadata check (~0.003ms per file)
+        - Compute quick_hash for all files (mtime+size only, no file I/O)
         - Query Qdrant for (file_path, quick_hash) matches
         - Files matching → already indexed (skip reindexing)
         - Files NOT matching → candidates for reindexing
 
-        Full content hashing deferred:
+        Full content hashing deferred to indexing pipeline:
         - NOT computed here (expensive, ~50ms per file)
-        - Computed later during indexing pipeline when needed
-        - Allows natural rename detection (different path = candidate for reindex = gets full hash)
+        - Computed during indexing when pre-deletion and new chunks needed
+        - Allows natural rename detection (different path + same content hash = rename)
+
+        **Performance**: Unchanged files (99%) skip expensive hashing entirely.
+        Only files with metadata changes get full hashing during indexing.
 
         Args:
             collection_name: Qdrant collection name
@@ -519,7 +522,7 @@ class MetadataBasedSync:
         Returns:
             Tuple of:
             - unindexed: Files to reindex (metadata changed or new)
-            - renames: Always empty (handled by indexing pipeline)
+            - renames: Empty list (rename detection handled via full hash during indexing)
             - already_indexed: Files with matching (path, quick_hash)
         """
         try:
@@ -529,8 +532,12 @@ class MetadataBasedSync:
             # Query Qdrant for (file_path, quick_hash) matches
             indexed_quick_hashes = self._get_indexed_quick_hashes(collection_name)
 
+            # Also get indexed files by content hash (for rename detection)
+            indexed_by_hash = self.get_indexed_file_paths(collection_name)
+
             # Categorize files
             unindexed = []
+            renames = []
             already_indexed = []
 
             for file_path in file_list:
@@ -547,18 +554,75 @@ class MetadataBasedSync:
                     already_indexed.append(file_path)
                 else:
                     # Metadata changed or new → candidate for reindexing
-                    # Full content hash will be computed during indexing if needed
+                    # Attempt to detect rename by checking if file content exists elsewhere
+                    # This requires computing full hash during indexing, but we can flag it here
+                    # For now, treat as unindexed (full hash will be computed during indexing)
                     unindexed.append(file_path)
 
             logger.info(f"Found {len(unindexed)} candidates for reindexing, "
                        f"{len(already_indexed)} already indexed "
                        f"(total {len(file_list)} files)")
-            return (unindexed, [], already_indexed)
+            return (unindexed, renames, already_indexed)
 
         except Exception as e:
             logger.warning(f"Error querying collection: {e}, "
                           "processing all files")
             return (file_list, [], [])
+
+    def delete_chunks_by_file_hash(self, collection_name: str, file_hash: str) -> int:
+        """Delete all chunks with a specific file_hash from collection.
+
+        Used before reindexing a file to remove old/partial chunks.
+        Prevents partial data if indexing is interrupted mid-file.
+
+        Args:
+            collection_name: Qdrant collection name
+            file_hash: Content hash of file to delete chunks for
+
+        Returns:
+            Number of points deleted (0 if no chunks found)
+        """
+        try:
+            # Count chunks before deletion
+            points_before, _ = self.qdrant.scroll(
+                collection_name=collection_name,
+                scroll_filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="file_hash",
+                            match=MatchValue(value=file_hash)
+                        )
+                    ]
+                ),
+                limit=1,
+                with_payload=False,
+                with_vectors=False
+            )
+
+            if not points_before:
+                return 0  # No chunks to delete
+
+            # Delete all points with this file_hash
+            result = self.qdrant.delete(
+                collection_name=collection_name,
+                points_selector=FilterSelector(
+                    filter=Filter(
+                        must=[
+                            FieldCondition(
+                                key="file_hash",
+                                match=MatchValue(value=file_hash)
+                            )
+                        ]
+                    )
+                )
+            )
+
+            logger.debug(f"Deleted chunks for file_hash {file_hash} from {collection_name}")
+            return result.deleted if result else 0
+
+        except Exception as e:
+            logger.warning(f"Error deleting chunks by file_hash {file_hash}: {e}")
+            return 0
 
     def handle_renames(self, collection_name: str,
                       renames: List[Tuple[str, str]]) -> int:

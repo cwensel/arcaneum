@@ -189,6 +189,10 @@ class PDFBatchUploader:
             # Pass 2: Full content hash for storage and deep verification
             file_hash = compute_file_hash(pdf_path)
 
+            # Pre-deletion: Remove old chunks with same file_hash before reindexing
+            # This prevents partial data if indexing is interrupted mid-file
+            self.sync.delete_chunks_by_file_hash(collection_name, file_hash)
+
             # Stage 1: Extract text
             if not verbose:
                 print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → extracting{' '*20}", end="", flush=True)

@@ -40,7 +40,7 @@ python scripts/benchmark_indexing.py --no-gpu
 
 ### Expected Output
 
-```
+```text
 EMBEDDING BATCH SIZE BENCHMARK
 --------------------------------------------------------------------------------
   Batch  256:  18523 emb/sec (0.54s ± 0.02s)   0.0%
@@ -77,7 +77,6 @@ python scripts/benchmark_pdf_indexing.py \
   --pdf-dir ./test_pdfs \
   --output pdf_results.json \
   --report pdf_report.txt \
-  --file-workers 4 \
   --verbose
 ```
 
@@ -90,8 +89,6 @@ python scripts/benchmark_pdf_indexing.py \
 - `--batch-size`: Qdrant upload batch size (default: 300)
 - `--embedding-batch-size`: Embedding batch size (default: 256)
 - `--batch-sizes`: Compare multiple batch sizes
-- `--file-workers`: Parallel PDF workers (default: 1)
-- `--embedding-workers`: Parallel embedding workers (default: 4)
 - `--no-gpu`: Disable GPU acceleration
 - `--output`: JSON output file
 - `--report`: Text report file
@@ -99,7 +96,7 @@ python scripts/benchmark_pdf_indexing.py \
 
 ### Expected Output
 
-```
+```text
 PDF INDEXING BENCHMARK REPORT
 ================================================================================
 INDEXING PERFORMANCE
@@ -144,7 +141,7 @@ The following optimizations have been applied:
 
 - ✅ **GPU Thread Lock Removal** (arcaneum-m7hg)
   - Expected: 20-30% speedup when GPU + multi-file workers
-  - Measure: Run with `--file-workers 4` and compare times
+  - Measure: Run with `--embedding-batch-size 500` and compare times
 
 - ✅ **Connection Pooling** (arcaneum-ezd8)
   - Expected: 10-20% speedup on uploads
@@ -208,6 +205,7 @@ sudo powermetrics --samplers gpu_power,gpu_frequency --show-empty-samples
 ```
 
 Expected GPU metrics:
+
 - GPU utilization: 80-95%
 - Memory: 2-8 GB (depending on model and batch size)
 - Power: 15-30W (GPU portion)
@@ -262,7 +260,6 @@ time arc index pdf \
   --path ./test_pdfs \
   --collection benchmark \
   --model stella \
-  --file-workers 4 \
   --embedding-batch-size 256 \
   --verbose
 ```

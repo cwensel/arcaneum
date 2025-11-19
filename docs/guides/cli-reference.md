@@ -143,43 +143,18 @@ arc index pdf /path/to/pdfs \
   --force
 ```
 
-### Parallel Processing
-
-```bash
-arc index pdf /path/to/pdfs \
-  --collection pdf-docs \
-  --embedding-workers 8
-```
-
 ### Performance Tuning
 
-**Maximum performance (use all CPU cores):**
+**Maximum throughput:**
 
 ```bash
 arc index pdf /path/to/pdfs \
   --collection pdf-docs \
-  --embedding-worker-mult 1.0 \
   --embedding-batch-size 500 \
   --process-priority low
 ```
 
-**Conservative (25% CPU, good for background):**
-
-```bash
-arc index pdf /path/to/pdfs \
-  --collection pdf-docs \
-  --embedding-worker-mult 0.25 \
-  --process-priority low
-```
-
-**Absolute control (set exact worker count):**
-
-```bash
-arc index pdf /path/to/pdfs \
-  --collection pdf-docs \
-  --embedding-workers 8 \
-  --embedding-batch-size 300
-```
+Note: Larger embedding batches (300-500) improve throughput 10-20%. Process priority is for background indexing.
 
 ### GPU Control
 
@@ -274,16 +249,13 @@ Additional options for `arc index` commands:
 
 **Performance Tuning:**
 
-- `--file-workers N`: Absolute number of files to process in parallel (overrides multiplier) [default: 1]
-  - PDF: Number of PDF files to process in parallel
-  - Source: Number of source files to process in parallel within each repo
-  - Markdown: Number of markdown files to process in parallel
-- `--file-worker-mult FLOAT`: Multiplier of cpu_count for file processing (overridden by --file-workers)
-- `--embedding-workers N`: Absolute number of embedding workers (overrides multiplier)
-- `--embedding-worker-mult FLOAT`: Multiplier of cpu_count for embedding workers [default: 0.5]
 - `--embedding-batch-size N`: Batch size for embedding generation [default: 200]
+  - Larger batches (300-500) improve throughput 10-20%
+  - Limited benefit from thread parallelism due to embedding lock (see Architecture Notes below)
 - `--process-priority low|normal|high`: Process scheduling priority [default: normal]
-- `--max-perf`: Preset that sets embedding-worker-mult=1.0, batch-size=500, priority=low (does NOT change file workers)
+  - Use `low` for background indexing to avoid blocking foreground tasks
+
+**Note on Parallelism:** File and embedding worker flags were removed because they provided minimal benefit due to the embedding lock (required for GPU thread-safety). The single-threaded embedding approach with larger batches is actually more efficient. Use `--embedding-batch-size` for throughput tuning.
 
 ### GPU Acceleration
 

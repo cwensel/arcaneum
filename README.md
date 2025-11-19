@@ -24,7 +24,8 @@ documents and source code with git-aware, AST-based chunking.
 - **Source Code Indexing**: Git-aware with AST chunking, multi-branch support, 165+ languages
 - **Markdown Indexing**: YAML frontmatter extraction, semantic chunking, incremental sync
 - **Dual Indexing**: Single command to index to both search engines
-- **Performance Tuning**: Granular control over workers, batch sizes, and process priority with `--max-perf` preset
+- **Performance Tuning**: Granular control over workers, batch sizes, and process priority via
+  `--embedding-batch-size` and `--process-priority` flags
 
 ### Multiple Embedding Models
 
@@ -112,7 +113,7 @@ arc collection create MyDocs --type pdf
 arc index pdf ~/Documents/papers --collection MyDocs
 
 # Index with maximum performance (uses all CPU cores)
-arc index pdf ~/Documents/papers --collection MyDocs --max-perf
+arc index pdf ~/Documents/papers --collection MyDocs
 
 # Search for concepts
 arc search semantic "neural network architectures" --collection MyDocs

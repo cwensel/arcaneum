@@ -117,8 +117,8 @@ arc collection create MyDocs --type pdf
 # Index PDFs (with OCR for scanned documents)
 arc index pdf ~/Documents/papers --collection MyDocs
 
-# Index with maximum performance (uses all CPU cores)
-arc index pdf ~/Documents/papers --collection MyDocs --max-perf
+# Index with larger batch size for better throughput
+arc index pdf ~/Documents/papers --collection MyDocs --embedding-batch-size 500
 
 # Search PDFs
 arc search semantic "machine learning techniques" --collection MyDocs
@@ -297,50 +297,41 @@ Arcaneum provides granular control over indexing performance for different workl
 
 ### Quick Start: Use Presets
 
-For maximum performance on batch workloads:
+For better throughput on batch workloads:
 
 ```bash
-# PDF indexing with all CPU cores
-arc index pdf ~/Documents --collection MyDocs --max-perf
+# PDF indexing with larger batch size
+arc index pdf ~/Documents --collection MyDocs --embedding-batch-size 500
 
-# Source code indexing with all CPU cores
-arc index code ~/projects --collection MyCode --max-perf
+# Source code indexing with larger batch size
+arc index code ~/projects --collection MyCode --embedding-batch-size 500
 ```
 
-The `--max-perf` preset sets:
-
-- All CPU cores for parallel embedding generation (via --embedding-worker-mult 1.0)
-- Large batch sizes (500 chunks) for better throughput
-- Low process priority (background processing, won't impact UI responsiveness)
-- File workers are NOT changed by --max-perf (defaults to 1 for sequential processing)
+Note: Worker parallelism flags were removed due to embedding lock serialization.
+Use --embedding-batch-size for throughput tuning.
 
 ### Advanced: Granular Control
 
 For fine-tuned control, use individual flags:
 
 ```bash
-# Conservative: 25% CPU, good for background processing
+# Conservative: smaller batches, low priority
 arc index pdf ~/docs --collection MyDocs \
-  --embedding-worker-mult 0.25 \
+  --embedding-batch-size 100 \
   --process-priority low
 
-# Balanced: default settings (50% CPU)
+# Balanced: default settings
 arc index pdf ~/docs --collection MyDocs
 
-# Maximum: absolute control over workers
+# Maximum throughput: large batches
 arc index pdf ~/docs --collection MyDocs \
-  --embedding-workers 8 \
-  --embedding-batch-size 300 \
+  --embedding-batch-size 500 \
   --process-priority low
 ```
 
 **Available Options:**
 
-- `--embedding-workers N`: Absolute number of embedding workers
-- `--embedding-worker-mult FLOAT`: Multiplier of cpu_count (e.g., 0.5 = half cores, 1.0 = all cores)
-- `--embedding-batch-size N`: Batch size for embeddings (default: 200, max-perf: 500)
-- `--file-workers N`: Number of files to process in parallel (default: 1)
-- `--file-worker-mult FLOAT`: File worker multiplier (overridden by --file-workers)
+- `--embedding-batch-size N`: Batch size for embeddings (default: 200)
 - `--process-priority low|normal|high`: OS scheduling priority
 
 See the [CLI Reference](cli-reference.md) for complete performance tuning documentation.

@@ -30,16 +30,11 @@ def index_source_command(
     path: str,
     collection: str,
     model: str,
-    file_workers: Optional[int],
-    file_worker_mult: float,
-    embedding_workers: int,
-    embedding_worker_mult: float,
     embedding_batch_size: int,
     chunk_size: Optional[int],
     chunk_overlap: Optional[int],
     depth: Optional[int],
     process_priority: str,
-    max_perf: bool,
     force: bool,
     no_gpu: bool,
     verbose: bool,
@@ -52,16 +47,11 @@ def index_source_command(
         path: Directory containing git repositories
         collection: Target collection name
         model: Embedding model (jina-code, jina-v2-code, stella)
-        file_workers: Number of parallel workers for file processing (None = cpu_count // 2)
-        file_worker_mult: File worker multiplier
-        embedding_workers: Number of parallel workers for embedding generation
-        embedding_worker_mult: Embedding worker multiplier
         embedding_batch_size: Batch size for embedding generation
         chunk_size: Target chunk size in tokens (default: 400)
         chunk_overlap: Overlap between chunks in tokens (default: 20)
         depth: Git discovery depth (None = unlimited)
         process_priority: Process scheduling priority (low, normal, high)
-        max_perf: Maximum performance preset
         force: Force reindex all projects
         no_gpu: Disable GPU acceleration (use CPU only)
         verbose: Verbose output
@@ -87,45 +77,9 @@ def index_source_command(
     # Set process priority early
     set_process_priority(process_priority)
 
-    # Apply --max-perf preset (sets defaults before precedence logic)
-    if max_perf:
-        if embedding_worker_mult is None:
-            embedding_worker_mult = 1.0
-        if embedding_batch_size == 200:  # Default value
-            embedding_batch_size = 500
-        if process_priority == "normal":  # Default value
-            process_priority = "low"
-            set_process_priority(process_priority)  # Re-apply with new priority
-
-    # Compute embedding_workers with precedence: absolute → multiplier → default (0.5)
-    from multiprocessing import cpu_count
-    if embedding_workers is not None:
-        # Absolute value specified, use it
-        actual_embedding_workers = max(1, embedding_workers)
-        embedding_worker_source = f"{actual_embedding_workers} (absolute)"
-    elif embedding_worker_mult is not None:
-        # Multiplier specified, compute from cpu_count
-        actual_embedding_workers = max(1, int(cpu_count() * embedding_worker_mult))
-        embedding_worker_source = f"{actual_embedding_workers} (cpu_count × {embedding_worker_mult})"
-    else:
-        # Default: 0.5 multiplier (half of CPU cores)
-        actual_embedding_workers = max(1, int(cpu_count() * 0.5))
-        embedding_worker_source = f"{actual_embedding_workers} (cpu_count × 0.5, default)"
-
-    # Compute file_workers with precedence: absolute → multiplier → default (1)
-    # Note: Source code DOES use file parallelism (ProcessPoolExecutor in source_code_pipeline.py)
-    if file_workers is not None:
-        # Absolute value specified, use it
-        actual_file_workers = max(1, file_workers)
-        file_worker_source = f"{actual_file_workers} (absolute)"
-    elif file_worker_mult is not None:
-        # Multiplier specified, compute from cpu_count
-        actual_file_workers = max(1, int(cpu_count() * file_worker_mult))
-        file_worker_source = f"{actual_file_workers} (cpu_count × {file_worker_mult})"
-    else:
-        # Default: 1 worker (sequential processing)
-        actual_file_workers = 1
-        file_worker_source = f"{actual_file_workers} (default, sequential)"
+    # Auto-detect optimal settings
+    actual_embedding_workers = max(1, embedding_workers) if embedding_workers else 1
+    actual_file_workers = max(1, file_workers) if file_workers else 1
 
     # Set up signal handler for Ctrl-C
     def signal_handler(sig, frame):
@@ -191,9 +145,8 @@ def index_source_command(
                 console.print(f"  Device: CPU (GPU not available)")
 
             # Show parallelism configuration
-            preset_suffix = " [max-perf preset]" if max_perf else ""
-            console.print(f"  File processing: {file_worker_source} workers{preset_suffix}")
-            console.print(f"  Embedding: {embedding_worker_source} workers, batch size {embedding_batch_size}{preset_suffix}")
+            console.print(f"  File processing: {actual_file_workers} workers")
+            console.print(f"  Embedding: {actual_embedding_workers} workers, batch size {embedding_batch_size}")
 
             # Show process priority
             if process_priority != "normal":

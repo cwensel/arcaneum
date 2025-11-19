@@ -93,10 +93,6 @@ arc index pdf <directory> --collection <name> --model <model>
 
 **Performance Tuning:**
 
-- `--file-workers`: Absolute number of PDF files to process in parallel (overrides multiplier)
-- `--file-worker-mult`: Multiplier of cpu_count for file processing [default: 0.5]
-- `--embedding-workers`: Absolute number of embedding workers (overrides multiplier)
-- `--embedding-worker-mult`: Multiplier of cpu_count for embedding workers [default: 0.5]
 - `--embedding-batch-size`: Batch size for embedding generation [default: 200]
 - `--process-priority`: Process scheduling priority (low/normal/high) [default: normal]
 
@@ -170,7 +166,6 @@ arc index pdf ./pdfs \
 arc index pdf ./pdfs \
   --collection pdf-docs \
   --model stella \
-  --embedding-worker-mult 1.0 \
   --embedding-batch-size 500 \
   --process-priority low
 ```
@@ -181,7 +176,6 @@ arc index pdf ./pdfs \
 arc index pdf ./pdfs \
   --collection pdf-docs \
   --model stella \
-  --embedding-worker-mult 0.25 \
   --process-priority low
 ```
 

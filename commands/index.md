@@ -27,7 +27,6 @@ Index PDFs, markdown, or source code into Qdrant collections for semantic search
 - --no-ocr: Disable OCR (enabled by default for scanned PDFs)
 - --ocr-language: OCR language code (default: eng)
 - --offline: Use cached models only (no network)
-- --batch-across-files: Batch uploads across files (faster, less atomic)
 
 **Markdown Indexing Options:**
 

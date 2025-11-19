@@ -38,7 +38,6 @@ class PDFBatchUploader:
         ocr_workers: Optional[int] = None,
         embedding_workers: int = 4,
         embedding_batch_size: int = 256,
-        batch_across_files: bool = False,
         file_workers: int = 1,
         max_memory_gb: Optional[float] = None,
         pdf_timeout: int = 600,
@@ -62,7 +61,6 @@ class PDFBatchUploader:
             ocr_workers: Number of parallel OCR workers (None = cpu_count)
             embedding_workers: Number of parallel workers for embedding generation (default: 4)
             embedding_batch_size: Batch size for embedding generation (default: 256, optimized from 200 per arcaneum-9kgg)
-            batch_across_files: Whether to batch uploads across files
             file_workers: Number of PDF files to process in parallel (default: 1)
             max_memory_gb: Maximum memory to use in GB (None = auto-calculate from available)
             pdf_timeout: Timeout in seconds for processing a single PDF (default: 600)
@@ -128,7 +126,6 @@ class PDFBatchUploader:
 
         self.ocr_enabled = ocr_enabled
         self.ocr_threshold = ocr_threshold
-        self.batch_across_files = batch_across_files
 
         if ocr_enabled:
             self.ocr = OCREngine(
@@ -579,8 +576,8 @@ class PDFBatchUploader:
             return 0
 
     @retry(
-        stop=stop_after_attempt(5),
-        wait=wait_exponential(multiplier=1, min=2, max=10),  # Max 10 second wait
+        stop=stop_after_attempt(3),  # Reduced from 5 (arcaneum-6pvk: reduce retry overhead)
+        wait=wait_exponential(multiplier=1, min=1, max=5),  # Reduced: 1-5s instead of 2-10s (arcaneum-6pvk)
         retry=retry_if_not_exception_type(KeyboardInterrupt),  # Don't retry on Ctrl+C
         reraise=True
     )
@@ -592,7 +589,7 @@ class PDFBatchUploader:
                 points=points,
                 batch_size=self.batch_size,
                 parallel=self.parallel_workers,
-                max_retries=3,  # Inner retry for rate limiting
+                max_retries=1,  # Reduced from 3 (arcaneum-6pvk: outer retry handles this)
                 wait=True
             )
 
@@ -600,5 +597,6 @@ class PDFBatchUploader:
             return result
 
         except Exception as e:
-            logger.error(f"Batch upload failed: {e}")
+            # Log retry attempts for debugging (arcaneum-6pvk: identify failure patterns)
+            logger.warning(f"Batch upload failed: {e} (retrying...)")
             raise

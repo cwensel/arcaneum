@@ -27,10 +27,6 @@ def index_pdfs_command(
     path: str,
     collection: str,
     model: str,
-    file_workers: int,
-    file_worker_mult: float,
-    embedding_workers: int,
-    embedding_worker_mult: float,
     embedding_batch_size: int,
     no_ocr: bool,
     ocr_language: str,
@@ -38,9 +34,7 @@ def index_pdfs_command(
     normalize_only: bool,
     preserve_images: bool,
     process_priority: str,
-    max_perf: bool,
     force: bool,
-    batch_across_files: bool,
     no_gpu: bool,
     offline: bool,
     verbose: bool,
@@ -63,7 +57,6 @@ def index_pdfs_command(
         preserve_images: Extract images for multimodal search (RDR-016)
         process_priority: Process scheduling priority (low, normal, high)
         force: Force reindex all files
-        batch_across_files: Batch uploads across files
         no_gpu: Disable GPU acceleration (use CPU only)
         offline: Use cached models only (no network calls)
         verbose: Verbose output
@@ -82,44 +75,16 @@ def index_pdfs_command(
     # Set process priority early
     set_process_priority(process_priority)
 
-    # Apply --max-perf preset (sets defaults before precedence logic)
-    if max_perf:
-        if embedding_worker_mult is None:
-            embedding_worker_mult = 1.0
-        if embedding_batch_size == 200:  # Default value
-            embedding_batch_size = 500
-        if process_priority == "normal":  # Default value
-            process_priority = "low"
-            set_process_priority(process_priority)  # Re-apply with new priority
+    # Auto-detect optimal settings
+    # Note: File workers is hardcoded to 1 due to embedding lock (arcaneum-6pvk)
+    # Embedding generation is serialized when file_workers > 1 to prevent GPU conflicts
+    actual_file_workers = 1  # Serialized by embedding lock (arcaneum-3fs3)
+    file_worker_source = "1 (auto, serialized by embedding lock)"
 
-    # Compute file_workers with precedence: absolute → multiplier → default (1)
-    from multiprocessing import cpu_count
-    if file_workers is not None:
-        # Absolute value specified, use it
-        actual_file_workers = max(1, file_workers)
-        file_worker_source = f"{actual_file_workers} (absolute)"
-    elif file_worker_mult is not None:
-        # Multiplier specified, compute from cpu_count
-        actual_file_workers = max(1, int(cpu_count() * file_worker_mult))
-        file_worker_source = f"{actual_file_workers} (cpu_count × {file_worker_mult})"
-    else:
-        # Default: 1 worker (sequential processing)
-        actual_file_workers = 1
-        file_worker_source = f"{actual_file_workers} (default, sequential)"
-
-    # Compute embedding_workers with precedence: absolute → multiplier → default (0.5)
-    if embedding_workers is not None:
-        # Absolute value specified, use it
-        actual_embedding_workers = max(1, embedding_workers)
-        embedding_worker_source = f"{actual_embedding_workers} (absolute)"
-    elif embedding_worker_mult is not None:
-        # Multiplier specified, compute from cpu_count
-        actual_embedding_workers = max(1, int(cpu_count() * embedding_worker_mult))
-        embedding_worker_source = f"{actual_embedding_workers} (cpu_count × {embedding_worker_mult})"
-    else:
-        # Default: 0.5 multiplier (half of CPU cores)
-        actual_embedding_workers = max(1, int(cpu_count() * 0.5))
-        embedding_worker_source = f"{actual_embedding_workers} (cpu_count × 0.5, default)"
+    # GPU models ignore embedding_workers (single-threaded is faster)
+    # CPU models use ThreadPoolExecutor, but benefit is limited
+    actual_embedding_workers = 1  # GPU: single-threaded optimal, CPU: ignored in lock
+    embedding_worker_source = "1 (auto, GPU uses internal parallelism)"
 
     # Enable offline mode if requested (blocks all HuggingFace network calls)
     if offline:
@@ -207,9 +172,9 @@ def index_pdfs_command(
         uploader = PDFBatchUploader(
             qdrant_client=qdrant,
             embedding_client=embeddings,
-            batch_size=100,
-            parallel_workers=4,  # Upload parallelism (implementation detail)
-            max_retries=5,
+            batch_size=300,  # Optimized from 100 (arcaneum-6pvk: reduce upload rate)
+            parallel_workers=2,  # Reduced from 4 (arcaneum-6pvk: reduce connection pressure)
+            max_retries=3,  # Reduced from 5 (arcaneum-6pvk: reduce retry overhead)
             ocr_enabled=ocr_enabled,
             ocr_engine='tesseract',
             ocr_language=ocr_language,
@@ -217,8 +182,7 @@ def index_pdfs_command(
             ocr_workers=ocr_workers,
             embedding_workers=actual_embedding_workers,
             embedding_batch_size=embedding_batch_size,
-            batch_across_files=batch_across_files,
-            file_workers=actual_file_workers,  # PDF file parallelism
+            file_workers=actual_file_workers,  # PDF file parallelism (arcaneum-6pvk: hardcoded to 1)
             pdf_timeout=600,  # 10 minute timeout per PDF
             ocr_page_timeout=60,  # 1 minute timeout per OCR page
             embedding_timeout=300,  # 5 minute timeout for embeddings
@@ -266,9 +230,8 @@ def index_pdfs_command(
                 console.print(f"  Device: CPU (GPU not available)")
 
             # Show parallelism configuration
-            preset_suffix = " [max-perf preset]" if max_perf else ""
-            console.print(f"  File processing: {file_worker_source} workers{preset_suffix}")
-            console.print(f"  Embedding: {embedding_worker_source} workers, batch size {embedding_batch_size}{preset_suffix}")
+            console.print(f"  File processing: {actual_file_workers} workers")
+            console.print(f"  Embedding: {actual_embedding_workers} workers, batch size {embedding_batch_size}")
 
             # Show extraction strategy (RDR-016)
             if normalize_only:
@@ -286,10 +249,7 @@ def index_pdfs_command(
             else:
                 console.print(f"  OCR: disabled")
             console.print(f"  Pipeline: PDF → Extract → [OCR if needed] → Chunk → Embed → Upload")
-            if batch_across_files:
-                console.print(f"  Upload: Batched across files (100 chunks)")
-            else:
-                console.print(f"  Upload: Atomic per-document (safer)")
+            console.print(f"  Upload: Atomic per-document (safer)")
 
             # Show process priority
             if process_priority != "normal":

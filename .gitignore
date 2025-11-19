@@ -38,3 +38,6 @@ arcaneum.yaml
 *.swp
 *.swo
 *~
+
+# workspaces
+_*

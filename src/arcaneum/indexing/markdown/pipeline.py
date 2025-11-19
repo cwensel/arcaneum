@@ -14,9 +14,10 @@ from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
+import xxhash
 
 from ...embeddings.client import EmbeddingClient
-from ..common.sync import MetadataBasedSync, compute_text_file_hash
+from ..common.sync import MetadataBasedSync, compute_text_file_hash, compute_file_hash
 from .discovery import MarkdownDiscovery
 from .chunker import SemanticMarkdownChunker
 
@@ -101,6 +102,13 @@ class MarkdownIndexingPipeline:
 
             if verbose:
                 print(f"     read {len(content)} chars", flush=True)
+
+            # Stage 1b: Pre-deletion - Remove old chunks with same file_hash before reindexing
+            # This prevents partial data if indexing is interrupted mid-file
+            file_hash = compute_file_hash(file_path)
+            if verbose:
+                print(f"  → pre-deletion: removing old chunks", flush=True)
+            self.sync.delete_chunks_by_file_hash(collection_name, file_hash)
 
             # Build base metadata
             base_metadata = {
@@ -458,6 +466,13 @@ class MarkdownIndexingPipeline:
             'store_type': 'markdown',
             'injection_mode': True,
         })
+
+        # Pre-deletion: Remove old chunks with same content hash before injecting
+        # This prevents partial data if injection is interrupted mid-operation
+        hasher = xxhash.xxh64()
+        hasher.update(content.encode('utf-8'))
+        content_hash = hasher.hexdigest()
+        self.sync.delete_chunks_by_file_hash(collection_name, content_hash)
 
         # Chunk content
         chunks = chunker.chunk(content, base_metadata)

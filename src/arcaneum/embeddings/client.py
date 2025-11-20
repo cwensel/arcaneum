@@ -140,6 +140,35 @@ class EmbeddingClient:
             "gpu_available": self._device != "cpu"
         }
 
+    def _get_optimal_batch_size(self, model_name: str) -> int:
+        """Calculate optimal batch size based on model and device (arcaneum-i7oa).
+
+        GPU models can process much larger batches efficiently. This method
+        calculates optimal batch sizes based on model dimensions and GPU availability.
+
+        Memory analysis shows 1024-text batches use <5MB (<0.1% of typical GPU memory),
+        so we're not constrained by GPU memory - we can use larger batches for efficiency.
+
+        Args:
+            model_name: Model identifier
+
+        Returns:
+            Optimal batch size for this model
+        """
+        if not self.use_gpu:
+            return 256  # Conservative for CPU
+
+        dimensions = self.get_dimensions(model_name)
+
+        # Adaptive sizing based on model dimensions (arcaneum-i7oa)
+        # Larger batches = fewer kernel launches = better GPU utilization
+        if dimensions <= 384:
+            return 1024  # Small models (bge-small: 384D)
+        elif dimensions <= 768:
+            return 768   # Medium models (jina-code: 768D, bge-base: 768D)
+        else:
+            return 512   # Large models (stella: 1024D, bge-large: 1024D)
+
     def get_model(self, model_name: str):
         """Get or initialize embedding model.
 
@@ -338,12 +367,34 @@ class EmbeddingClient:
             # FastEmbed: use embed()
             # Process in batches to prevent hangs
             BATCH_SIZE = 100
-            all_embeddings = []
 
-            for i in range(0, len(texts), BATCH_SIZE):
+            # Pre-allocate result array to avoid incremental list extensions (arcaneum-knl6)
+            # First batch determines embedding dimensions
+            first_batch = texts[:min(BATCH_SIZE, len(texts))]
+            first_embeddings = list(model.embed(first_batch))
+
+            if not first_embeddings:
+                return []
+
+            # Get dimensions from first embedding
+            dim = len(first_embeddings[0])
+
+            # Pre-allocate numpy array with correct shape and dtype
+            import numpy as np
+            all_embeddings = np.zeros((len(texts), dim), dtype=np.float32)
+
+            # Fill first batch
+            for idx, emb in enumerate(first_embeddings):
+                all_embeddings[idx] = emb
+
+            # Process remaining batches and fill array slices (arcaneum-knl6)
+            offset = len(first_embeddings)
+            for i in range(BATCH_SIZE, len(texts), BATCH_SIZE):
                 batch = texts[i:i + BATCH_SIZE]
                 batch_embeddings = list(model.embed(batch))
-                all_embeddings.extend(batch_embeddings)
+                batch_size = len(batch_embeddings)
+                all_embeddings[offset:offset + batch_size] = batch_embeddings
+                offset += batch_size
 
             return all_embeddings
 
@@ -352,24 +403,24 @@ class EmbeddingClient:
         texts: List[str],
         model_name: str,
         max_workers: int = 4,
-        batch_size: int = 256,
+        batch_size: int = None,
         timeout: int = 300
     ) -> List[List[float]]:
         """Generate embeddings with smart parallelism strategy.
 
         Strategy:
-        - GPU models: Single-threaded with larger batches (256-512) for optimal throughput
+        - GPU models: Single-threaded with adaptive batch sizing (512-1024) for optimal throughput
           GPU models have built-in parallelism; ThreadPoolExecutor adds overhead without gain
         - CPU models: ThreadPoolExecutor (optional, tested performance-dependent)
 
-        Current implementation: Single-threaded with configurable batch sizes.
-        GPU models process 256+ embeddings/batch internally for maximum efficiency.
+        Current implementation: Single-threaded with adaptive batch sizes based on model.
+        GPU models process larger batches (512-1024) internally for maximum efficiency (arcaneum-i7oa).
 
         Args:
             texts: List of text strings to embed
             model_name: Model identifier (stella, jina, modernbert, bge)
             max_workers: Number of concurrent workers (ignored for GPU, kept for API compatibility)
-            batch_size: Chunk size for batches (default: 200, consider 256-512 for GPU)
+            batch_size: Chunk size for batches (default: None = auto-optimal, can override with explicit value)
             timeout: Timeout in seconds (ignored in single-threaded mode)
 
         Returns:
@@ -381,14 +432,20 @@ class EmbeddingClient:
         Note:
             After profiling (arcaneum-c128), single-threaded approach is faster for GPU models
             due to GPU's internal parallelism within batch. See arcaneum-m7hg for details.
+            Adaptive batch sizing (arcaneum-i7oa) uses 512-1024 for GPU models to maximize throughput.
 
         Example:
             >>> client = EmbeddingClient()
             >>> texts = ["text1", "text2", ..., "text1000"]
-            >>> embeddings = client.embed_parallel(texts, "stella", batch_size=512)
+            >>> embeddings = client.embed_parallel(texts, "stella")  # Uses optimal batch size
+            >>> embeddings = client.embed_parallel(texts, "stella", batch_size=256)  # Override
         """
         # Get model once
         _ = self.get_model(model_name)
+
+        # Use adaptive batch sizing if not explicitly provided (arcaneum-i7oa)
+        if batch_size is None:
+            batch_size = self._get_optimal_batch_size(model_name)
 
         # For GPU models: single-threaded batching is faster than ThreadPoolExecutor
         # GPU internal parallelism is optimized within batch, not at thread level

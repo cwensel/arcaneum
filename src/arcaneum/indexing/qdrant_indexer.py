@@ -42,7 +42,7 @@ class QdrantIndexer:
     - gRPC support for faster uploads
     """
 
-    DEFAULT_BATCH_SIZE = 300  # Optimized for Qdrant (Phase 1 RDR-013)
+    DEFAULT_BATCH_SIZE = 512  # GPU-optimal batch size (arcaneum-2m1i, arcaneum-i7oa)
     MAX_RETRIES = 3
     INITIAL_RETRY_WAIT = 1  # seconds
 
@@ -55,7 +55,7 @@ class QdrantIndexer:
 
         Args:
             client: Initialized Qdrant client
-            batch_size: Number of chunks per batch upload (default 150)
+            batch_size: Number of chunks per batch upload (default 512, GPU-optimal)
         """
         self.client = client
         self.batch_size = batch_size

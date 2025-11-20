@@ -134,7 +134,7 @@ class SourceCodeIndexer:
         vector_name: Optional[str] = None,
         parallel_workers: Optional[int] = None,
         embedding_workers: int = 4,
-        embedding_batch_size: int = 256
+        embedding_batch_size: int = 512
     ):
         """Initialize source code indexer.
 
@@ -148,7 +148,7 @@ class SourceCodeIndexer:
             vector_name: Name of vector if using named vectors (e.g., "stella")
             parallel_workers: Number of parallel workers for file processing (None = cpu_count // 2)
             embedding_workers: Number of parallel workers for embedding generation (default: 4)
-            embedding_batch_size: Batch size for embedding generation (default: 200)
+            embedding_batch_size: Batch size for embedding generation (default: 512, GPU-optimal per arcaneum-i7oa, arcaneum-2m1i)
         """
         self.qdrant_indexer = qdrant_indexer
         self.git_discovery = GitProjectDiscovery()

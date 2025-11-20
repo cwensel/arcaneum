@@ -331,9 +331,9 @@ class EmbeddingClient:
             # Potential 10-20% speedup on embeddings by reducing tensor→list conversion overhead.
             # Disable progress bar - pipeline handles progress display
             embeddings = model.encode(texts, show_progress_bar=False, convert_to_numpy=True)
-            # Return numpy rows directly - Qdrant accepts both lists and arrays
-            # This avoids .tolist() conversion which can be expensive for large batches
-            return [emb.tolist() for emb in embeddings]
+            # Return numpy arrays directly - Qdrant Python client accepts numpy.ndarray natively
+            # Removing .tolist() conversion saves 5-15% overhead on embeddings (arcaneum-zfch)
+            return embeddings
         else:
             # FastEmbed: use embed()
             # Process in batches to prevent hangs
@@ -446,9 +446,9 @@ class EmbeddingClient:
                         # Fill with None to indicate failure
                         all_embeddings[start_idx:end_idx] = [None] * (end_idx - start_idx)
 
-            # Check for any failures
-            if None in all_embeddings:
-                failed_indices = [i for i, emb in enumerate(all_embeddings) if emb is None]
+            # Check for any failures (handle both list and numpy array cases)
+            failed_indices = [i for i, emb in enumerate(all_embeddings) if emb is None]
+            if failed_indices:
                 raise RuntimeError(
                     f"Failed to generate embeddings for {len(failed_indices)} texts at indices: {failed_indices[:10]}..."
                 )

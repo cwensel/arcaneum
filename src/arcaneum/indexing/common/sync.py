@@ -617,8 +617,10 @@ class MetadataBasedSync:
                 )
             )
 
-            logger.debug(f"Deleted chunks for file_hash {file_hash} from {collection_name}")
-            return result.deleted if result else 0
+            # UpdateResult only has operation_id and status, count the deleted chunks from before
+            deleted_count = len(points_before) if points_before else 0
+            logger.debug(f"Deleted {deleted_count} chunks for file_hash {file_hash} from {collection_name}")
+            return deleted_count
 
         except Exception as e:
             logger.warning(f"Error deleting chunks by file_hash {file_hash}: {e}")

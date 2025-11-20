@@ -114,11 +114,13 @@ class SearchEmbedder:
         if backend == "fastembed":
             # FastEmbed: Use query_embed for queries
             query_vector = list(model.query_embed([query]))[0]
-            return (model_key, query_vector.tolist())
+            # Return numpy array directly - Qdrant accepts numpy arrays natively
+            return (model_key, query_vector)
         elif backend == "sentence-transformers":
             # SentenceTransformers: Use encode (no separate query_embed)
             query_vector = model.encode([query], convert_to_numpy=True)[0]
-            return (model_key, query_vector.tolist())
+            # Return numpy array directly - Qdrant accepts numpy arrays natively (arcaneum-zfch)
+            return (model_key, query_vector)
         else:
             raise ValueError(f"Unknown backend: {backend}")
 

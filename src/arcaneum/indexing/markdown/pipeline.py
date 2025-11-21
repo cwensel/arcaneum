@@ -17,7 +17,7 @@ from qdrant_client.models import PointStruct
 import xxhash
 
 from ...embeddings.client import EmbeddingClient
-from ..common.sync import MetadataBasedSync, compute_text_file_hash, compute_file_hash
+from ..common.sync import MetadataBasedSync, compute_text_file_hash, compute_file_hash, compute_quick_hash
 from .discovery import MarkdownDiscovery
 from .chunker import SemanticMarkdownChunker
 
@@ -105,6 +105,7 @@ class MarkdownIndexingPipeline:
 
             # Stage 1b: Pre-deletion - Remove old chunks with same file_hash before reindexing
             # This prevents partial data if indexing is interrupted mid-file
+            quick_hash = compute_quick_hash(file_path)  # Metadata-only hash (mtime+size)
             file_hash = compute_file_hash(file_path)
             if verbose:
                 print(f"  → pre-deletion: removing old chunks", flush=True)
@@ -114,7 +115,8 @@ class MarkdownIndexingPipeline:
             base_metadata = {
                 'filename': file_metadata.file_name,
                 'file_path': file_metadata.file_path,
-                'file_hash': file_metadata.content_hash,
+                'quick_hash': quick_hash,  # Pass 1: Fast metadata-based hash (mtime+size)
+                'file_hash': file_metadata.content_hash,  # Pass 2: Full content hash
                 'file_size': file_metadata.file_size,
                 'store_type': 'markdown',
                 'has_frontmatter': file_metadata.has_frontmatter,

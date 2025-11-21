@@ -494,26 +494,76 @@ class MetadataBasedSync:
             logger.warning(f"Error querying quick_hashes: {e}")
             return set()
 
+    def _get_indexed_file_paths_set(self, collection_name: str) -> set:
+        """Get all indexed file_path values for deduplication in Pass 2.
+
+        Used to determine which Pass 1 misses are new files vs existing files with changed metadata.
+        Returns a set of file_path strings for O(1) lookup.
+
+        Args:
+            collection_name: Qdrant collection name
+
+        Returns:
+            Set of file_path strings
+        """
+        indexed_paths = set()
+        offset = None
+
+        try:
+            while True:
+                points, offset = self.qdrant.scroll(
+                    collection_name=collection_name,
+                    limit=100,
+                    offset=offset,
+                    with_payload=["file_path"],
+                    with_vectors=False
+                )
+
+                if not points:
+                    break
+
+                for point in points:
+                    if point.payload:
+                        path = point.payload.get("file_path")
+                        if path:
+                            indexed_paths.add(path)
+
+                if offset is None:
+                    break
+
+            return indexed_paths
+
+        except Exception as e:
+            logger.warning(f"Error querying indexed paths: {e}")
+            return set()
+
     def get_unindexed_files(self, collection_name: str,
                             file_list: List[Path],
                             hash_fn=None) -> Tuple[List[Path], List[Tuple[str, str]], List[Path]]:
-        """Filter file list using metadata gate to identify files needing reindexing.
+        """Filter file list using 3-pass sync strategy to identify files needing reindexing.
 
-        **Metadata-only gate strategy** (highly optimized incremental sync):
+        **3-pass strategy** (handles collections with/without quick_hash):
 
-        Pass 1: Ultra-fast metadata check (~0.003ms per file)
-        - Compute quick_hash for all files (mtime+size only, no file I/O)
+        Pass 1 (Ultra-fast ~0.003ms): Metadata check (mtime+size)
+        - Compute quick_hash for all files
         - Query Qdrant for (file_path, quick_hash) matches
-        - Files matching → already indexed (skip reindexing)
-        - Files NOT matching → candidates for reindexing
+        - If found → file unchanged at same location → skip indexing
 
-        Full content hashing deferred to indexing pipeline:
-        - NOT computed here (expensive, ~50ms per file)
-        - Computed during indexing when pre-deletion and new chunks needed
-        - Allows natural rename detection (different path + same content hash = rename)
+        Pass 2 (Moderate ~50ms per miss): Content verification
+        - For files that miss Pass 1, compute full content hash
+        - Query Qdrant for (file_path, file_hash) matches
+        - If found → file content unchanged (metadata changed) → skip indexing
+        - Handles collections missing quick_hash field
 
-        **Performance**: Unchanged files (99%) skip expensive hashing entirely.
-        Only files with metadata changes get full hashing during indexing.
+        Pass 3 (Rename detection ~5ms per miss): Check for moves/renames
+        - For files that miss Pass 2, search for content_hash elsewhere
+        - If found exactly once → file moved/renamed → skip indexing
+        - If multiple matches → ambiguous, treat as new
+
+        **Performance**:
+        - Unchanged files (99%): Pass 1 only (~0.003ms)
+        - Metadata changed only: Pass 1 + Pass 2 (~50ms)
+        - New/moved files: All 3 passes (~60ms)
 
         Args:
             collection_name: Qdrant collection name
@@ -522,47 +572,137 @@ class MetadataBasedSync:
 
         Returns:
             Tuple of:
-            - unindexed: Files to reindex (metadata changed or new)
-            - renames: Empty list (rename detection handled via full hash during indexing)
-            - already_indexed: Files with matching (path, quick_hash)
+            - unindexed: Files to reindex (new or truly changed)
+            - renames: List of (old_path, file_path) tuples for renamed files
+            - already_indexed: Files unchanged in content
         """
         try:
+            import time
+            start_time = time.time()
+
             # Pass 1: Metadata gate (mtime+size) - ultra fast
+            pass1_start = time.time()
             quick_hashes = _compute_hashes_parallel(file_list, compute_quick_hash, show_progress=False)
+            quick_hash_time = time.time() - pass1_start
 
-            # Query Qdrant for (file_path, quick_hash) matches
+            pass1_qdrant_start = time.time()
             indexed_quick_hashes = self._get_indexed_quick_hashes(collection_name)
-
-            # Also get indexed files by content hash (for rename detection)
-            indexed_by_hash = self.get_indexed_file_paths(collection_name)
+            pass1_qdrant_time = time.time() - pass1_qdrant_start
 
             # Categorize files
             unindexed = []
             renames = []
             already_indexed = []
+            pass1_misses = []  # Files that need Pass 2
 
+            # Pass 1: Quick metadata check
+            pass1_check_start = time.time()
             for file_path in file_list:
                 file_path_str = str(file_path.absolute())
                 quick_hash = quick_hashes.get(file_path_str)
 
                 if quick_hash is None:
-                    # Hash computation failed, skip this file
+                    # Hash computation failed, treat as unindexed
+                    unindexed.append(file_path)
                     continue
 
                 # Check if (file_path, quick_hash) exists in collection
                 if (file_path_str, quick_hash) in indexed_quick_hashes:
-                    # Metadata unchanged → already indexed
+                    # Pass 1 HIT: Metadata unchanged → already indexed
                     already_indexed.append(file_path)
                 else:
-                    # Metadata changed or new → candidate for reindexing
-                    # Attempt to detect rename by checking if file content exists elsewhere
-                    # This requires computing full hash during indexing, but we can flag it here
-                    # For now, treat as unindexed (full hash will be computed during indexing)
-                    unindexed.append(file_path)
+                    # Pass 1 MISS: Metadata changed or new → proceed to Pass 2
+                    pass1_misses.append((file_path, file_path_str))
 
-            logger.info(f"Found {len(unindexed)} candidates for reindexing, "
-                       f"{len(already_indexed)} already indexed "
-                       f"(total {len(file_list)} files)")
+            pass1_check_time = time.time() - pass1_check_start
+            pass1_total = time.time() - pass1_start
+
+            logger.info(f"Pass 1 (metadata gate): {len(file_list)} files "
+                       f"→ {len(already_indexed)} hits, {len(pass1_misses)} misses "
+                       f"(hash: {quick_hash_time:.3f}s, qdrant: {pass1_qdrant_time:.3f}s, check: {pass1_check_time:.3f}s, total: {pass1_total:.3f}s)")
+
+            # Pass 2a: Separate existing files (need content hash) from new files (defer hashing)
+            pass2_start = time.time()
+            pass2_hits = 0
+            pass2_misses = 0
+            pass2_new_files = 0
+
+            if pass1_misses:
+                # Get indexed file paths to distinguish new files from existing files with changed metadata
+                existing_paths_start = time.time()
+                indexed_paths = self._get_indexed_file_paths_set(collection_name)
+                existing_paths_time = time.time() - existing_paths_start
+
+                # Separate Pass 1 misses into two categories:
+                # 1. New files (path not in collection) → defer hashing to indexing pipeline
+                # 2. Existing files with changed metadata (path in collection) → need Pass 2 content check
+                existing_files_to_check = []
+                for file_path, file_path_str in pass1_misses:
+                    if file_path_str in indexed_paths:
+                        # File exists in collection with different metadata → check content
+                        existing_files_to_check.append((file_path, file_path_str))
+                    else:
+                        # File doesn't exist in collection → new file, defer hashing
+                        unindexed.append(file_path)
+                        pass2_new_files += 1
+
+                # Only compute content hashes for existing files with changed metadata
+                content_hash_start = time.time()
+                if existing_files_to_check:
+                    content_hashes = _compute_hashes_parallel(
+                        [fp for fp, _ in existing_files_to_check],
+                        compute_file_hash,
+                        show_progress=False
+                    )
+                else:
+                    content_hashes = {}
+                content_hash_time = time.time() - content_hash_start
+
+                for file_path, file_path_str in existing_files_to_check:
+                    content_hash = content_hashes.get(str(file_path.absolute()))
+
+                    if content_hash is None:
+                        # Hash computation failed, treat as unindexed
+                        unindexed.append(file_path)
+                        continue
+
+                    # Check if (file_path, content_hash) exists in collection
+                    if self.is_file_indexed(collection_name, file_path, content_hash):
+                        # Pass 2 HIT: Content unchanged (metadata changed) → skip indexing
+                        already_indexed.append(file_path)
+                        pass2_hits += 1
+                    else:
+                        # Pass 2 MISS: Check for renames (Pass 3)
+                        pass2_misses += 1
+                        old_paths = self.find_file_by_content_hash(collection_name, content_hash)
+
+                        if old_paths:
+                            if len(old_paths) == 1:
+                                # Pass 3 HIT: Single match → file was moved/renamed
+                                old_path = old_paths[0]
+                                renames.append((old_path, str(file_path)))
+                                already_indexed.append(file_path)
+                            else:
+                                # Pass 3 AMBIGUOUS: Multiple matches → treat as new
+                                logger.debug(f"Ambiguous rename for {file_path}: {len(old_paths)} files with same content")
+                                unindexed.append(file_path)
+                        else:
+                            # All passes miss: File is new or truly changed
+                            unindexed.append(file_path)
+
+                pass2_total = time.time() - pass2_start
+                logger.info(f"Pass 2 (smart filtering): {len(pass1_misses)} candidates "
+                           f"→ {pass2_new_files} new (deferred), {len(existing_files_to_check)} existing "
+                           f"→ {pass2_hits} hits, {pass2_misses} misses "
+                           f"(paths: {existing_paths_time:.3f}s, hash: {content_hash_time:.3f}s, total: {pass2_total:.3f}s)")
+            else:
+                logger.info(f"Pass 2 skipped (no Pass 1 misses)")
+                pass2_total = 0
+
+            total_time = time.time() - start_time
+            logger.info(f"Sync complete: {len(unindexed)} files to reindex, "
+                       f"{len(already_indexed)} already indexed, "
+                       f"{len(renames)} renamed (total {len(file_list)} files, {total_time:.3f}s)")
             return (unindexed, renames, already_indexed)
 
         except Exception as e:

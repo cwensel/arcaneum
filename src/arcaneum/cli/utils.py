@@ -12,7 +12,7 @@ from ..config import load_config, ArcaneumConfig, QdrantConfig
 logger = logging.getLogger(__name__)
 
 
-def set_process_priority(priority: str) -> None:
+def set_process_priority(priority: str, disable_worker_nice: bool = False) -> None:
     """Set process scheduling priority.
 
     Args:
@@ -20,11 +20,16 @@ def set_process_priority(priority: str) -> None:
             - low: nice +10 (background processing, minimal impact on UI)
             - normal: no change (default)
             - high: nice -10 (requires root/admin privileges)
+        disable_worker_nice: If True, disable nice settings for worker processes (arcaneum-mql4)
 
     Note:
         On Windows, this uses SetPriorityClass instead of nice.
         'high' priority may require administrator privileges.
     """
+    # Store disable_worker_nice in environment for worker processes to access (arcaneum-mql4)
+    if disable_worker_nice:
+        os.environ['ARCANEUM_DISABLE_WORKER_NICE'] = '1'
+
     if priority == "normal":
         return  # No change needed
 

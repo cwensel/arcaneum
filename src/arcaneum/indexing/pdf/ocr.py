@@ -40,6 +40,14 @@ def _ocr_single_page_worker(
     Returns:
         Tuple of (page_num, text, confidence)
     """
+    # Set low priority UNLESS disabled by --not-nice flag (arcaneum-mql4)
+    if os.environ.get('ARCANEUM_DISABLE_WORKER_NICE') != '1':
+        try:
+            if hasattr(os, 'nice'):
+                os.nice(10)  # Background priority for OCR workers
+        except Exception:
+            pass  # Ignore if we can't set priority
+
     image = None
     img_array = None
     gray = None

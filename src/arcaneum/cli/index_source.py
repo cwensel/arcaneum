@@ -35,6 +35,7 @@ def index_source_command(
     chunk_overlap: Optional[int],
     depth: Optional[int],
     process_priority: str,
+    not_nice: bool,
     force: bool,
     no_gpu: bool,
     verbose: bool,
@@ -52,6 +53,7 @@ def index_source_command(
         chunk_overlap: Overlap between chunks in tokens (default: 20)
         depth: Git discovery depth (None = unlimited)
         process_priority: Process scheduling priority (low, normal, high)
+        not_nice: Disable process priority reduction for worker processes
         force: Force reindex all projects
         no_gpu: Disable GPU acceleration (use CPU only)
         verbose: Verbose output
@@ -75,7 +77,7 @@ def index_source_command(
     logger = logging.getLogger(__name__)
 
     # Set process priority early
-    set_process_priority(process_priority)
+    set_process_priority(process_priority, disable_worker_nice=not_nice)
 
     # Auto-detect optimal settings
     actual_embedding_workers = max(1, embedding_workers) if embedding_workers else 1

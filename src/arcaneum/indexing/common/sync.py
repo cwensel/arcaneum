@@ -116,12 +116,13 @@ def _compute_hash_worker(args: Tuple[Path, Callable]) -> Tuple[Path, str]:
     """
     file_path, hash_fn = args
 
-    # Set low priority (nice level 19 on Unix, IDLE on Windows)
-    try:
-        if hasattr(os, 'nice'):
-            os.nice(19)
-    except Exception:
-        pass  # Ignore if we can't set priority
+    # Set low priority UNLESS disabled by --not-nice flag (arcaneum-mql4)
+    if os.environ.get('ARCANEUM_DISABLE_WORKER_NICE') != '1':
+        try:
+            if hasattr(os, 'nice'):
+                os.nice(19)  # Lowest priority for hash workers
+        except Exception:
+            pass  # Ignore if we can't set priority
 
     try:
         file_hash = hash_fn(file_path)

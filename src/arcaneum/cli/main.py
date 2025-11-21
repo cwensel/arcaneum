@@ -118,16 +118,17 @@ def index():
 @click.option('--normalize-only', is_flag=True, help='Skip markdown conversion, only normalize whitespace (RDR-016: max 47%% token savings)')
 @click.option('--preserve-images', is_flag=True, help='Extract images for future multimodal search (RDR-016: slower processing)')
 @click.option('--process-priority', type=click.Choice(['low', 'normal', 'high']), default='normal', help='Process scheduling priority (default: normal). Use low for background indexing.')
+@click.option('--not-nice', is_flag=True, help='Disable process priority reduction for worker processes (use normal priority)')
 @click.option('--force', is_flag=True, help='Force reindex all files')
 @click.option('--no-gpu', is_flag=True, help='Disable GPU acceleration (use CPU only, 2-3x slower)')
 @click.option('--offline', is_flag=True, help='Offline mode (use cached models only, no network)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 @click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_pdf(path, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, force, no_gpu, offline, verbose, debug, output_json):
+def index_pdf(path, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, no_gpu, offline, verbose, debug, output_json):
     """Index PDF files"""
     from arcaneum.cli.index_pdfs import index_pdfs_command
-    index_pdfs_command(path, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, force, no_gpu, offline, verbose, debug, output_json)
+    index_pdfs_command(path, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, no_gpu, offline, verbose, debug, output_json)
 
 
 @index.command('code')
@@ -139,15 +140,16 @@ def index_pdf(path, collection, model, embedding_batch_size, no_ocr, ocr_languag
 @click.option('--chunk-overlap', type=int, help='Overlap between chunks in tokens (default: 20)')
 @click.option('--depth', type=int, help='Git discovery depth')
 @click.option('--process-priority', type=click.Choice(['low', 'normal', 'high']), default='normal', help='Process scheduling priority (default: normal). Use low for background indexing.')
+@click.option('--not-nice', is_flag=True, help='Disable process priority reduction for worker processes (use normal priority)')
 @click.option('--force', is_flag=True, help='Force reindex all projects')
 @click.option('--no-gpu', is_flag=True, help='Disable GPU acceleration (use CPU only, 2-3x slower)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 @click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_code(path, collection, model, embedding_batch_size, chunk_size, chunk_overlap, depth, process_priority, force, no_gpu, verbose, debug, output_json):
+def index_code(path, collection, model, embedding_batch_size, chunk_size, chunk_overlap, depth, process_priority, not_nice, force, no_gpu, verbose, debug, output_json):
     """Index source code"""
     from arcaneum.cli.index_source import index_source_command
-    index_source_command(path, collection, model, embedding_batch_size, chunk_size, chunk_overlap, depth, process_priority, force, no_gpu, verbose, debug, output_json)
+    index_source_command(path, collection, model, embedding_batch_size, chunk_size, chunk_overlap, depth, process_priority, not_nice, force, no_gpu, verbose, debug, output_json)
 
 
 @index.command('markdown')
@@ -161,16 +163,17 @@ def index_code(path, collection, model, embedding_batch_size, chunk_size, chunk_
 @click.option('--exclude', multiple=True, help='Patterns to exclude (e.g., node_modules, .obsidian)')
 @click.option('--qdrant-url', default='http://localhost:6333', help='Qdrant server URL')
 @click.option('--process-priority', type=click.Choice(['low', 'normal', 'high']), default='normal', help='Process scheduling priority (default: normal). Use low for background indexing.')
+@click.option('--not-nice', is_flag=True, help='Disable process priority reduction for worker processes (use normal priority)')
 @click.option('--force', is_flag=True, help='Force reindex all files')
 @click.option('--no-gpu', is_flag=True, help='Disable GPU acceleration (use CPU only, 2-3x slower)')
 @click.option('--offline', is_flag=True, help='Offline mode (use cached models only, no network)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 @click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_markdown(path, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, force, no_gpu, offline, verbose, debug, output_json):
+def index_markdown(path, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, no_gpu, offline, verbose, debug, output_json):
     """Index markdown files"""
     from arcaneum.cli.index_markdown import index_markdown_command
-    index_markdown_command(path, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, force, no_gpu, offline, verbose, debug, output_json)
+    index_markdown_command(path, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, no_gpu, offline, verbose, debug, output_json)
 
 
 @cli.command('store')

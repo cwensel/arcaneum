@@ -33,6 +33,7 @@ def index_markdown_command(
     exclude: tuple,
     qdrant_url: str,
     process_priority: str,
+    not_nice: bool,
     force: bool,
     no_gpu: bool,
     offline: bool,
@@ -50,6 +51,7 @@ def index_markdown_command(
         chunk_size: Target chunk size in tokens
         chunk_overlap: Overlap between chunks in tokens
         process_priority: Process scheduling priority
+        not_nice: Disable process priority reduction for worker processes
         force: Force reindex all files
         no_gpu: Disable GPU acceleration
         offline: Use cached models only (no network calls)
@@ -61,7 +63,7 @@ def index_markdown_command(
     from .utils import set_process_priority
 
     # Set process priority early
-    set_process_priority(process_priority)
+    set_process_priority(process_priority, disable_worker_nice=not_nice)
 
     # Auto-detect optimal settings
     actual_file_workers = 1

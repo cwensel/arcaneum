@@ -51,6 +51,14 @@ def _process_file_worker(
     Returns:
         List of CodeChunk objects with metadata (no embeddings yet)
     """
+    # Set low priority UNLESS disabled by --not-nice flag (arcaneum-mql4)
+    if os.environ.get('ARCANEUM_DISABLE_WORKER_NICE') != '1':
+        try:
+            if hasattr(os, 'nice'):
+                os.nice(10)  # Background priority for code processing workers
+        except Exception:
+            pass  # Ignore if we can't set priority
+
     try:
         # Create chunker (thread-safe, lightweight)
         chunker = ASTCodeChunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)

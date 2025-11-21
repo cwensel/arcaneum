@@ -34,6 +34,7 @@ def index_pdfs_command(
     normalize_only: bool,
     preserve_images: bool,
     process_priority: str,
+    not_nice: bool,
     force: bool,
     no_gpu: bool,
     offline: bool,
@@ -56,6 +57,7 @@ def index_pdfs_command(
         normalize_only: Skip markdown conversion, only normalize whitespace (RDR-016)
         preserve_images: Extract images for multimodal search (RDR-016)
         process_priority: Process scheduling priority (low, normal, high)
+        not_nice: Disable process priority reduction for worker processes
         force: Force reindex all files
         no_gpu: Disable GPU acceleration (use CPU only)
         offline: Use cached models only (no network calls)
@@ -73,7 +75,7 @@ def index_pdfs_command(
     ocr_enabled = not no_ocr
 
     # Set process priority early
-    set_process_priority(process_priority)
+    set_process_priority(process_priority, disable_worker_nice=not_nice)
 
     # Auto-detect optimal settings
     # Note: File workers is hardcoded to 1 due to embedding lock (arcaneum-6pvk)

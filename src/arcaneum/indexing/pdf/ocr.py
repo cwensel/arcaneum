@@ -7,8 +7,9 @@ import cv2
 import numpy as np
 from pathlib import Path
 from typing import Tuple, Optional, Dict
-from concurrent.futures import ProcessPoolExecutor, as_completed, TimeoutError
 from multiprocessing import cpu_count
+import multiprocessing as mp
+import os
 import io
 import logging
 import tempfile
@@ -324,37 +325,32 @@ class OCREngine:
             del images
             gc.collect()
 
-            # Process pages in parallel
-            with ProcessPoolExecutor(max_workers=self.ocr_workers) as executor:
+            # Process pages in parallel using multiprocessing.Pool with fork context
+            # Use fork context on Unix for better performance and to avoid malloc warnings
+            ctx = mp.get_context('fork') if hasattr(os, 'fork') else mp.get_context()
+
+            with ctx.Pool(processes=self.ocr_workers) as pool:
                 # Submit all page jobs for this batch
-                future_to_page = {}
+                async_results = []
                 for page_num, img_bytes in serialized_images:
-                    future = executor.submit(
+                    async_result = pool.apply_async(
                         _ocr_single_page_worker,
-                        img_bytes,
-                        page_num,
-                        self.engine,
-                        self.language,
-                        self.confidence_threshold,
-                        self.image_scale
+                        (img_bytes, page_num, self.engine, self.language,
+                         self.confidence_threshold, self.image_scale)
                     )
-                    future_to_page[future] = page_num
+                    async_results.append((async_result, page_num))
 
                 # Collect results as they complete
-                for future in as_completed(future_to_page):
-                    page_num = future_to_page[future]
+                for async_result, page_num in async_results:
                     try:
-                        result_page_num, page_text, page_conf = future.result(timeout=self.page_timeout)
+                        result_page_num, page_text, page_conf = async_result.get(timeout=self.page_timeout)
                         batch_results[result_page_num] = (page_text, page_conf)
 
                         # Show per-page progress
                         if verbose and page_text.strip():
                             print(f"  → OCR: Page {result_page_num}/{total_pages} ({len(page_text)} chars, conf: {page_conf:.0f}%)", flush=True)
 
-                        # Release future reference immediately
-                        del future
-
-                    except TimeoutError:
+                    except mp.TimeoutError:
                         logger.error(f"OCR timeout for page {page_num} (exceeded {self.page_timeout}s)")
                         batch_results[page_num] = ("", 0.0)
                     except Exception as e:
@@ -362,7 +358,7 @@ class OCREngine:
                         batch_results[page_num] = ("", 0.0)
 
             # Clear serialized images
-            del serialized_images, future_to_page
+            del serialized_images, async_results
             gc.collect()
 
         # temp_dir is automatically cleaned up here

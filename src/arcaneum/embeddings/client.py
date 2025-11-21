@@ -447,6 +447,9 @@ class EmbeddingClient:
         if batch_size is None:
             batch_size = self._get_optimal_batch_size(model_name)
 
+        # Note: GPU memory warning moved to CLI level (index_pdfs.py, index_source.py)
+        # where we have more context about user intent and can distinguish explicit vs auto-tuned batch sizes
+
         # For GPU models: single-threaded batching is faster than ThreadPoolExecutor
         # GPU internal parallelism is optimized within batch, not at thread level
         if self.use_gpu:

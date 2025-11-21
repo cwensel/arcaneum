@@ -340,6 +340,20 @@ class PDFBatchUploader:
             # uploaded_count is used for stats
             return ([], uploaded_count, None)
 
+        except RuntimeError as e:
+            # Check if this is a GPU OOM error
+            error_msg = str(e)
+            if any(oom_marker in error_msg for oom_marker in [
+                "MPS backend out of memory",
+                "CUDA out of memory",
+                "out of memory"
+            ]):
+                # Return special marker for GPU OOM that CLI can detect
+                return ([], 0, f"GPU_OOM: {error_msg}")
+            else:
+                # Not a GPU OOM, treat as generic RuntimeError
+                return ([], 0, f"RuntimeError: {error_msg}")
+
         except Exception as e:
             error_msg = str(e)
             error_type = type(e).__name__
@@ -472,7 +486,29 @@ class PDFBatchUploader:
                             points, file_chunk_count = [], 0
 
                         if error:
-                            # Show error
+                            # Check for GPU OOM error - fail fast with clear message
+                            if error.startswith("GPU_OOM:"):
+                                # Extract original error message
+                                oom_details = error[9:]  # Remove "GPU_OOM: " prefix
+
+                                # Print clear error message to stderr (visible in all modes)
+                                print("\n" + "=" * 80, file=sys.stderr)
+                                print("❌ GPU OUT OF MEMORY", file=sys.stderr)
+                                print("=" * 80, file=sys.stderr)
+                                print(f"\nThe GPU ran out of memory while processing: {pdf_path.name}", file=sys.stderr)
+                                print(f"Current batch size: {self.embedding_batch_size}", file=sys.stderr)
+                                print("\nTry one of these solutions:", file=sys.stderr)
+                                print(f"  1. Reduce batch size: --embedding-batch-size 50", file=sys.stderr)
+                                print(f"  2. Use CPU instead: --no-gpu (2-3x slower but uses system RAM)", file=sys.stderr)
+                                print(f"  3. Process fewer files at once", file=sys.stderr)
+                                print(f"\nTechnical details:", file=sys.stderr)
+                                print(f"  {oom_details}", file=sys.stderr)
+                                print("=" * 80 + "\n", file=sys.stderr)
+
+                                # Raise exception to stop processing immediately
+                                raise RuntimeError(f"GPU out of memory. See error message above for solutions.")
+
+                            # Show error (non-OOM)
                             if not verbose:
                                 status_line = f"[{pdf_idx}/{total_pdfs}] {pdf_path.name} ✗ ({error.split(':')[0]})"
                                 print(f"\r{status_line:<80}")
@@ -509,7 +545,29 @@ class PDFBatchUploader:
                     )
 
                     if error:
-                        # Show error
+                        # Check for GPU OOM error - fail fast with clear message
+                        if error.startswith("GPU_OOM:"):
+                            # Extract original error message
+                            oom_details = error[9:]  # Remove "GPU_OOM: " prefix
+
+                            # Print clear error message to stderr (visible in all modes)
+                            print("\n" + "=" * 80, file=sys.stderr)
+                            print("❌ GPU OUT OF MEMORY", file=sys.stderr)
+                            print("=" * 80, file=sys.stderr)
+                            print(f"\nThe GPU ran out of memory while processing: {pdf_path.name}", file=sys.stderr)
+                            print(f"Current batch size: {self.embedding_batch_size}", file=sys.stderr)
+                            print("\nTry one of these solutions:", file=sys.stderr)
+                            print(f"  1. Reduce batch size: --embedding-batch-size 50", file=sys.stderr)
+                            print(f"  2. Use CPU instead: --no-gpu (2-3x slower but uses system RAM)", file=sys.stderr)
+                            print(f"  3. Process fewer files at once", file=sys.stderr)
+                            print(f"\nTechnical details:", file=sys.stderr)
+                            print(f"  {oom_details}", file=sys.stderr)
+                            print("=" * 80 + "\n", file=sys.stderr)
+
+                            # Raise exception to stop processing immediately
+                            raise RuntimeError(f"GPU out of memory. See error message above for solutions.")
+
+                        # Show error (non-OOM)
                         if not verbose:
                             status_line = f"[{pdf_idx}/{total_pdfs}] {pdf_path.name} ✗ ({error.split(':')[0]})"
                             print(f"\r{status_line:<80}")

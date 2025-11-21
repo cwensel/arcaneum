@@ -170,6 +170,66 @@ def index_pdfs_command(
                 console.print(f"[red]❌ {e}[/red]")
             sys.exit(1)
 
+        # Auto-tune batch size if not explicitly set by user
+        if embedding_batch_size is None:
+            if not no_gpu:
+                # GPU mode: auto-tune based on available memory
+                from arcaneum.utils.memory import get_gpu_memory_info, estimate_safe_batch_size_v2
+
+                available_bytes, total_bytes, device_type = get_gpu_memory_info()
+
+                if available_bytes is not None:
+                    # Calculate optimal batch size
+                    auto_batch_size = estimate_safe_batch_size_v2(
+                        model_name=model,
+                        available_gpu_bytes=available_bytes,
+                        pipeline_overhead_gb=2.0,  # PDF extraction + chunking
+                        safety_factor=0.6
+                    )
+
+                    if not output_json:
+                        available_gb = available_bytes / (1024 ** 3)
+                        total_gb = total_bytes / (1024 ** 3)
+                        console.print(
+                            f"[blue]🔧 Auto-tuned batch size: {auto_batch_size} "
+                            f"(GPU: {available_gb:.1f}GB / {total_gb:.1f}GB available)[/blue]"
+                        )
+
+                    embedding_batch_size = auto_batch_size
+                else:
+                    # GPU memory detection failed, use fallback
+                    embedding_batch_size = 256
+                    if not output_json:
+                        console.print(
+                            "[yellow]⚠️  GPU memory detection failed, using default batch size: 256[/yellow]"
+                        )
+            else:
+                # CPU mode: use conservative default
+                embedding_batch_size = 256
+        else:
+            # User explicitly set batch size - respect it but check if it seems risky
+            if not no_gpu:
+                from arcaneum.utils.memory import get_gpu_memory_info, estimate_safe_batch_size_v2
+
+                available_bytes, total_bytes, device_type = get_gpu_memory_info()
+
+                if available_bytes is not None:
+                    safe_batch_size = estimate_safe_batch_size_v2(
+                        model_name=model,
+                        available_gpu_bytes=available_bytes,
+                        pipeline_overhead_gb=2.0,
+                        safety_factor=0.6
+                    )
+
+                    if embedding_batch_size > safe_batch_size and not output_json:
+                        available_gb = available_bytes / (1024 ** 3)
+                        console.print(
+                            f"\n[yellow]⚠️  WARNING: Batch size {embedding_batch_size} may exceed available GPU memory[/yellow]"
+                        )
+                        console.print(f"   GPU: {device_type.upper()}, Available: {available_gb:.1f}GB")
+                        console.print(f"   Recommended batch size: {safe_batch_size}")
+                        console.print(f"   Consider: --embedding-batch-size {safe_batch_size} or --no-gpu\n")
+
         # Create uploader with file parallelism (arcaneum-108, RDR-016)
         uploader = PDFBatchUploader(
             qdrant_client=qdrant,

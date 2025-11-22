@@ -21,22 +21,23 @@ def get_gpu_memory_info() -> tuple[Optional[int], Optional[int], Optional[str]]:
             free_mem, total_mem = torch.cuda.mem_get_info()
             return (free_mem, total_mem, "cuda")
         elif torch.backends.mps.is_available():
-            # MPS (Apple Silicon) - less precise info available
-            # MPS doesn't expose memory info directly, use heuristics
-            # Approximate based on system memory dedicated to GPU
-            try:
-                # Try to get current allocation
-                allocated = torch.mps.driver_allocated_memory()
-                # Estimate total as system unified memory (conservative: 70% of RAM)
-                mem = psutil.virtual_memory()
-                estimated_total = int(mem.total * 0.7)  # 70% of RAM for GPU
-                available = estimated_total - allocated
-                return (available, estimated_total, "mps")
-            except Exception:
-                # Fallback: assume 70% of system RAM available for MPS
-                mem = psutil.virtual_memory()
-                estimated_total = int(mem.total * 0.7)
-                return (estimated_total, estimated_total, "mps")
+            # MPS (Apple Silicon) - unified memory architecture
+            # Unlike CUDA, MPS shares memory with system RAM and macOS can page/swap.
+            # The "allocated" memory is NOT permanently unavailable - OS can reclaim it.
+            # Therefore, we use system available memory instead of subtracting allocations.
+            mem = psutil.virtual_memory()
+
+            # Use system available memory as proxy for GPU availability
+            # MPS can use up to ~70-80% of total RAM, but respect system availability
+            estimated_total = int(mem.total * 0.7)  # 70% of RAM theoretical max for GPU
+
+            # For available: use whichever is smaller:
+            # 1. System available memory (respects other processes)
+            # 2. Estimated total (respects 70% cap)
+            system_available = mem.available
+            available = min(system_available, estimated_total)
+
+            return (available, estimated_total, "mps")
         else:
             return (None, None, None)
     except ImportError:
@@ -82,36 +83,78 @@ def estimate_safe_batch_size(
 def estimate_safe_batch_size_v2(
     model_name: str,
     available_gpu_bytes: int,
-    pipeline_overhead_gb: float = 2.0,
-    safety_factor: float = 0.6
+    pipeline_overhead_gb: float = 0.3,
+    safety_factor: float = 0.6,
+    device_type: str = "cuda"
 ) -> int:
     """Estimate safe batch size with model-aware memory calculations.
 
-    This version accounts for:
-    - Model weights (loaded once, not per-batch): 0.3-2.5GB depending on model
-    - Pipeline overhead (PDF extraction, chunking): ~2GB
-    - Activation memory per item: 3-8MB (empirical measurements)
+    IMPORTANT: For MPS (Apple Silicon), this uses a simplified heuristic because:
+    - Unified memory architecture makes precise calculation unreliable
+    - Model weights are allocated from same pool as available memory
+    - macOS can page/swap as needed
 
-    Based on empirical observation: "1024-text batches use <5MB" from embeddings/client.py:149
-    This suggests per-item activation memory is much smaller than previously estimated.
-
-    Memory model:
-        Total = ModelWeights (one-time) + PipelineOverhead + (BatchSize × ActivationPerItem)
+    For CUDA, uses detailed memory model accounting for model weights and activations.
 
     Args:
         model_name: Model identifier (stella, jina-code, bge-large, bge-base, bge-small)
         available_gpu_bytes: Available GPU memory in bytes
-        pipeline_overhead_gb: Memory reserved for PDF processing (default: 2GB)
+        pipeline_overhead_gb: Memory reserved for minimal GPU overhead (default: 0.3GB)
         safety_factor: Fraction of memory to use after overhead (default: 0.6 = 60%)
+        device_type: "cuda" or "mps" (default: "cuda")
 
     Returns:
         Recommended safe batch size (8-1024)
 
     Example:
-        >>> # 10GB available, stella model
-        >>> estimate_safe_batch_size_v2("stella", 10 * 1024**3)
-        >>> # Returns: ~550 (10GB - 2.5GB model - 2GB pipeline = 5.5GB × 0.6 / 8MB)
+        >>> # 10GB available, stella model, CUDA
+        >>> estimate_safe_batch_size_v2("stella", 10 * 1024**3, device_type="cuda")
+        >>> # Returns: ~422 (detailed calculation)
+
+        >>> # 10GB available, stella model, MPS
+        >>> estimate_safe_batch_size_v2("stella", 10 * 1024**3, device_type="mps")
+        >>> # Returns: 512 (heuristic: use optimal batch size if memory seems adequate)
     """
+    # MPS (Apple Silicon): Use simplified heuristic
+    # Precise calculation is unreliable due to unified memory architecture
+    if device_type == "mps":
+        available_gb = available_gpu_bytes / (1024 ** 3)
+
+        # Optimal batch sizes from empirical testing (RDR-013, arcaneum-i7oa)
+        OPTIMAL_BATCH_SIZES = {
+            'stella': 512,
+            'jina': 512,
+            'jina-code': 512,
+            'bge-large': 512,
+            'bge-base': 512,
+            'bge-small': 512,
+        }
+
+        # Minimum memory requirements (model + reasonable batch)
+        MIN_MEMORY_GB = {
+            'stella': 4.0,   # 2.5GB model + 1.5GB for batching
+            'jina': 2.0,     # 0.5GB model + 1.5GB for batching
+            'jina-code': 2.0,
+            'bge-large': 2.5,
+            'bge-base': 2.0,
+            'bge-small': 1.5,
+        }
+
+        optimal = OPTIMAL_BATCH_SIZES.get(model_name, 512)
+        min_required = MIN_MEMORY_GB.get(model_name, 4.0)
+
+        if available_gb >= min_required:
+            # Have enough memory, use optimal batch size
+            logger.debug(f"MPS: {available_gb:.1f}GB available >= {min_required}GB required, using optimal batch_size={optimal}")
+            return optimal
+        else:
+            # Low memory, scale down batch size proportionally
+            scale_factor = available_gb / min_required
+            scaled_batch = max(8, int(optimal * scale_factor))
+            logger.warning(f"MPS: Low memory ({available_gb:.1f}GB < {min_required}GB), scaling batch_size to {scaled_batch}")
+            return min(scaled_batch, 1024)
+
+    # CUDA: Use detailed memory model
     # Model weights (one-time GPU memory allocation)
     MODEL_WEIGHTS_GB = {
         'stella': 2.5,        # 1.5B parameters
@@ -123,11 +166,6 @@ def estimate_safe_batch_size_v2(
     }
 
     # Activation memory per batch item (empirical measurements)
-    # Based on observation: 1024 texts use <5MB total for small models
-    # But larger models have more activation memory due to:
-    # - Intermediate layer activations
-    # - Attention matrices (scales with sequence length)
-    # - Temporary buffers during encoding
     ACTIVATION_MB_PER_ITEM = {
         'stella': 8.0,        # 1024D output, large model
         'jina': 5.0,          # 768D output

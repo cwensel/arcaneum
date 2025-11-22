@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 import logging
 import os
 import sys
+import time
 
 from ..embeddings.client import EmbeddingClient
 from .common.sync import MetadataBasedSync, compute_file_hash, compute_quick_hash
@@ -95,19 +96,12 @@ class PDFBatchUploader:
         )
         self.file_workers = safe_file_workers
 
-        # Per-worker embedding clients to avoid lock serialization (arcaneum-qw0l)
-        # Each worker gets its own EmbeddingClient instance to access the shared model
-        # without locks. This removes the 2-3× speedup bottleneck for multi-worker mode.
-        # SentenceTransformer models are NOT thread-safe on GPU, but each worker can
-        # safely access the model through its own client instance (model caching prevents
-        # duplicate loads, they share the same underlying model instance in memory).
-        self._embedding_clients = {}
-        for worker_id in range(self.file_workers):
-            self._embedding_clients[worker_id] = EmbeddingClient(
-                cache_dir=embedding_client.cache_dir,
-                verify_ssl=embedding_client.verify_ssl,
-                use_gpu=embedding_client.use_gpu
-            )
+        # Use shared embedding client for all workers (arcaneum-q9ak)
+        # Creating per-worker clients causes each to load its own 2GB+ model copy,
+        # leading to disk space exhaustion and memory pressure.
+        # Since embed_parallel() for GPU models uses single-threaded batching (arcaneum-m7hg),
+        # there's no thread-safety issue with sharing the client.
+        self._shared_embedding_client = embedding_client
 
         if warning:
             logger.warning(warning)
@@ -267,24 +261,40 @@ class PDFBatchUploader:
             # Stage 4: Embedding
             texts = [chunk.text for chunk in chunks]
             if not verbose:
-                print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → embedding ({file_chunk_count} chunks, parallel){' '*15}", end="", flush=True)
+                print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → embedding ({file_chunk_count} chunks){' '*15}", end="", flush=True)
             else:
-                print(f"  → embedding ({file_chunk_count} chunks, parallel)", flush=True)
+                print(f"  → embedding ({file_chunk_count} chunks)", flush=True)
 
-            # Use per-worker embedding client to eliminate lock contention (arcaneum-qw0l)
-            # Each worker has its own EmbeddingClient instance accessing the shared model.
-            # This removes the 2-3× serialization bottleneck during multi-worker PDF processing.
-            embedding_client = self._embedding_clients[worker_id]
+            # Progress callback for verbose mode (arcaneum-w638)
+            batch_times = []  # Track timing for each batch
+            def embedding_progress(batch_idx: int, total_batches: int):
+                if verbose:
+                    elapsed = time.time() - embedding_start_time if batch_times else 0
+                    if batch_idx > 1:
+                        avg_per_batch = elapsed / (batch_idx - 1)
+                        print(f"     batch {batch_idx}/{total_batches} ({self.embedding_batch_size} chunks/batch, {avg_per_batch:.2f}s/batch)", flush=True)
+                    else:
+                        print(f"     batch {batch_idx}/{total_batches} ({self.embedding_batch_size} chunks/batch)", flush=True)
+
+            # Use shared embedding client (arcaneum-q9ak)
+            # Single client shared across workers prevents duplicate model loading.
+            # Note: embed_parallel() is actually sequential for GPU (single-threaded batching).
+            # GPU hardware parallelism happens WITHIN each batch, not across batches.
+            embedding_client = self._shared_embedding_client
+            embedding_start_time = time.time()
             embeddings = embedding_client.embed_parallel(
                 texts,
                 model_name,
                 max_workers=self.embedding_workers,
                 batch_size=self.embedding_batch_size,
-                timeout=self.embedding_timeout
+                timeout=self.embedding_timeout,
+                progress_callback=embedding_progress if verbose else None
             )
+            embedding_elapsed = time.time() - embedding_start_time
 
             if verbose:
-                print(f"     embedded {file_chunk_count} chunks", flush=True)
+                total_batches = (file_chunk_count + self.embedding_batch_size - 1) // self.embedding_batch_size
+                print(f"     embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches, {embedding_elapsed/total_batches:.2f}s/batch)", flush=True)
 
             # Stage 5: Create and upload points in batches (streaming upload)
             # This avoids holding all points in memory at once

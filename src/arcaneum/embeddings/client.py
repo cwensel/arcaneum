@@ -6,6 +6,10 @@ import os
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 from arcaneum.paths import get_models_dir
 import threading
+import logging
+import time
+
+logger = logging.getLogger(__name__)
 
 # Model configurations with dimensions
 # Note: "stella" is an alias for bge-large since actual stella (dunzhang/stella_en_1.5B_v5)
@@ -312,10 +316,10 @@ class EmbeddingClient:
 
         return self._models[model_name]
 
-    def embed(self, texts: List[str], model_name: str) -> List[List[float]]:
+    def embed(self, texts: List[str], model_name: str, batch_size: int = 512) -> List[List[float]]:
         """Generate embeddings for texts using specified model.
 
-        Processes in batches of 100 to prevent FastEmbed hangs on large batches.
+        Processes in batches to optimize GPU utilization.
 
         Note: Single-threaded for GPU models - ThreadPoolExecutor with locks causes serialization.
         GPU models have internal parallelism within batch processing. See arcaneum-m7hg.
@@ -323,6 +327,7 @@ class EmbeddingClient:
         Args:
             texts: List of text strings to embed
             model_name: Model identifier (stella, jina, modernbert, bge)
+            batch_size: Batch size for model.encode() (default: 512 for GPU optimization)
 
         Returns:
             List of embedding vectors
@@ -332,21 +337,23 @@ class EmbeddingClient:
         """
         # No lock needed - single-threaded embedding is faster for GPU models
         # GPU parallelism is via large batches (256-512), not thread-level parallelism
-        return self._embed_impl(texts, model_name)
+        return self._embed_impl(texts, model_name, batch_size=batch_size)
 
-    def _embed_impl(self, texts: List[str], model_name: str) -> List[List[float]]:
+    def _embed_impl(self, texts: List[str], model_name: str, batch_size: int = 512) -> List[List[float]]:
         """Internal implementation of embedding (called with or without lock).
 
         Optimized GPU→CPU transfer strategies for reduced overhead (arcaneum-ppa2).
 
         For SentenceTransformers:
         - Use convert_to_numpy=True to leverage model's optimized GPU→CPU path
+        - Use conservative internal batch_size for MPS memory constraints
         - Return numpy rows (not converted to lists) - faster serialization to Qdrant
         - Qdrant accepts both lists and numpy arrays as vectors
 
         Args:
             texts: List of text strings to embed
             model_name: Model identifier
+            batch_size: Batch size for model.encode() (default: 512, but see internal_batch_size logic)
 
         Returns:
             List of embedding vectors (as lists or arrays)
@@ -358,8 +365,24 @@ class EmbeddingClient:
             # SentenceTransformers: use encode() with convert_to_numpy=True (arcaneum-ppa2)
             # This uses the model's optimized GPU→CPU transfer path.
             # Potential 10-20% speedup on embeddings by reducing tensor→list conversion overhead.
+
+            # CRITICAL: model.encode() batch_size controls GPU memory usage
+            # For MPS (unified memory), large batches (512) cause OOM on stella (1.5B model)
+            # Use conservative internal batch size for MPS, larger for CUDA
+            if self._device == "mps":
+                # MPS: Use smaller batches to avoid OOM (stella needs ~1.88GB per batch of 512)
+                internal_batch_size = 64  # Conservative for MPS unified memory
+            else:
+                # CUDA: Can use larger batches (dedicated VRAM)
+                internal_batch_size = min(batch_size, 256)
+
             # Disable progress bar - pipeline handles progress display
-            embeddings = model.encode(texts, show_progress_bar=False, convert_to_numpy=True)
+            embeddings = model.encode(
+                texts,
+                batch_size=internal_batch_size,
+                show_progress_bar=False,
+                convert_to_numpy=True
+            )
             # Return numpy arrays directly - Qdrant Python client accepts numpy.ndarray natively
             # Removing .tolist() conversion saves 5-15% overhead on embeddings (arcaneum-zfch)
             return embeddings
@@ -404,17 +427,22 @@ class EmbeddingClient:
         model_name: str,
         max_workers: int = 4,
         batch_size: int = None,
-        timeout: int = 300
+        timeout: int = 300,
+        progress_callback: callable = None
     ) -> List[List[float]]:
-        """Generate embeddings with smart parallelism strategy.
+        """Generate embeddings with batched processing.
+
+        Note: Despite the name "parallel", GPU mode uses SEQUENTIAL batching. The "parallel"
+        in the name refers to GPU hardware parallelism WITHIN each batch, not across batches.
 
         Strategy:
-        - GPU models: Single-threaded with adaptive batch sizing (512-1024) for optimal throughput
-          GPU models have built-in parallelism; ThreadPoolExecutor adds overhead without gain
-        - CPU models: ThreadPoolExecutor (optional, tested performance-dependent)
+        - GPU models: Sequential batching (one batch at a time) with adaptive sizing (512-1024)
+          GPU hardware parallelism processes N chunks within each batch simultaneously
+          ThreadPoolExecutor adds overhead without benefit for GPU
+        - CPU models: Optional ThreadPoolExecutor across batches (rarely used)
 
-        Current implementation: Single-threaded with adaptive batch sizes based on model.
-        GPU models process larger batches (512-1024) internally for maximum efficiency (arcaneum-i7oa).
+        Current implementation: Sequential batch processing for GPU.
+        Large batch sizes (512-1024) maximize GPU utilization (arcaneum-i7oa).
 
         Args:
             texts: List of text strings to embed
@@ -422,6 +450,7 @@ class EmbeddingClient:
             max_workers: Number of concurrent workers (ignored for GPU, kept for API compatibility)
             batch_size: Chunk size for batches (default: None = auto-optimal, can override with explicit value)
             timeout: Timeout in seconds (ignored in single-threaded mode)
+            progress_callback: Optional callback(batch_idx, total_batches) called after each batch completes
 
         Returns:
             List of embedding vectors in original order
@@ -447,20 +476,32 @@ class EmbeddingClient:
         if batch_size is None:
             batch_size = self._get_optimal_batch_size(model_name)
 
+        # Log batch configuration in debug mode
+        logger.debug(f"Embedding {len(texts)} texts with batch_size={batch_size}, use_gpu={self.use_gpu}, device={self._device}")
+
         # Note: GPU memory warning moved to CLI level (index_pdfs.py, index_source.py)
         # where we have more context about user intent and can distinguish explicit vs auto-tuned batch sizes
 
-        # For GPU models: single-threaded batching is faster than ThreadPoolExecutor
-        # GPU internal parallelism is optimized within batch, not at thread level
+        # For GPU models: sequential batching (no ThreadPoolExecutor)
+        # GPU hardware provides parallelism WITHIN each batch, not across batches
         if self.use_gpu:
-            # Single-threaded approach: process all batches sequentially
-            # GPU provides internal parallelism for the batch
+            # Sequential batch processing: one batch completes before next begins
+            # GPU hardware processes all N chunks in a batch simultaneously
             all_embeddings = []
+            total_batches = (len(texts) + batch_size - 1) // batch_size
+            batch_idx = 0
             for start_idx in range(0, len(texts), batch_size):
+                batch_start_time = time.time()
                 end_idx = min(start_idx + batch_size, len(texts))
                 batch_texts = texts[start_idx:end_idx]
-                batch_embeddings = self.embed(batch_texts, model_name)
+                actual_batch_size = len(batch_texts)
+                batch_embeddings = self.embed(batch_texts, model_name, batch_size=batch_size)
+                batch_elapsed = time.time() - batch_start_time
+                logger.debug(f"Batch {batch_idx + 1}/{total_batches}: {actual_batch_size} chunks embedded in {batch_elapsed:.2f}s ({actual_batch_size/batch_elapsed:.1f} chunks/s)")
                 all_embeddings.extend(batch_embeddings)
+                batch_idx += 1
+                if progress_callback:
+                    progress_callback(batch_idx, total_batches)
             return all_embeddings
 
         # For CPU models: ThreadPoolExecutor can provide speedup
@@ -477,6 +518,8 @@ class EmbeddingClient:
                 batches.append((start_idx, end_idx, batch_texts))
 
             # Process batches in parallel for CPU models
+            total_batches = len(batches)
+            completed_batches = 0
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 # Submit all batch jobs
                 future_to_batch = {}
@@ -491,17 +534,16 @@ class EmbeddingClient:
                         batch_embeddings = future.result(timeout=timeout)
                         # Place results in correct position
                         all_embeddings[start_idx:end_idx] = batch_embeddings
+                        completed_batches += 1
+                        if progress_callback:
+                            progress_callback(completed_batches, total_batches)
                     except TimeoutError:
                         # Log timeout error
-                        import logging
-                        logger = logging.getLogger(__name__)
                         logger.error(f"Batch {start_idx}-{end_idx} timed out (exceeded {timeout}s)")
                         # Fill with None to indicate failure
                         all_embeddings[start_idx:end_idx] = [None] * (end_idx - start_idx)
                     except Exception as e:
                         # Log error but don't fail entire batch
-                        import logging
-                        logger = logging.getLogger(__name__)
                         logger.error(f"Batch {start_idx}-{end_idx} failed: {e}")
                         # Fill with None to indicate failure
                         all_embeddings[start_idx:end_idx] = [None] * (end_idx - start_idx)
@@ -540,8 +582,6 @@ class EmbeddingClient:
             if self.use_gpu and self._device != "cpu":
                 self._clear_gpu_cache()
 
-            import logging
-            logger = logging.getLogger(__name__)
             logger.info(f"Released model: {model_name}")
 
     def release_all_models(self):
@@ -567,8 +607,6 @@ class EmbeddingClient:
         if self.use_gpu and self._device != "cpu":
             self._clear_gpu_cache()
 
-        import logging
-        logger = logging.getLogger(__name__)
         if model_names:
             logger.info(f"Released {len(model_names)} models: {', '.join(model_names)}")
 
@@ -582,18 +620,12 @@ class EmbeddingClient:
             import torch
             if self._device == "cuda":
                 torch.cuda.empty_cache()
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.debug("Cleared CUDA cache")
             elif self._device == "mps":
                 torch.mps.empty_cache()
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.debug("Cleared MPS cache")
         except Exception as e:
             # Not fatal if cache clearing fails
-            import logging
-            logger = logging.getLogger(__name__)
             logger.debug(f"Could not clear GPU cache: {e}")
 
     def get_loaded_models(self) -> List[str]:

@@ -36,7 +36,7 @@ dependencies = [
     "xxhash>=3.5.0",  # Fast non-cryptographic hashing for file deduplication
     # PDF indexing dependencies (RDR-004, RDR-016)
     "pymupdf>=1.26.6",
-    "pymupdf4llm>=0.1.7",
+    "pymupdf4llm>=0.2.2",  # Updated from 0.1.7 to fix table extraction bugs
     "pymupdf-layout>=0.1.0",  # Better page layout detection for improved semantic chunking
     "pdfplumber>=0.11.7",
     "pytesseract>=0.3.13",

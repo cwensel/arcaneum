@@ -180,11 +180,13 @@ def index_pdfs_command(
 
                 if available_bytes is not None:
                     # Calculate optimal batch size
+                    # Note: pipeline_overhead_gb is minimal (0.3GB) because PDF processing is CPU-based
                     auto_batch_size = estimate_safe_batch_size_v2(
                         model_name=model,
                         available_gpu_bytes=available_bytes,
-                        pipeline_overhead_gb=2.0,  # PDF extraction + chunking
-                        safety_factor=0.6
+                        pipeline_overhead_gb=0.3,  # Minimal GPU overhead (PDF extraction/chunking use CPU)
+                        safety_factor=0.6,
+                        device_type=device_type  # Pass device type for MPS vs CUDA logic
                     )
 
                     if not output_json:
@@ -192,7 +194,7 @@ def index_pdfs_command(
                         total_gb = total_bytes / (1024 ** 3)
                         console.print(
                             f"[blue]🔧 Auto-tuned batch size: {auto_batch_size} "
-                            f"(GPU: {available_gb:.1f}GB / {total_gb:.1f}GB available)[/blue]"
+                            f"(GPU: {available_gb:.1f}GB / {total_gb:.1f}GB total, {device_type.upper()})[/blue]"
                         )
 
                     embedding_batch_size = auto_batch_size
@@ -217,8 +219,9 @@ def index_pdfs_command(
                     safe_batch_size = estimate_safe_batch_size_v2(
                         model_name=model,
                         available_gpu_bytes=available_bytes,
-                        pipeline_overhead_gb=2.0,
-                        safety_factor=0.6
+                        pipeline_overhead_gb=0.3,  # Minimal GPU overhead
+                        safety_factor=0.6,
+                        device_type=device_type  # Pass device type for MPS vs CUDA logic
                     )
 
                     if embedding_batch_size > safe_batch_size and not output_json:

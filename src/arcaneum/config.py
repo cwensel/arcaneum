@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, HttpUrl
 from pathlib import Path
 from typing import Dict, List, Literal
 import yaml
+from arcaneum.embeddings.client import EMBEDDING_MODELS
 
 
 class ModelConfig(BaseModel):
@@ -96,38 +97,57 @@ def save_config(config: ArcaneumConfig, config_path: Path):
         yaml.dump(config.model_dump(mode='json'), f, default_flow_style=False)
 
 
-# Default model configurations (from RDR-003, updated for RDR-004)
-DEFAULT_MODELS = {
-    "stella": ModelConfig(
-        name="BAAI/bge-large-en-v1.5",
-        dimensions=1024,
-        chunk_size=768,  # Conservative for PDF
-        chunk_overlap=115,  # 15% overlap
-        late_chunking=True,
-        char_to_token_ratio=3.3,
-    ),
-    "modernbert": ModelConfig(
-        name="answerdotai/ModernBERT-base",
-        dimensions=768,
-        chunk_size=1536,  # Conservative for long context
-        chunk_overlap=230,  # 15% overlap
-        late_chunking=True,
-        char_to_token_ratio=3.4,
-    ),
-    "bge": ModelConfig(
-        name="BAAI/bge-large-en-v1.5",
-        dimensions=1024,
-        chunk_size=460,  # Safe margin from 512 limit
-        chunk_overlap=69,  # 15% overlap
-        late_chunking=False,  # Not supported (512 token limit)
-        char_to_token_ratio=3.3,
-    ),
-    "jina": ModelConfig(
-        name="jinaai/jina-embeddings-v2-base-code",
-        dimensions=768,
-        chunk_size=1536,
-        chunk_overlap=230,  # 15% overlap
-        late_chunking=True,
-        char_to_token_ratio=3.2,
-    ),
-}
+def _build_default_models() -> Dict[str, ModelConfig]:
+    """Build DEFAULT_MODELS from EMBEDDING_MODELS with PDF-specific chunking parameters.
+
+    Consolidates model definitions into a single source of truth (EMBEDDING_MODELS),
+    then adds PDF-specific chunking based on model backend and dimensions.
+
+    Chunking strategy:
+    - SentenceTransformers models: Support late_chunking, use larger chunks (1024-1536)
+    - FastEmbed models: No late_chunking support, use conservative chunks (460 safe from 512 limit)
+    - Overlap: 15% of chunk_size for context continuity
+    """
+    defaults = {}
+
+    for model_id, config in EMBEDDING_MODELS.items():
+        backend = config.get("backend", "fastembed")
+        dimensions = config.get("dimensions", 768)
+
+        # Determine late_chunking support by backend
+        supports_late_chunking = backend == "sentence-transformers"
+
+        # Determine chunk size based on backend and model characteristics
+        if supports_late_chunking:
+            # SentenceTransformers models: can use larger chunks with late pooling
+            if dimensions >= 1024:
+                chunk_size = 768  # stella, jina-v3
+            else:
+                chunk_size = 1536  # modernbert, jina-code, jina-v3
+        else:
+            # FastEmbed models: limited by token budget, use conservative sizing
+            chunk_size = 460  # Safe margin from 512 token limit
+
+        # Calculate overlap (15% of chunk_size, rounded to nearest multiple of 23 for consistency)
+        chunk_overlap = max(int(chunk_size * 0.15 / 23) * 23, 1)
+
+        # Determine char_to_token_ratio by backend
+        if backend == "sentence-transformers":
+            char_to_token_ratio = 3.3 if dimensions <= 768 else 3.3
+        else:
+            char_to_token_ratio = 3.3  # FastEmbed models
+
+        defaults[model_id] = ModelConfig(
+            name=config["name"],
+            dimensions=dimensions,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            late_chunking=supports_late_chunking,
+            char_to_token_ratio=char_to_token_ratio,
+        )
+
+    return defaults
+
+
+# Default model configurations derived from EMBEDDING_MODELS with PDF-specific parameters
+DEFAULT_MODELS = _build_default_models()

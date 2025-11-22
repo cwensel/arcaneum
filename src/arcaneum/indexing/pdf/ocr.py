@@ -57,6 +57,10 @@ def _ocr_single_page_worker(
     reader = None
 
     try:
+        # Disable OpenCV threading to prevent fork-related crashes on macOS (segfault in cv2.resize)
+        # See: https://github.com/opencv/opencv/issues/5150
+        cv2.setNumThreads(0)
+
         # Deserialize image
         image = Image.open(io.BytesIO(page_image_bytes))
 

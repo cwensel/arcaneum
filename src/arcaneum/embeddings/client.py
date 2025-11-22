@@ -82,6 +82,29 @@ EMBEDDING_MODELS = {
         "description": "BGE Small (384D, fastest)",
         "available": True
     },
+
+    # Additional general purpose models
+    "minilm": {
+        "name": "sentence-transformers/all-MiniLM-L6-v2",
+        "dimensions": 384,
+        "backend": "sentence-transformers",
+        "description": "MiniLM (384D, lightweight, fast)",
+        "available": True
+    },
+    "gte-base": {
+        "name": "thenlper/gte-base",
+        "dimensions": 768,
+        "backend": "sentence-transformers",
+        "description": "GTE Base (768D, general purpose retrieval)",
+        "available": True
+    },
+    "e5-base": {
+        "name": "intfloat/e5-base-v2",
+        "dimensions": 768,
+        "backend": "sentence-transformers",
+        "description": "E5 Base v2 (768D, multilingual, strong performance)",
+        "available": True
+    },
 }
 
 

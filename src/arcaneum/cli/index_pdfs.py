@@ -147,8 +147,8 @@ def index_pdfs_command(
         model_dict = {
             'chunk_size': model_config.chunk_size,
             'chunk_overlap': model_config.chunk_overlap,
-            'char_to_token_ratio': 3.3,
-            'late_chunking': model in ['stella', 'modernbert', 'jina'],  # bge doesn't support
+            'char_to_token_ratio': model_config.char_to_token_ratio,
+            'late_chunking': model_config.late_chunking,
         }
 
         # Initialize embedding client with persistent model caching (arcaneum-pwd5)

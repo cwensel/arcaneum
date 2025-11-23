@@ -243,8 +243,9 @@ class MetadataBasedSync:
                     if point.payload:
                         # New format: dict of path → quick_hash for all locations
                         # Use ONLY dict format if it exists (skip old format to avoid conflicts)
-                        file_quick_hashes = point.payload.get("file_quick_hashes", {})
-                        if file_quick_hashes:
+                        # Check for key existence, not truthiness, to handle empty dicts correctly
+                        if "file_quick_hashes" in point.payload:
+                            file_quick_hashes = point.payload.get("file_quick_hashes", {})
                             chunks_with_dict += 1
                             for dict_path, dict_quick_hash in file_quick_hashes.items():
                                 dict_entries += 1
@@ -653,7 +654,12 @@ class MetadataBasedSync:
             # Ensure all paths in array have dict entries (migration for partially-migrated chunks)
             for existing_path in file_paths:
                 if existing_path not in file_quick_hashes:
-                    logger.warning(f"Path in file_paths array missing dict entry: {existing_path} (needs full migration)")
+                    # Auto-fix: populate missing dict entry from old field if possible
+                    if existing_path == primary_path and "quick_hash" in current_payload:
+                        file_quick_hashes[existing_path] = current_payload["quick_hash"]
+                        logger.debug(f"Auto-fixed: migrated missing dict entry for {existing_path}")
+                    else:
+                        logger.warning(f"Path {existing_path} missing dict entry and cannot auto-fix")
 
             # Add new path if not already present
             new_path_abs = str(new_path) if not isinstance(new_path, str) else new_path
@@ -675,12 +681,17 @@ class MetadataBasedSync:
                 return 0
 
             # Update all chunks with this file_hash
+            # Keep old quick_hash field in sync with primary path's dict entry for consistency
+            update_payload = {
+                "file_paths": file_paths,
+                "file_quick_hashes": file_quick_hashes
+            }
+            if primary_path and primary_path in file_quick_hashes:
+                update_payload["quick_hash"] = file_quick_hashes[primary_path]
+
             result = self.qdrant.set_payload(
                 collection_name=collection_name,
-                payload={
-                    "file_paths": file_paths,
-                    "file_quick_hashes": file_quick_hashes
-                },
+                payload=update_payload,
                 points=FilterSelector(
                     filter=Filter(
                         must=[

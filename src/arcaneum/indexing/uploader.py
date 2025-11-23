@@ -3,7 +3,7 @@
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Set
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_not_exception_type
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 import logging
@@ -159,7 +159,8 @@ class PDFBatchUploader:
         verbose: bool,
         pdf_idx: int,
         total_pdfs: int,
-        worker_id: int = 0
+        worker_id: int = 0,
+        scanned_files: Optional[Set[str]] = None
     ) -> Tuple[List[PointStruct], int, Optional[str]]:
         """Process a single PDF: extract, OCR, chunk, embed, create points.
 
@@ -186,8 +187,38 @@ class PDFBatchUploader:
 
             # Pass 1: Fast metadata hash (mtime+size)
             quick_hash = compute_quick_hash(pdf_path)
-            # Pass 2: Full content hash for storage and deep verification
+            # Pass 2: Full content hash for storage and deep verification (ONLY time we hash!)
             file_hash = compute_file_hash(pdf_path)
+
+            # Stage 0.5: Check if content exists (by file_hash) - if so, handle as metadata update, not re-index
+            # This prevents re-indexing files that just need metadata migration (file_quick_hashes dict)
+            old_paths = self.sync.find_file_by_content_hash(collection_name, file_hash)
+            if old_paths:
+                # Content already indexed - always call add_alternate_path to ensure metadata is complete
+                # This handles both new duplicate paths and migration of existing paths to new dict format
+                new_path = str(pdf_path.absolute())
+
+                path_already_tracked = new_path in old_paths
+                result = self.sync.add_alternate_path(collection_name, file_hash, new_path, quick_hash)
+
+                if verbose:
+                    if not path_already_tracked:
+                        # New duplicate path
+                        primary_path = old_paths[0] if old_paths else "unknown"
+                        print(f"  ⊕ Duplicate content: added as alternate path")
+                        print(f"     Primary location: {primary_path}")
+                        print(f"     Total locations: {len(old_paths) + 1}")
+                    elif result > 0:
+                        # Path was tracked but dict entry was missing (migration)
+                        print(f"  ⚙️  Migrated metadata (updated quick_hash dict)")
+                    else:
+                        # Everything already up to date
+                        print(f"  ✓ Already indexed with complete metadata")
+                elif not verbose:
+                    status = "alternate path added" if not path_already_tracked else "already tracked"
+                    print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → {status}{' '*20}", flush=True)
+
+                return ([], 0, None)
 
             # Pre-deletion: Remove old chunks with same file_hash before reindexing
             # This prevents partial data if indexing is interrupted mid-file
@@ -236,10 +267,13 @@ class PDFBatchUploader:
                     print(f"     OCR complete", flush=True)
 
             # Chunk text with file metadata (two-pass sync support)
+            file_path_abs = str(pdf_path.absolute())
             base_metadata = {
                 'filename': pdf_path.name,
-                'file_path': str(pdf_path.absolute()),  # Always store absolute path for consistent lookups
-                'quick_hash': quick_hash,  # Pass 1: Fast metadata-based hash (mtime+size)
+                'file_path': file_path_abs,  # Primary path (always store absolute path)
+                'file_paths': [file_path_abs],  # All locations with this content (multi-path tracking)
+                'file_quick_hashes': {file_path_abs: quick_hash},  # Map of path → quick_hash for Pass 1
+                'quick_hash': quick_hash,  # Pass 1: Fast metadata-based hash (mtime+size) - kept for compatibility
                 'file_hash': file_hash,     # Pass 2: Full content hash (for deep verification)
                 'file_size': pdf_path.stat().st_size,
                 'store_type': 'pdf',
@@ -412,6 +446,10 @@ class PDFBatchUploader:
         all_pdf_files = sorted(pdf_dir.rglob("*.pdf"))
         logger.info(f"Found {len(all_pdf_files)} total PDF files")
 
+        # Create set of ALL scanned file paths for duplicate/rename detection
+        # This must include BOTH files needing processing AND already indexed files
+        scanned_files = {str(p.absolute()) for p in all_pdf_files}
+
         # Filter to unindexed files via metadata queries (unless force_reindex)
         if verbose:
             print(f"🔍 Scanning collection for existing files...")
@@ -422,20 +460,15 @@ class PDFBatchUploader:
             if verbose:
                 print(f"🔄 Force reindex: {len(pdf_files)} PDFs to process")
         else:
-            pdf_files, renames, already_indexed = self.sync.get_unindexed_files(collection_name, all_pdf_files)
+            pdf_files, already_indexed = self.sync.get_unindexed_files(collection_name, all_pdf_files)
 
-            # Handle renames first (metadata update only, no reindexing)
-            if renames:
-                self.sync.handle_renames(collection_name, renames)
-
-            logger.info(f"Incremental sync: {len(pdf_files)} new/modified, "
-                       f"{len(renames)} renamed, {len(already_indexed)} already indexed")
+            logger.info(f"Incremental sync: {len(pdf_files)} need processing, "
+                       f"{len(already_indexed)} already indexed")
 
             if verbose:
-                if renames:
-                    print(f"📝 Renamed {len(renames)} PDFs (metadata updated)")
-                print(f"📊 Found {len(all_pdf_files)} PDFs: {len(pdf_files)} new/modified, "
-                      f"{len(renames)} renamed, {len(already_indexed)} already indexed")
+                print(f"📊 Found {len(all_pdf_files)} PDFs: {len(pdf_files)} need processing, "
+                      f"{len(already_indexed)} already indexed")
+                print(f"   (duplicate content will be tracked via file_paths array)")
 
         if not pdf_files:
             logger.info("No PDFs to index")
@@ -482,7 +515,8 @@ class PDFBatchUploader:
                             verbose,
                             pdf_idx,
                             total_pdfs,
-                            worker_id
+                            worker_id,
+                            scanned_files
                         )
                         future_to_pdf[future] = (pdf_idx, pdf_path)
 
@@ -551,7 +585,9 @@ class PDFBatchUploader:
                         point_id,
                         verbose,
                         pdf_idx,
-                        total_pdfs
+                        total_pdfs,
+                        0,  # worker_id = 0 for sequential mode
+                        scanned_files
                     )
 
                     if error:
@@ -650,7 +686,7 @@ class PDFBatchUploader:
         reraise=True
     )
     def _upload_batch(self, collection_name: str, points: List[PointStruct]):
-        """Upload batch with exponential backoff retry."""
+        """Upload batch with exponential backoff retry and verification."""
         try:
             result = self.qdrant.upload_points(
                 collection_name=collection_name,
@@ -661,7 +697,41 @@ class PDFBatchUploader:
                 wait=True
             )
 
-            logger.debug(f"Batch uploaded: {len(points)} points")
+            logger.debug(f"Batch uploaded: {len(points)} points, status: {result.status if hasattr(result, 'status') else 'unknown'}")
+
+            # Verify upload using same query method as Pass 1 (filter by file_path)
+            # This ensures chunks are actually indexed and queryable, not just uploaded
+            if points and points[0].payload:
+                import time
+                from qdrant_client.models import Filter, FieldCondition, MatchValue
+
+                time.sleep(0.2)  # Wait for Qdrant to index
+                file_path = points[0].payload.get("file_path")
+
+                if file_path:
+                    verification = self.qdrant.scroll(
+                        collection_name=collection_name,
+                        scroll_filter=Filter(
+                            must=[
+                                FieldCondition(
+                                    key="file_path",
+                                    match=MatchValue(value=file_path)
+                                )
+                            ]
+                        ),
+                        limit=1,
+                        with_payload=False,
+                        with_vectors=False
+                    )
+
+                    if not verification[0]:  # scroll returns (points, offset)
+                        error_msg = f"Upload verification failed: chunks with file_path {file_path} not queryable after upload (batch size: {len(points)})"
+                        logger.error(error_msg)
+                        logger.error(f"Point ID {points[0].id} was uploaded but not indexed for queries")
+                        raise RuntimeError(error_msg)
+
+                    logger.debug(f"Upload verified: {file_path} is queryable")
+
             return result
 
         except Exception as e:

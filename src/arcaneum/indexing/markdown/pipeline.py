@@ -10,7 +10,7 @@ This module orchestrates the complete markdown indexing workflow:
 
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Set
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
@@ -71,7 +71,8 @@ class MarkdownIndexingPipeline:
         point_id_start: int,
         verbose: bool,
         file_idx: int,
-        total_files: int
+        total_files: int,
+        scanned_files: Optional[Set[str]] = None
     ) -> Tuple[List[PointStruct], int, Optional[str]]:
         """Process a single markdown file: read, chunk, embed, create points.
 
@@ -103,19 +104,54 @@ class MarkdownIndexingPipeline:
             if verbose:
                 print(f"     read {len(content)} chars", flush=True)
 
-            # Stage 1b: Pre-deletion - Remove old chunks with same file_hash before reindexing
-            # This prevents partial data if indexing is interrupted mid-file
+            # Stage 1b: Compute hashes (ONLY time we hash!)
             quick_hash = compute_quick_hash(file_path)  # Metadata-only hash (mtime+size)
             file_hash = compute_file_hash(file_path)
+
+            # Stage 1c: Check if content exists (by file_hash) - if so, handle as metadata update, not re-index
+            # This prevents re-indexing files that just need metadata migration (file_quick_hashes dict)
+            old_paths = self.sync.find_file_by_content_hash(collection_name, file_hash)
+            if old_paths:
+                # Content already indexed - always call add_alternate_path to ensure metadata is complete
+                # This handles both new duplicate paths and migration of existing paths to new dict format
+                new_path = str(file_path.absolute())
+
+                path_already_tracked = new_path in old_paths
+                result = self.sync.add_alternate_path(collection_name, file_hash, new_path, quick_hash)
+
+                if verbose:
+                    if not path_already_tracked:
+                        # New duplicate path
+                        primary_path = old_paths[0] if old_paths else "unknown"
+                        print(f"  ⊕ Duplicate content: added as alternate path")
+                        print(f"     Primary location: {primary_path}")
+                        print(f"     Total locations: {len(old_paths) + 1}")
+                    elif result > 0:
+                        # Path was tracked but dict entry was missing (migration)
+                        print(f"  ⚙️  Migrated metadata (updated quick_hash dict)")
+                    else:
+                        # Everything already up to date
+                        print(f"  ✓ Already indexed with complete metadata")
+                elif not verbose:
+                    status = "alternate path added" if not path_already_tracked else "already tracked"
+                    print(f"\r[{file_idx}/{total_files}] {file_path.name} → {status}{' '*20}", flush=True)
+
+                return None
+
+            # Stage 1e: Pre-deletion - Remove old chunks with same file_hash before reindexing
+            # This prevents partial data if indexing is interrupted mid-file
             if verbose:
                 print(f"  → pre-deletion: removing old chunks", flush=True)
             self.sync.delete_chunks_by_file_hash(collection_name, file_hash)
 
             # Build base metadata
+            file_path_abs = str(file_path.absolute())
             base_metadata = {
                 'filename': file_metadata.file_name,
-                'file_path': file_metadata.file_path,
-                'quick_hash': quick_hash,  # Pass 1: Fast metadata-based hash (mtime+size)
+                'file_path': file_path_abs,  # Primary path
+                'file_paths': [file_path_abs],  # All locations with this content (multi-path tracking)
+                'file_quick_hashes': {file_path_abs: quick_hash},  # Map of path → quick_hash for Pass 1
+                'quick_hash': quick_hash,  # Pass 1: Fast metadata-based hash (mtime+size) - kept for compatibility
                 'file_hash': file_metadata.content_hash,  # Pass 2: Full content hash
                 'file_size': file_metadata.file_size,
                 'store_type': 'markdown',
@@ -236,6 +272,10 @@ class MarkdownIndexingPipeline:
         all_markdown_files = self.discovery.discover_files(markdown_dir, recursive=recursive)
         logger.info(f"Found {len(all_markdown_files)} total markdown files")
 
+        # Create set of ALL scanned file paths for duplicate/rename detection
+        # This must include BOTH files needing processing AND already indexed files
+        scanned_files = {str(p.absolute()) for p in all_markdown_files}
+
         # Filter to unindexed files (unless force_reindex)
         if verbose:
             print(f"🔍 Scanning collection for existing files...")
@@ -246,22 +286,17 @@ class MarkdownIndexingPipeline:
             if verbose:
                 print(f"🔄 Force reindex: {len(markdown_files)} files to process")
         else:
-            markdown_files, renames, already_indexed = self.sync.get_unindexed_files(
-                collection_name, all_markdown_files, hash_fn=compute_text_file_hash
+            markdown_files, already_indexed = self.sync.get_unindexed_files(
+                collection_name, all_markdown_files
             )
 
-            # Handle renames first (metadata update only, no reindexing)
-            if renames:
-                self.sync.handle_renames(collection_name, renames)
-
-            logger.info(f"Incremental sync: {len(markdown_files)} new/modified, "
-                       f"{len(renames)} renamed, {len(already_indexed)} already indexed")
+            logger.info(f"Incremental sync: {len(markdown_files)} need processing, "
+                       f"{len(already_indexed)} already indexed")
 
             if verbose:
-                if renames:
-                    print(f"📝 Renamed {len(renames)} files (metadata updated)")
-                print(f"📊 Found {len(all_markdown_files)} files: {len(markdown_files)} new/modified, "
-                      f"{len(renames)} renamed, {len(already_indexed)} already indexed")
+                print(f"📊 Found {len(all_markdown_files)} files: {len(markdown_files)} need processing, "
+                      f"{len(already_indexed)} already indexed")
+                print(f"   (duplicate content will be tracked via file_paths array)")
 
         if not markdown_files:
             logger.info("No markdown files to index")
@@ -325,7 +360,8 @@ class MarkdownIndexingPipeline:
                             point_id + (file_idx - 1) * point_id_step,
                             verbose,
                             file_idx,
-                            total_files
+                            total_files,
+                            scanned_files
                         )
                         future_to_file[future] = (file_idx, file_path)
 
@@ -376,7 +412,8 @@ class MarkdownIndexingPipeline:
                         point_id,
                         verbose,
                         file_idx,
-                        total_files
+                        total_files,
+                        scanned_files
                     )
 
                     if error:

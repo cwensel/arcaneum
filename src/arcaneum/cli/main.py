@@ -85,6 +85,7 @@ def collection_items(name, output_json):
     items_collection_command(name, output_json)
 
 
+
 # Models commands
 @cli.group()
 def models():

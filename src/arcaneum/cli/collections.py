@@ -452,3 +452,5 @@ def items_collection_command(name: str, output_json: bool):
     except Exception as e:
         print_error(f"Failed to list collection items: {e}", output_json)
         sys.exit(1)
+
+

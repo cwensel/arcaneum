@@ -6,7 +6,7 @@ import multiprocessing as mp
 from pathlib import Path
 from typing import List, Set, Callable, Tuple, Dict
 from qdrant_client import QdrantClient
-from qdrant_client.models import Filter, FieldCondition, MatchValue, FilterSelector
+from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchAny, FilterSelector
 import logging
 import xxhash
 
@@ -203,258 +203,14 @@ class MetadataBasedSync:
             qdrant_client: Qdrant client instance
         """
         self.qdrant = qdrant_client
-
-    def is_file_indexed(self, collection_name: str, file_path: Path,
-                       file_hash: str) -> bool:
-        """Check if file with current content hash is already indexed.
-
-        Returns True if ANY chunks with this file_path AND file_hash exist.
-
-        Args:
-            collection_name: Qdrant collection name
-            file_path: Path to file
-            file_hash: Content hash of file
-
-        Returns:
-            True if file is already indexed with same content
-        """
-        try:
-            points, _ = self.qdrant.scroll(
-                collection_name=collection_name,
-                scroll_filter=Filter(
-                    must=[
-                        FieldCondition(
-                            key="file_path",
-                            match=MatchValue(value=str(file_path))
-                        ),
-                        FieldCondition(
-                            key="file_hash",
-                            match=MatchValue(value=file_hash)
-                        )
-                    ]
-                ),
-                limit=1,  # Just need to know if exists
-                with_payload=False,  # Don't need payload, faster
-                with_vectors=False   # Don't need vectors, faster
-            )
-
-            return len(points) > 0
-
-        except Exception as e:
-            logger.warning(f"Error querying collection: {e}")
-            return False
-
-    def is_file_indexed_by_quick_hash(self, collection_name: str, file_path: Path,
-                                      quick_hash: str) -> bool:
-        """Check if file with metadata hash (mtime+size) exists in collection.
-
-        Fast gate check using only mtime+size hash. Used in Pass 1 of incremental sync.
-
-        Performance: ~0.003ms per file (metadata-only, no file I/O)
-        - Queries Qdrant index for exact match on file_path + quick_hash
-        - If found → file unchanged at same location, skip indexing
-        - If miss → proceed to Pass 2 (full content hash) for deep verification
-
-        Args:
-            collection_name: Qdrant collection name
-            file_path: Path to file
-            quick_hash: Metadata hash (mtime+size, from compute_quick_hash)
-
-        Returns:
-            True if file_path + quick_hash exists in collection
-        """
-        try:
-            points, _ = self.qdrant.scroll(
-                collection_name=collection_name,
-                scroll_filter=Filter(
-                    must=[
-                        FieldCondition(
-                            key="file_path",
-                            match=MatchValue(value=str(file_path))
-                        ),
-                        FieldCondition(
-                            key="quick_hash",  # New metadata field
-                            match=MatchValue(value=quick_hash)
-                        )
-                    ]
-                ),
-                limit=1,
-                with_payload=False,
-                with_vectors=False
-            )
-
-            return len(points) > 0
-
-        except Exception as e:
-            logger.warning(f"Error querying collection (quick_hash): {e}")
-            return False
-
-    def find_file_by_content_hash(self, collection_name: str, file_hash: str) -> List[str]:
-        """Find all file_paths in collection with given content hash.
-
-        Used in Pass 3 rename detection to find if file moved.
-
-        Args:
-            collection_name: Qdrant collection name
-            file_hash: Content hash to search for
-
-        Returns:
-            List of file_paths that have this content hash
-        """
-        try:
-            paths = []
-            offset = None
-
-            while True:
-                points, offset = self.qdrant.scroll(
-                    collection_name=collection_name,
-                    scroll_filter=Filter(
-                        must=[
-                            FieldCondition(
-                                key="file_hash",
-                                match=MatchValue(value=file_hash)
-                            )
-                        ]
-                    ),
-                    limit=100,
-                    offset=offset,
-                    with_payload=["file_path"],
-                    with_vectors=False
-                )
-
-                if not points:
-                    break
-
-                for point in points:
-                    if point.payload and "file_path" in point.payload:
-                        path = point.payload["file_path"]
-                        if path not in paths:
-                            paths.append(path)
-
-                if offset is None:
-                    break
-
-            return paths
-
-        except Exception as e:
-            logger.warning(f"Error finding file by content hash: {e}")
-            return []
-
-    def check_if_synced_two_pass(self, collection_name: str, file_path: Path) -> tuple:
-        """Three-pass sync check: metadata gate + content verification + rename detection.
-
-        **Pass 1 (Ultra-fast ~0.003ms)**: Check if file_path + quick_hash exists
-        - Computes mtime+size hash only (metadata, no file I/O)
-        - Queries Qdrant index for match
-        - If found → file unchanged at same location → skip indexing
-        - Zero file I/O overhead for unchanged files
-
-        **Pass 2 (Slower ~50ms)**: If Pass 1 misses, compute and check content hash
-        - Only computed for files with changed metadata (rare)
-        - Confirms if file content truly changed
-        - Handles edge case: mtime changed but content same (e.g., touch command)
-        - ~50ms per file (full xxh64 hash of content)
-
-        **Pass 3 (Rename detection ~5ms)**: If Pass 2 misses, check for renames
-        - File may have been moved but content unchanged
-        - Searches for file_hash elsewhere in collection
-        - Returns old_path if found (for metadata-only update)
-
-        Args:
-            collection_name: Qdrant collection name
-            file_path: Path to file
-
-        Returns:
-            Tuple of (is_synced, old_path_if_renamed)
-            - (True, None): File unchanged at same location → skip indexing
-            - (True, old_path): File moved but content same → update metadata only
-            - (False, None): File new or changed → reindex
-        """
-        file_path_str = str(file_path)
-
-        # Pass 1: Ultra-fast metadata check (~0.003ms, no file I/O)
-        quick_hash = compute_quick_hash(file_path)
-        if self.is_file_indexed_by_quick_hash(collection_name, file_path, quick_hash):
-            logger.debug(f"Pass 1 HIT: {file_path} unchanged (mtime+size match)")
-            return (True, None)
-
-        # Pass 1 miss - file either new, metadata changed, or moved
-        # Pass 2: Content verification (~50ms per file, only if Pass 1 misses)
-        content_hash = compute_file_hash(file_path)
-        if self.is_file_indexed(collection_name, file_path, content_hash):
-            logger.debug(f"Pass 2 HIT: {file_path} unchanged (content match, metadata changed)")
-            return (True, None)
-
-        # Pass 2 miss - check if file was moved/renamed (Pass 3)
-        # Find all paths with this content hash
-        old_paths = self.find_file_by_content_hash(collection_name, content_hash)
-
-        if old_paths:
-            # Content hash found elsewhere - file was moved/renamed
-            if len(old_paths) == 1:
-                old_path = old_paths[0]
-                logger.debug(f"Pass 3 HIT: {file_path} is rename from {old_path} (content unchanged)")
-                return (True, old_path)
-            else:
-                # Multiple matches - ambiguous, treat as new file to be safe
-                logger.debug(f"Pass 3 AMBIGUOUS: {len(old_paths)} files with same content, treating as new")
-                return (False, None)
-
-        # All passes miss - file is new or changed
-        logger.debug(f"All passes miss: {file_path} is new or changed, needs indexing")
-        return (False, None)
-
-    def get_indexed_file_paths(self, collection_name: str) -> Dict[str, List[str]]:
-        """Get all indexed files organized by hash.
-
-        Returns dict mapping file_hash to list of file_paths for rename detection.
-
-        Args:
-            collection_name: Qdrant collection name
-
-        Returns:
-            Dict mapping file_hash to list of file_paths
-        """
-        indexed_by_hash = {}
-        offset = None
-
-        try:
-            while True:
-                points, offset = self.qdrant.scroll(
-                    collection_name=collection_name,
-                    limit=100,
-                    offset=offset,
-                    with_payload=["file_path", "file_hash"],
-                    with_vectors=False
-                )
-
-                if not points:
-                    break
-
-                for point in points:
-                    if point.payload:
-                        path = point.payload.get("file_path")
-                        hash_val = point.payload.get("file_hash")
-                        if path and hash_val:
-                            if hash_val not in indexed_by_hash:
-                                indexed_by_hash[hash_val] = []
-                            if path not in indexed_by_hash[hash_val]:
-                                indexed_by_hash[hash_val].append(path)
-
-                if offset is None:
-                    break
-
-            return indexed_by_hash
-
-        except Exception as e:
-            logger.warning(f"Error scrolling collection: {e}")
-            return {}
-
     def _get_indexed_quick_hashes(self, collection_name: str) -> set:
         """Get all indexed (file_path, quick_hash) pairs for Pass 1 matching.
 
         Used during incremental sync to detect unchanged files without reindexing.
         Returns a set of (file_path, quick_hash) tuples for O(1) lookup.
+
+        For chunks with file_quick_hashes dict, includes all alternate paths.
+        For old format chunks, includes only the primary file_path.
 
         Args:
             collection_name: Qdrant collection name
@@ -464,6 +220,10 @@ class MetadataBasedSync:
         """
         indexed_pairs = set()
         offset = None
+        chunks_with_dict = 0
+        chunks_with_array = 0
+        total_chunks = 0
+        dict_entries = 0
 
         try:
             while True:
@@ -471,7 +231,7 @@ class MetadataBasedSync:
                     collection_name=collection_name,
                     limit=100,
                     offset=offset,
-                    with_payload=["file_path", "quick_hash"],
+                    with_payload=["file_path", "quick_hash", "file_quick_hashes", "file_paths"],
                     with_vectors=False
                 )
 
@@ -479,14 +239,33 @@ class MetadataBasedSync:
                     break
 
                 for point in points:
+                    total_chunks += 1
                     if point.payload:
-                        path = point.payload.get("file_path")
-                        quick_hash = point.payload.get("quick_hash")
-                        if path and quick_hash:
-                            indexed_pairs.add((path, quick_hash))
+                        # New format: dict of path → quick_hash for all locations
+                        # Use ONLY dict format if it exists (skip old format to avoid conflicts)
+                        file_quick_hashes = point.payload.get("file_quick_hashes", {})
+                        if file_quick_hashes:
+                            chunks_with_dict += 1
+                            for dict_path, dict_quick_hash in file_quick_hashes.items():
+                                dict_entries += 1
+                                if dict_path and dict_quick_hash:
+                                    indexed_pairs.add((dict_path, dict_quick_hash))
+                        else:
+                            # Old format: single path + quick_hash (only if dict doesn't exist)
+                            path = point.payload.get("file_path")
+                            quick_hash = point.payload.get("quick_hash")
+                            if path and quick_hash:
+                                indexed_pairs.add((path, quick_hash))
+
+                        # Check if file_paths array exists
+                        file_paths = point.payload.get("file_paths", [])
+                        if file_paths:
+                            chunks_with_array += 1
 
                 if offset is None:
                     break
+
+            logger.debug(f"Pass 1: Loaded {len(indexed_pairs)} unique (path, quick_hash) pairs from {total_chunks} chunks ({chunks_with_dict} with dict)")
 
             return indexed_pairs
 
@@ -539,31 +318,25 @@ class MetadataBasedSync:
 
     def get_unindexed_files(self, collection_name: str,
                             file_list: List[Path],
-                            hash_fn=None) -> Tuple[List[Path], List[Tuple[str, str]], List[Path]]:
-        """Filter file list using 3-pass sync strategy to identify files needing reindexing.
+                            hash_fn=None) -> Tuple[List[Path], List[Path]]:
+        """Filter file list using fast metadata check to identify files needing processing.
 
-        **3-pass strategy** (handles collections with/without quick_hash):
+        **Single-pass strategy** (deferred content hashing):
 
         Pass 1 (Ultra-fast ~0.003ms): Metadata check (mtime+size)
         - Compute quick_hash for all files
         - Query Qdrant for (file_path, quick_hash) matches
-        - If found → file unchanged at same location → skip indexing
-
-        Pass 2 (Moderate ~50ms per miss): Content verification
-        - For files that miss Pass 1, compute full content hash
-        - Query Qdrant for (file_path, file_hash) matches
-        - If found → file content unchanged (metadata changed) → skip indexing
-        - Handles collections missing quick_hash field
-
-        Pass 3 (Rename detection ~5ms per miss): Check for moves/renames
-        - For files that miss Pass 2, search for content_hash elsewhere
-        - If found exactly once → file moved/renamed → skip indexing
-        - If multiple matches → ambiguous, treat as new
+        - If found → file unchanged at same location → skip
+        - If not found → needs processing (duplicate detection deferred to indexing)
 
         **Performance**:
-        - Unchanged files (99%): Pass 1 only (~0.003ms)
-        - Metadata changed only: Pass 1 + Pass 2 (~50ms)
-        - New/moved files: All 3 passes (~60ms)
+        - Unchanged files (99%): ~0.003ms per file
+        - Changed/new files: ~0.003ms + deferred to indexing phase
+
+        **Content hashing and duplicate detection** now happen during indexing phase:
+        - Eliminates double hashing (was: sync + indexing)
+        - Each file hashed only once (during indexing)
+        - Duplicate/rename detection at start of indexing
 
         Args:
             collection_name: Qdrant collection name
@@ -572,13 +345,16 @@ class MetadataBasedSync:
 
         Returns:
             Tuple of:
-            - unindexed: Files to reindex (new or truly changed)
-            - renames: List of (old_path, file_path) tuples for renamed files
-            - already_indexed: Files unchanged in content
+            - needs_processing: Files that need indexing/duplicate-check (Pass 1 miss)
+            - already_indexed: Files unchanged (Pass 1 hit)
         """
         try:
             import time
             start_time = time.time()
+
+            # Brief delay to ensure Qdrant consistency (in case previous run just finished)
+            # This prevents race conditions where chunks are uploaded but not yet queryable
+            time.sleep(1.0)
 
             # Pass 1: Metadata gate (mtime+size) - ultra fast
             pass1_start = time.time()
@@ -590,10 +366,8 @@ class MetadataBasedSync:
             pass1_qdrant_time = time.time() - pass1_qdrant_start
 
             # Categorize files
-            unindexed = []
-            renames = []
+            needs_processing = []
             already_indexed = []
-            pass1_misses = []  # Files that need Pass 2
 
             # Pass 1: Quick metadata check
             pass1_check_start = time.time()
@@ -602,108 +376,30 @@ class MetadataBasedSync:
                 quick_hash = quick_hashes.get(file_path_str)
 
                 if quick_hash is None:
-                    # Hash computation failed, treat as unindexed
-                    unindexed.append(file_path)
+                    # Hash computation failed, treat as needs processing
+                    needs_processing.append(file_path)
                     continue
 
                 # Check if (file_path, quick_hash) exists in collection
                 if (file_path_str, quick_hash) in indexed_quick_hashes:
-                    # Pass 1 HIT: Metadata unchanged → already indexed
+                    # Pass 1 HIT: Metadata unchanged → skip
                     already_indexed.append(file_path)
                 else:
-                    # Pass 1 MISS: Metadata changed or new → proceed to Pass 2
-                    pass1_misses.append((file_path, file_path_str))
+                    # Pass 1 MISS: Metadata changed or new → defer to indexing phase
+                    needs_processing.append(file_path)
 
             pass1_check_time = time.time() - pass1_check_start
             pass1_total = time.time() - pass1_start
 
             logger.info(f"Pass 1 (metadata gate): {len(file_list)} files "
-                       f"→ {len(already_indexed)} hits, {len(pass1_misses)} misses "
+                       f"→ {len(already_indexed)} hits, {len(needs_processing)} need processing "
                        f"(hash: {quick_hash_time:.3f}s, qdrant: {pass1_qdrant_time:.3f}s, check: {pass1_check_time:.3f}s, total: {pass1_total:.3f}s)")
 
-            # Pass 2a: Separate existing files (need content hash) from new files (defer hashing)
-            pass2_start = time.time()
-            pass2_hits = 0
-            pass2_misses = 0
-            pass2_new_files = 0
-
-            if pass1_misses:
-                # Get indexed file paths to distinguish new files from existing files with changed metadata
-                existing_paths_start = time.time()
-                indexed_paths = self._get_indexed_file_paths_set(collection_name)
-                existing_paths_time = time.time() - existing_paths_start
-
-                # Separate Pass 1 misses into two categories:
-                # 1. New files (path not in collection) → defer hashing to indexing pipeline
-                # 2. Existing files with changed metadata (path in collection) → need Pass 2 content check
-                existing_files_to_check = []
-                for file_path, file_path_str in pass1_misses:
-                    if file_path_str in indexed_paths:
-                        # File exists in collection with different metadata → check content
-                        existing_files_to_check.append((file_path, file_path_str))
-                    else:
-                        # File doesn't exist in collection → new file, defer hashing
-                        unindexed.append(file_path)
-                        pass2_new_files += 1
-
-                # Only compute content hashes for existing files with changed metadata
-                content_hash_start = time.time()
-                if existing_files_to_check:
-                    content_hashes = _compute_hashes_parallel(
-                        [fp for fp, _ in existing_files_to_check],
-                        compute_file_hash,
-                        show_progress=False
-                    )
-                else:
-                    content_hashes = {}
-                content_hash_time = time.time() - content_hash_start
-
-                for file_path, file_path_str in existing_files_to_check:
-                    content_hash = content_hashes.get(str(file_path.absolute()))
-
-                    if content_hash is None:
-                        # Hash computation failed, treat as unindexed
-                        unindexed.append(file_path)
-                        continue
-
-                    # Check if (file_path, content_hash) exists in collection
-                    if self.is_file_indexed(collection_name, file_path, content_hash):
-                        # Pass 2 HIT: Content unchanged (metadata changed) → skip indexing
-                        already_indexed.append(file_path)
-                        pass2_hits += 1
-                    else:
-                        # Pass 2 MISS: Check for renames (Pass 3)
-                        pass2_misses += 1
-                        old_paths = self.find_file_by_content_hash(collection_name, content_hash)
-
-                        if old_paths:
-                            if len(old_paths) == 1:
-                                # Pass 3 HIT: Single match → file was moved/renamed
-                                old_path = old_paths[0]
-                                renames.append((old_path, str(file_path)))
-                                already_indexed.append(file_path)
-                            else:
-                                # Pass 3 AMBIGUOUS: Multiple matches → treat as new
-                                logger.debug(f"Ambiguous rename for {file_path}: {len(old_paths)} files with same content")
-                                unindexed.append(file_path)
-                        else:
-                            # All passes miss: File is new or truly changed
-                            unindexed.append(file_path)
-
-                pass2_total = time.time() - pass2_start
-                logger.info(f"Pass 2 (smart filtering): {len(pass1_misses)} candidates "
-                           f"→ {pass2_new_files} new (deferred), {len(existing_files_to_check)} existing "
-                           f"→ {pass2_hits} hits, {pass2_misses} misses "
-                           f"(paths: {existing_paths_time:.3f}s, hash: {content_hash_time:.3f}s, total: {pass2_total:.3f}s)")
-            else:
-                logger.info(f"Pass 2 skipped (no Pass 1 misses)")
-                pass2_total = 0
-
             total_time = time.time() - start_time
-            logger.info(f"Sync complete: {len(unindexed)} files to reindex, "
-                       f"{len(already_indexed)} already indexed, "
-                       f"{len(renames)} renamed (total {len(file_list)} files, {total_time:.3f}s)")
-            return (unindexed, renames, already_indexed)
+            logger.info(f"Sync complete: {len(needs_processing)} files to process, "
+                       f"{len(already_indexed)} already indexed "
+                       f"(total {len(file_list)} files, {total_time:.3f}s)")
+            return (needs_processing, already_indexed)
 
         except Exception as e:
             logger.warning(f"Error querying collection: {e}, "
@@ -767,16 +463,79 @@ class MetadataBasedSync:
             logger.warning(f"Error deleting chunks by file_hash {file_hash}: {e}")
             return 0
 
-    def handle_renames(self, collection_name: str,
-                      renames: List[Tuple[str, str]]) -> int:
-        """Update file_path metadata for renamed files.
+    def find_file_by_content_hash(self, collection_name: str, file_hash: str) -> List[str]:
+        """Find all file_paths in collection with given content hash.
 
-        Updates all chunks with old_path to use new_path. This avoids
-        reindexing the entire file when only the path changed.
+        Returns ALL paths including both the primary file_path and any paths
+        in the file_paths array (for duplicates).
 
         Args:
             collection_name: Qdrant collection name
-            renames: List of (old_path, new_path) tuples
+            file_hash: Content hash to search for
+
+        Returns:
+            List of file_paths that have this content hash
+        """
+        try:
+            paths = []
+            offset = None
+
+            while True:
+                points, offset = self.qdrant.scroll(
+                    collection_name=collection_name,
+                    scroll_filter=Filter(
+                        must=[
+                            FieldCondition(
+                                key="file_hash",
+                                match=MatchValue(value=file_hash)
+                            )
+                        ]
+                    ),
+                    limit=100,
+                    offset=offset,
+                    with_payload=["file_path", "file_paths"],
+                    with_vectors=False
+                )
+
+                if not points:
+                    break
+
+                for point in points:
+                    if point.payload:
+                        # Primary path (old format)
+                        if "file_path" in point.payload:
+                            path = point.payload["file_path"]
+                            if path not in paths:
+                                paths.append(path)
+
+                        # All paths (new format with duplicates)
+                        file_paths_array = point.payload.get("file_paths", [])
+                        for path in file_paths_array:
+                            if path and path not in paths:
+                                paths.append(path)
+
+                if offset is None:
+                    break
+
+            return paths
+
+        except Exception as e:
+            logger.warning(f"Error finding file by content hash: {e}")
+            return []
+
+    def handle_renames(self, collection_name: str,
+                      renames: List[Tuple]) -> int:
+        """Update metadata for renamed/moved files.
+
+        Updates all chunks with old_path to use new_path and updates
+        all path-dependent metadata. This avoids reindexing when only
+        the path changed.
+
+        Args:
+            collection_name: Qdrant collection name
+            renames: List of tuples, either:
+                - (old_path, new_path) for backward compatibility
+                - (old_path, new_path, metadata_dict) for full update
 
         Returns:
             Number of files successfully renamed
@@ -786,12 +545,33 @@ class MetadataBasedSync:
 
         renamed_count = 0
 
-        for old_path, new_path in renames:
+        for rename_info in renames:
             try:
-                # Update all chunks with old_path to use new_path
+                # Support both old format (2-tuple) and new format (3-tuple)
+                if len(rename_info) == 2:
+                    old_path, new_path = rename_info
+                    new_metadata = {}
+                elif len(rename_info) == 3:
+                    old_path, new_path, new_metadata = rename_info
+                else:
+                    logger.warning(f"Invalid rename tuple length: {len(rename_info)}")
+                    continue
+
+                # Build payload with all path-dependent metadata
+                payload = {"file_path": new_path}
+
+                # Add optional metadata fields if provided
+                if "filename" in new_metadata:
+                    payload["filename"] = new_metadata["filename"]
+                if "quick_hash" in new_metadata:
+                    payload["quick_hash"] = new_metadata["quick_hash"]
+                # Note: file_hash stays same (it's the key for finding renames)
+                # Note: file_size stays same
+
+                # Update all chunks with old_path
                 self.qdrant.set_payload(
                     collection_name=collection_name,
-                    payload={"file_path": new_path},
+                    payload=payload,
                     points=FilterSelector(
                         filter=Filter(
                             must=[
@@ -804,7 +584,11 @@ class MetadataBasedSync:
                     )
                 )
                 renamed_count += 1
-                logger.info(f"Renamed: {old_path} -> {new_path}")
+
+                if new_metadata:
+                    logger.info(f"Renamed: {old_path} -> {new_path} (updated {len(payload)} fields)")
+                else:
+                    logger.info(f"Renamed: {old_path} -> {new_path}")
 
             except Exception as e:
                 logger.warning(f"Failed to rename {old_path} -> {new_path}: {e}")
@@ -813,3 +597,105 @@ class MetadataBasedSync:
             logger.info(f"Successfully renamed {renamed_count}/{len(renames)} files")
 
         return renamed_count
+
+    def add_alternate_path(self, collection_name: str, file_hash: str, new_path: str, quick_hash: str) -> int:
+        """Add an alternate file path to existing chunks with same content.
+
+        When a duplicate file is found (same content, different path), this adds
+        the new path to the file_paths array and stores its quick_hash for Pass 1 sync.
+
+        Args:
+            collection_name: Qdrant collection name
+            file_hash: Content hash to find existing chunks
+            new_path: New file path to add to file_paths array
+            quick_hash: Quick hash (mtime+size) for this specific file
+
+        Returns:
+            Number of chunks updated
+        """
+        try:
+            # First, get one chunk to see current file_paths state
+            points, _ = self.qdrant.scroll(
+                collection_name=collection_name,
+                scroll_filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="file_hash",
+                            match=MatchValue(value=file_hash)
+                        )
+                    ]
+                ),
+                limit=1,
+                with_payload=True,
+                with_vectors=False
+            )
+
+            if not points:
+                logger.warning(f"No chunks found with file_hash {file_hash}")
+                return 0
+
+            # Get current state
+            current_payload = points[0].payload
+            file_paths = current_payload.get("file_paths", [])
+            file_quick_hashes = current_payload.get("file_quick_hashes", {})
+
+            # Lazy migration: if file_paths doesn't exist, create from file_path
+            if not file_paths and "file_path" in current_payload:
+                file_paths = [current_payload["file_path"]]
+                logger.debug(f"Migrated old format: created file_paths array from file_path")
+
+            # IMPORTANT: Also migrate primary path's quick_hash if missing from dict
+            primary_path = current_payload.get("file_path")
+            if primary_path and primary_path not in file_quick_hashes and "quick_hash" in current_payload:
+                file_quick_hashes[primary_path] = current_payload["quick_hash"]
+                logger.debug(f"Migrated primary path quick_hash to file_quick_hashes dict")
+
+            # Ensure all paths in array have dict entries (migration for partially-migrated chunks)
+            for existing_path in file_paths:
+                if existing_path not in file_quick_hashes:
+                    logger.warning(f"Path in file_paths array missing dict entry: {existing_path} (needs full migration)")
+
+            # Add new path if not already present
+            new_path_abs = str(new_path) if not isinstance(new_path, str) else new_path
+            path_existed = new_path_abs in file_paths
+            dict_entry_existed = new_path_abs in file_quick_hashes
+
+            if not path_existed:
+                file_paths.append(new_path_abs)
+
+            # Check if quick_hash changed (file was touched/modified)
+            quick_hash_changed = file_quick_hashes.get(new_path_abs) != quick_hash
+
+            # Always update dict entry (creates new or updates existing)
+            file_quick_hashes[new_path_abs] = quick_hash
+
+            # If both already existed with same quick_hash, nothing to do
+            if path_existed and dict_entry_existed and not quick_hash_changed:
+                logger.debug(f"Path {new_path} already fully tracked with same quick_hash")
+                return 0
+
+            # Update all chunks with this file_hash
+            result = self.qdrant.set_payload(
+                collection_name=collection_name,
+                payload={
+                    "file_paths": file_paths,
+                    "file_quick_hashes": file_quick_hashes
+                },
+                points=FilterSelector(
+                    filter=Filter(
+                        must=[
+                            FieldCondition(
+                                key="file_hash",
+                                match=MatchValue(value=file_hash)
+                            )
+                        ]
+                    )
+                )
+            )
+
+            logger.debug(f"Added alternate path {new_path} to {len(file_paths)} total paths for hash {file_hash[:8]}")
+            return len(file_paths)
+
+        except Exception as e:
+            logger.warning(f"Failed to add alternate path {new_path}: {e}")
+            return 0

@@ -241,6 +241,7 @@ class MarkdownIndexingPipeline:
         model_name: str,
         model_config: Dict,
         force_reindex: bool = False,
+        randomize: bool = False,
         verbose: bool = False,
         chunk_size: int = 512,
         chunk_overlap: int = 50,
@@ -254,6 +255,7 @@ class MarkdownIndexingPipeline:
             model_name: Embedding model to use
             model_config: Model configuration
             force_reindex: Bypass sync and reindex all files
+            randomize: Randomize file processing order (useful for parallel indexing)
             verbose: Show detailed progress
             chunk_size: Target chunk size in tokens
             chunk_overlap: Overlap between chunks in tokens
@@ -332,6 +334,14 @@ class MarkdownIndexingPipeline:
         else:
             print(f"✓ Model ready", flush=True)
             print()
+
+        # Randomize file order if requested (useful for parallel indexing)
+        if randomize:
+            import random
+            random.shuffle(markdown_files)
+            if verbose:
+                print(f"🔀 Randomized file processing order")
+                print()
 
         # Process files with optional parallel processing (arcaneum-ce28)
         point_id = self._get_next_point_id(collection_name)

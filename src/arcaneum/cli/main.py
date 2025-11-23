@@ -123,13 +123,14 @@ def index():
 @click.option('--force', is_flag=True, help='Force reindex all files')
 @click.option('--no-gpu', is_flag=True, help='Disable GPU acceleration (use CPU only, 2-3x slower)')
 @click.option('--offline', is_flag=True, help='Offline mode (use cached models only, no network)')
+@click.option('--randomize', is_flag=True, help='Randomize file processing order (useful for parallel indexing)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 @click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_pdf(path, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, no_gpu, offline, verbose, debug, output_json):
+def index_pdf(path, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, no_gpu, offline, randomize, verbose, debug, output_json):
     """Index PDF files"""
     from arcaneum.cli.index_pdfs import index_pdfs_command
-    index_pdfs_command(path, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, no_gpu, offline, verbose, debug, output_json)
+    index_pdfs_command(path, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, no_gpu, offline, randomize, verbose, debug, output_json)
 
 
 @index.command('code')
@@ -168,13 +169,14 @@ def index_code(path, collection, model, embedding_batch_size, chunk_size, chunk_
 @click.option('--force', is_flag=True, help='Force reindex all files')
 @click.option('--no-gpu', is_flag=True, help='Disable GPU acceleration (use CPU only, 2-3x slower)')
 @click.option('--offline', is_flag=True, help='Offline mode (use cached models only, no network)')
+@click.option('--randomize', is_flag=True, help='Randomize file processing order (useful for parallel indexing)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 @click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_markdown(path, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, no_gpu, offline, verbose, debug, output_json):
+def index_markdown(path, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, no_gpu, offline, randomize, verbose, debug, output_json):
     """Index markdown files"""
     from arcaneum.cli.index_markdown import index_markdown_command
-    index_markdown_command(path, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, no_gpu, offline, verbose, debug, output_json)
+    index_markdown_command(path, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, no_gpu, offline, randomize, verbose, debug, output_json)
 
 
 @cli.command('store')

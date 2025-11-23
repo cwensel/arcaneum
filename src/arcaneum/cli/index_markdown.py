@@ -37,6 +37,7 @@ def index_markdown_command(
     force: bool,
     no_gpu: bool,
     offline: bool,
+    randomize: bool,
     verbose: bool,
     debug: bool,
     output_json: bool
@@ -223,6 +224,7 @@ def index_markdown_command(
             model_name=model,
             model_config=model_dict,
             force_reindex=force,
+            randomize=randomize,
             verbose=verbose,
             chunk_size=model_dict['chunk_size'],
             chunk_overlap=model_dict['chunk_overlap'],

@@ -410,6 +410,7 @@ class PDFBatchUploader:
         model_name: str,
         model_config: Dict,
         force_reindex: bool = False,
+        randomize: bool = False,
         verbose: bool = False
     ) -> Dict:
         """Index PDFs in directory with incremental sync and optional parallel processing.
@@ -477,6 +478,13 @@ class PDFBatchUploader:
             else:
                 print("✅ All PDFs are up to date")
             return {"files": 0, "chunks": 0, "errors": 0}
+
+        # Randomize file order if requested (useful for parallel indexing)
+        if randomize:
+            import random
+            random.shuffle(pdf_files)
+            if verbose:
+                print(f"🔀 Randomized file processing order")
 
         # Show count for minimal mode
         if not verbose:

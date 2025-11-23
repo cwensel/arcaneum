@@ -17,6 +17,7 @@ Index PDFs, markdown, or source code into Qdrant collections for semantic search
 - --model: Embedding model (auto-selected by content type)
 - --workers: Parallel workers (default: 4)
 - --force: Force reindex all files
+- --randomize: Randomize file processing order (useful for parallel indexing)
 - --no-gpu: Disable GPU acceleration (GPU enabled by default)
 - --verbose: Show detailed progress (suppress library warnings)
 - --debug: Show all library warnings including transformers
@@ -26,12 +27,19 @@ Index PDFs, markdown, or source code into Qdrant collections for semantic search
 
 - --no-ocr: Disable OCR (enabled by default for scanned PDFs)
 - --ocr-language: OCR language code (default: eng)
+- --ocr-workers: Parallel OCR workers (default: cpu_count)
+- --normalize-only: Skip markdown conversion, only normalize whitespace
+- --preserve-images: Extract images for multimodal search
+- --process-priority: Process scheduling priority (low, normal, high)
+- --embedding-batch-size: Batch size for embeddings (auto-tuned if not specified)
 - --offline: Use cached models only (no network)
 
 **Markdown Indexing Options:**
 
 - --chunk-size: Target chunk size in tokens (overrides model default)
 - --chunk-overlap: Overlap between chunks in tokens
+- --recursive/--no-recursive: Search subdirectories recursively (default: recursive)
+- --exclude: Patterns to exclude (e.g., node_modules, .obsidian)
 - --offline: Use cached models only (no network)
 
 **Source Code Indexing Options:**
@@ -52,6 +60,10 @@ Index PDFs, markdown, or source code into Qdrant collections for semantic search
 
 # Force CPU-only mode (disable GPU)
 /index pdf ~/Documents/Research --collection PDFs --model stella --no-gpu
+
+# Parallel indexing from multiple terminals (randomize order)
+/index pdf ~/Documents/Research --collection PDFs --randomize
+/index markdown ~/notes --collection Notes --randomize
 
 # Debug mode (show all warnings)
 /index pdf ~/Documents/Research --collection PDFs --model stella --debug

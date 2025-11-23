@@ -38,6 +38,7 @@ def index_pdfs_command(
     force: bool,
     no_gpu: bool,
     offline: bool,
+    randomize: bool,
     verbose: bool,
     debug: bool,
     output_json: bool
@@ -334,6 +335,7 @@ def index_pdfs_command(
             model_name=model,
             model_config=model_dict,
             force_reindex=force,
+            randomize=randomize,
             verbose=verbose
         )
 

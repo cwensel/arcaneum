@@ -25,16 +25,5 @@
     "dual-indexing",
     "cli-tools",
     "agent-memory"
-  ],
-  "commands": [
-    "./commands/collection.md",
-    "./commands/config.md",
-    "./commands/container.md",
-    "./commands/corpus.md",
-    "./commands/doctor.md",
-    "./commands/index.md",
-    "./commands/models.md",
-    "./commands/search.md",
-    "./commands/store.md"
   ]
 }

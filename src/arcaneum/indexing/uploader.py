@@ -194,10 +194,31 @@ class PDFBatchUploader:
             # This prevents re-indexing files that just need metadata migration (file_quick_hashes dict)
             old_paths = self.sync.find_file_by_content_hash(collection_name, file_hash)
             if old_paths:
-                # Content already indexed - always call add_alternate_path to ensure metadata is complete
-                # This handles both new duplicate paths and migration of existing paths to new dict format
+                # Check if any old paths still exist on filesystem
+                existing_old_paths = self.sync.filter_existing_paths(old_paths)
                 new_path = str(pdf_path.absolute())
 
+                if not existing_old_paths:
+                    # None of the old paths exist - this is a rename, not a duplicate
+                    old_path = old_paths[0]  # Use the primary (first) path as the source
+                    new_metadata = {
+                        'filename': pdf_path.name,
+                        'quick_hash': quick_hash
+                    }
+                    result = self.sync.handle_renames(collection_name, [(old_path, new_path, new_metadata)])
+
+                    if verbose:
+                        print(f"  ↪ File renamed/moved")
+                        print(f"     Old location: {old_path}")
+                        print(f"     New location: {new_path}")
+                        print(f"     Updated {result} chunks")
+                    elif not verbose:
+                        print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → renamed (updated {result} chunks){' '*20}", flush=True)
+
+                    return ([], 0, None)
+
+                # Content already indexed - always call add_alternate_path to ensure metadata is complete
+                # This handles both new duplicate paths and migration of existing paths to new dict format
                 path_already_tracked = new_path in old_paths
                 result = self.sync.add_alternate_path(collection_name, file_hash, new_path, quick_hash)
 

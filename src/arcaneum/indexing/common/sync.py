@@ -524,6 +524,18 @@ class MetadataBasedSync:
             logger.warning(f"Error finding file by content hash: {e}")
             return []
 
+    def filter_existing_paths(self, paths: List[str]) -> List[str]:
+        """Filter a list of paths to only those that exist on the filesystem.
+
+        Args:
+            paths: List of file paths to check
+
+        Returns:
+            List of paths that exist on disk
+        """
+        from pathlib import Path
+        return [p for p in paths if Path(p).exists()]
+
     def handle_renames(self, collection_name: str,
                       renames: List[Tuple]) -> int:
         """Update metadata for renamed/moved files.

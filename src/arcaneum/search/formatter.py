@@ -9,15 +9,17 @@ from .searcher import SearchResult
 def format_text_results(
     query: str,
     results: List[SearchResult],
+    limit: int = 10,
+    offset: int = 0,
     verbose: bool = False
 ) -> str:
     """Format search results for human-readable terminal display.
 
     Output format:
         Searching for: "query"
-        Found N results
+        Found N results (showing results 11-20)
 
-        [1] Score: 95% | Language: python | Project: myproject
+        [11] Score: 95% | Language: python | Project: myproject
             /path/to/file.py
 
             def authenticate_user(username, password):
@@ -26,6 +28,8 @@ def format_text_results(
     Args:
         query: Original search query
         results: List of SearchResult objects
+        limit: Maximum number of results requested
+        offset: Number of results skipped (for pagination)
         verbose: If True, show more metadata and longer snippets
 
     Returns:
@@ -33,13 +37,18 @@ def format_text_results(
     """
     lines = []
 
-    # Header
+    # Header with pagination info
     lines.append(f'Searching for: "{query}"')
-    lines.append(f"Found {len(results)} result{'s' if len(results) != 1 else ''}")
+    if offset > 0:
+        start = offset + 1
+        end = offset + len(results)
+        lines.append(f"Found {len(results)} result{'s' if len(results) != 1 else ''} (showing results {start}-{end})")
+    else:
+        lines.append(f"Found {len(results)} result{'s' if len(results) != 1 else ''}")
     lines.append("")  # Blank line
 
-    # Format each result
-    for i, result in enumerate(results, 1):
+    # Format each result (numbered from offset + 1)
+    for i, result in enumerate(results, offset + 1):
         # Score and metadata header
         score_pct = int(result.score * 100)
         metadata_str = format_metadata(result.metadata, verbose=verbose)
@@ -73,6 +82,8 @@ def format_json_results(
     query: str,
     collection: str,
     results: List[SearchResult],
+    limit: int = 10,
+    offset: int = 0,
     verbose: bool = False
 ) -> str:
     """Format search results as JSON.
@@ -81,6 +92,8 @@ def format_json_results(
         {
             "query": "search query",
             "collection": "MyCollection",
+            "limit": 10,
+            "offset": 0,
             "total_results": 5,
             "results": [
                 {
@@ -96,6 +109,8 @@ def format_json_results(
         query: Original search query
         collection: Collection name
         results: List of SearchResult objects
+        limit: Maximum number of results requested
+        offset: Number of results skipped (for pagination)
         verbose: If True, include full metadata and longer content
 
     Returns:
@@ -107,6 +122,8 @@ def format_json_results(
     output = {
         "query": query,
         "collection": collection,
+        "limit": limit,
+        "offset": offset,
         "total_results": len(results),
         "results": [
             {

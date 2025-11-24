@@ -237,6 +237,9 @@ arc find MyCode "auth" --filter language=python
 # With limit
 arc find MyCode "auth" --limit 20
 
+# With pagination (second page)
+arc find MyCode "auth" --limit 20 --offset 20
+
 # JSON output
 arc find MyCode "auth" --json
 ```
@@ -604,6 +607,7 @@ from ..config import DEFAULT_MODELS
 @click.option('--vector-name', help='Vector name to use (auto-detects if not specified)')
 @click.option('--filter', 'filter_arg', help='Metadata filter (key=value or JSON)')
 @click.option('--limit', type=int, default=10, help='Number of results')
+@click.option('--offset', type=int, default=0, help='Number of results to skip (for pagination)')
 @click.option('--score-threshold', type=float, help='Minimum score threshold')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
 @click.option('--qdrant-url', default='http://localhost:6333', help='Qdrant server URL')
@@ -615,6 +619,7 @@ def search_command(
     vector_name: str,
     filter_arg: str,
     limit: int,
+    offset: int,
     score_threshold: float,
     output_json: bool,
     qdrant_url: str,

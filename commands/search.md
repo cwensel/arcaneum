@@ -13,6 +13,7 @@ Search your indexed content using vector-based semantic search or keyword-based 
 **Common Options:**
 
 - --limit: Number of results to return (default: 10)
+- --offset: Number of results to skip for pagination (default: 0)
 - --filter: Metadata filter (key=value or JSON)
 - --json: Output in JSON format
 - --verbose: Show detailed information
@@ -30,9 +31,20 @@ Search your indexed content using vector-based semantic search or keyword-based 
 **Examples:**
 
 ```text
+# Basic semantic search
 /search semantic "authentication logic" --collection MyCode --limit 5
+
+# Full-text keyword search
 /search text "def authenticate" --index MyCode-fulltext
+
+# Search with score threshold
 /search semantic "fraud detection patterns" --collection PDFs --score-threshold 0.7
+
+# Pagination: Get second page of results
+/search semantic "machine learning" --collection Papers --limit 10 --offset 10
+
+# Pagination: Get third page with JSON output
+/search semantic "neural networks" --collection Papers --limit 10 --offset 20 --json
 ```
 
 **Execution:**
@@ -45,12 +57,14 @@ arc search $ARGUMENTS
 **When to Use Each:**
 
 **Semantic Search** (vector-based):
+
 - Finding conceptually similar code/documents
 - Cross-language semantic matching
 - "What does this" or "How to" questions
 - Fuzzy concept matching
 
 **Full-Text Search** (keyword-based):
+
 - Exact keyword or phrase matching
 - Function/variable name search
 - Quoted phrase search
@@ -59,6 +73,7 @@ arc search $ARGUMENTS
 **Result Format:**
 
 Both commands show:
+
 - Relevance score (similarity for semantic, rank for text)
 - Source file path
 - Matching content snippet

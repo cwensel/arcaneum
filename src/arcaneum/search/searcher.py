@@ -73,6 +73,7 @@ def search_collection(
     collection_name: str,
     vector_name: Optional[str] = None,
     limit: int = 10,
+    offset: int = 0,
     query_filter: Optional[models.Filter] = None,
     score_threshold: Optional[float] = None
 ) -> List[SearchResult]:
@@ -93,6 +94,7 @@ def search_collection(
         collection_name: Name of collection to search
         vector_name: Optional specific vector to use (auto-detects if None)
         limit: Maximum number of results to return
+        offset: Number of results to skip (for pagination)
         query_filter: Optional metadata filter
         score_threshold: Optional minimum similarity score (0.0 to 1.0)
 
@@ -118,6 +120,7 @@ def search_collection(
             query_vector=(model_key, query_vector),
             query_filter=query_filter,
             limit=limit,
+            offset=offset,
             score_threshold=score_threshold,
             with_payload=True,
             with_vectors=False  # Don't return vectors (saves bandwidth)

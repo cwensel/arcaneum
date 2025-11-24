@@ -227,13 +227,14 @@ def search():
 @click.option('--vector-name', help='Vector name to use (auto-detects if not specified)')
 @click.option('--filter', 'filter_arg', help='Metadata filter (key=value or JSON)')
 @click.option('--limit', type=int, default=10, help='Number of results')
+@click.option('--offset', type=int, default=0, help='Number of results to skip (for pagination)')
 @click.option('--score-threshold', type=float, help='Minimum score threshold')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-def search_semantic(query, collection, vector_name, filter_arg, limit, score_threshold, output_json, verbose):
+def search_semantic(query, collection, vector_name, filter_arg, limit, offset, score_threshold, output_json, verbose):
     """Vector-based semantic search"""
     from arcaneum.cli.search import search_command
-    search_command(query, collection, vector_name, filter_arg, limit, score_threshold, output_json, verbose)
+    search_command(query, collection, vector_name, filter_arg, limit, offset, score_threshold, output_json, verbose)
 
 
 @search.command('text')
@@ -241,12 +242,13 @@ def search_semantic(query, collection, vector_name, filter_arg, limit, score_thr
 @click.option('--index', 'index_name', required=True, help='MeiliSearch index to search')
 @click.option('--filter', 'filter_arg', help='Metadata filter (key=value or JSON)')
 @click.option('--limit', type=int, default=10, help='Number of results')
+@click.option('--offset', type=int, default=0, help='Number of results to skip (for pagination)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-def search_text(query, index_name, filter_arg, limit, output_json, verbose):
+def search_text(query, index_name, filter_arg, limit, offset, output_json, verbose):
     """Keyword-based full-text search"""
     from arcaneum.cli.fulltext import search_text_command
-    search_text_command(query, index_name, filter_arg, limit, output_json, verbose)
+    search_text_command(query, index_name, filter_arg, limit, offset, output_json, verbose)
 
 
 # Dual indexing commands (RDR-009)

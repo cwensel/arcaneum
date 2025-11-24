@@ -29,6 +29,7 @@ def search_command(
     vector_name: str,
     filter_arg: str,
     limit: int,
+    offset: int,
     score_threshold: float,
     output_json: bool,
     verbose: bool
@@ -41,6 +42,7 @@ def search_command(
         vector_name: Optional specific vector to use (auto-detects if None)
         filter_arg: Optional metadata filter string
         limit: Maximum number of results
+        offset: Number of results to skip (for pagination)
         score_threshold: Optional minimum similarity score
         output_json: If True, output JSON format
         verbose: If True, show detailed output and logging
@@ -92,6 +94,7 @@ def search_command(
             collection_name=collection,
             vector_name=vector_name,
             limit=limit,
+            offset=offset,
             query_filter=query_filter,
             score_threshold=score_threshold
         )
@@ -108,6 +111,8 @@ def search_command(
                 query=query,
                 collection=collection,
                 results=results,
+                limit=limit,
+                offset=offset,
                 verbose=verbose
             )
             # Use print() not console.print() for JSON to avoid Rich wrapping
@@ -130,6 +135,8 @@ def search_command(
             output = format_text_results(
                 query=query,
                 results=results,
+                limit=limit,
+                offset=offset,
                 verbose=verbose
             )
             console.print(output)

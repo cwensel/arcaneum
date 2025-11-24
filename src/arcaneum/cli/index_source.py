@@ -28,6 +28,7 @@ console = Console()
 
 def index_source_command(
     path: str,
+    from_file: str,
     collection: str,
     model: str,
     embedding_batch_size: int,
@@ -45,7 +46,8 @@ def index_source_command(
     """Index source code to Qdrant collection (from RDR-005).
 
     Args:
-        path: Directory containing git repositories
+        path: Directory containing git repositories (or None if using from_file)
+        from_file: Path to file containing list of source code file paths, or "-" for stdin
         collection: Target collection name
         model: Embedding model (jina-code, jina-v2-code, stella)
         embedding_batch_size: Batch size for embedding generation
@@ -91,6 +93,24 @@ def index_source_command(
     signal.signal(signal.SIGINT, signal_handler)
 
     try:
+        # Handle file list if provided
+        file_list = None
+        source_dir = None
+
+        if from_file:
+            from .utils import read_file_list
+            # Code indexing doesn't restrict by extension - accepts all source files
+            file_list = read_file_list(from_file, allowed_extensions=None)
+            if not file_list:
+                raise ValueError("No valid files found in the provided list")
+            # Use parent directory of first file as base directory for reporting
+            source_dir = file_list[0].parent
+        else:
+            from pathlib import Path
+            source_dir = Path(path)
+            if not source_dir.exists():
+                raise ValueError(f"Path does not exist: {path}")
+
         # Connect to Qdrant (use defaults)
         qdrant_url = 'localhost'
         qdrant_port = 6333
@@ -248,12 +268,13 @@ def index_source_command(
 
         # Index directory
         stats = indexer.index_directory(
-            input_path=path,
+            input_path=source_dir,
             collection_name=collection,
             depth=depth,
             force=force,
             show_progress=verbose,
-            verbose=verbose
+            verbose=verbose,
+            file_list=file_list
         )
 
         # Output

@@ -204,17 +204,20 @@ class SourceCodeIndexer:
         depth: Optional[int] = None,
         force: bool = False,
         show_progress: bool = True,
-        verbose: bool = False
+        verbose: bool = False,
+        file_list: Optional[List] = None
     ) -> dict:
         """Index all git repositories in directory with metadata-based sync.
 
         Args:
-            input_path: Directory containing git repositories
+            input_path: Directory containing git repositories (or base directory for file_list)
             collection_name: Qdrant collection name
             depth: Maximum depth to search for repos (None = unlimited)
             force: If True, bypass incremental sync and reindex all
             show_progress: If True, show progress with rich
             verbose: If True, show detailed output
+            file_list: Optional list of source files to index (Note: Limited support for code indexing.
+                      Code indexing is git-centric and works best with git repositories.)
 
         Returns:
             Dictionary with indexing statistics
@@ -232,6 +235,16 @@ class SourceCodeIndexer:
         cpu_monitor = create_monitor()
         if cpu_monitor:
             cpu_monitor.start()
+
+        # Warn if file_list is provided (limited support for code indexing)
+        if file_list is not None:
+            console.print(
+                "[yellow]⚠️  Warning: file_list is not fully supported for code indexing. "
+                "Code indexing is git-centric and works best with git repositories.[/yellow]\n"
+            )
+            # For now, ignore file_list and proceed with git discovery
+            # Future enhancement: could support standalone file indexing
+            file_list = None
 
         # Show configuration at start
         console.print(f"\n[bold blue]Source Code Indexing Configuration[/bold blue]")

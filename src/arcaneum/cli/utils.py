@@ -3,13 +3,87 @@
 import os
 import sys
 import logging
-from typing import Optional
+from typing import Optional, List, Set
 from pathlib import Path
 from qdrant_client import QdrantClient
 
 from ..config import load_config, ArcaneumConfig, QdrantConfig
 
 logger = logging.getLogger(__name__)
+
+
+def read_file_list(
+    from_file: str,
+    allowed_extensions: Optional[Set[str]] = None
+) -> List[Path]:
+    """Read file paths from a list file or stdin.
+
+    Args:
+        from_file: Path to file containing list of files (one per line),
+                   or "-" to read from stdin
+        allowed_extensions: Optional set of allowed file extensions (e.g., {'.pdf', '.md'})
+                          If provided, files with other extensions will be skipped with warning
+
+    Returns:
+        List of Path objects (absolute paths) for files that exist and match criteria
+
+    Notes:
+        - Empty lines and lines starting with '#' are skipped
+        - Relative paths are resolved relative to current working directory
+        - Non-existent files are skipped with warning
+        - Files with wrong extensions (if allowed_extensions provided) are skipped with warning
+    """
+    paths = []
+
+    # Read lines from stdin or file
+    if from_file == '-':
+        logger.debug("Reading file list from stdin")
+        lines = sys.stdin.readlines()
+    else:
+        from_file_path = Path(from_file)
+        if not from_file_path.exists():
+            logger.error(f"File list not found: {from_file}")
+            return []
+        logger.debug(f"Reading file list from {from_file}")
+        with open(from_file_path, 'r') as f:
+            lines = f.readlines()
+
+    # Process each line
+    for line_num, line in enumerate(lines, 1):
+        line = line.strip()
+
+        # Skip empty lines and comments
+        if not line or line.startswith('#'):
+            continue
+
+        # Convert to Path and make absolute
+        path = Path(line)
+        if not path.is_absolute():
+            path = path.absolute()
+
+        # Check if file exists
+        if not path.exists():
+            logger.warning(f"Line {line_num}: File not found, skipping: {line}")
+            continue
+
+        # Check if it's a file (not directory)
+        if not path.is_file():
+            logger.warning(f"Line {line_num}: Not a file, skipping: {line}")
+            continue
+
+        # Check extension if filtering is requested
+        if allowed_extensions is not None:
+            if path.suffix.lower() not in allowed_extensions:
+                logger.warning(
+                    f"Line {line_num}: Wrong file type (expected {', '.join(allowed_extensions)}), "
+                    f"skipping: {line}"
+                )
+                continue
+
+        paths.append(path)
+
+    logger.info(f"Read {len(paths)} valid file paths from list")
+    return paths
 
 
 def set_process_priority(priority: str, disable_worker_nice: bool = False) -> None:

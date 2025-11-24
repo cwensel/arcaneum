@@ -1,6 +1,6 @@
 ---
 description: Index content into collections
-argument-hint: <pdf|code|markdown> <path> [options]
+argument-hint: <pdf|code|markdown> [<path> | --from-file <file>] [options]
 ---
 
 Index PDFs, markdown, or source code into Qdrant collections for semantic search.
@@ -14,6 +14,7 @@ Index PDFs, markdown, or source code into Qdrant collections for semantic search
 **Common Options:**
 
 - --collection: Target collection (required)
+- --from-file: Read file paths from list (one per line, or "-" for stdin)
 - --model: Embedding model (auto-selected by content type)
 - --workers: Parallel workers (default: 4)
 - --force: Force reindex all files
@@ -54,6 +55,14 @@ Index PDFs, markdown, or source code into Qdrant collections for semantic search
 /index markdown ~/notes --collection Notes --model stella
 /index code ~/projects/myapp --collection MyCode --model jina-code
 
+# Index from file list
+/index pdf --from-file /path/to/pdf_list.txt --collection PDFs
+/index markdown --from-file /path/to/md_list.txt --collection Notes
+
+# Index from stdin (pipe file paths)
+find ~/Documents -name "*.pdf" | /index pdf --from-file - --collection PDFs
+ls ~/notes/*.md | /index markdown --from-file - --collection Notes
+
 # With options
 /index markdown ~/docs --collection Docs --chunk-size 512 --verbose
 /index pdf ~/scanned-docs --collection Scans --no-ocr --offline
@@ -76,9 +85,32 @@ cd ${CLAUDE_PLUGIN_ROOT}
 arc index $ARGUMENTS
 ```
 
+**File List Format (--from-file):**
+
+When using `--from-file`, provide a text file with one file path per line:
+
+```text
+# Comments are supported (lines starting with #)
+/absolute/path/to/file1.pdf
+relative/path/to/file2.md
+/another/file3.pdf
+
+# Empty lines are ignored
+```
+
+Features:
+
+- Supports both absolute and relative paths
+- Relative paths resolved from current directory
+- Comments (lines starting with #) and empty lines are skipped
+- Non-existent files are warned about but processing continues
+- Wrong file extensions are filtered with warnings
+- Use "-" to read from stdin
+
 **How It Works:**
 
 **PDF Indexing:**
+
 1. Extract text from PDFs (PyMuPDF + pdfplumber fallback)
 2. Auto-trigger OCR for scanned PDFs (< 100 chars extracted)
 3. Chunk text with 15% overlap for context
@@ -87,6 +119,7 @@ arc index $ARGUMENTS
 6. Incremental: Skips unchanged files (file hash metadata check)
 
 **Markdown Indexing:**
+
 1. Discover markdown files (.md, .markdown extensions)
 2. Extract YAML frontmatter (title, author, tags, category, etc.)
 3. Semantic chunking preserving document structure (headers, code blocks)
@@ -95,6 +128,7 @@ arc index $ARGUMENTS
 6. Incremental: Skips unchanged files (SHA256 content hash check)
 
 **Source Code Indexing:**
+
 1. Discover git repositories in directory tree
 2. Extract git metadata (project, branch, commit)
 3. Parse code with tree-sitter (AST-aware chunking, 15+ languages)
@@ -121,12 +155,14 @@ arc index $ARGUMENTS
 **GPU Acceleration:**
 
 GPU acceleration is **enabled by default** for faster embedding generation:
+
 - **Apple Silicon**: MPS (Metal Performance Shaders) backend
 - **NVIDIA GPUs**: CUDA backend
 - **CPU fallback**: Automatic if GPU unavailable
 - **Disable GPU**: Use --no-gpu flag (for thermal/battery concerns)
 
 **Compatible models** (verified with GPU support):
+
 - stella (recommended for PDFs/markdown) - Full MPS support
 - jina-code (recommended for source code) - Full MPS support
 - bge-small, bge-base - CoreML support
@@ -134,6 +170,7 @@ GPU acceleration is **enabled by default** for faster embedding generation:
 **Offline Mode:**
 
 Use --offline for corporate proxies or SSL issues:
+
 - Requires models pre-downloaded: `arc models download`
 - No network calls during indexing
 - Fails if model not cached
@@ -147,6 +184,7 @@ Use --offline for corporate proxies or SSL issues:
 **Debug Mode:**
 
 Use --debug to troubleshoot indexing issues:
+
 - Shows all library warnings (including HuggingFace transformers)
 - Displays detailed stack traces
 - Helps diagnose model loading or GPU issues

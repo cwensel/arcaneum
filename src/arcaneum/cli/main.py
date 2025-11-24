@@ -109,7 +109,8 @@ def index():
 
 
 @index.command('pdf')
-@click.argument('path', type=click.Path(exists=True))
+@click.argument('path', type=click.Path(exists=True), required=False)
+@click.option('--from-file', help='Read file paths from list (one per line, or "-" for stdin)')
 @click.option('--collection', required=True, help='Target collection name')
 @click.option('--model', default=None, help='(Deprecated: model is now set at collection creation time) Embedding model to use')
 @click.option('--embedding-batch-size', type=int, default=None, help='Batch size for embedding generation. Auto-tuned for GPU memory if not specified. Larger batches (300-500) improve throughput 10-20%.')
@@ -127,14 +128,23 @@ def index():
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 @click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_pdf(path, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, no_gpu, offline, randomize, verbose, debug, output_json):
+def index_pdf(path, from_file, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, no_gpu, offline, randomize, verbose, debug, output_json):
     """Index PDF files"""
+    # Validate that exactly one of path or from_file is provided
+    if not path and not from_file:
+        click.echo("Error: Either PATH or --from-file must be provided", err=True)
+        raise click.Abort()
+    if path and from_file:
+        click.echo("Error: Cannot use both PATH and --from-file", err=True)
+        raise click.Abort()
+
     from arcaneum.cli.index_pdfs import index_pdfs_command
-    index_pdfs_command(path, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, no_gpu, offline, randomize, verbose, debug, output_json)
+    index_pdfs_command(path, from_file, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, no_gpu, offline, randomize, verbose, debug, output_json)
 
 
 @index.command('code')
-@click.argument('path', type=click.Path(exists=True))
+@click.argument('path', type=click.Path(exists=True), required=False)
+@click.option('--from-file', help='Read file paths from list (one per line, or "-" for stdin)')
 @click.option('--collection', required=True, help='Target collection name')
 @click.option('--model', default=None, help='(Deprecated: model is now set at collection creation time) Embedding model to use')
 @click.option('--embedding-batch-size', type=int, default=None, help='Batch size for embedding generation. Auto-tuned for GPU memory if not specified. Larger batches (300-500) improve throughput 10-20%.')
@@ -148,14 +158,23 @@ def index_pdf(path, collection, model, embedding_batch_size, no_ocr, ocr_languag
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 @click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_code(path, collection, model, embedding_batch_size, chunk_size, chunk_overlap, depth, process_priority, not_nice, force, no_gpu, verbose, debug, output_json):
+def index_code(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, depth, process_priority, not_nice, force, no_gpu, verbose, debug, output_json):
     """Index source code"""
+    # Validate that exactly one of path or from_file is provided
+    if not path and not from_file:
+        click.echo("Error: Either PATH or --from-file must be provided", err=True)
+        raise click.Abort()
+    if path and from_file:
+        click.echo("Error: Cannot use both PATH and --from-file", err=True)
+        raise click.Abort()
+
     from arcaneum.cli.index_source import index_source_command
-    index_source_command(path, collection, model, embedding_batch_size, chunk_size, chunk_overlap, depth, process_priority, not_nice, force, no_gpu, verbose, debug, output_json)
+    index_source_command(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, depth, process_priority, not_nice, force, no_gpu, verbose, debug, output_json)
 
 
 @index.command('markdown')
-@click.argument('path', type=click.Path(exists=True))
+@click.argument('path', type=click.Path(exists=True), required=False)
+@click.option('--from-file', help='Read file paths from list (one per line, or "-" for stdin)')
 @click.option('--collection', required=True, help='Target collection name')
 @click.option('--model', default=None, help='(Deprecated: model is now set at collection creation time) Embedding model to use')
 @click.option('--embedding-batch-size', type=int, default=None, help='Batch size for embedding generation. Auto-tuned for GPU memory if not specified. Larger batches (300-500) improve throughput 10-20%.')
@@ -173,10 +192,18 @@ def index_code(path, collection, model, embedding_batch_size, chunk_size, chunk_
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 @click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_markdown(path, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, no_gpu, offline, randomize, verbose, debug, output_json):
+def index_markdown(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, no_gpu, offline, randomize, verbose, debug, output_json):
     """Index markdown files"""
+    # Validate that exactly one of path or from_file is provided
+    if not path and not from_file:
+        click.echo("Error: Either PATH or --from-file must be provided", err=True)
+        raise click.Abort()
+    if path and from_file:
+        click.echo("Error: Cannot use both PATH and --from-file", err=True)
+        raise click.Abort()
+
     from arcaneum.cli.index_markdown import index_markdown_command
-    index_markdown_command(path, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, no_gpu, offline, randomize, verbose, debug, output_json)
+    index_markdown_command(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, no_gpu, offline, randomize, verbose, debug, output_json)
 
 
 @cli.command('store')

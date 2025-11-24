@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 def index_markdown_command(
     path: str,
+    from_file: str,
     collection: str,
     model: str,
     embedding_batch_size: int,
@@ -45,7 +46,8 @@ def index_markdown_command(
     """Index markdown files to Qdrant collection.
 
     Args:
-        path: Directory containing markdown files
+        path: Directory containing markdown files (or None if using from_file)
+        from_file: Path to file containing list of markdown paths, or "-" for stdin
         collection: Target collection name
         model: Embedding model to use
         embedding_batch_size: Batch size for embedding generation
@@ -92,9 +94,22 @@ def index_markdown_command(
     signal.signal(signal.SIGINT, signal_handler)
 
     try:
-        markdown_dir = Path(path)
-        if not markdown_dir.exists():
-            raise ValueError(f"Path does not exist: {path}")
+        # Handle file list if provided
+        file_list = None
+        markdown_dir = None
+
+        if from_file:
+            from .utils import read_file_list
+            # Markdown supports multiple extensions
+            file_list = read_file_list(from_file, allowed_extensions={'.md', '.markdown', '.mdown', '.mkd', '.mkdn'})
+            if not file_list:
+                raise ValueError("No valid markdown files found in the provided list")
+            # Use parent directory of first file as base directory for reporting
+            markdown_dir = file_list[0].parent
+        else:
+            markdown_dir = Path(path)
+            if not markdown_dir.exists():
+                raise ValueError(f"Path does not exist: {path}")
 
         # Initialize Qdrant client early to retrieve model from collection metadata
         from arcaneum.paths import get_models_dir
@@ -228,7 +243,8 @@ def index_markdown_command(
             verbose=verbose,
             chunk_size=model_dict['chunk_size'],
             chunk_overlap=model_dict['chunk_overlap'],
-            recursive=recursive
+            recursive=recursive,
+            file_list=file_list
         )
 
         # Output results

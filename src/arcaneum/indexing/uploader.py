@@ -432,17 +432,20 @@ class PDFBatchUploader:
         model_config: Dict,
         force_reindex: bool = False,
         randomize: bool = False,
-        verbose: bool = False
+        verbose: bool = False,
+        file_list: List[Path] = None
     ) -> Dict:
         """Index PDFs in directory with incremental sync and optional parallel processing.
 
         Args:
-            pdf_dir: Directory containing PDFs
+            pdf_dir: Directory containing PDFs (or base directory for file_list)
             collection_name: Qdrant collection name
             model_name: Embedding model to use
             model_config: Model configuration (chunk_size, overlap, etc.)
             force_reindex: Bypass metadata sync and reindex all files
+            randomize: Randomize file processing order
             verbose: If True, show tqdm progress bar; if False, show per-file progress
+            file_list: Optional list of specific PDF files to index (overrides directory scanning)
 
         Returns:
             Statistics dict with files, chunks, errors counts
@@ -464,9 +467,13 @@ class PDFBatchUploader:
             max_doc_tokens=8000
         )
 
-        # Discover all PDFs
-        all_pdf_files = sorted(pdf_dir.rglob("*.pdf"))
-        logger.info(f"Found {len(all_pdf_files)} total PDF files")
+        # Discover all PDFs (from file_list or directory scanning)
+        if file_list is not None:
+            all_pdf_files = sorted(file_list)
+            logger.info(f"Using {len(all_pdf_files)} PDF files from provided list")
+        else:
+            all_pdf_files = sorted(pdf_dir.rglob("*.pdf"))
+            logger.info(f"Found {len(all_pdf_files)} total PDF files")
 
         # Create set of ALL scanned file paths for duplicate/rename detection
         # This must include BOTH files needing processing AND already indexed files

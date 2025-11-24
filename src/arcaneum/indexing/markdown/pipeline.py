@@ -266,12 +266,13 @@ class MarkdownIndexingPipeline:
         verbose: bool = False,
         chunk_size: int = 512,
         chunk_overlap: int = 50,
-        recursive: bool = True
+        recursive: bool = True,
+        file_list: List[Path] = None
     ) -> Dict:
         """Index markdown files in directory with incremental sync.
 
         Args:
-            markdown_dir: Directory containing markdown files
+            markdown_dir: Directory containing markdown files (or base directory for file_list)
             collection_name: Qdrant collection name
             model_name: Embedding model to use
             model_config: Model configuration
@@ -280,6 +281,8 @@ class MarkdownIndexingPipeline:
             verbose: Show detailed progress
             chunk_size: Target chunk size in tokens
             chunk_overlap: Overlap between chunks in tokens
+            recursive: Search subdirectories recursively (ignored if file_list provided)
+            file_list: Optional list of specific markdown files to index (overrides directory scanning)
 
         Returns:
             Statistics dict with files, chunks, errors counts
@@ -291,9 +294,13 @@ class MarkdownIndexingPipeline:
             preserve_code_blocks=True
         )
 
-        # Discover all markdown files
-        all_markdown_files = self.discovery.discover_files(markdown_dir, recursive=recursive)
-        logger.info(f"Found {len(all_markdown_files)} total markdown files")
+        # Discover all markdown files (from file_list or directory scanning)
+        if file_list is not None:
+            all_markdown_files = sorted(file_list)
+            logger.info(f"Using {len(all_markdown_files)} markdown files from provided list")
+        else:
+            all_markdown_files = self.discovery.discover_files(markdown_dir, recursive=recursive)
+            logger.info(f"Found {len(all_markdown_files)} total markdown files")
 
         # Create set of ALL scanned file paths for duplicate/rename detection
         # This must include BOTH files needing processing AND already indexed files

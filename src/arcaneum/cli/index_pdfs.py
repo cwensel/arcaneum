@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 def index_pdfs_command(
     path: str,
+    from_file: str,
     collection: str,
     model: str,
     embedding_batch_size: int,
@@ -46,7 +47,8 @@ def index_pdfs_command(
     """Index PDF files to Qdrant collection.
 
     Args:
-        path: Directory containing PDF files
+        path: Directory containing PDF files (or None if using from_file)
+        from_file: Path to file containing list of PDF paths, or "-" for stdin
         collection: Target collection name
         model: Embedding model to use
         workers: Number of parallel workers
@@ -111,9 +113,21 @@ def index_pdfs_command(
     signal.signal(signal.SIGINT, signal_handler)
 
     try:
-        pdf_dir = Path(path)
-        if not pdf_dir.exists():
-            raise ValueError(f"Path does not exist: {path}")
+        # Handle file list if provided
+        file_list = None
+        pdf_dir = None
+
+        if from_file:
+            from .utils import read_file_list
+            file_list = read_file_list(from_file, allowed_extensions={'.pdf'})
+            if not file_list:
+                raise ValueError("No valid PDF files found in the provided list")
+            # Use parent directory of first file as base directory for reporting
+            pdf_dir = file_list[0].parent
+        else:
+            pdf_dir = Path(path)
+            if not pdf_dir.exists():
+                raise ValueError(f"Path does not exist: {path}")
 
         # Initialize Qdrant client ONCE and reuse throughout indexing (connection pooling optimization)
         # This avoids TCP connection overhead for each operation
@@ -336,7 +350,8 @@ def index_pdfs_command(
             model_config=model_dict,
             force_reindex=force,
             randomize=randomize,
-            verbose=verbose
+            verbose=verbose,
+            file_list=file_list
         )
 
         # Output results

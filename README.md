@@ -159,7 +159,7 @@ arc store analysis.md --collection Memory \
 # Store from stdin (agent workflow)
 echo "# Research\n\nFindings..." | arc store - --collection Memory
 
-# Content persisted to: ~/.arcaneum/agent-memory/{collection}/
+# Content persisted to: ~/.local/share/arcaneum/agent-memory/{collection}/
 # Enables re-indexing and full-text retrieval
 ```
 
@@ -203,15 +203,21 @@ The `doctor` command checks your environment and guides you through any issues.
 
 ### Data Storage
 
-Arcaneum stores data across two locations:
+Arcaneum stores data in XDG-compliant locations:
 
-**Embedding Models:**
+**Cache (Re-downloadable):**
 
 ```text
-~/.arcaneum/models/     # Auto-downloaded, ~1-2GB per model
+~/.cache/arcaneum/models/     # Embedding models, ~1-2GB per model
 ```
 
-**Vector Database:**
+**Data (User-created):**
+
+```text
+~/.local/share/arcaneum/      # Local databases and indexed content
+```
+
+**Vector Database (Docker):**
 
 Qdrant uses Docker named volumes for data persistence and safety:
 
@@ -222,6 +228,11 @@ qdrant-arcaneum-snapshots  # Backup snapshots
 
 Named volumes store data on a Linux ext4 filesystem inside Docker, providing better
 reliability and performance than bind mounts.
+
+**Legacy Migration:**
+
+If upgrading from an older version with `~/.arcaneum/`, the directory will be
+automatically migrated to XDG-compliant locations on first run.
 
 **Migration Note:** If you're upgrading from bind mounts to named volumes, see
 **[Qdrant Migration Guide](docs/guides/qdrant-migration.md)** for detailed migration

@@ -2,6 +2,7 @@
 
 import sys
 import click
+import os
 from arcaneum import __version__
 from arcaneum.cli.errors import (
     EXIT_SUCCESS,
@@ -22,9 +23,16 @@ if sys.version_info < MIN_PYTHON:
 
 @click.group()
 @click.version_option(version=__version__)
-def cli():
+@click.pass_context
+def cli(ctx):
     """Arcaneum: Semantic and full-text search tools for Qdrant and MeiliSearch"""
-    pass
+    # Run migration from legacy ~/.arcaneum/ to XDG-compliant structure if needed
+    # Only show verbose output if user passed --verbose or similar flags
+    verbose = ctx.parent and ctx.parent.params.get('verbose', False) if ctx.parent else False
+
+    # Auto-migrate silently on first access (only logs errors)
+    from arcaneum.migrations import run_migration_if_needed
+    run_migration_if_needed(verbose=verbose)
 
 
 # Collection management commands (RDR-003)

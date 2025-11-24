@@ -16,6 +16,7 @@ from ..search import (
     format_json_results,
     format_summary
 )
+from ..paths import get_models_dir
 from .errors import InvalidArgumentError, ResourceNotFoundError
 from .utils import create_qdrant_client
 
@@ -65,8 +66,8 @@ def search_command(
         client = create_qdrant_client(for_search=True)
 
         # Initialize embedder
-        # TODO: Make cache dir configurable
-        cache_dir = Path.home() / ".cache" / "arcaneum"
+        # Use same cache directory as index commands for consistency
+        cache_dir = get_models_dir()
         embedder = SearchEmbedder(cache_dir=cache_dir, verify_ssl=True)
 
         # Parse metadata filter if provided

@@ -3,25 +3,28 @@
 import shutil
 import click
 from pathlib import Path
-from arcaneum.paths import get_arcaneum_dir, get_models_dir, get_data_dir
+from arcaneum.paths import get_models_dir, get_data_dir, get_legacy_arcaneum_dir
 from arcaneum.cli.output import print_info, print_success, print_error
 
 
 def show_cache_dir():
-    """Show the cache directory location."""
+    """Show the cache directory location (XDG-compliant structure)."""
     models_dir = get_models_dir()
     data_dir = get_data_dir()
-    arcaneum_dir = get_arcaneum_dir()
+    legacy_dir = get_legacy_arcaneum_dir()
 
-    print_info(f"Arcaneum directories:")
-    print(f"  Root:   {arcaneum_dir}")
-    print(f"  Models: {models_dir}")
-    print(f"  Data:   {data_dir}")
+    print_info(f"Arcaneum directories (XDG-compliant):")
+    print(f"  Cache (models): {models_dir}")
+    print(f"  Data (databases): {data_dir}")
+
+    # Show legacy directory if it exists
+    if legacy_dir.exists():
+        print(f"  Legacy (old): {legacy_dir} [Run any command to auto-migrate]")
 
     # Show sizes if directories exist
     if models_dir.exists():
         size = get_dir_size(models_dir)
-        print(f"  Models size: {format_size(size)}")
+        print(f"  Cache size: {format_size(size)}")
 
     if data_dir.exists():
         size = get_dir_size(data_dir)

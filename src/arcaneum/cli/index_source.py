@@ -82,8 +82,33 @@ def index_source_command(
     set_process_priority(process_priority, disable_worker_nice=not_nice)
 
     # Auto-detect optimal settings
-    actual_embedding_workers = max(1, embedding_workers) if embedding_workers else 1
-    actual_file_workers = max(1, file_workers) if file_workers else 1
+    # Note: File workers is hardcoded to 1 due to embedding lock (arcaneum-6pvk)
+    # Embedding generation is serialized when file_workers > 1 to prevent GPU conflicts
+    actual_file_workers = 1  # Serialized by embedding lock
+    # GPU models ignore embedding_workers (single-threaded is faster)
+    actual_embedding_workers = 1  # GPU: single-threaded optimal
+
+    # Auto-tune batch size if not explicitly set by user
+    if embedding_batch_size is None:
+        if not no_gpu:
+            # GPU mode: auto-tune based on available memory
+            try:
+                from arcaneum.utils.memory import get_gpu_memory_info, estimate_safe_batch_size_v2
+                memory_info = get_gpu_memory_info()
+                if memory_info:
+                    available_bytes = memory_info.get('available', 0)
+                    device_type = memory_info.get('device_type', 'cuda')
+                    embedding_batch_size = estimate_safe_batch_size_v2(
+                        available_memory_bytes=available_bytes,
+                        device_type=device_type
+                    )
+                else:
+                    embedding_batch_size = 256  # Fallback
+            except Exception:
+                embedding_batch_size = 256  # Fallback on error
+        else:
+            # CPU mode: use conservative default
+            embedding_batch_size = 256
 
     # Set up signal handler for Ctrl-C
     def signal_handler(sig, frame):

@@ -24,22 +24,24 @@ Manage Arcaneum configuration and model cache.
 **Execution:**
 
 ```bash
-cd ${CLAUDE_PLUGIN_ROOT}
 arc config $ARGUMENTS
 ```
 
-**Note:** The model cache (~/.arcaneum/models/) stores downloaded embedding models.
+**Note:** The model cache stores downloaded embedding models in XDG-compliant locations.
 First-time indexing downloads ~1-2GB of models which are then reused. I'll show you:
 
 - Current cache directory locations
-- Size of each directory (models, data)
+- Size of each directory
 - Free disk space information
 
 Use clear-cache when models are corrupted or to free disk space (models will
 be re-downloaded on next use).
 
+**Directory Locations (XDG-compliant):**
+
+- Models (cache): `~/.cache/arcaneum/models`
+- Qdrant data: Docker volume `qdrant-arcaneum-storage`
+
 **Related:**
 
-- Models auto-downloaded to ~/.arcaneum/models/
-- Data stored in ~/.arcaneum/data/
 - Implemented in arcaneum-157 and arcaneum-162

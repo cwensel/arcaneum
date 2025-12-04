@@ -8,25 +8,53 @@ This guide explains how to safely test the Arcaneum plugin marketplace in a loca
 - Local clone of the arcaneum repository
 - Python 3.12+ installed
 - Docker running (for Qdrant/MeiliSearch functionality)
+- `arc` CLI installed via pip (`pip install -e .`) - required for commands to work
+
+## Automatic Permission Approval
+
+The Arcaneum plugin includes a PermissionRequest hook that automatically approves
+`arc` commands when the CLI is properly installed:
+
+**How it works:**
+
+1. When Claude Code runs an `arc` command, the hook intercepts the permission request
+2. The hook verifies `arc` is in your PATH (installed via pip)
+3. If found, the command is auto-approved without prompting
+4. If not found, you'll see an error asking you to install via pip
+
+**Location:** `.claude-plugin/hooks/arc-permissions.sh`
+
+**Manual fallback:** If the hook doesn't work, add to `~/.claude/settings.json`:
+
+```json
+{
+  "permissions": {
+    "allow": ["Bash(arc:*)"]
+  }
+}
+```
 
 ## Directory Structure Compliance
 
 Our plugin structure meets Claude Code best practices:
 
-```
+```text
 arcaneum/                           # Plugin root
 ├── .claude-plugin/                 # Plugin metadata (required)
 │   ├── plugin.json                 # Plugin manifest ✓
-│   └── marketplace.json            # Marketplace catalog ✓
+│   ├── marketplace.json            # Marketplace catalog ✓
+│   └── hooks/                      # Permission hooks ✓
+│       └── arc-permissions.sh      # Auto-approve arc commands
 ├── commands/                       # Slash commands at root ✓
-│   ├── create-collection.md
-│   ├── index-pdfs.md
-│   ├── index-source.md
-│   ├── list-collections.md
+│   ├── collection.md
+│   ├── config.md
+│   ├── container.md
+│   ├── corpus.md
+│   ├── doctor.md
+│   ├── index.md
+│   ├── models.md
 │   ├── search.md
-│   ├── search-text.md
-│   ├── create-corpus.md
-│   └── sync-directory.md
+│   └── store.md
 ├── src/arcaneum/                   # Python implementation
 │   ├── cli/                        # CLI commands
 │   ├── indexing/                   # Indexing pipelines
@@ -38,11 +66,13 @@ arcaneum/                           # Plugin root
 ```
 
 **Key Compliance Points:**
+
 - ✅ `commands/` at root level (not nested in `.claude-plugin/`)
 - ✅ All paths in `plugin.json` use relative `./` prefix
 - ✅ `plugin.json` contains required fields (name, version, description)
 - ✅ `marketplace.json` contains owner and plugins array
-- ✅ Uses `${CLAUDE_PLUGIN_ROOT}` in slash commands
+- ✅ PermissionRequest hook auto-approves `arc` commands
+- ✅ Commands run `arc` directly (requires pip install)
 
 ## Local Testing Workflow
 
@@ -199,13 +229,14 @@ python -m json.tool .claude-plugin/marketplace.json > /dev/null && echo "✓ Val
 
 ### Slash Commands
 
-- [ ] All 8 files exist in `commands/` directory
+- [ ] All 9 files exist in `commands/` directory
 - [ ] Each has YAML frontmatter with `description` and `argument-hint`
-- [ ] Each uses `${CLAUDE_PLUGIN_ROOT}` in execution block
+- [ ] Each runs `arc` directly (relies on pip install placing it in PATH)
 - [ ] Each uses `$ARGUMENTS` for parameter passing
 - [ ] Examples are clear and runnable
 
 **Validation Command:**
+
 ```bash
 # Check all commands have frontmatter
 for f in commands/*.md; do
@@ -215,9 +246,9 @@ for f in commands/*.md; do
 done
 echo "✓ All commands have frontmatter"
 
-# Check all use CLAUDE_PLUGIN_ROOT
-if [ $(grep -l "CLAUDE_PLUGIN_ROOT" commands/*.md | wc -l) -eq $(ls commands/*.md | wc -l) ]; then
-  echo "✓ All commands use CLAUDE_PLUGIN_ROOT"
+# Check all run arc directly
+if [ $(grep -l "^arc " commands/*.md | wc -l) -eq $(ls commands/*.md | wc -l) ]; then
+  echo "✓ All commands run arc directly"
 fi
 ```
 
@@ -500,11 +531,15 @@ for f in commands/*.md; do
     head -3 "$f" | grep -q "^description:" || (echo "❌ Missing frontmatter in $f" && exit 1)
 done
 
-# Check CLAUDE_PLUGIN_ROOT usage
-echo "✓ Verifying CLAUDE_PLUGIN_ROOT usage..."
-count=$(grep -l "CLAUDE_PLUGIN_ROOT" commands/*.md | wc -l | tr -d ' ')
+# Check hooks directory exists
+echo "✓ Verifying hooks directory..."
+test -f .claude-plugin/hooks/arc-permissions.sh || (echo "❌ Permission hook missing" && exit 1)
+
+# Check arc commands run directly
+echo "✓ Verifying arc commands run directly..."
+count=$(grep -l "^arc " commands/*.md | wc -l | tr -d ' ')
 total=$(ls commands/*.md | wc -l | tr -d ' ')
-test "$count" -eq "$total" || (echo "❌ Not all commands use CLAUDE_PLUGIN_ROOT" && exit 1)
+test "$count" -eq "$total" || (echo "❌ Not all commands run arc directly" && exit 1)
 
 # Test CLI loads
 echo "✓ Testing CLI loads..."
@@ -634,12 +669,14 @@ This script validates:
 3. Clear any test collections
 4. Reinstall fresh and test
 
-### ❌ Hardcoding Paths
+### ❌ arc Not in PATH
 
-**Problem:** Commands fail when installed to different location.
+**Problem:** Commands fail with "arc not found" error.
 
 **Solution:**
-- Always use `${CLAUDE_PLUGIN_ROOT}` for plugin-relative paths
+
+- Install via pip: `pip install -e /path/to/arcaneum`
+- The PermissionRequest hook will auto-approve when `arc` is found
 - Use `$ARGUMENTS` for user-provided paths
 
 ### ❌ Not Testing All Argument Combinations
@@ -805,7 +842,8 @@ bd create "Search filter syntax unclear in help text" \
 
 - [ ] JSON manifests valid
 - [ ] All commands have frontmatter
-- [ ] ${CLAUDE_PLUGIN_ROOT} used everywhere
+- [ ] Permission hook exists and is executable
+- [ ] `arc` installed via pip and in PATH
 - [ ] CLI loads without errors
 - [ ] Fresh install works
 - [ ] JSON output works

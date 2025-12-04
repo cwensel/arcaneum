@@ -1,16 +1,19 @@
 ---
 description: Manage Qdrant collections
-argument-hint: <create|list|info|delete> [options]
+argument-hint: <create|list|info|delete|items> [name] [options]
 ---
 
 Manage Qdrant vector collections for storing embeddings.
 
-**Subcommands:**
+**IMPORTANT:** You must specify a subcommand (`create`, `list`, `info`, `delete`, or `items`).
 
-- create: Create a new collection with specified embedding model
-- list: List all collections in Qdrant
-- info: Show detailed information about a collection
-- delete: Delete a collection permanently
+**Subcommands (required):**
+
+- `create`: Create a new collection with specified embedding model
+- `list`: List all collections in Qdrant
+- `info`: Show detailed information about a collection
+- `delete`: Delete a collection permanently
+- `items`: List indexed files/repos in a collection
 
 **Common Options:**
 
@@ -28,13 +31,13 @@ Manage Qdrant vector collections for storing embeddings.
 **Execution:**
 
 ```bash
-cd ${CLAUDE_PLUGIN_ROOT}
 arc collection $ARGUMENTS
 ```
 
 **Collection Types:**
 
 Collections should specify a type (pdf or code) to ensure content matches:
+
 - pdf: For document collections (PDFs, text files)
 - code: For source code repositories
 

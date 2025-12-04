@@ -81,7 +81,13 @@ def format_size(bytes: int) -> str:
     return f"{bytes:.1f} PB"
 
 
-@click.group(name='config')
+from arcaneum.cli.errors import HelpfulGroup
+
+
+@click.group(name='config', cls=HelpfulGroup, usage_examples=[
+    'arc config show-cache-dir',
+    'arc config clear-cache --confirm',
+])
 def config_group():
     """Configuration and cache management"""
     pass

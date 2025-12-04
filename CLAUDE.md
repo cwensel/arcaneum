@@ -41,6 +41,24 @@ When creating or modifying markdown files in this project:
 - Fix any linting errors reported by markdownlint
 - Follow the project's markdown style guidelines enforced by markdownlint
 
+## Arc CLI Quick Reference
+
+When asked to search collections, use this exact syntax:
+
+```bash
+# Semantic search (most common)
+arc search semantic "your query" --collection CollectionName
+
+# Full-text search
+arc search text "your query" --index IndexName
+
+# List available collections
+arc collection list
+```
+
+**IMPORTANT:** The subcommand (`semantic` or `text`) must come BEFORE the query.
+Do NOT use `arc search --collection` - that syntax is incorrect.
+
 ## Source Control
 
 We use git to manage the project source. Claude Code has the following restrictions:

@@ -1,15 +1,17 @@
 ---
 description: Index content into collections
-argument-hint: <pdf|code|markdown> [<path> | --from-file <file>] [options]
+argument-hint: <pdf|code|markdown> <path> --collection NAME
 ---
 
 Index PDFs, markdown, or source code into Qdrant collections for semantic search.
 
-**Subcommands:**
+**IMPORTANT:** You must specify a subcommand (`pdf`, `code`, or `markdown`) before the path.
 
-- pdf: Index PDF documents (with OCR support)
-- markdown: Index markdown files (with frontmatter extraction)
-- code: Index source code repositories (git-aware)
+**Subcommands (required):**
+
+- `pdf`: Index PDF documents (with OCR support)
+- `markdown`: Index markdown files (with frontmatter extraction)
+- `code`: Index source code repositories (git-aware)
 
 **Common Options:**
 
@@ -81,7 +83,6 @@ ls ~/notes/*.md | /index markdown --from-file - --collection Notes
 **Execution:**
 
 ```bash
-cd ${CLAUDE_PLUGIN_ROOT}
 arc index $ARGUMENTS
 ```
 

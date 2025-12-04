@@ -12,6 +12,7 @@ from arcaneum.cli.errors import (
     ArcaneumError,
     InvalidArgumentError,
     ResourceNotFoundError,
+    HelpfulGroup,
 )
 
 # Version check (RDR-006: Best practice from Beads)
@@ -36,7 +37,12 @@ def cli(ctx):
 
 
 # Collection management commands (RDR-003)
-@cli.group()
+@cli.group(cls=HelpfulGroup, usage_examples=[
+    'arc collection list',
+    'arc collection create MyCollection --type code',
+    'arc collection info MyCollection',
+    'arc collection delete MyCollection --confirm',
+])
 def collection():
     """Manage Qdrant collections"""
     pass
@@ -95,7 +101,10 @@ def collection_items(name, output_json):
 
 
 # Models commands
-@cli.group()
+@cli.group(cls=HelpfulGroup, usage_examples=[
+    'arc models list',
+    'arc models list --json',
+])
 def models():
     """Manage embedding models"""
     pass
@@ -110,7 +119,11 @@ def list_models(output_json):
 
 
 # Indexing commands (RDR-004, RDR-005)
-@cli.group()
+@cli.group(cls=HelpfulGroup, usage_examples=[
+    'arc index pdf /path/to/pdfs --collection MyPDFs',
+    'arc index code /path/to/repo --collection MyCode',
+    'arc index markdown /path/to/docs --collection MyDocs',
+])
 def index():
     """Index content into collections"""
     pass
@@ -250,7 +263,10 @@ def store(file, collection, model, title, category, tags, metadata, chunk_size, 
 
 
 # Search commands (RDR-007, RDR-012)
-@cli.group()
+@cli.group(cls=HelpfulGroup, usage_examples=[
+    'arc search semantic "your query" --collection CollectionName',
+    'arc search text "your query" --index IndexName',
+])
 def search():
     """Search collections"""
     pass
@@ -287,7 +303,10 @@ def search_text(query, index_name, filter_arg, limit, offset, output_json, verbo
 
 
 # Dual indexing commands (RDR-009)
-@cli.group()
+@cli.group(cls=HelpfulGroup, usage_examples=[
+    'arc corpus create MyCorpus --type code',
+    'arc corpus sync /path/to/files --corpus MyCorpus',
+])
 def corpus():
     """Manage dual-index corpora (Qdrant + MeiliSearch)"""
     pass

@@ -35,7 +35,6 @@ Manage Docker container services for Qdrant and MeiliSearch.
 **Execution:**
 
 ```bash
-cd ${CLAUDE_PLUGIN_ROOT}
 arc container $ARGUMENTS
 ```
 
@@ -47,11 +46,12 @@ helpful error messages if Docker is not running. I'll show you:
 - Data directory locations and sizes
 - Log output for debugging
 
-**Data Locations:**
+**Data Locations (Docker Volumes):**
 
-- Qdrant: ~/.arcaneum/data/qdrant/
-- Snapshots: ~/.arcaneum/data/qdrant_snapshots/
+- Qdrant storage: `qdrant-arcaneum-storage`
+- Qdrant snapshots: `qdrant-arcaneum-snapshots`
 - All data persists across container restarts
+- Use `docker volume ls --filter name=arcaneum` to view volumes
 
 **Related:**
 

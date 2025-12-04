@@ -1,13 +1,15 @@
 ---
 description: Manage embedding models
-argument-hint: <list> [options]
+argument-hint: list [--json]
 ---
 
 Manage and view available embedding models for vector search.
 
-**Subcommands:**
+**IMPORTANT:** You must specify a subcommand (currently only `list` is available).
 
-- list: List all available embedding models with details
+**Subcommands (required):**
+
+- `list`: List all available embedding models with details
 
 **Options:**
 
@@ -23,13 +25,13 @@ Manage and view available embedding models for vector search.
 **Execution:**
 
 ```bash
-cd ${CLAUDE_PLUGIN_ROOT}
 arc models $ARGUMENTS
 ```
 
 **Available Models:**
 
 The list command shows:
+
 - Model name (for --model flags)
 - Dimensions (vector size)
 - Backend (fastembed, sentence-transformers)
@@ -39,15 +41,18 @@ The list command shows:
 **Current Models:**
 
 **For Documents/PDFs:**
+
 - **stella** (1024D): Best for documents, PDFs, general text
 - **bge-large** (1024D): General purpose, high quality
 - **modernbert** (1024D): Newer general-purpose model
 
 **For Source Code:**
+
 - **jina-code** (768D): Optimized for code, cross-language
 - **jina-v2-code** (768D): Alternative code model
 
 **For General Use:**
+
 - **bge** (1024D): High-quality general embeddings
 - **bge-small** (384D): Faster, smaller, lower quality
 
@@ -73,7 +78,8 @@ The list command shows:
 **Downloading Models:**
 
 Models auto-download on first use (~1-2GB):
-- Cached in ~/.arcaneum/models/
+
+- Cached in `~/.cache/arcaneum/models` (XDG-compliant)
 - Reused across indexing operations
 - Use --offline flag to require cached models
 

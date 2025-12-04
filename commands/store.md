@@ -7,7 +7,7 @@ Store agent-generated content (research, analysis, synthesized information) with
 metadata. Content is persisted to disk for re-indexing and full-text retrieval, then
 indexed to Qdrant for semantic search.
 
-**Storage Location:** `~/.arcaneum/agent-memory/{collection}/`
+**Storage Location:** `~/.local/share/arcaneum/agent-memory/{collection}/`
 
 **Options:**
 
@@ -32,7 +32,6 @@ indexed to Qdrant for semantic search.
 **Execution:**
 
 ```bash
-cd ${CLAUDE_PLUGIN_ROOT}
 arc store $ARGUMENTS
 ```
 
@@ -43,7 +42,7 @@ arc store $ARGUMENTS
 3. Semantic chunking preserving document structure
 4. Generate embeddings (stella default: 1024D for documents)
 5. Upload to Qdrant with metadata
-6. Persist to disk: `~/.arcaneum/agent-memory/{collection}/{date}_{agent}_{slug}.md`
+6. Persist to disk: `~/.local/share/arcaneum/agent-memory/{collection}/{date}_{agent}_{slug}.md`
 7. Generate YAML frontmatter with injection metadata (injection_id, injected_at, injected_by)
 
 **Persistence:**

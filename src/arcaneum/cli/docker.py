@@ -88,7 +88,15 @@ def check_qdrant_health():
         return False
 
 
-@click.group(name='container')
+from arcaneum.cli.errors import HelpfulGroup
+
+
+@click.group(name='container', cls=HelpfulGroup, usage_examples=[
+    'arc container start',
+    'arc container stop',
+    'arc container status',
+    'arc container logs -f',
+])
 def container_group():
     """Manage container services (Qdrant, MeiliSearch)"""
     pass

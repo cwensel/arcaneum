@@ -31,7 +31,6 @@ Check that all Arcaneum prerequisites are met and the system is ready for use.
 **Execution:**
 
 ```bash
-cd ${CLAUDE_PLUGIN_ROOT}
 arc doctor $ARGUMENTS
 ```
 

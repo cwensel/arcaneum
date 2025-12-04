@@ -1,17 +1,37 @@
 ---
 description: Search across collections
-argument-hint: <semantic|text> <query> [options]
+argument-hint: semantic "query" --collection NAME
 ---
 
-Search your indexed content using vector-based semantic search or keyword-based full-text search.
+Search your indexed content using semantic search (most common) or full-text search.
 
-**Subcommands:**
+**Quick Start - Most Common Usage:**
 
-- semantic: Vector-based semantic search (Qdrant)
-- text: Keyword-based full-text search (MeiliSearch)
+```bash
+arc search semantic "your query here" --collection CollectionName
+```
+
+**IMPORTANT:** The subcommand (`semantic` or `text`) comes BEFORE the query.
+
+**Subcommands (required):**
+
+- `semantic`: Vector-based semantic search (Qdrant) - use `--collection`
+- `text`: Keyword-based full-text search (MeiliSearch) - use `--index`
+
+**Examples:**
+
+```text
+# Semantic search (most common)
+/arc:search semantic "identity proofing" --collection Standards
+/arc:search semantic "authentication logic" --collection MyCode --limit 5
+
+# Full-text keyword search
+/arc:search text "def authenticate" --index MyCode-fulltext
+```
 
 **Common Options:**
 
+- --collection: Collection to search (required for semantic)
 - --limit: Number of results to return (default: 10)
 - --offset: Number of results to skip for pagination (default: 0)
 - --filter: Metadata filter (key=value or JSON)
@@ -20,7 +40,6 @@ Search your indexed content using vector-based semantic search or keyword-based 
 
 **Semantic Search Options:**
 
-- --collection: Collection to search (required)
 - --vector-name: Vector name (auto-detected if not specified)
 - --score-threshold: Minimum similarity score
 
@@ -28,29 +47,9 @@ Search your indexed content using vector-based semantic search or keyword-based 
 
 - --index: MeiliSearch index name (required)
 
-**Examples:**
-
-```text
-# Basic semantic search
-/search semantic "authentication logic" --collection MyCode --limit 5
-
-# Full-text keyword search
-/search text "def authenticate" --index MyCode-fulltext
-
-# Search with score threshold
-/search semantic "fraud detection patterns" --collection PDFs --score-threshold 0.7
-
-# Pagination: Get second page of results
-/search semantic "machine learning" --collection Papers --limit 10 --offset 10
-
-# Pagination: Get third page with JSON output
-/search semantic "neural networks" --collection Papers --limit 10 --offset 20 --json
-```
-
 **Execution:**
 
 ```bash
-cd ${CLAUDE_PLUGIN_ROOT}
 arc search $ARGUMENTS
 ```
 

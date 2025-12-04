@@ -1,14 +1,16 @@
 ---
 description: Manage dual-index corpora
-argument-hint: <create|sync> [options]
+argument-hint: <create|sync> <name|directory> [options]
 ---
 
 Manage corpora that combine both vector search (Qdrant) and full-text search (MeiliSearch) for the same content.
 
-**Subcommands:**
+**IMPORTANT:** You must specify a subcommand (`create` or `sync`).
 
-- create: Create both Qdrant collection and MeiliSearch index
-- sync: Index directory to both systems simultaneously
+**Subcommands (required):**
+
+- `create`: Create both Qdrant collection and MeiliSearch index
+- `sync`: Index directory to both systems simultaneously
 
 **Common Options:**
 
@@ -39,17 +41,18 @@ Manage corpora that combine both vector search (Qdrant) and full-text search (Me
 **Execution:**
 
 ```bash
-cd ${CLAUDE_PLUGIN_ROOT}
 arc corpus $ARGUMENTS
 ```
 
 **What Is a Corpus?**
 
 A corpus combines two search systems:
+
 1. **Vector search** (Qdrant): Semantic similarity, concept matching
 2. **Full-text search** (MeiliSearch): Keyword, phrase, boolean operators
 
 This enables hybrid search strategies:
+
 - Broad semantic discovery (vector search)
 - Precise keyword refinement (full-text search)
 - Combined results for best of both worlds
@@ -57,12 +60,14 @@ This enables hybrid search strategies:
 **When to Use Corpus vs Collection:**
 
 **Use Corpus When:**
+
 - Need both semantic and keyword search
 - Users search different ways (concepts vs exact terms)
 - Want fast keyword filtering of semantic results
 - Building search UIs with multiple search modes
 
 **Use Collection When:**
+
 - Only need semantic search
 - Working with embeddings/vectors directly
 - Integrating with existing vector workflows
@@ -80,6 +85,7 @@ This enables hybrid search strategies:
 **Performance:**
 
 Corpus sync is approximately 2x slower than single-system indexing due to dual upload, but still efficient:
+
 - PDFs: ~5-15/minute
 - Source files: 50-100 files/second
 

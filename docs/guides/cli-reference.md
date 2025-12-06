@@ -248,7 +248,7 @@ arc index pdf /path/to/pdfs --collection pdf-docs --debug
 
 ## Model Selection
 
-Available models:
+### General Purpose Models
 
 | Model | Dimensions | Best For | Late Chunking |
 |-------|------------|----------|---------------|
@@ -256,6 +256,33 @@ Available models:
 | `bge` | 1024D | Precision, short documents | ❌ |
 | `modernbert` | 768D | Long context, recent content | ✅ |
 | `jina` | 768D | Code + text, multilingual | ✅ |
+
+### Code-Specific Models
+
+**Fastest: `jina-code-0.5b` (Recommended)**
+
+For source code indexing, use specialized code models optimized for programming languages:
+
+| Model | Dimensions | Context | Best For | Notes |
+|-------|------------|---------|----------|-------|
+| `jina-code-0.5b` | 896D | 32K | **Fastest, balanced** | ⚡ SOTA Sept 2025, optimal speed/quality |
+| `jina-code-1.5b` | 1536D | 32K | Highest quality | SOTA Sept 2025, slower but best accuracy |
+| `jina-code` | 768D | 8K | Legacy | v2 model, superseded by above |
+| `codesage-large` | 1024D | - | 9 languages | CodeSage V2, Dec 2024 |
+| `nomic-code` | 3584D | - | 6 languages | 7B params, highest quality, slowest |
+
+**Recommendation:** Use `jina-code-0.5b` for code collections. It provides the best balance of speed and quality
+with 32K context window support.
+
+**Usage:**
+
+```bash
+# Create code collection (uses jina-code-0.5b by default)
+arc collection create MyCode --type code
+
+# Or explicitly specify model
+arc collection create MyCode --type code --model jina-code-0.5b
+```
 
 ## Common Workflows
 

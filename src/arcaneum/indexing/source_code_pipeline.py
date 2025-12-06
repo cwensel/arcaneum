@@ -7,6 +7,7 @@ indexing with metadata-based sync (RDR-005 with RDR-006 progress enhancements).
 
 import logging
 import os
+import time
 from typing import List, Optional, Set
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -26,6 +27,42 @@ from ..monitoring.cpu_stats import create_monitor
 
 logger = logging.getLogger(__name__)
 console = Console()
+
+
+class EmbeddingTimingCollector:
+    """Collects timing metrics during embedding batch processing."""
+
+    def __init__(self):
+        self.batch_times = []
+        self.start_time = None
+        self.total_batches = 0
+
+    def start(self, total_batches: int):
+        """Start timing collection."""
+        self.start_time = time.time()
+        self.total_batches = total_batches
+        self.batch_times = []
+
+    def record_batch(self, batch_idx: int, total_batches: int):
+        """Record completion of a batch."""
+        if self.start_time:
+            elapsed = time.time() - self.start_time
+            self.batch_times.append(elapsed)
+
+    def get_summary(self) -> dict:
+        """Get timing summary."""
+        if not self.batch_times:
+            return {"total_time": 0, "avg_per_batch": 0, "num_batches": 0}
+
+        total_time = self.batch_times[-1] if self.batch_times else 0
+        num_batches = len(self.batch_times)
+        avg_per_batch = total_time / num_batches if num_batches > 0 else 0
+
+        return {
+            "total_time": total_time,
+            "avg_per_batch": avg_per_batch,
+            "num_batches": num_batches
+        }
 
 
 def _process_file_worker(
@@ -462,6 +499,11 @@ class SourceCodeIndexer:
 
         total_files = len(files)
 
+        # Show project header in verbose mode
+        if verbose:
+            console.print(f"\n[{project_num}/{total_projects}] {identifier}")
+            console.print(f"  → processing files ({total_files} files found)")
+
         # Process files in parallel using ProcessPoolExecutor (RDR-013 Phase 2)
         # Default: cpu_count // 2 for responsive laptop
         all_chunks = []
@@ -518,6 +560,10 @@ class SourceCodeIndexer:
 
         self.stats["files_processed"] += files_processed
 
+        # Show chunking status in verbose mode
+        if verbose:
+            console.print(f"  → chunking ({len(all_chunks)} chunks created)")
+
         if not all_chunks:
             logger.info(f"No chunks created for {identifier}")
             return
@@ -525,11 +571,12 @@ class SourceCodeIndexer:
         self.stats["chunks_created"] += len(all_chunks)
 
         # Generate embeddings in parallel batches (Phase 2 RDR-013)
-        # Using embed_parallel() for 2-4x speedup with ThreadPoolExecutor
         total_chunks = len(all_chunks)
 
         # Show embedding progress
-        if not verbose:
+        if verbose:
+            console.print(f"  → embedding ({total_chunks} chunks)")
+        else:
             print(
                 f"\r[{project_num}/{total_projects}] {identifier}: "
                 f"→ embedding {total_chunks} chunks (parallel)" + " " * 30,
@@ -538,21 +585,39 @@ class SourceCodeIndexer:
                 file=sys.stdout
             )
 
+        # Create timing collector for verbose mode
+        timing_collector = None
+        if verbose:
+            timing_collector = EmbeddingTimingCollector()
+            total_batches = (total_chunks + self.embedding_batch_size - 1) // self.embedding_batch_size
+            timing_collector.start(total_batches)
+
         # Embed all texts in parallel
         texts = [chunk.content for chunk in all_chunks]
         all_embeddings = self.embedding_client.embed_parallel(
             texts,
             self.embedding_model_id,
             max_workers=self.embedding_workers,
-            batch_size=self.embedding_batch_size
+            batch_size=self.embedding_batch_size,
+            progress_callback=timing_collector.record_batch if timing_collector else None
         )
+
+        # Show timing summary in verbose mode
+        if verbose and timing_collector:
+            timing = timing_collector.get_summary()
+            console.print(
+                f"     embedded {total_chunks} chunks in {timing['total_time']:.2f}s "
+                f"({timing['num_batches']} batches, {timing['avg_per_batch']:.2f}s/batch)"
+            )
 
         # Attach embeddings to chunks
         for chunk, embedding in zip(all_chunks, all_embeddings):
             chunk.embedding = embedding  # Already a list from EmbeddingClient
 
         # Show upload progress
-        if not verbose:
+        if verbose:
+            console.print(f"  → uploading ({total_files} files, {len(all_chunks)} chunks)")
+        else:
             print(
                 f"\r[{project_num}/{total_projects}] {identifier}: "
                 f"→ uploading ({total_files} files, {len(all_chunks)} chunks)" + " " * 20,
@@ -574,21 +639,17 @@ class SourceCodeIndexer:
         project_files = self.stats["files_processed"] - initial_files
         project_chunks = self.stats["chunks_created"] - initial_chunks
 
-        # Final status line (overwrites progress)
-        if not verbose:
+        # Final status line
+        if verbose:
+            console.print(f"  ✓ complete ({project_files} files, {project_chunks} chunks)")
+        else:
             print(
                 f"\r[{project_num}/{total_projects}] {identifier}: "
                 f"✓ ({project_files} files, {project_chunks} chunks)" + " " * 30,
                 flush=True,
                 file=sys.stdout
             )
-            # Move to next line for next project
             print()
-        else:
-            logger.info(
-                f"Indexed {identifier}: {project_files} files, "
-                f"{project_chunks} chunks, {uploaded} uploaded"
-            )
 
     def reset_stats(self):
         """Reset statistics counters."""

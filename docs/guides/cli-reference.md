@@ -26,6 +26,7 @@ arc <command> [options]
 arc collection create <name> --model <model>  # Create Qdrant collection
 arc collection list                          # List all collections
 arc collection info <name>                    # Show collection details
+arc collection items <name>                   # List indexed files/repos
 arc collection delete <name>                  # Delete collection
 ```
 
@@ -116,6 +117,75 @@ arc collection delete pdf-docs
 # Skip confirmation
 arc collection delete pdf-docs --confirm
 ```
+
+### List Collection Items
+
+List all indexed files or repositories in a collection:
+
+```bash
+# Human-readable table output
+arc collection items MyCode
+
+# JSON output for automation
+arc collection items MyCode --json
+```
+
+**Features:**
+
+- **Type-aware output**: Different displays for code vs PDF/markdown collections
+- **Metadata included**: File sizes, chunk counts, git information
+- **Deduplication**: Shows unique files/repos (not individual chunks)
+- **Efficient**: Batched retrieval for large collections
+
+**Code Collections Output:**
+
+Shows repositories with git metadata:
+
+| Project | Branch | Commit | Chunks |
+|---------|--------|--------|--------|
+| my-app | main | a1b2c3d4e5f6 | 1,532 |
+| my-lib | develop | f6e5d4c3b2a1 | 847 |
+
+**PDF/Markdown Collections Output:**
+
+Shows files with size information:
+
+| File | Size | Chunks |
+|------|------|--------|
+| research-paper.pdf | 2.3MB | 42 |
+| documentation.md | 15.2KB | 8 |
+
+**JSON Output Format:**
+
+```json
+{
+  "status": "success",
+  "message": "Found 2 items in collection 'MyCode'",
+  "data": {
+    "collection": "MyCode",
+    "type": "code",
+    "item_count": 2,
+    "items": [
+      {
+        "git_project_name": "my-app",
+        "git_project_identifier": "/path/to/my-app",
+        "git_branch": "main",
+        "git_commit_hash": "a1b2c3d4e5f6",
+        "git_remote_url": "https://github.com/user/my-app",
+        "chunk_count": 1532
+      }
+    ]
+  }
+}
+```
+
+**Use Cases:**
+
+- Verify indexing completed successfully
+- Audit collection contents
+- Check which branches are indexed
+- Count total chunks per file/repo
+- Export collection metadata for reporting
 
 ## PDF Indexing Examples
 
@@ -255,7 +325,9 @@ Additional options for `arc index` commands:
 - `--process-priority low|normal|high`: Process scheduling priority [default: normal]
   - Use `low` for background indexing to avoid blocking foreground tasks
 
-**Note on Parallelism:** File and embedding worker flags were removed because they provided minimal benefit due to the embedding lock (required for GPU thread-safety). The single-threaded embedding approach with larger batches is actually more efficient. Use `--embedding-batch-size` for throughput tuning.
+**Note on Parallelism:** File and embedding worker flags were removed because they provided minimal benefit
+due to the embedding lock (required for GPU thread-safety). The single-threaded embedding approach with
+larger batches is actually more efficient. Use `--embedding-batch-size` for throughput tuning.
 
 ### GPU Acceleration
 

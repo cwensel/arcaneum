@@ -99,6 +99,9 @@ arc collection create MyCode --type code
 # Index your project (git-aware, multi-branch)
 arc index code ~/projects/my-app --collection MyCode
 
+# List what's indexed
+arc collection items MyCode
+
 # Search semantically
 arc search semantic "authentication middleware" --collection MyCode --limit 10
 ```

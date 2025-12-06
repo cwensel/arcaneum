@@ -145,6 +145,9 @@ arc collection list
 # Show collection details
 arc collection info MyCode
 
+# List what's indexed in a collection
+arc collection items MyCode
+
 # Check container status
 arc container status
 
@@ -369,6 +372,7 @@ arc container status         # Check status
 # Collections
 arc collection list                    # List all collections
 arc collection create NAME --model MODEL --type TYPE
+arc collection items NAME              # List indexed files/repos
 arc collection delete NAME --confirm
 
 # Indexing

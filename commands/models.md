@@ -48,8 +48,11 @@ The list command shows:
 
 **For Source Code:**
 
-- **jina-code** (768D): Optimized for code, cross-language
-- **jina-v2-code** (768D): Alternative code model
+- **jina-code-0.5b** (896D): **RECOMMENDED** - SOTA Sept 2025, 32K context, fast (default)
+- **jina-code-1.5b** (1536D): SOTA Sept 2025, 32K context, highest quality
+- **codesage-large** (1024D): CodeSage V2, Dec 2024, 9 languages
+- **jina-code** (768D): Legacy v2 model, 8K context
+- **nomic-code** (3584D): 7B params, 6 languages, slower but comprehensive
 
 **For General Use:**
 
@@ -60,7 +63,7 @@ The list command shows:
 
 1. **Match content type:**
    - PDFs/docs → stella or modernbert
-   - Source code → jina-code
+   - Source code → jina-code-0.5b (fast) or jina-code-1.5b (quality)
    - Mixed → stella or bge
 
 2. **Consider dimensions:**
@@ -86,6 +89,10 @@ Models auto-download on first use (~1-2GB):
 **Pre-download for offline use:**
 
 ```bash
+# Download the recommended code model
+python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('jinaai/jina-code-embeddings-0.5b')"
+
+# Or the legacy v2 model
 python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('jinaai/jina-embeddings-v2-base-code')"
 ```
 

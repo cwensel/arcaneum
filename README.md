@@ -30,7 +30,9 @@ documents and source code with git-aware, AST-based chunking.
 ### Multiple Embedding Models
 
 - **stella** (1024D) - High-quality general purpose embeddings, optimized for PDFs and documents
-- **jina-code** (768D) - Code-specific embeddings, optimized for source code analysis
+- **jina-code-0.5b** (896D) - **RECOMMENDED** for code - SOTA Sept 2025, 32K context, fast (default)
+- **jina-code-1.5b** (1536D) - Highest quality code embeddings, SOTA Sept 2025
+- **codesage-large** (1024D) - CodeSage V2, 9 programming languages
 - **bge-large** (1024D) - BGE large embeddings, balanced performance
 - **jina-v3** (1024D) - Multilingual embeddings with extended 8K context
 - **bge-base** (768D) - BGE base embeddings, balanced performance and speed

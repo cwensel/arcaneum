@@ -65,13 +65,13 @@ def create_collection_command(
             if collection_type is None:
                 raise InvalidArgumentError(
                     "Either --model must be specified, or --type must be specified to infer the model. "
-                    "Model inference works with: --type pdf (stella), --type code (jina-code), --type markdown (stella)"
+                    "Model inference works with: --type pdf (stella), --type code (jina-code-0.5b), --type markdown (stella)"
                 )
 
             # Map collection type to default model
             type_to_model = {
                 "pdf": "stella",
-                "code": "jina-code",
+                "code": "jina-code-0.5b",  # Updated to SOTA Sept 2025 model (896D, 32K context)
                 "markdown": "stella"
             }
             model = type_to_model.get(collection_type)

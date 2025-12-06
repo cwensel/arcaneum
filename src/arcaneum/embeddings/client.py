@@ -21,7 +21,39 @@ EMBEDDING_MODELS = {
         "name": "jinaai/jina-embeddings-v2-base-code",
         "dimensions": 768,
         "backend": "sentence-transformers",
-        "description": "Code-specific (768D, 8K context, best for source code)",
+        "description": "Code-specific (768D, 8K context, legacy v2 model)",
+        "available": True,
+        "recommended_for": "code"
+    },
+    "jina-code-0.5b": {
+        "name": "jinaai/jina-code-embeddings-0.5b",
+        "dimensions": 896,
+        "backend": "sentence-transformers",
+        "description": "Code-specific SOTA (896D, 32K context, Sept 2025, fast)",
+        "available": True,
+        "recommended_for": "code"
+    },
+    "jina-code-1.5b": {
+        "name": "jinaai/jina-code-embeddings-1.5b",
+        "dimensions": 1536,
+        "backend": "sentence-transformers",
+        "description": "Code-specific SOTA (1536D, 32K context, Sept 2025, highest quality)",
+        "available": True,
+        "recommended_for": "code"
+    },
+    "codesage-large": {
+        "name": "codesage/codesage-large",
+        "dimensions": 1024,
+        "backend": "sentence-transformers",
+        "description": "CodeSage V2 (1024D, 9 languages, Dec 2024)",
+        "available": True,
+        "recommended_for": "code"
+    },
+    "nomic-code": {
+        "name": "nomic-ai/nomic-embed-code",
+        "dimensions": 3584,
+        "backend": "sentence-transformers",
+        "description": "Nomic Code (3584D, 7B params, 6 languages, 2025)",
         "available": True,
         "recommended_for": "code"
     },

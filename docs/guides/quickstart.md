@@ -89,8 +89,8 @@ Example output:
 ```text
 Source Code Indexing Configuration
   Collection: MyCode (type: code)
-  Embedding: jinaai/jina-embeddings-v2-base-code
-  Vector: jina-code
+  Embedding: jinaai/jina-code-embeddings-0.5b
+  Vector: jina-code-0.5b
 
 Git discovery completed: 1 repos, 3 branches
 Indexed 247 files → 1,532 chunks
@@ -250,7 +250,7 @@ arc collection list
 
 # Delete and recreate
 arc collection delete MyCode --confirm
-arc collection create MyCode --model jina-code --type code
+arc collection create MyCode --model jina-code-0.5b --type code
 ```
 
 ### No Search Results
@@ -287,7 +287,7 @@ All `arc` commands are available as slash commands:
 
 ```text
 /doctor
-/collection create MyCode --model jina-code --type code
+/collection create MyCode --model jina-code-0.5b --type code
 /index code ~/my-project --collection MyCode
 /search semantic "authentication logic" --collection MyCode
 ```

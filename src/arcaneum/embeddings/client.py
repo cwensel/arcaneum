@@ -542,9 +542,17 @@ class EmbeddingClient:
         if self.use_gpu:
             # Sequential batch processing: one batch completes before next begins
             # GPU hardware processes all N chunks in a batch simultaneously
-            all_embeddings = []
+            #
+            # Memory optimization: Pre-allocate numpy array instead of list.extend()
+            # List.extend() over-allocates by 25-50% during growth, causing memory bloat.
+            # Pre-allocation uses exact memory needed. (arcaneum-q6by)
+            import numpy as np
+            dim = self.get_dimensions(model_name)
+            all_embeddings = np.zeros((len(texts), dim), dtype=np.float32)
+
             total_batches = (len(texts) + batch_size - 1) // batch_size
             batch_idx = 0
+            offset = 0
             for start_idx in range(0, len(texts), batch_size):
                 batch_start_time = time.time()
                 end_idx = min(start_idx + batch_size, len(texts))
@@ -553,7 +561,11 @@ class EmbeddingClient:
                 batch_embeddings = self.embed(batch_texts, model_name, batch_size=batch_size)
                 batch_elapsed = time.time() - batch_start_time
                 logger.debug(f"Batch {batch_idx + 1}/{total_batches}: {actual_batch_size} chunks embedded in {batch_elapsed:.2f}s ({actual_batch_size/batch_elapsed:.1f} chunks/s)")
-                all_embeddings.extend(batch_embeddings)
+
+                # Fill pre-allocated array in place (no list over-allocation)
+                all_embeddings[offset:offset + actual_batch_size] = batch_embeddings
+                offset += actual_batch_size
+
                 batch_idx += 1
                 if progress_callback:
                     progress_callback(batch_idx, total_batches)
@@ -602,6 +614,13 @@ class EmbeddingClient:
                         logger.error(f"Batch {start_idx}-{end_idx} failed: {e}")
                         # Fill with None to indicate failure
                         all_embeddings[start_idx:end_idx] = [None] * (end_idx - start_idx)
+
+            # Memory cleanup: Clear futures dictionary to release references (arcaneum-64yl)
+            # Future objects hold references to results and callbacks that prevent GC
+            del future_to_batch
+            del batches
+            import gc
+            gc.collect()
 
             # Check for any failures (handle both list and numpy array cases)
             failed_indices = [i for i, emb in enumerate(all_embeddings) if emb is None]

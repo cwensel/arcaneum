@@ -24,6 +24,7 @@ from .ast_chunker import ASTCodeChunker
 from .qdrant_indexer import QdrantIndexer
 from .types import CodeChunk, CodeChunkMetadata, GitMetadata
 from ..monitoring.cpu_stats import create_monitor
+from ..monitoring.pipeline_profiler import PipelineProfiler
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -242,7 +243,8 @@ class SourceCodeIndexer:
         force: bool = False,
         show_progress: bool = True,
         verbose: bool = False,
-        file_list: Optional[List] = None
+        file_list: Optional[List] = None,
+        profile: bool = False
     ) -> dict:
         """Index all git repositories in directory with metadata-based sync.
 
@@ -255,6 +257,7 @@ class SourceCodeIndexer:
             verbose: If True, show detailed output
             file_list: Optional list of source files to index (Note: Limited support for code indexing.
                       Code indexing is git-centric and works best with git repositories.)
+            profile: If True, show pipeline performance profiling (stage breakdown, throughput)
 
         Returns:
             Dictionary with indexing statistics
@@ -272,6 +275,11 @@ class SourceCodeIndexer:
         cpu_monitor = create_monitor()
         if cpu_monitor:
             cpu_monitor.start()
+
+        # Initialize pipeline profiler if requested
+        profiler = PipelineProfiler() if profile else None
+        if profiler:
+            profiler.start()
 
         # Warn if file_list is provided (limited support for code indexing)
         if file_list is not None:
@@ -412,10 +420,15 @@ class SourceCodeIndexer:
                 collection_name,
                 verbose=verbose,
                 project_num=idx,
-                total_projects=total_projects
+                total_projects=total_projects,
+                profiler=profiler
             )
 
             # Stats are now shown in _index_project final line
+
+        # Stop profiler
+        if profiler:
+            profiler.stop()
 
         # Report final statistics
         if verbose:
@@ -437,6 +450,10 @@ class SourceCodeIndexer:
                 console.print(f"  CPU usage: {stats['cpu_percent']:.1f}% total ({stats['cpu_percent_per_core']:.1f}% per core)")
                 console.print(f"  Threads: {stats['num_threads']} | Cores: {stats['num_cores']}")
                 console.print(f"  Elapsed: {stats['elapsed_time']:.1f}s")
+
+            # Show pipeline profiling report if enabled
+            if profiler:
+                console.print(f"\n{profiler.report()}")
         else:
             # RDR-006: Structured completion message
             msg = f"\n[INFO] Complete: {self.stats['projects_indexed']} projects, "
@@ -453,6 +470,10 @@ class SourceCodeIndexer:
             if cpu_monitor:
                 console.print(f"[INFO] {cpu_monitor.get_summary()}")
 
+            # Show pipeline profiling in compact mode if enabled
+            if profiler:
+                console.print(f"[INFO] {profiler.get_compact_summary()}")
+
         return self.stats
 
     def _index_project(
@@ -463,7 +484,8 @@ class SourceCodeIndexer:
         collection_name: str,
         verbose: bool = False,
         project_num: int = 1,
-        total_projects: int = 1
+        total_projects: int = 1,
+        profiler: Optional[PipelineProfiler] = None
     ):
         """Index a single project.
 
@@ -475,6 +497,7 @@ class SourceCodeIndexer:
             verbose: If True, show detailed progress
             project_num: Current project number (for progress display)
             total_projects: Total number of projects
+            profiler: Optional pipeline profiler for stage timing
         """
         # Track initial stats for this project
         initial_files = self.stats["files_processed"]
@@ -519,6 +542,9 @@ class SourceCodeIndexer:
                 file=sys.stdout
             )
 
+        # Track file processing time for profiler
+        file_processing_start = time.time()
+
         with ProcessPoolExecutor(max_workers=self.parallel_workers) as executor:
             # Submit all file processing jobs
             future_to_file = {}
@@ -558,6 +584,14 @@ class SourceCodeIndexer:
                     logger.error(f"Error processing {file_path}: {e}")
                     continue
 
+        # Memory cleanup: Clear futures dictionary after ProcessPoolExecutor (arcaneum-b8lg)
+        # Future objects hold references to worker results that prevent GC
+        del future_to_file
+
+        # Record file processing stage timing
+        if profiler:
+            profiler.record_stage("file_processing", time.time() - file_processing_start, files_processed)
+
         self.stats["files_processed"] += files_processed
 
         # Show chunking status in verbose mode
@@ -592,6 +626,9 @@ class SourceCodeIndexer:
             total_batches = (total_chunks + self.embedding_batch_size - 1) // self.embedding_batch_size
             timing_collector.start(total_batches)
 
+        # Track embedding time for profiler
+        embedding_start = time.time()
+
         # Embed all texts in parallel
         texts = [chunk.content for chunk in all_chunks]
         all_embeddings = self.embedding_client.embed_parallel(
@@ -601,6 +638,10 @@ class SourceCodeIndexer:
             batch_size=self.embedding_batch_size,
             progress_callback=timing_collector.record_batch if timing_collector else None
         )
+
+        # Record embedding stage timing
+        if profiler:
+            profiler.record_stage("embedding", time.time() - embedding_start, total_chunks)
 
         # Show timing summary in verbose mode
         if verbose and timing_collector:
@@ -626,14 +667,32 @@ class SourceCodeIndexer:
                 file=sys.stdout
             )
 
-        # Upload to Qdrant
+        # Track upload time for profiler
+        upload_start = time.time()
+
+        # Upload to Qdrant with bulk mode for 1.3-1.5x speedup (RDR-013 Phase 1)
+        # Bulk mode disables HNSW indexing during upload, rebuilds after completion
         uploaded = self.qdrant_indexer.upload_chunks(
             collection_name,
             all_chunks,
-            vector_name=self.vector_name
+            vector_name=self.vector_name,
+            bulk_mode=True
         )
+
+        # Record upload stage timing
+        if profiler:
+            profiler.record_stage("upload", time.time() - upload_start, uploaded)
+
         self.stats["chunks_uploaded"] += uploaded
         self.stats["projects_indexed"] += 1
+
+        # Memory cleanup: Release large data structures after upload (arcaneum-b8lg)
+        # These can hold 100MB+ for large projects, preventing GC between projects
+        del all_chunks
+        del texts
+        del all_embeddings
+        import gc
+        gc.collect()
 
         # Calculate files/chunks for this project
         project_files = self.stats["files_processed"] - initial_files

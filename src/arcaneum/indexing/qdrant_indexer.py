@@ -235,8 +235,6 @@ class QdrantIndexer:
                 )
                 total_uploaded += uploaded
 
-            logger.info(f"Uploaded {total_uploaded} chunks in {(total_uploaded + self.batch_size - 1) // self.batch_size} batches")
-
         finally:
             # Always disable bulk mode if it was enabled
             if bulk_mode:
@@ -355,8 +353,6 @@ class QdrantIndexer:
         Args:
             collection_name: Name of collection
         """
-        logger.info(f"Enabling bulk mode for {collection_name}")
-
         try:
             self.client.update_collection(
                 collection_name=collection_name,
@@ -364,8 +360,6 @@ class QdrantIndexer:
                     indexing_threshold=0  # Disable indexing during upload
                 )
             )
-            logger.info(f"Bulk mode enabled for {collection_name}")
-
         except Exception as e:
             logger.error(f"Error enabling bulk mode: {e}")
             raise
@@ -379,8 +373,6 @@ class QdrantIndexer:
         Args:
             collection_name: Name of collection
         """
-        logger.info(f"Disabling bulk mode for {collection_name}, rebuilding index...")
-
         try:
             self.client.update_collection(
                 collection_name=collection_name,
@@ -388,8 +380,6 @@ class QdrantIndexer:
                     indexing_threshold=20000  # Restore default
                 )
             )
-            logger.info(f"Bulk mode disabled for {collection_name}, index rebuild complete")
-
         except Exception as e:
             logger.error(f"Error disabling bulk mode: {e}")
             raise

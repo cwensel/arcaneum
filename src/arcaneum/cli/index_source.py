@@ -41,6 +41,7 @@ def index_source_command(
     no_gpu: bool,
     verbose: bool,
     debug: bool,
+    profile: bool,
     output_json: bool
 ):
     """Index source code to Qdrant collection (from RDR-005).
@@ -60,6 +61,7 @@ def index_source_command(
         no_gpu: Disable GPU acceleration (use CPU only)
         verbose: Verbose output
         debug: Debug mode (show all library warnings)
+        profile: Show pipeline performance profiling
         output_json: Output JSON format
 
     Note:
@@ -299,7 +301,8 @@ def index_source_command(
             force=force,
             show_progress=verbose,
             verbose=verbose,
-            file_list=file_list
+            file_list=file_list,
+            profile=profile
         )
 
         # Output

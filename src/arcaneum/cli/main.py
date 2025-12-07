@@ -41,6 +41,7 @@ def cli(ctx):
     'arc collection list',
     'arc collection create MyCollection --type code',
     'arc collection info MyCollection',
+    'arc collection verify MyCollection',
     'arc collection delete MyCollection --confirm',
 ])
 def collection():
@@ -99,6 +100,26 @@ def collection_items(name, output_json):
     items_collection_command(name, output_json)
 
 
+@collection.command('verify')
+@click.argument('name')
+@click.option('--project', help='Verify specific project identifier only (code collections)')
+@click.option('--verbose', '-v', is_flag=True, help='Show detailed file-level results')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def collection_verify(name, project, verbose, output_json):
+    """Verify collection integrity (fsck-like check).
+
+    Scans the collection to detect items with incomplete chunk sets.
+    For code collections, verifies all files in each repo have complete chunks.
+    For PDF/markdown, verifies all file chunks are present.
+
+    Examples:
+      arc collection verify MyCode
+      arc collection verify MyCode --project myrepo#main
+      arc collection verify MyPDFs --verbose
+    """
+    from arcaneum.cli.collections import verify_collection_command
+    verify_collection_command(name, project, verbose, output_json)
+
 
 # Models commands
 @cli.group(cls=HelpfulGroup, usage_examples=[
@@ -146,10 +167,11 @@ def index():
 @click.option('--no-gpu', is_flag=True, help='Disable GPU acceleration (use CPU only, 2-3x slower)')
 @click.option('--offline', is_flag=True, help='Offline mode (use cached models only, no network)')
 @click.option('--randomize', is_flag=True, help='Randomize file processing order (useful for parallel indexing)')
+@click.option('--verify', is_flag=True, help='Verify collection integrity after indexing (fsck-like check)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 @click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_pdf(path, from_file, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, no_gpu, offline, randomize, verbose, debug, output_json):
+def index_pdf(path, from_file, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, no_gpu, offline, randomize, verify, verbose, debug, output_json):
     """Index PDF files"""
     # Validate that exactly one of path or from_file is provided
     if not path and not from_file:
@@ -160,7 +182,7 @@ def index_pdf(path, from_file, collection, model, embedding_batch_size, no_ocr, 
         raise click.Abort()
 
     from arcaneum.cli.index_pdfs import index_pdfs_command
-    index_pdfs_command(path, from_file, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, no_gpu, offline, randomize, verbose, debug, output_json)
+    index_pdfs_command(path, from_file, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, no_gpu, offline, randomize, verify, verbose, debug, output_json)
 
 
 @index.command('code')
@@ -176,11 +198,12 @@ def index_pdf(path, from_file, collection, model, embedding_batch_size, no_ocr, 
 @click.option('--not-nice', is_flag=True, help='Disable process priority reduction for worker processes (use normal priority)')
 @click.option('--force', is_flag=True, help='Force reindex all projects')
 @click.option('--no-gpu', is_flag=True, help='Disable GPU acceleration (use CPU only, 2-3x slower)')
+@click.option('--verify', is_flag=True, help='Verify and repair incomplete items after indexing (fsck-like check)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 @click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
 @click.option('--profile', is_flag=True, help='Show pipeline performance profiling (stage breakdown, throughput)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_code(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, depth, process_priority, not_nice, force, no_gpu, verbose, debug, profile, output_json):
+def index_code(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, depth, process_priority, not_nice, force, no_gpu, verify, verbose, debug, profile, output_json):
     """Index source code"""
     # Validate that exactly one of path or from_file is provided
     if not path and not from_file:
@@ -191,7 +214,7 @@ def index_code(path, from_file, collection, model, embedding_batch_size, chunk_s
         raise click.Abort()
 
     from arcaneum.cli.index_source import index_source_command
-    index_source_command(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, depth, process_priority, not_nice, force, no_gpu, verbose, debug, profile, output_json)
+    index_source_command(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, depth, process_priority, not_nice, force, no_gpu, verify, verbose, debug, profile, output_json)
 
 
 @index.command('markdown')
@@ -211,10 +234,11 @@ def index_code(path, from_file, collection, model, embedding_batch_size, chunk_s
 @click.option('--no-gpu', is_flag=True, help='Disable GPU acceleration (use CPU only, 2-3x slower)')
 @click.option('--offline', is_flag=True, help='Offline mode (use cached models only, no network)')
 @click.option('--randomize', is_flag=True, help='Randomize file processing order (useful for parallel indexing)')
+@click.option('--verify', is_flag=True, help='Verify collection integrity after indexing (fsck-like check)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 @click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_markdown(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, no_gpu, offline, randomize, verbose, debug, output_json):
+def index_markdown(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, no_gpu, offline, randomize, verify, verbose, debug, output_json):
     """Index markdown files"""
     # Validate that exactly one of path or from_file is provided
     if not path and not from_file:
@@ -225,7 +249,7 @@ def index_markdown(path, from_file, collection, model, embedding_batch_size, chu
         raise click.Abort()
 
     from arcaneum.cli.index_markdown import index_markdown_command
-    index_markdown_command(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, no_gpu, offline, randomize, verbose, debug, output_json)
+    index_markdown_command(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, no_gpu, offline, randomize, verify, verbose, debug, output_json)
 
 
 @cli.command('store')

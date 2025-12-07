@@ -40,6 +40,7 @@ def index_pdfs_command(
     no_gpu: bool,
     offline: bool,
     randomize: bool,
+    verify: bool,
     verbose: bool,
     debug: bool,
     output_json: bool
@@ -64,6 +65,7 @@ def index_pdfs_command(
         force: Force reindex all files
         no_gpu: Disable GPU acceleration (use CPU only)
         offline: Use cached models only (no network calls)
+        verify: Verify collection integrity after indexing
         verbose: Verbose output
         debug: Debug mode (show all library warnings)
         output_json: Output JSON format
@@ -353,6 +355,37 @@ def index_pdfs_command(
             verbose=verbose,
             file_list=file_list
         )
+
+        # Post-verify if requested
+        verification_result = None
+        if verify:
+            from arcaneum.indexing.verify import CollectionVerifier
+
+            if not output_json:
+                console.print("\n[dim]Verifying collection integrity...[/dim]")
+
+            verifier = CollectionVerifier(qdrant)
+            verification_result = verifier.verify_collection(collection, verbose=verbose)
+
+            if verification_result.is_healthy:
+                if not output_json:
+                    console.print(f"[green]✓ Collection verified - all {verification_result.complete_items} files complete[/green]")
+            else:
+                incomplete = verification_result.get_items_needing_repair()
+                if not output_json:
+                    console.print(f"[yellow]⚠ Found {len(incomplete)} incomplete files[/yellow]")
+                    for item in incomplete[:5]:
+                        console.print(f"  [yellow]{item}[/yellow]")
+                    if len(incomplete) > 5:
+                        console.print(f"  [dim]... and {len(incomplete) - 5} more[/dim]")
+                    console.print("[dim]Re-run with --force to repair incomplete files[/dim]")
+
+            stats["verification"] = {
+                "is_healthy": verification_result.is_healthy,
+                "total_files": verification_result.total_items,
+                "complete_files": verification_result.complete_items,
+                "incomplete_files": verification_result.incomplete_items,
+            }
 
         # Output results
         if output_json:

@@ -454,3 +454,159 @@ def items_collection_command(name: str, output_json: bool):
         sys.exit(1)
 
 
+def verify_collection_command(
+    name: str,
+    project: str | None,
+    verbose: bool,
+    output_json: bool,
+):
+    """Verify collection integrity (fsck-like check).
+
+    Args:
+        name: Collection name
+        project: Optional project identifier filter (code collections only)
+        verbose: Show detailed file-level results
+        output_json: Output as JSON
+    """
+    try:
+        from arcaneum.indexing.verify import CollectionVerifier
+
+        client = create_qdrant_client()
+        verifier = CollectionVerifier(client)
+
+        console.print(f"[dim]Scanning collection '{name}'...[/dim]")
+        result = verifier.verify_collection(name, project_filter=project, verbose=verbose)
+
+        if output_json:
+            # Build JSON output
+            data = {
+                "collection": result.collection_name,
+                "type": result.collection_type,
+                "total_points": result.total_points,
+                "total_items": result.total_items,
+                "complete_items": result.complete_items,
+                "incomplete_items": result.incomplete_items,
+                "is_healthy": result.is_healthy,
+                "errors": result.errors,
+            }
+
+            if result.collection_type == "code":
+                data["projects"] = []
+                for proj in result.projects:
+                    proj_data = {
+                        "identifier": proj.identifier,
+                        "project_name": proj.project_name,
+                        "branch": proj.branch,
+                        "commit_hash": proj.commit_hash,
+                        "total_files": proj.total_files,
+                        "complete_files": proj.complete_files,
+                        "completion_percentage": round(proj.completion_percentage, 1),
+                        "is_complete": proj.is_complete,
+                    }
+                    if not proj.is_complete and verbose:
+                        proj_data["incomplete_files"] = [
+                            {
+                                "file_path": f.file_path,
+                                "expected_chunks": f.expected_chunks,
+                                "actual_chunks": f.actual_chunks,
+                                "missing_indices": f.missing_indices,
+                            }
+                            for f in proj.incomplete_files
+                        ]
+                    data["projects"].append(proj_data)
+            else:
+                data["files"] = []
+                for file in result.files:
+                    file_data = {
+                        "file_path": file.file_path,
+                        "expected_chunks": file.expected_chunks,
+                        "actual_chunks": file.actual_chunks,
+                        "completion_percentage": round(file.completion_percentage, 1),
+                        "is_complete": file.is_complete,
+                    }
+                    if not file.is_complete:
+                        file_data["missing_indices"] = file.missing_indices
+                    data["files"].append(file_data)
+
+            # Include items needing repair
+            data["needs_repair"] = result.get_items_needing_repair()
+
+            status = "success" if result.is_healthy else "warning"
+            msg = (
+                f"Collection '{name}' is healthy"
+                if result.is_healthy
+                else f"Collection '{name}' has {result.incomplete_items} incomplete items"
+            )
+            print_json(status, msg, data)
+        else:
+            # Human-readable output
+            console.print(f"\n[bold cyan]Collection: {name}[/bold cyan]")
+            type_str = f"[bold]{result.collection_type}[/bold]" if result.collection_type else "[yellow]untyped[/yellow]"
+            console.print(f"Type: {type_str}")
+            console.print(f"Total points: {result.total_points:,}")
+            console.print(f"Total items: {result.total_items}")
+
+            if result.is_healthy:
+                console.print(f"\n[green]Collection is healthy - all {result.complete_items} items complete[/green]")
+            else:
+                console.print(f"\n[yellow]Found {result.incomplete_items} incomplete items[/yellow]")
+                console.print(f"Complete: {result.complete_items}, Incomplete: {result.incomplete_items}")
+
+                # Show incomplete items
+                if result.collection_type == "code":
+                    table = Table(title="Incomplete Projects")
+                    table.add_column("Project", style="cyan")
+                    table.add_column("Branch", style="green")
+                    table.add_column("Files", style="yellow")
+                    table.add_column("Completion", style="magenta")
+
+                    for proj in result.projects:
+                        if not proj.is_complete:
+                            table.add_row(
+                                proj.project_name,
+                                proj.branch,
+                                f"{proj.complete_files}/{proj.total_files}",
+                                f"{proj.completion_percentage:.1f}%",
+                            )
+
+                            # Show file details if verbose
+                            if verbose:
+                                for f in proj.incomplete_files[:5]:  # Limit to first 5
+                                    console.print(
+                                        f"  [dim]{f.file_path}: "
+                                        f"{f.actual_chunks}/{f.expected_chunks} chunks "
+                                        f"(missing: {f.missing_indices[:5]}{'...' if len(f.missing_indices) > 5 else ''})[/dim]"
+                                    )
+                                if len(proj.incomplete_files) > 5:
+                                    console.print(f"  [dim]... and {len(proj.incomplete_files) - 5} more files[/dim]")
+
+                    console.print(table)
+                else:
+                    table = Table(title="Incomplete Files")
+                    table.add_column("File", style="cyan", no_wrap=False)
+                    table.add_column("Chunks", style="yellow")
+                    table.add_column("Completion", style="magenta")
+
+                    for file in result.files:
+                        if not file.is_complete:
+                            table.add_row(
+                                file.file_path,
+                                f"{file.actual_chunks}/{file.expected_chunks}",
+                                f"{file.completion_percentage:.1f}%",
+                            )
+
+                    console.print(table)
+
+                # Show repair hint
+                needs_repair = result.get_items_needing_repair()
+                if needs_repair:
+                    console.print(f"\n[dim]To repair, re-index the following items:[/dim]")
+                    for item in needs_repair[:10]:
+                        console.print(f"  [yellow]{item}[/yellow]")
+                    if len(needs_repair) > 10:
+                        console.print(f"  [dim]... and {len(needs_repair) - 10} more[/dim]")
+
+    except Exception as e:
+        print_error(f"Failed to verify collection: {e}", output_json)
+        sys.exit(1)
+

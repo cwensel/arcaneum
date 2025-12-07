@@ -39,6 +39,7 @@ def index_source_command(
     not_nice: bool,
     force: bool,
     no_gpu: bool,
+    verify: bool,
     verbose: bool,
     debug: bool,
     profile: bool,
@@ -59,6 +60,7 @@ def index_source_command(
         not_nice: Disable process priority reduction for worker processes
         force: Force reindex all projects
         no_gpu: Disable GPU acceleration (use CPU only)
+        verify: Verify collection integrity and repair incomplete items after indexing
         verbose: Verbose output
         debug: Debug mode (show all library warnings)
         profile: Show pipeline performance profiling
@@ -293,7 +295,25 @@ def index_source_command(
             embedding_batch_size=embedding_batch_size  # Embedding batch size
         )
 
-        # Index directory
+        # Pre-verify if requested - find incomplete items to include in indexing
+        repair_targets = None
+        if verify:
+            from arcaneum.indexing.verify import CollectionVerifier
+
+            if verbose or not output_json:
+                console.print("[dim]Pre-indexing verification...[/dim]")
+
+            verifier = CollectionVerifier(qdrant_client)
+            pre_verification = verifier.verify_collection(collection, verbose=False)
+
+            if not pre_verification.is_healthy:
+                incomplete_identifiers = pre_verification.get_items_needing_repair()
+                if incomplete_identifiers:
+                    repair_targets = set(incomplete_identifiers)
+                    if verbose or not output_json:
+                        console.print(f"[yellow]Found {len(repair_targets)} incomplete items to repair: {list(repair_targets)}[/yellow]\n")
+
+        # Index directory (include repair targets if any)
         stats = indexer.index_directory(
             input_path=source_dir,
             collection_name=collection,
@@ -302,8 +322,36 @@ def index_source_command(
             show_progress=verbose,
             verbose=verbose,
             file_list=file_list,
-            profile=profile
+            profile=profile,
+            repair_targets=repair_targets  # Projects to force re-index even if commit unchanged
         )
+
+        # Post-verify if requested
+        verification_result = None
+        if verify:
+            if verbose or not output_json:
+                console.print("\n[dim]Post-indexing verification...[/dim]")
+
+            verification_result = verifier.verify_collection(collection, verbose=verbose)
+
+            if verification_result.is_healthy:
+                if verbose or not output_json:
+                    console.print(f"[green]Collection verified - all {verification_result.complete_items} items complete[/green]")
+            else:
+                if verbose or not output_json:
+                    still_incomplete = verification_result.get_items_needing_repair()
+                    console.print(f"[yellow]Warning: {len(still_incomplete)} items still incomplete after indexing[/yellow]")
+                    for item in still_incomplete[:5]:
+                        console.print(f"  [yellow]{item}[/yellow]")
+
+            # Add verification results to stats
+            stats["verification"] = {
+                "is_healthy": verification_result.is_healthy,
+                "total_items": verification_result.total_items,
+                "complete_items": verification_result.complete_items,
+                "incomplete_items": verification_result.incomplete_items,
+                "repaired": len(repair_targets) if repair_targets else 0,
+            }
 
         # Output
         if output_json:

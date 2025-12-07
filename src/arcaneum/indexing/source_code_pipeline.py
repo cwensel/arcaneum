@@ -244,7 +244,8 @@ class SourceCodeIndexer:
         show_progress: bool = True,
         verbose: bool = False,
         file_list: Optional[List] = None,
-        profile: bool = False
+        profile: bool = False,
+        repair_targets: Optional[Set[str]] = None
     ) -> dict:
         """Index all git repositories in directory with metadata-based sync.
 
@@ -258,6 +259,8 @@ class SourceCodeIndexer:
             file_list: Optional list of source files to index (Note: Limited support for code indexing.
                       Code indexing is git-centric and works best with git repositories.)
             profile: If True, show pipeline performance profiling (stage breakdown, throughput)
+            repair_targets: Optional set of project identifiers that need repair (re-index even if
+                           commit unchanged, will delete existing chunks first)
 
         Returns:
             Dictionary with indexing statistics
@@ -318,7 +321,8 @@ class SourceCodeIndexer:
         console.print()
 
         # Step 1: Query Qdrant for indexed projects (source of truth)
-        if not force:
+        # Note: In repair mode (repair_targets set), we need indexed_projects for deletion
+        if not force or repair_targets:
             if verbose:
                 console.print("[cyan]Querying indexed projects...[/cyan]")
             indexed_projects = self.sync.get_indexed_projects(collection_name)
@@ -359,6 +363,9 @@ class SourceCodeIndexer:
 
             identifier = git_metadata.identifier
 
+            # Check if this is a repair target (needs re-indexing due to incomplete chunks)
+            is_repair_target = repair_targets is not None and identifier in repair_targets
+
             # Check if needs indexing (query Qdrant metadata)
             needs_indexing = self.sync.should_reindex_project(
                 collection_name,
@@ -366,7 +373,8 @@ class SourceCodeIndexer:
                 git_metadata.commit_hash
             )
 
-            if not needs_indexing and not force:
+            # Skip if already indexed and not forcing/repairing
+            if not needs_indexing and not force and not is_repair_target:
                 if verbose:
                     console.print(
                         f"  [green]✓[/green] {identifier} "
@@ -375,14 +383,21 @@ class SourceCodeIndexer:
                 self.stats["projects_skipped"] += 1
                 continue
 
-            # Project needs indexing
+            # Project needs indexing (new, changed, forced, or repair target)
             if identifier in indexed_projects:
-                old_commit = indexed_projects[identifier].commit_hash
-                if verbose:
-                    console.print(
-                        f"  [yellow]↻[/yellow] {identifier} "
-                        f"(commit changed: {old_commit[:12]} → {git_metadata.commit_hash[:12]})"
-                    )
+                if is_repair_target:
+                    if verbose:
+                        console.print(
+                            f"  [magenta]🔧[/magenta] {identifier} "
+                            f"(repairing incomplete index)"
+                        )
+                else:
+                    old_commit = indexed_projects[identifier].commit_hash
+                    if verbose:
+                        console.print(
+                            f"  [yellow]↻[/yellow] {identifier} "
+                            f"(commit changed: {old_commit[:12]} → {git_metadata.commit_hash[:12]})"
+                        )
                 # Delete old chunks (filter-based, fast)
                 self.qdrant_indexer.delete_branch_chunks(collection_name, identifier)
             else:

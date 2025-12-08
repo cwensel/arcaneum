@@ -154,7 +154,7 @@ class CollectionVerifier:
 
         For each file in each project, verifies that all chunk_indices exist.
         """
-        logger.info(f"Verifying code collection: {collection_name}")
+        logger.debug(f"Verifying code collection: {collection_name}")
 
         # Collect chunk info: {project_id: {file_path: {chunk_index: chunk_count}}}
         project_files: Dict[str, Dict[str, Dict[str, any]]] = defaultdict(
@@ -198,7 +198,7 @@ class CollectionVerifier:
 
             batch_count += 1
             if verbose and batch_count % 10 == 0:
-                logger.info(f"Processed {batch_count} batches...")
+                logger.debug(f"Processed {batch_count} batches...")
 
             if not points:
                 break
@@ -305,7 +305,7 @@ class CollectionVerifier:
 
         For each file, verifies that all chunk_indices exist.
         """
-        logger.info(f"Verifying {collection_type or 'file'} collection: {collection_name}")
+        logger.debug(f"Verifying {collection_type or 'file'} collection: {collection_name}")
 
         # Collect chunk info: {file_path: {"indices": set, "chunk_count": int}}
         file_chunks: Dict[str, Dict[str, any]] = defaultdict(
@@ -328,7 +328,7 @@ class CollectionVerifier:
 
             batch_count += 1
             if verbose and batch_count % 10 == 0:
-                logger.info(f"Processed {batch_count} batches...")
+                logger.debug(f"Processed {batch_count} batches...")
 
             if not points:
                 break

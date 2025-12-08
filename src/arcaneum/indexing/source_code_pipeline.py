@@ -667,8 +667,9 @@ class SourceCodeIndexer:
             )
 
         # Attach embeddings to chunks
+        # Note: Embeddings can be numpy arrays or lists - Qdrant client handles both
         for chunk, embedding in zip(all_chunks, all_embeddings):
-            chunk.embedding = embedding  # Already a list from EmbeddingClient
+            chunk.embedding = embedding
 
         # Show upload progress
         if verbose:

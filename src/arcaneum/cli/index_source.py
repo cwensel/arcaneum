@@ -269,6 +269,8 @@ def index_source_command(
                     'jina': 'jinaai/jina-embeddings-v2-base-code',  # 768D
                     'jina-v3': 'jinaai/jina-embeddings-v3',  # 1024D - multilingual
                     'jina-base-en': 'jinaai/jina-embeddings-v2-base-en',  # 768D - English-only
+                    'jina-code-0.5b': 'jinaai/jina-code-embeddings-0.5b',  # 896D - SOTA code model
+                    'jina-code-1.5b': 'jinaai/jina-code-embeddings-1.5b',  # 1536D - SOTA code model
                 }
                 embedding_model = vector_to_model_map.get(vector_name, 'jinaai/jina-embeddings-v2-base-code')
                 if verbose:

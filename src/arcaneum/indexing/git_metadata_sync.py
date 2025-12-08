@@ -79,7 +79,7 @@ class GitMetadataSync:
             logger.debug(f"Using cached indexed projects for {collection_name}")
             return self._cache[collection_name]
 
-        logger.info(f"Querying Qdrant for indexed projects in {collection_name}")
+        logger.debug(f"Querying Qdrant for indexed projects in {collection_name}")
 
         indexed_projects: Dict[str, IndexedProject] = {}
         offset = None
@@ -131,7 +131,7 @@ class GitMetadataSync:
                 if offset is None:
                     break
 
-            logger.info(
+            logger.debug(
                 f"Found {len(indexed_projects)} indexed projects "
                 f"in {collection_name} ({batch_count} batches)"
             )

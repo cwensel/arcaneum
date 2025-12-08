@@ -197,6 +197,12 @@ class ASTCodeChunker:
             if not chunks:
                 raise ValueError("CodeSplitter returned empty chunks")
 
+            # Filter out empty chunks (can happen with certain AST edge cases)
+            chunks = [c for c in chunks if c and c.strip()]
+
+            if not chunks:
+                raise ValueError("All chunks were empty after filtering")
+
             return chunks
 
         except Exception as e:
@@ -248,6 +254,9 @@ class ASTCodeChunker:
         # Add final chunk
         if current_chunk:
             chunks.append('\n'.join(current_chunk))
+
+        # Filter out empty chunks
+        chunks = [c for c in chunks if c and c.strip()]
 
         return chunks if chunks else [code]  # Return original if no chunks created
 

@@ -266,6 +266,45 @@ arc collection info MyCode
 arc index code ~/code --collection MyCode --force
 ```
 
+### GPU Memory Errors (Apple Silicon)
+
+If you see MPS out-of-memory errors on Apple Silicon Macs:
+
+```text
+ERROR: MPS backend out of memory (MPS allocated: X GiB, ...)
+```
+
+**Quick fixes:**
+
+1. **Allow unlimited GPU memory** (recommended for most cases):
+
+   ```bash
+   export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
+   arc index code ~/project --collection MyCode
+   ```
+
+2. **Use smaller batch size:**
+
+   ```bash
+   arc index code ~/project --collection MyCode --embedding-batch-size 100
+   ```
+
+3. **Force CPU mode** (slower but reliable):
+
+   ```bash
+   arc index code ~/project --collection MyCode --no-gpu
+   ```
+
+**Permanent fix:** Add to your `~/.zshrc` or `~/.bashrc`:
+
+```bash
+export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
+```
+
+**Why this happens:** Apple Silicon uses unified memory shared between CPU and GPU.
+When other apps use significant memory, PyTorch's default safety limits can trigger
+OOM errors even when memory is technically available.
+
 ## Claude Code Plugin
 
 After completing the installation above, you can use Arcaneum commands directly in Claude Code.

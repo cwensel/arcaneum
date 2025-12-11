@@ -17,13 +17,18 @@ logger = logging.getLogger(__name__)
 # Model configurations with multiple backends
 EMBEDDING_MODELS = {
     # Code-specific models (SentenceTransformers)
+    # Size categories for MPS memory management:
+    #   "small" = <500M params (batch_size=64)
+    #   "medium" = 500M-1B params (batch_size=32)
+    #   "large" = >1B params (batch_size=8)
     "jina-code": {
         "name": "jinaai/jina-embeddings-v2-base-code",
         "dimensions": 768,
         "backend": "sentence-transformers",
         "description": "Code-specific (768D, 8K context, legacy v2 model)",
         "available": True,
-        "recommended_for": "code"
+        "recommended_for": "code",
+        "size": "small"  # ~137M params
     },
     "jina-code-0.5b": {
         "name": "jinaai/jina-code-embeddings-0.5b",
@@ -31,7 +36,8 @@ EMBEDDING_MODELS = {
         "backend": "sentence-transformers",
         "description": "Code-specific SOTA (896D, 32K context, Sept 2025, fast)",
         "available": True,
-        "recommended_for": "code"
+        "recommended_for": "code",
+        "size": "medium"  # 500M params
     },
     "jina-code-1.5b": {
         "name": "jinaai/jina-code-embeddings-1.5b",
@@ -39,7 +45,8 @@ EMBEDDING_MODELS = {
         "backend": "sentence-transformers",
         "description": "Code-specific SOTA (1536D, 32K context, Sept 2025, highest quality)",
         "available": True,
-        "recommended_for": "code"
+        "recommended_for": "code",
+        "size": "large"  # 1.5B params
     },
     "codesage-large": {
         "name": "codesage/codesage-large",
@@ -47,7 +54,8 @@ EMBEDDING_MODELS = {
         "backend": "sentence-transformers",
         "description": "CodeSage V2 (1024D, 9 languages, Dec 2024)",
         "available": True,
-        "recommended_for": "code"
+        "recommended_for": "code",
+        "size": "medium"  # ~400M params
     },
     "nomic-code": {
         "name": "nomic-ai/nomic-embed-code",
@@ -55,7 +63,8 @@ EMBEDDING_MODELS = {
         "backend": "sentence-transformers",
         "description": "Nomic Code (3584D, 7B params, 6 languages, 2025)",
         "available": True,
-        "recommended_for": "code"
+        "recommended_for": "code",
+        "size": "large"  # 7B params - very large
     },
 
     # General purpose models (SentenceTransformers)
@@ -65,7 +74,8 @@ EMBEDDING_MODELS = {
         "backend": "sentence-transformers",
         "description": "General purpose (1024D, high quality for docs/PDFs)",
         "available": True,
-        "recommended_for": "pdf"
+        "recommended_for": "pdf",
+        "size": "large"  # 1.5B params
     },
 
     # Jina models (FastEmbed)
@@ -121,21 +131,24 @@ EMBEDDING_MODELS = {
         "dimensions": 384,
         "backend": "sentence-transformers",
         "description": "MiniLM (384D, lightweight, fast)",
-        "available": True
+        "available": True,
+        "size": "small"  # ~22M params
     },
     "gte-base": {
         "name": "thenlper/gte-base",
         "dimensions": 768,
         "backend": "sentence-transformers",
         "description": "GTE Base (768D, general purpose retrieval)",
-        "available": True
+        "available": True,
+        "size": "small"  # ~110M params
     },
     "e5-base": {
         "name": "intfloat/e5-base-v2",
         "dimensions": 768,
         "backend": "sentence-transformers",
         "description": "E5 Base v2 (768D, multilingual, strong performance)",
-        "available": True
+        "available": True,
+        "size": "small"  # ~110M params
     },
 }
 
@@ -422,11 +435,24 @@ class EmbeddingClient:
             # Potential 10-20% speedup on embeddings by reducing tensor→list conversion overhead.
 
             # CRITICAL: model.encode() batch_size controls GPU memory usage
-            # For MPS (unified memory), large batches (512) cause OOM on stella (1.5B model)
-            # Use conservative internal batch size for MPS, larger for CUDA
+            # For MPS (unified memory), large batches cause OOM especially on large models
+            # Use model-aware batch sizing based on parameter count
             if self._device == "mps":
-                # MPS: Use smaller batches to avoid OOM (stella needs ~1.88GB per batch of 512)
-                internal_batch_size = 64  # Conservative for MPS unified memory
+                # MPS: Adaptive batch size based on model size
+                # stella (1.5B params) needs very small batches to avoid OOM
+                # Smaller models like jina-code can handle larger batches
+                model_config = EMBEDDING_MODELS.get(model_name, {})
+                model_size = model_config.get("size", "medium")
+
+                if model_size == "large":
+                    # Large models (stella 1.5B): very conservative batch size
+                    internal_batch_size = 8
+                elif model_size == "medium":
+                    # Medium models (jina-code, modernbert): moderate batch size
+                    internal_batch_size = 32
+                else:
+                    # Smaller models: can use larger batches
+                    internal_batch_size = 64
             else:
                 # CUDA: Can use larger batches (dedicated VRAM)
                 internal_batch_size = min(batch_size, 256)

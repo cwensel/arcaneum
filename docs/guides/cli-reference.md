@@ -531,6 +531,23 @@ arc container start
 chmod +x bin/arc
 ```
 
+### GPU Memory Errors (MPS/CUDA)
+
+Large embedding models can exceed GPU memory, especially on Apple Silicon (MPS):
+
+```text
+RuntimeError: MPS backend out of memory (MPS allocated: 12.25 GiB...)
+```
+
+**Solutions:**
+
+1. The system uses adaptive batch sizes based on model size (automatic)
+2. Use `--no-gpu` to force CPU mode
+3. Use `--embedding-batch-size 100` to reduce memory usage
+4. Try a smaller model (e.g., `minilm` instead of `stella`)
+
+See [PDF Indexing Guide](pdf-indexing.md#gpu-memory-errors-mpscuda) for model memory requirements.
+
 ## More Documentation
 
 - [PDF Indexing Guide](pdf-indexing.md) - Detailed PDF indexing documentation

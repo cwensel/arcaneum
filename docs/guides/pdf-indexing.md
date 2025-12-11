@@ -341,6 +341,32 @@ For large PDFs or many parallel workers:
 2. Use on-disk vectors in collection config
 3. Disable HNSW indexing during upload
 
+### GPU Memory Errors (MPS/CUDA)
+
+If you see errors like `MPS backend out of memory` when using large models like `stella` (1.5B params):
+
+```text
+RuntimeError: MPS backend out of memory (MPS allocated: 12.25 GiB...)
+```
+
+The system uses adaptive batch sizes based on model size, but if you still hit memory limits:
+
+1. **Use a smaller model**: Try `bge` or `minilm` instead of `stella`
+2. **Disable GPU**: `--no-gpu` forces CPU-only mode
+3. **Close other apps**: Free up GPU memory used by other applications
+4. **Reduce batch size**: `--embedding-batch-size 100` (lower = less memory)
+
+**Model memory requirements (approximate on MPS):**
+
+| Model | Size | Memory Usage |
+|-------|------|--------------|
+| `stella` | 1.5B params | ~12-15 GB |
+| `jina-code-1.5b` | 1.5B params | ~12-15 GB |
+| `nomic-code` | 7B params | ~20+ GB |
+| `jina-code-0.5b` | 500M params | ~4-6 GB |
+| `jina-code` | 137M params | ~2-3 GB |
+| `minilm` | 22M params | <1 GB |
+
 ### Slow OCR
 
 OCR is CPU-intensive (2s per page). To speed up:

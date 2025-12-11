@@ -112,12 +112,12 @@ def search_collection(
         query, collection_name, client, vector_name
     )
 
-    # Step 2: Execute Qdrant search
-    # Use named vector tuple: (vector_name, vector_data)
+    # Step 2: Execute Qdrant search using query_points API (qdrant-client 1.16+)
     try:
-        results = client.search(
+        response = client.query_points(
             collection_name=collection_name,
-            query_vector=(model_key, query_vector),
+            query=query_vector,
+            using=model_key,  # Named vector to search
             query_filter=query_filter,
             limit=limit,
             offset=offset,
@@ -125,6 +125,7 @@ def search_collection(
             with_payload=True,
             with_vectors=False  # Don't return vectors (saves bandwidth)
         )
+        results = response.points
     except Exception as e:
         raise Exception(f"Search failed: {e}")
 

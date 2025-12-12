@@ -18,6 +18,7 @@ from .pdf.ocr import OCREngine
 from .pdf.chunker import PDFChunker
 from ..monitoring.cpu_stats import create_monitor
 from ..utils.memory import calculate_safe_workers, log_memory_stats
+from ..utils.formatting import format_duration
 from ..cli.output import timestamp
 
 logger = logging.getLogger(__name__)
@@ -337,7 +338,7 @@ class PDFBatchUploader:
                         avg_per_batch = elapsed / batch_idx
                         remaining = total_batches - batch_idx
                         eta = remaining * avg_per_batch
-                        progress = f"[{batch_idx}/{total_batches} batches, ~{eta:.0f}s remaining]"
+                        progress = f"[{batch_idx}/{total_batches} batches, ~{format_duration(eta)} remaining]"
                     else:
                         progress = f"[0/{total_batches} batches]"
                     # \r returns to line start, spaces clear previous longer text

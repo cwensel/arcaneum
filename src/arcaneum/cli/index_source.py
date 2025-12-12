@@ -93,30 +93,8 @@ def index_source_command(
     # GPU models ignore embedding_workers (single-threaded is faster)
     actual_embedding_workers = 1  # GPU: single-threaded optimal
 
-    # Auto-tune batch size if not explicitly set by user
-    if embedding_batch_size is None:
-        if not no_gpu:
-            # GPU mode: auto-tune based on available memory
-            try:
-                from arcaneum.utils.memory import get_gpu_memory_info, estimate_safe_batch_size_v2
-
-                available_bytes, total_bytes, device_type = get_gpu_memory_info()
-
-                if available_bytes is not None:
-                    embedding_batch_size = estimate_safe_batch_size_v2(
-                        model_name=model,
-                        available_gpu_bytes=available_bytes,
-                        pipeline_overhead_gb=0.3,
-                        safety_factor=0.6,
-                        device_type=device_type
-                    )
-                else:
-                    embedding_batch_size = 256  # Fallback
-            except Exception:
-                embedding_batch_size = 256  # Fallback on error
-        else:
-            # CPU mode: use conservative default
-            embedding_batch_size = 256
+    # Note: Batch size auto-tuning happens AFTER model retrieval (see below)
+    # to ensure we know the actual model name for proper batch size estimation
 
     # Set up signal handler for Ctrl-C
     def signal_handler(sig, frame):
@@ -171,6 +149,32 @@ def index_source_command(
                 "Model is now set at collection creation time. "
                 "Please use 'arc collection create --type code' instead.[/yellow]"
             )
+
+        # Auto-tune batch size if not explicitly set by user
+        # This happens AFTER model retrieval to ensure proper model-aware estimation
+        if embedding_batch_size is None:
+            if not no_gpu:
+                # GPU mode: auto-tune based on available memory
+                try:
+                    from arcaneum.utils.memory import get_gpu_memory_info, estimate_safe_batch_size_v2
+
+                    available_bytes, total_bytes, device_type = get_gpu_memory_info()
+
+                    if available_bytes is not None:
+                        embedding_batch_size = estimate_safe_batch_size_v2(
+                            model_name=model,
+                            available_gpu_bytes=available_bytes,
+                            pipeline_overhead_gb=0.3,
+                            safety_factor=0.6,
+                            device_type=device_type
+                        )
+                    else:
+                        embedding_batch_size = 256  # Fallback
+                except Exception:
+                    embedding_batch_size = 256  # Fallback on error
+            else:
+                # CPU mode: use conservative default
+                embedding_batch_size = 256
 
         qdrant_indexer = QdrantIndexer(qdrant_client)
 

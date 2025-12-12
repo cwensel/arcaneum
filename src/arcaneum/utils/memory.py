@@ -123,14 +123,16 @@ def estimate_safe_batch_size_v2(
         # Optimal batch sizes from empirical testing (RDR-013, arcaneum-i7oa)
         # Larger batches = fewer kernel launches = better GPU utilization
         # Values tuned for sustained GPU inference without OOM
+        # NOTE: Qwen2-based models (jina-code-0.5b/1.5b) need small batches due to
+        # attention memory scaling with sequence length (up to 32K context)
         OPTIMAL_BATCH_SIZES = {
             'stella': 512,
             'jina': 512,
             'jina-code': 512,
-            'jina-code-0.5b': 256,   # 500M params, moderate batches
-            'jina-code-1.5b': 128,   # 1.5B params, smaller batches
+            'jina-code-0.5b': 64,    # Qwen2-based, 32K context - needs small batches
+            'jina-code-1.5b': 32,    # Qwen2-based, 32K context - needs very small batches
             'codesage-large': 256,   # ~400M params
-            'nomic-code': 64,        # 7B params, very large model
+            'nomic-code': 32,        # 7B params, very large model
             'bge-large': 512,
             'bge-base': 512,
             'bge-small': 512,
@@ -141,10 +143,10 @@ def estimate_safe_batch_size_v2(
             'stella': 4.0,           # 2.5GB model + 1.5GB for batching
             'jina': 2.0,             # 0.5GB model + 1.5GB for batching
             'jina-code': 2.0,
-            'jina-code-0.5b': 3.0,   # 1.5GB model + 1.5GB for batching
-            'jina-code-1.5b': 6.0,   # 4GB model + 2GB for batching
+            'jina-code-0.5b': 6.0,   # 2GB model + 4GB for attention on long sequences
+            'jina-code-1.5b': 10.0,  # 4GB model + 6GB for attention on long sequences
             'codesage-large': 3.0,   # 1.5GB model + 1.5GB for batching
-            'nomic-code': 16.0,      # ~14GB model + 2GB for batching (7B params)
+            'nomic-code': 20.0,      # ~14GB model + 6GB for batching (7B params)
             'bge-large': 2.5,
             'bge-base': 2.0,
             'bge-small': 1.5,
@@ -155,13 +157,13 @@ def estimate_safe_batch_size_v2(
 
         if available_gb >= min_required:
             # Have enough memory, use optimal batch size
-            logger.debug(f"MPS: {available_gb:.1f}GB available >= {min_required}GB required, using optimal batch_size={optimal}")
+            logger.debug(f"MPS: {available_gb:.1f}GB available, using optimal batch_size={optimal}")
             return optimal
         else:
-            # Low memory, scale down batch size proportionally
+            # Not enough for optimal batching, scale down proportionally
             scale_factor = available_gb / min_required
             scaled_batch = max(8, int(optimal * scale_factor))
-            logger.warning(f"MPS: Low memory ({available_gb:.1f}GB < {min_required}GB), scaling batch_size to {scaled_batch}")
+            logger.debug(f"MPS: {available_gb:.1f}GB available (optimal: {min_required}GB), using batch_size={scaled_batch}")
             return min(scaled_batch, 1024)
 
     # CUDA: Use detailed memory model

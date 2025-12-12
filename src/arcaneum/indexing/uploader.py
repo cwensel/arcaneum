@@ -358,7 +358,7 @@ class PDFBatchUploader:
             if verbose:
                 # Show final batch count, then newline and summary
                 print(f"\r{embedding_ts}   → embedding ({file_chunk_count} chunks) [{total_batches}/{total_batches} batches]    ")
-                print(f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches, {embedding_elapsed/total_batches:.2f}s/batch)", flush=True)
+                print(f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed/total_batches:.2f}s/batch)", flush=True)
 
             # Stage 5: Create and upload points in batches (streaming upload)
             # This avoids holding all points in memory at once

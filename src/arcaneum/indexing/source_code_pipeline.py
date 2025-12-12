@@ -676,7 +676,7 @@ class SourceCodeIndexer:
             print(f"\r{embedding_ts}   → embedding ({total_chunks} chunks) [{total_batches}/{total_batches} batches]    ")
             console.print(
                 f"{timestamp()}      embedded {total_chunks} chunks in {embedding_elapsed:.2f}s "
-                f"({total_batches} batches, {embedding_elapsed/total_batches:.2f}s/batch)"
+                f"({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed/total_batches:.2f}s/batch)"
             )
 
         # Attach embeddings to chunks

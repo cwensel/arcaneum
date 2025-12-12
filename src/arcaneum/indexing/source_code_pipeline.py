@@ -622,10 +622,13 @@ class SourceCodeIndexer:
 
         # Generate embeddings in parallel batches (Phase 2 RDR-013)
         total_chunks = len(all_chunks)
+        total_batches = (total_chunks + self.embedding_batch_size - 1) // self.embedding_batch_size
+        embedding_ts = timestamp()  # Capture timestamp at start of embedding
 
         # Show embedding progress
         if verbose:
-            console.print(f"{timestamp()}   → embedding ({total_chunks} chunks)")
+            # Print initial line without newline so we can update it in-place
+            print(f"{embedding_ts}   → embedding ({total_chunks} chunks)", end="", flush=True)
         else:
             print(
                 f"\r[{project_num}/{total_projects}] {identifier}: "
@@ -635,15 +638,22 @@ class SourceCodeIndexer:
                 file=sys.stdout
             )
 
-        # Create timing collector for verbose mode
-        timing_collector = None
-        if verbose:
-            timing_collector = EmbeddingTimingCollector()
-            total_batches = (total_chunks + self.embedding_batch_size - 1) // self.embedding_batch_size
-            timing_collector.start(total_batches)
-
         # Track embedding time for profiler
         embedding_start = time.time()
+
+        # Progress callback for verbose mode - updates line in-place with ETA
+        def embedding_progress(batch_idx: int, total_batches: int):
+            if verbose:
+                elapsed = time.time() - embedding_start
+                if batch_idx > 0:
+                    avg_per_batch = elapsed / batch_idx
+                    remaining = total_batches - batch_idx
+                    eta = remaining * avg_per_batch
+                    progress = f"[{batch_idx}/{total_batches} batches, ~{eta:.0f}s remaining]"
+                else:
+                    progress = f"[0/{total_batches} batches]"
+                # \r returns to line start, spaces clear previous longer text
+                print(f"\r{embedding_ts}   → embedding ({total_chunks} chunks) {progress}    ", end="", flush=True)
 
         # Embed all texts in parallel
         texts = [chunk.content for chunk in all_chunks]
@@ -652,7 +662,7 @@ class SourceCodeIndexer:
             self.embedding_model_id,
             max_workers=self.embedding_workers,
             batch_size=self.embedding_batch_size,
-            progress_callback=timing_collector.record_batch if timing_collector else None
+            progress_callback=embedding_progress if verbose else None
         )
 
         # Record embedding stage timing
@@ -660,11 +670,13 @@ class SourceCodeIndexer:
             profiler.record_stage("embedding", time.time() - embedding_start, total_chunks)
 
         # Show timing summary in verbose mode
-        if verbose and timing_collector:
-            timing = timing_collector.get_summary()
+        if verbose:
+            embedding_elapsed = time.time() - embedding_start
+            # Show final batch count, then newline and summary
+            print(f"\r{embedding_ts}   → embedding ({total_chunks} chunks) [{total_batches}/{total_batches} batches]    ")
             console.print(
-                f"{timestamp()}      embedded {total_chunks} chunks in {timing['total_time']:.2f}s "
-                f"({timing['num_batches']} batches, {timing['avg_per_batch']:.2f}s/batch)"
+                f"{timestamp()}      embedded {total_chunks} chunks in {embedding_elapsed:.2f}s "
+                f"({total_batches} batches, {embedding_elapsed/total_batches:.2f}s/batch)"
             )
 
         # Attach embeddings to chunks

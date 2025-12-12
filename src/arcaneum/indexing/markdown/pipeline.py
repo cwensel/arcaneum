@@ -9,6 +9,7 @@ This module orchestrates the complete markdown indexing workflow:
 """
 
 import logging
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Set
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -207,22 +208,46 @@ class MarkdownIndexingPipeline:
 
             # Stage 3: Generate embeddings (parallel)
             texts = [chunk.text for chunk in chunks]
+            total_batches = (file_chunk_count + self.embedding_batch_size - 1) // self.embedding_batch_size
+            embedding_ts = timestamp()  # Capture timestamp at start of embedding
 
             if not verbose:
                 print(f"\r[{file_idx}/{total_files}] {file_path.name} → embedding ({file_chunk_count} chunks){' '*15}", end="", flush=True)
             else:
-                print(f"{timestamp()}   → embedding ({file_chunk_count} chunks)", flush=True)
+                # Print initial line without newline so we can update it in-place
+                print(f"{embedding_ts}   → embedding ({file_chunk_count} chunks)", end="", flush=True)
+
+            # Track embedding time
+            embedding_start = time.time()
+
+            # Progress callback for verbose mode - updates line in-place with ETA
+            def embedding_progress(batch_idx: int, total_batches: int):
+                if verbose:
+                    elapsed = time.time() - embedding_start
+                    if batch_idx > 0:
+                        avg_per_batch = elapsed / batch_idx
+                        remaining = total_batches - batch_idx
+                        eta = remaining * avg_per_batch
+                        progress = f"[{batch_idx}/{total_batches} batches, ~{eta:.0f}s remaining]"
+                    else:
+                        progress = f"[0/{total_batches} batches]"
+                    # \r returns to line start, spaces clear previous longer text
+                    print(f"\r{embedding_ts}   → embedding ({file_chunk_count} chunks) {progress}    ", end="", flush=True)
 
             # Generate embeddings in parallel using ThreadPoolExecutor
             embeddings = self.embeddings.embed_parallel(
                 texts,
                 model_name,
                 max_workers=self.embedding_workers,
-                batch_size=self.embedding_batch_size
+                batch_size=self.embedding_batch_size,
+                progress_callback=embedding_progress if verbose else None
             )
+            embedding_elapsed = time.time() - embedding_start
 
             if verbose:
-                print(f"{timestamp()}      embedded {file_chunk_count} chunks", flush=True)
+                # Show final batch count, then newline and summary
+                print(f"\r{embedding_ts}   → embedding ({file_chunk_count} chunks) [{total_batches}/{total_batches} batches]    ")
+                print(f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches, {embedding_elapsed/total_batches:.2f}s/batch)", flush=True)
 
             # Stage 4: Create points
             points = []

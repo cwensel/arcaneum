@@ -316,21 +316,28 @@ class PDFBatchUploader:
 
             # Stage 4: Embedding
             texts = [chunk.text for chunk in chunks]
+            total_batches = (file_chunk_count + self.embedding_batch_size - 1) // self.embedding_batch_size
+            embedding_ts = timestamp()  # Capture timestamp at start of embedding
+
             if not verbose:
                 print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → embedding ({file_chunk_count} chunks){' '*15}", end="", flush=True)
             else:
-                print(f"{timestamp()}   → embedding ({file_chunk_count} chunks)", flush=True)
+                # Print initial line without newline so we can update it in-place
+                print(f"{embedding_ts}   → embedding ({file_chunk_count} chunks)", end="", flush=True)
 
-            # Progress callback for verbose mode (arcaneum-w638)
-            batch_times = []  # Track timing for each batch
+            # Progress callback for verbose mode - updates line in-place with ETA
             def embedding_progress(batch_idx: int, total_batches: int):
                 if verbose:
-                    elapsed = time.time() - embedding_start_time if batch_times else 0
-                    if batch_idx > 1:
-                        avg_per_batch = elapsed / (batch_idx - 1)
-                        print(f"{timestamp()}      batch {batch_idx}/{total_batches} ({self.embedding_batch_size} chunks/batch, {avg_per_batch:.2f}s/batch)", flush=True)
+                    elapsed = time.time() - embedding_start_time
+                    if batch_idx > 0:
+                        avg_per_batch = elapsed / batch_idx
+                        remaining = total_batches - batch_idx
+                        eta = remaining * avg_per_batch
+                        progress = f"[{batch_idx}/{total_batches} batches, ~{eta:.0f}s remaining]"
                     else:
-                        print(f"{timestamp()}      batch {batch_idx}/{total_batches} ({self.embedding_batch_size} chunks/batch)", flush=True)
+                        progress = f"[0/{total_batches} batches]"
+                    # \r returns to line start, spaces clear previous longer text
+                    print(f"\r{embedding_ts}   → embedding ({file_chunk_count} chunks) {progress}    ", end="", flush=True)
 
             # Use shared embedding client (arcaneum-q9ak)
             # Single client shared across workers prevents duplicate model loading.
@@ -349,7 +356,8 @@ class PDFBatchUploader:
             embedding_elapsed = time.time() - embedding_start_time
 
             if verbose:
-                total_batches = (file_chunk_count + self.embedding_batch_size - 1) // self.embedding_batch_size
+                # Show final batch count, then newline and summary
+                print(f"\r{embedding_ts}   → embedding ({file_chunk_count} chunks) [{total_batches}/{total_batches} batches]    ")
                 print(f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches, {embedding_elapsed/total_batches:.2f}s/batch)", flush=True)
 
             # Stage 5: Create and upload points in batches (streaming upload)

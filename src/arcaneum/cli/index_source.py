@@ -99,12 +99,15 @@ def index_source_command(
             # GPU mode: auto-tune based on available memory
             try:
                 from arcaneum.utils.memory import get_gpu_memory_info, estimate_safe_batch_size_v2
-                memory_info = get_gpu_memory_info()
-                if memory_info:
-                    available_bytes = memory_info.get('available', 0)
-                    device_type = memory_info.get('device_type', 'cuda')
+
+                available_bytes, total_bytes, device_type = get_gpu_memory_info()
+
+                if available_bytes is not None:
                     embedding_batch_size = estimate_safe_batch_size_v2(
-                        available_memory_bytes=available_bytes,
+                        model_name=model,
+                        available_gpu_bytes=available_bytes,
+                        pipeline_overhead_gb=0.3,
+                        safety_factor=0.6,
                         device_type=device_type
                     )
                 else:

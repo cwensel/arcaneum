@@ -121,20 +121,30 @@ def estimate_safe_batch_size_v2(
         available_gb = available_gpu_bytes / (1024 ** 3)
 
         # Optimal batch sizes from empirical testing (RDR-013, arcaneum-i7oa)
+        # Larger batches = fewer kernel launches = better GPU utilization
+        # Values tuned for sustained GPU inference without OOM
         OPTIMAL_BATCH_SIZES = {
             'stella': 512,
             'jina': 512,
             'jina-code': 512,
+            'jina-code-0.5b': 256,   # 500M params, moderate batches
+            'jina-code-1.5b': 128,   # 1.5B params, smaller batches
+            'codesage-large': 256,   # ~400M params
+            'nomic-code': 64,        # 7B params, very large model
             'bge-large': 512,
             'bge-base': 512,
             'bge-small': 512,
         }
 
-        # Minimum memory requirements (model + reasonable batch)
+        # Minimum memory requirements (model weights + reasonable batch headroom)
         MIN_MEMORY_GB = {
-            'stella': 4.0,   # 2.5GB model + 1.5GB for batching
-            'jina': 2.0,     # 0.5GB model + 1.5GB for batching
+            'stella': 4.0,           # 2.5GB model + 1.5GB for batching
+            'jina': 2.0,             # 0.5GB model + 1.5GB for batching
             'jina-code': 2.0,
+            'jina-code-0.5b': 3.0,   # 1.5GB model + 1.5GB for batching
+            'jina-code-1.5b': 6.0,   # 4GB model + 2GB for batching
+            'codesage-large': 3.0,   # 1.5GB model + 1.5GB for batching
+            'nomic-code': 16.0,      # ~14GB model + 2GB for batching (7B params)
             'bge-large': 2.5,
             'bge-base': 2.0,
             'bge-small': 1.5,
@@ -157,9 +167,13 @@ def estimate_safe_batch_size_v2(
     # CUDA: Use detailed memory model
     # Model weights (one-time GPU memory allocation)
     MODEL_WEIGHTS_GB = {
-        'stella': 2.5,        # 1.5B parameters
-        'jina': 0.5,          # ~110M parameters
+        'stella': 2.5,            # 1.5B parameters
+        'jina': 0.5,              # ~110M parameters
         'jina-code': 0.5,
+        'jina-code-0.5b': 1.5,    # 500M parameters
+        'jina-code-1.5b': 4.0,    # 1.5B parameters
+        'codesage-large': 1.5,    # ~400M parameters
+        'nomic-code': 14.0,       # 7B parameters
         'bge-large': 0.8,
         'bge-base': 0.5,
         'bge-small': 0.3,
@@ -167,12 +181,16 @@ def estimate_safe_batch_size_v2(
 
     # Activation memory per batch item (empirical measurements)
     ACTIVATION_MB_PER_ITEM = {
-        'stella': 8.0,        # 1024D output, large model
-        'jina': 5.0,          # 768D output
+        'stella': 8.0,            # 1024D output, large model
+        'jina': 5.0,              # 768D output
         'jina-code': 5.0,
-        'bge-large': 8.0,     # 1024D output
-        'bge-base': 5.0,      # 768D output
-        'bge-small': 3.0,     # 384D output
+        'jina-code-0.5b': 6.0,    # 896D output
+        'jina-code-1.5b': 10.0,   # 1536D output, large model
+        'codesage-large': 8.0,    # 1024D output
+        'nomic-code': 20.0,       # 3584D output, very large
+        'bge-large': 8.0,         # 1024D output
+        'bge-base': 5.0,          # 768D output
+        'bge-small': 3.0,         # 384D output
     }
 
     # Get model-specific parameters, default to conservative values

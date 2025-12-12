@@ -435,26 +435,32 @@ class EmbeddingClient:
             # Potential 10-20% speedup on embeddings by reducing tensor→list conversion overhead.
 
             # CRITICAL: model.encode() batch_size controls GPU memory usage
-            # For MPS (unified memory), large batches cause OOM especially on large models
-            # Use model-aware batch sizing based on parameter count
-            if self._device == "mps":
-                # MPS: Adaptive batch size based on model size
-                # stella (1.5B params) needs very small batches to avoid OOM
-                # Smaller models like jina-code can handle larger batches
-                model_config = EMBEDDING_MODELS.get(model_name, {})
-                model_size = model_config.get("size", "medium")
+            # Use dynamic batch sizing based on available memory at runtime
+            # This replaces the previous hard-coded values (8/32/64) which caused
+            # excessive kernel launches and poor GPU utilization
+            if self._device in ("mps", "cuda"):
+                from ..utils.memory import get_gpu_memory_info, estimate_safe_batch_size_v2
 
-                if model_size == "large":
-                    # Large models (stella 1.5B): very conservative batch size
-                    internal_batch_size = 8
-                elif model_size == "medium":
-                    # Medium models (jina-code, modernbert): moderate batch size
-                    internal_batch_size = 32
+                available_bytes, _, device_type = get_gpu_memory_info()
+                if available_bytes:
+                    internal_batch_size = estimate_safe_batch_size_v2(
+                        model_name=model_name,
+                        available_gpu_bytes=available_bytes,
+                        pipeline_overhead_gb=0.3,
+                        safety_factor=0.6,
+                        device_type=self._device
+                    )
+                    logger.debug(
+                        f"Dynamic internal_batch_size={internal_batch_size} for "
+                        f"model.encode() on {self._device} "
+                        f"(available: {available_bytes / (1024**3):.1f}GB)"
+                    )
                 else:
-                    # Smaller models: can use larger batches
+                    # Fallback if memory detection fails
                     internal_batch_size = 64
+                    logger.debug(f"Memory detection failed, using fallback internal_batch_size={internal_batch_size}")
             else:
-                # CUDA: Can use larger batches (dedicated VRAM)
+                # CPU: Use conservative batches
                 internal_batch_size = min(batch_size, 256)
 
             # Disable progress bar - pipeline handles progress display

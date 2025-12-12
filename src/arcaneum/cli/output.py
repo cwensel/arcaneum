@@ -6,7 +6,23 @@ following Beads best practices.
 
 import json
 import sys
+from datetime import datetime
 from typing import Any, Dict, List, Optional
+
+
+def timestamp() -> str:
+    """Return a human-readable timestamp for verbose output.
+
+    Returns:
+        Timestamp string in format "[HH:MM:SS]" for prefixing verbose output lines.
+        This helps users estimate how long each step has been running during indexing.
+
+    Example:
+        >>> ts = timestamp()
+        >>> print(f"{ts} → processing files")
+        [14:32:07] → processing files
+    """
+    return datetime.now().strftime("[%H:%M:%S]")
 
 
 def format_json_response(

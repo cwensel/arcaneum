@@ -20,6 +20,7 @@ from ...embeddings.client import EmbeddingClient
 from ..common.sync import MetadataBasedSync, compute_text_file_hash, compute_file_hash, compute_quick_hash
 from .discovery import MarkdownDiscovery
 from .chunker import SemanticMarkdownChunker
+from ...cli.output import timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -95,14 +96,14 @@ class MarkdownIndexingPipeline:
             if not verbose:
                 print(f"\r[{file_idx}/{total_files}] {file_path.name} → reading{' '*20}", end="", flush=True)
             else:
-                print(f"\n[{file_idx}/{total_files}] {file_path.name}", flush=True)
-                print(f"  → reading file", flush=True)
+                print(f"\n{timestamp()} [{file_idx}/{total_files}] {file_path.name}", flush=True)
+                print(f"{timestamp()}   → reading file", flush=True)
 
             file_metadata = self.discovery.extract_metadata(file_path)
             content, frontmatter = MarkdownDiscovery.read_file_with_frontmatter(file_path)
 
             if verbose:
-                print(f"     read {len(content)} chars", flush=True)
+                print(f"{timestamp()}      read {len(content)} chars", flush=True)
 
             # Stage 1b: Compute hashes (ONLY time we hash!)
             quick_hash = compute_quick_hash(file_path)  # Metadata-only hash (mtime+size)
@@ -126,10 +127,10 @@ class MarkdownIndexingPipeline:
                     result = self.sync.handle_renames(collection_name, [(old_path, new_path, new_metadata)])
 
                     if verbose:
-                        print(f"  ↪ File renamed/moved")
-                        print(f"     Old location: {old_path}")
-                        print(f"     New location: {new_path}")
-                        print(f"     Updated {result} chunks")
+                        print(f"{timestamp()}   ↪ File renamed/moved")
+                        print(f"{timestamp()}      Old location: {old_path}")
+                        print(f"{timestamp()}      New location: {new_path}")
+                        print(f"{timestamp()}      Updated {result} chunks")
                     elif not verbose:
                         print(f"\r[{file_idx}/{total_files}] {file_path.name} → renamed (updated {result} chunks){' '*20}", flush=True)
 
@@ -144,15 +145,15 @@ class MarkdownIndexingPipeline:
                     if not path_already_tracked:
                         # New duplicate path
                         primary_path = old_paths[0] if old_paths else "unknown"
-                        print(f"  ⊕ Duplicate content: added as alternate path")
-                        print(f"     Primary location: {primary_path}")
-                        print(f"     Total locations: {len(old_paths) + 1}")
+                        print(f"{timestamp()}   ⊕ Duplicate content: added as alternate path")
+                        print(f"{timestamp()}      Primary location: {primary_path}")
+                        print(f"{timestamp()}      Total locations: {len(old_paths) + 1}")
                     elif result > 0:
                         # Path was tracked but dict entry was missing (migration)
-                        print(f"  ⚙️  Migrated metadata (updated quick_hash dict)")
+                        print(f"{timestamp()}   ⚙️  Migrated metadata (updated quick_hash dict)")
                     else:
                         # Everything already up to date
-                        print(f"  ✓ Already indexed with complete metadata")
+                        print(f"{timestamp()}   ✓ Already indexed with complete metadata")
                 elif not verbose:
                     status = "alternate path added" if not path_already_tracked else "already tracked"
                     print(f"\r[{file_idx}/{total_files}] {file_path.name} → {status}{' '*20}", flush=True)
@@ -162,7 +163,7 @@ class MarkdownIndexingPipeline:
             # Stage 1e: Pre-deletion - Remove old chunks with same file_hash before reindexing
             # This prevents partial data if indexing is interrupted mid-file
             if verbose:
-                print(f"  → pre-deletion: removing old chunks", flush=True)
+                print(f"{timestamp()}   → pre-deletion: removing old chunks", flush=True)
             self.sync.delete_chunks_by_file_hash(collection_name, file_hash)
 
             # Build base metadata
@@ -196,13 +197,13 @@ class MarkdownIndexingPipeline:
             if not verbose:
                 print(f"\r[{file_idx}/{total_files}] {file_path.name} → chunking ({len(content)} chars){' '*15}", end="", flush=True)
             else:
-                print(f"  → chunking ({len(content)} chars)", flush=True)
+                print(f"{timestamp()}   → chunking ({len(content)} chars)", flush=True)
 
             chunks = chunker.chunk(content, base_metadata)
             file_chunk_count = len(chunks)
 
             if verbose:
-                print(f"     created {file_chunk_count} chunks", flush=True)
+                print(f"{timestamp()}      created {file_chunk_count} chunks", flush=True)
 
             # Stage 3: Generate embeddings (parallel)
             texts = [chunk.text for chunk in chunks]
@@ -210,7 +211,7 @@ class MarkdownIndexingPipeline:
             if not verbose:
                 print(f"\r[{file_idx}/{total_files}] {file_path.name} → embedding ({file_chunk_count} chunks){' '*15}", end="", flush=True)
             else:
-                print(f"  → embedding ({file_chunk_count} chunks)", flush=True)
+                print(f"{timestamp()}   → embedding ({file_chunk_count} chunks)", flush=True)
 
             # Generate embeddings in parallel using ThreadPoolExecutor
             embeddings = self.embeddings.embed_parallel(
@@ -221,7 +222,7 @@ class MarkdownIndexingPipeline:
             )
 
             if verbose:
-                print(f"     embedded {file_chunk_count} chunks", flush=True)
+                print(f"{timestamp()}      embedded {file_chunk_count} chunks", flush=True)
 
             # Stage 4: Create points
             points = []
@@ -308,13 +309,13 @@ class MarkdownIndexingPipeline:
 
         # Filter to unindexed files (unless force_reindex)
         if verbose:
-            print(f"🔍 Scanning collection for existing files...")
+            print(f"{timestamp()} 🔍 Scanning collection for existing files...")
 
         if force_reindex:
             markdown_files = all_markdown_files
             logger.info(f"Force reindex: processing all {len(markdown_files)} files")
             if verbose:
-                print(f"🔄 Force reindex: {len(markdown_files)} files to process")
+                print(f"{timestamp()} 🔄 Force reindex: {len(markdown_files)} files to process")
         else:
             markdown_files, already_indexed = self.sync.get_unindexed_files(
                 collection_name, all_markdown_files
@@ -324,16 +325,16 @@ class MarkdownIndexingPipeline:
                        f"{len(already_indexed)} already indexed")
 
             if verbose:
-                print(f"📊 Found {len(all_markdown_files)} files: {len(markdown_files)} need processing, "
+                print(f"{timestamp()} 📊 Found {len(all_markdown_files)} files: {len(markdown_files)} need processing, "
                       f"{len(already_indexed)} already indexed")
-                print(f"   (duplicate content will be tracked via file_paths array)")
+                print(f"{timestamp()}    (duplicate content will be tracked via file_paths array)")
 
         if not markdown_files:
             logger.info("No markdown files to index")
             if not verbose:
                 print("All markdown files up to date")
             else:
-                print("✅ All markdown files are up to date")
+                print(f"{timestamp()} ✅ All markdown files are up to date")
             return {"files": 0, "chunks": 0, "errors": 0}
 
         # Show count
@@ -348,9 +349,9 @@ class MarkdownIndexingPipeline:
         if not is_cached and not verbose:
             print(f"⬇️  Downloading {model_name} model (first time only)...", flush=True)
         elif not is_cached and verbose:
-            print(f"⬇️  Model not cached, downloading {model_name}...", flush=True)
+            print(f"{timestamp()} ⬇️  Model not cached, downloading {model_name}...", flush=True)
         elif verbose:
-            print(f"📦 Loading {model_name} model from cache...", flush=True)
+            print(f"{timestamp()} 📦 Loading {model_name} model from cache...", flush=True)
         else:
             print(f"📦 Loading model...", flush=True)
 
@@ -360,7 +361,7 @@ class MarkdownIndexingPipeline:
         if not verbose:
             print(" ✓\n")  # Add newline to prevent overwriting
         else:
-            print(f"✓ Model ready", flush=True)
+            print(f"{timestamp()} ✓ Model ready", flush=True)
             print()
 
         # Randomize file order if requested (useful for parallel indexing)
@@ -368,7 +369,7 @@ class MarkdownIndexingPipeline:
             import random
             random.shuffle(markdown_files)
             if verbose:
-                print(f"🔀 Randomized file processing order")
+                print(f"{timestamp()} 🔀 Randomized file processing order")
                 print()
 
         # Process files with optional parallel processing (arcaneum-ce28)
@@ -414,7 +415,7 @@ class MarkdownIndexingPipeline:
                                 status_line = f"[{file_idx}/{total_files}] {file_path.name} ✗ ({error.split(':')[0]})"
                                 print(f"\r{status_line:<80}")
                             else:
-                                print(f"  ✗ ERROR: {error}", flush=True)
+                                print(f"{timestamp()}   ✗ ERROR: {error}", flush=True)
                             stats["errors"] += 1
                         else:
                             # Upload this file's chunks
@@ -422,7 +423,7 @@ class MarkdownIndexingPipeline:
                                 if not verbose:
                                     print(f"\r[{file_idx}/{total_files}] {file_path.name} → uploading ({len(points)} chunks){' '*15}", end="", flush=True)
                                 else:
-                                    print(f"  → uploading ({len(points)} chunks)", flush=True)
+                                    print(f"{timestamp()}   → uploading ({len(points)} chunks)", flush=True)
 
                                 self.qdrant.upsert(
                                     collection_name=collection_name,
@@ -436,7 +437,7 @@ class MarkdownIndexingPipeline:
                                     status_line = f"[{file_idx}/{total_files}] {file_path.name} ✓ ({file_chunk_count} chunks)"
                                     print(f"\r{status_line:<80}")
                                 else:
-                                    print(f"  ✓ complete ({file_chunk_count} chunks)", flush=True)
+                                    print(f"{timestamp()}   ✓ complete ({file_chunk_count} chunks)", flush=True)
 
             else:
                 # Sequential mode: Process files one at a time
@@ -460,7 +461,7 @@ class MarkdownIndexingPipeline:
                             status_line = f"[{file_idx}/{total_files}] {file_path.name} ✗ ({error.split(':')[0]})"
                             print(f"\r{status_line:<80}")
                         else:
-                            print(f"  ✗ ERROR: {error}", flush=True)
+                            print(f"{timestamp()}   ✗ ERROR: {error}", flush=True)
                         stats["errors"] += 1
                     else:
                         # Upload this file's chunks
@@ -468,7 +469,7 @@ class MarkdownIndexingPipeline:
                             if not verbose:
                                 print(f"\r[{file_idx}/{total_files}] {file_path.name} → uploading ({len(points)} chunks){' '*15}", end="", flush=True)
                             else:
-                                print(f"  → uploading ({len(points)} chunks)", flush=True)
+                                print(f"{timestamp()}   → uploading ({len(points)} chunks)", flush=True)
 
                             self.qdrant.upsert(
                                 collection_name=collection_name,
@@ -483,13 +484,13 @@ class MarkdownIndexingPipeline:
                                 status_line = f"[{file_idx}/{total_files}] {file_path.name} ✓ ({file_chunk_count} chunks)"
                                 print(f"\r{status_line:<80}")
                             else:
-                                print(f"  ✓ complete ({file_chunk_count} chunks)", flush=True)
+                                print(f"{timestamp()}   ✓ complete ({file_chunk_count} chunks)", flush=True)
 
             # Summary
             if verbose:
-                print(f"\n✅ Indexed {stats['files']} files ({stats['chunks']} chunks)")
+                print(f"\n{timestamp()} ✅ Indexed {stats['files']} files ({stats['chunks']} chunks)")
                 if stats['errors'] > 0:
-                    print(f"⚠️  {stats['errors']} files had errors")
+                    print(f"{timestamp()} ⚠️  {stats['errors']} files had errors")
             else:
                 print(f"Indexed {stats['files']} file(s), {stats['chunks']} chunk(s)")
                 if stats['errors'] > 0:
@@ -500,7 +501,7 @@ class MarkdownIndexingPipeline:
         except Exception as e:
             logger.error(f"Pipeline error: {e}")
             if verbose:
-                print(f"\n❌ Pipeline error: {e}")
+                print(f"\n{timestamp()} ❌ Pipeline error: {e}")
             raise
 
     def inject_content(

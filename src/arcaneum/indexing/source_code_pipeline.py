@@ -25,6 +25,7 @@ from .qdrant_indexer import QdrantIndexer
 from .types import CodeChunk, CodeChunkMetadata, GitMetadata
 from ..monitoring.cpu_stats import create_monitor
 from ..monitoring.pipeline_profiler import PipelineProfiler
+from ..cli.output import timestamp
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -324,25 +325,25 @@ class SourceCodeIndexer:
         # Note: In repair mode (repair_targets set), we need indexed_projects for deletion
         if not force or repair_targets:
             if verbose:
-                console.print("[cyan]Querying indexed projects...[/cyan]")
+                console.print(f"{timestamp()} [cyan]Querying indexed projects...[/cyan]")
             indexed_projects = self.sync.get_indexed_projects(collection_name)
             if verbose:
-                console.print(f"Found {len(indexed_projects)} indexed combinations\n")
+                console.print(f"{timestamp()} Found {len(indexed_projects)} indexed combinations\n")
         else:
             if verbose:
-                console.print("[yellow]Force mode: bypassing incremental sync[/yellow]\n")
+                console.print(f"{timestamp()} [yellow]Force mode: bypassing incremental sync[/yellow]\n")
             indexed_projects = {}
 
         # Step 2: Discover git projects
         if verbose:
-            console.print(f"[cyan]Discovering git projects...[/cyan]")
+            console.print(f"{timestamp()} [cyan]Discovering git projects...[/cyan]")
         git_projects = self.git_discovery.find_git_projects(input_path, depth)
         self.stats["projects_discovered"] = len(git_projects)
 
         if not verbose:
             console.print(f"[INFO] Found {len(git_projects)} projects")
         else:
-            console.print(f"Found {len(git_projects)} git project(s)\n")
+            console.print(f"{timestamp()} Found {len(git_projects)} git project(s)\n")
 
         if not git_projects:
             console.print("[INFO] No git projects found")
@@ -352,7 +353,7 @@ class SourceCodeIndexer:
         projects_to_index = []
 
         if verbose:
-            console.print("[cyan]Analyzing projects...[/cyan]")
+            console.print(f"{timestamp()} [cyan]Analyzing projects...[/cyan]")
 
         for project_root in git_projects:
             git_metadata = self.git_discovery.extract_metadata(project_root)
@@ -377,7 +378,7 @@ class SourceCodeIndexer:
             if not needs_indexing and not force and not is_repair_target:
                 if verbose:
                     console.print(
-                        f"  [green]✓[/green] {identifier} "
+                        f"{timestamp()}   [green]✓[/green] {identifier} "
                         f"(commit {git_metadata.commit_hash[:12]} already indexed)"
                     )
                 self.stats["projects_skipped"] += 1
@@ -388,21 +389,21 @@ class SourceCodeIndexer:
                 if is_repair_target:
                     if verbose:
                         console.print(
-                            f"  [magenta]🔧[/magenta] {identifier} "
+                            f"{timestamp()}   [magenta]🔧[/magenta] {identifier} "
                             f"(repairing incomplete index)"
                         )
                 else:
                     old_commit = indexed_projects[identifier].commit_hash
                     if verbose:
                         console.print(
-                            f"  [yellow]↻[/yellow] {identifier} "
+                            f"{timestamp()}   [yellow]↻[/yellow] {identifier} "
                             f"(commit changed: {old_commit[:12]} → {git_metadata.commit_hash[:12]})"
                         )
                 # Delete old chunks (filter-based, fast)
                 self.qdrant_indexer.delete_branch_chunks(collection_name, identifier)
             else:
                 if verbose:
-                    console.print(f"  [blue]➕[/blue] {identifier} (new branch)")
+                    console.print(f"{timestamp()}   [blue]➕[/blue] {identifier} (new branch)")
 
             projects_to_index.append((project_root, git_metadata, identifier))
 
@@ -417,7 +418,7 @@ class SourceCodeIndexer:
         if not verbose:
             console.print(f"[INFO] Indexing {len(projects_to_index)} projects...")
         else:
-            console.print(f"[cyan]Indexing {len(projects_to_index)} project(s)...[/cyan]\n")
+            console.print(f"{timestamp()} [cyan]Indexing {len(projects_to_index)} project(s)...[/cyan]\n")
 
         # Process projects with appropriate output level
         total_projects = len(projects_to_index)
@@ -447,7 +448,7 @@ class SourceCodeIndexer:
 
         # Report final statistics
         if verbose:
-            console.print(f"\n[bold green]✓ Indexing complete![/bold green]")
+            console.print(f"\n{timestamp()} [bold green]✓ Indexing complete![/bold green]")
             console.print(f"\nStatistics:")
             console.print(f"  Projects discovered: {self.stats['projects_discovered']}")
             console.print(f"  Projects indexed: {self.stats['projects_indexed']}")
@@ -539,8 +540,8 @@ class SourceCodeIndexer:
 
         # Show project header in verbose mode
         if verbose:
-            console.print(f"\n[{project_num}/{total_projects}] {identifier}")
-            console.print(f"  → processing files ({total_files} files found)")
+            console.print(f"\n{timestamp()} [{project_num}/{total_projects}] {identifier}")
+            console.print(f"{timestamp()}   → processing files ({total_files} files found)")
 
         # Process files in parallel using ProcessPoolExecutor (RDR-013 Phase 2)
         # Default: cpu_count // 2 for responsive laptop
@@ -611,7 +612,7 @@ class SourceCodeIndexer:
 
         # Show chunking status in verbose mode
         if verbose:
-            console.print(f"  → chunking ({len(all_chunks)} chunks created)")
+            console.print(f"{timestamp()}   → chunking ({len(all_chunks)} chunks created)")
 
         if not all_chunks:
             logger.info(f"No chunks created for {identifier}")
@@ -624,7 +625,7 @@ class SourceCodeIndexer:
 
         # Show embedding progress
         if verbose:
-            console.print(f"  → embedding ({total_chunks} chunks)")
+            console.print(f"{timestamp()}   → embedding ({total_chunks} chunks)")
         else:
             print(
                 f"\r[{project_num}/{total_projects}] {identifier}: "
@@ -662,7 +663,7 @@ class SourceCodeIndexer:
         if verbose and timing_collector:
             timing = timing_collector.get_summary()
             console.print(
-                f"     embedded {total_chunks} chunks in {timing['total_time']:.2f}s "
+                f"{timestamp()}      embedded {total_chunks} chunks in {timing['total_time']:.2f}s "
                 f"({timing['num_batches']} batches, {timing['avg_per_batch']:.2f}s/batch)"
             )
 
@@ -673,7 +674,7 @@ class SourceCodeIndexer:
 
         # Show upload progress
         if verbose:
-            console.print(f"  → uploading ({total_files} files, {len(all_chunks)} chunks)")
+            console.print(f"{timestamp()}   → uploading ({total_files} files, {len(all_chunks)} chunks)")
         else:
             print(
                 f"\r[{project_num}/{total_projects}] {identifier}: "
@@ -716,7 +717,7 @@ class SourceCodeIndexer:
 
         # Final status line
         if verbose:
-            console.print(f"  ✓ complete ({project_files} files, {project_chunks} chunks)")
+            console.print(f"{timestamp()}   ✓ complete ({project_files} files, {project_chunks} chunks)")
         else:
             print(
                 f"\r[{project_num}/{total_projects}] {identifier}: "

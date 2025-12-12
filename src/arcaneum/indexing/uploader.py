@@ -18,6 +18,7 @@ from .pdf.ocr import OCREngine
 from .pdf.chunker import PDFChunker
 from ..monitoring.cpu_stats import create_monitor
 from ..utils.memory import calculate_safe_workers, log_memory_stats
+from ..cli.output import timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -182,8 +183,8 @@ class PDFBatchUploader:
         try:
             # Stage 0: Computing hashes (two-pass sync)
             if verbose:
-                print(f"\n[{pdf_idx}/{total_pdfs}] {pdf_path.name}", flush=True)
-                print(f"  → computing hashes", flush=True)
+                print(f"\n{timestamp()} [{pdf_idx}/{total_pdfs}] {pdf_path.name}", flush=True)
+                print(f"{timestamp()}   → computing hashes", flush=True)
 
             # Pass 1: Fast metadata hash (mtime+size)
             quick_hash = compute_quick_hash(pdf_path)
@@ -208,10 +209,10 @@ class PDFBatchUploader:
                     result = self.sync.handle_renames(collection_name, [(old_path, new_path, new_metadata)])
 
                     if verbose:
-                        print(f"  ↪ File renamed/moved")
-                        print(f"     Old location: {old_path}")
-                        print(f"     New location: {new_path}")
-                        print(f"     Updated {result} chunks")
+                        print(f"{timestamp()}   ↪ File renamed/moved")
+                        print(f"{timestamp()}      Old location: {old_path}")
+                        print(f"{timestamp()}      New location: {new_path}")
+                        print(f"{timestamp()}      Updated {result} chunks")
                     elif not verbose:
                         print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → renamed (updated {result} chunks){' '*20}", flush=True)
 
@@ -226,15 +227,15 @@ class PDFBatchUploader:
                     if not path_already_tracked:
                         # New duplicate path
                         primary_path = old_paths[0] if old_paths else "unknown"
-                        print(f"  ⊕ Duplicate content: added as alternate path")
-                        print(f"     Primary location: {primary_path}")
-                        print(f"     Total locations: {len(old_paths) + 1}")
+                        print(f"{timestamp()}   ⊕ Duplicate content: added as alternate path")
+                        print(f"{timestamp()}      Primary location: {primary_path}")
+                        print(f"{timestamp()}      Total locations: {len(old_paths) + 1}")
                     elif result > 0:
                         # Path was tracked but dict entry was missing (migration)
-                        print(f"  ⚙️  Migrated metadata (updated quick_hash dict)")
+                        print(f"{timestamp()}   ⚙️  Migrated metadata (updated quick_hash dict)")
                     else:
                         # Everything already up to date
-                        print(f"  ✓ Already indexed with complete metadata")
+                        print(f"{timestamp()}   ✓ Already indexed with complete metadata")
                 elif not verbose:
                     status = "alternate path added" if not path_already_tracked else "already tracked"
                     print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → {status}{' '*20}", flush=True)
@@ -249,7 +250,7 @@ class PDFBatchUploader:
             if not verbose:
                 print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → extracting{' '*20}", end="", flush=True)
             else:
-                print(f"  → extracting text", flush=True)
+                print(f"{timestamp()}   → extracting text", flush=True)
 
             if not verbose:
                 # Suppress PyMuPDF warnings to stderr
@@ -264,7 +265,7 @@ class PDFBatchUploader:
                         os.close(old_stderr)
             else:
                 text, extract_meta = self.extractor.extract(pdf_path)
-                print(f"     extracted {len(text)} chars", flush=True)
+                print(f"{timestamp()}      extracted {len(text)} chars", flush=True)
 
             # Stage 2: OCR (if needed)
             if self.ocr_enabled and len(text) < self.ocr_threshold:
@@ -279,13 +280,13 @@ class PDFBatchUploader:
                 if not verbose:
                     print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → OCR ({page_count}p){' '*20}", end="", flush=True)
                 else:
-                    print(f"  → running OCR ({page_count} pages)", flush=True)
+                    print(f"{timestamp()}   → running OCR ({page_count} pages)", flush=True)
 
                 text, ocr_meta = self.ocr.process_pdf(pdf_path, verbose=verbose)
                 extract_meta.update(ocr_meta)
 
                 if verbose:
-                    print(f"     OCR complete", flush=True)
+                    print(f"{timestamp()}      OCR complete", flush=True)
 
             # Chunk text with file metadata (two-pass sync support)
             file_path_abs = str(pdf_path.absolute())
@@ -305,20 +306,20 @@ class PDFBatchUploader:
             if not verbose:
                 print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → chunking ({len(text)} chars){' '*15}", end="", flush=True)
             else:
-                print(f"  → chunking ({len(text)} chars)", flush=True)
+                print(f"{timestamp()}   → chunking ({len(text)} chars)", flush=True)
 
             chunks = chunker.chunk(text, base_metadata)
             file_chunk_count = len(chunks)
 
             if verbose:
-                print(f"     created {file_chunk_count} chunks", flush=True)
+                print(f"{timestamp()}      created {file_chunk_count} chunks", flush=True)
 
             # Stage 4: Embedding
             texts = [chunk.text for chunk in chunks]
             if not verbose:
                 print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → embedding ({file_chunk_count} chunks){' '*15}", end="", flush=True)
             else:
-                print(f"  → embedding ({file_chunk_count} chunks)", flush=True)
+                print(f"{timestamp()}   → embedding ({file_chunk_count} chunks)", flush=True)
 
             # Progress callback for verbose mode (arcaneum-w638)
             batch_times = []  # Track timing for each batch
@@ -327,9 +328,9 @@ class PDFBatchUploader:
                     elapsed = time.time() - embedding_start_time if batch_times else 0
                     if batch_idx > 1:
                         avg_per_batch = elapsed / (batch_idx - 1)
-                        print(f"     batch {batch_idx}/{total_batches} ({self.embedding_batch_size} chunks/batch, {avg_per_batch:.2f}s/batch)", flush=True)
+                        print(f"{timestamp()}      batch {batch_idx}/{total_batches} ({self.embedding_batch_size} chunks/batch, {avg_per_batch:.2f}s/batch)", flush=True)
                     else:
-                        print(f"     batch {batch_idx}/{total_batches} ({self.embedding_batch_size} chunks/batch)", flush=True)
+                        print(f"{timestamp()}      batch {batch_idx}/{total_batches} ({self.embedding_batch_size} chunks/batch)", flush=True)
 
             # Use shared embedding client (arcaneum-q9ak)
             # Single client shared across workers prevents duplicate model loading.
@@ -349,7 +350,7 @@ class PDFBatchUploader:
 
             if verbose:
                 total_batches = (file_chunk_count + self.embedding_batch_size - 1) // self.embedding_batch_size
-                print(f"     embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches, {embedding_elapsed/total_batches:.2f}s/batch)", flush=True)
+                print(f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches, {embedding_elapsed/total_batches:.2f}s/batch)", flush=True)
 
             # Stage 5: Create and upload points in batches (streaming upload)
             # This avoids holding all points in memory at once
@@ -376,7 +377,7 @@ class PDFBatchUploader:
                     if not verbose:
                         print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → uploading batch ({uploaded_count}/{file_chunk_count}){' '*15}", end="", flush=True)
                     else:
-                        print(f"  → uploading batch ({len(points_batch)} chunks, {uploaded_count}/{file_chunk_count} total)", flush=True)
+                        print(f"{timestamp()}   → uploading batch ({len(points_batch)} chunks, {uploaded_count}/{file_chunk_count} total)", flush=True)
 
                     self._upload_batch(collection_name, points_batch)
                     uploaded_count += len(points_batch)
@@ -389,7 +390,7 @@ class PDFBatchUploader:
                 if not verbose:
                     print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → uploading final batch ({uploaded_count}/{file_chunk_count}){' '*15}", end="", flush=True)
                 else:
-                    print(f"  → uploading final batch ({len(points_batch)} chunks)", flush=True)
+                    print(f"{timestamp()}   → uploading final batch ({len(points_batch)} chunks)", flush=True)
 
                 self._upload_batch(collection_name, points_batch)
                 uploaded_count += len(points_batch)
@@ -481,13 +482,13 @@ class PDFBatchUploader:
 
         # Filter to unindexed files via metadata queries (unless force_reindex)
         if verbose:
-            print(f"🔍 Scanning collection for existing files...")
+            print(f"{timestamp()} 🔍 Scanning collection for existing files...")
 
         if force_reindex:
             pdf_files = all_pdf_files
             logger.info(f"Force reindex: processing all {len(pdf_files)} PDFs")
             if verbose:
-                print(f"🔄 Force reindex: {len(pdf_files)} PDFs to process")
+                print(f"{timestamp()} 🔄 Force reindex: {len(pdf_files)} PDFs to process")
         else:
             pdf_files, already_indexed = self.sync.get_unindexed_files(collection_name, all_pdf_files)
 
@@ -495,16 +496,16 @@ class PDFBatchUploader:
                        f"{len(already_indexed)} already indexed")
 
             if verbose:
-                print(f"📊 Found {len(all_pdf_files)} PDFs: {len(pdf_files)} need processing, "
+                print(f"{timestamp()} 📊 Found {len(all_pdf_files)} PDFs: {len(pdf_files)} need processing, "
                       f"{len(already_indexed)} already indexed")
-                print(f"   (duplicate content will be tracked via file_paths array)")
+                print(f"{timestamp()}    (duplicate content will be tracked via file_paths array)")
 
         if not pdf_files:
             logger.info("No PDFs to index")
             if not verbose:
                 print("All PDFs up to date")
             else:
-                print("✅ All PDFs are up to date")
+                print(f"{timestamp()} ✅ All PDFs are up to date")
             return {"files": 0, "chunks": 0, "errors": 0}
 
         # Randomize file order if requested (useful for parallel indexing)
@@ -512,7 +513,7 @@ class PDFBatchUploader:
             import random
             random.shuffle(pdf_files)
             if verbose:
-                print(f"🔀 Randomized file processing order")
+                print(f"{timestamp()} 🔀 Randomized file processing order")
 
         # Show count for minimal mode
         if not verbose:
@@ -593,7 +594,7 @@ class PDFBatchUploader:
                                 status_line = f"[{pdf_idx}/{total_pdfs}] {pdf_path.name} ✗ ({error.split(':')[0]})"
                                 print(f"\r{status_line:<80}")
                             else:
-                                print(f"  ✗ ERROR: {error}", file=sys.stderr, flush=True)
+                                print(f"{timestamp()}   ✗ ERROR: {error}", file=sys.stderr, flush=True)
                             stats["errors"] += 1
                         else:
                             # Points are already uploaded via streaming (points list will be empty)
@@ -607,7 +608,7 @@ class PDFBatchUploader:
                                     status_line = f"[{pdf_idx}/{total_pdfs}] {pdf_path.name} ✓ ({file_chunk_count} chunks)"
                                     print(f"\r{status_line:<80}")
                                 else:
-                                    print(f"  ✓ complete ({file_chunk_count} chunks)", flush=True)
+                                    print(f"{timestamp()}   ✓ complete ({file_chunk_count} chunks)", flush=True)
 
             else:
                 # Sequential mode: Process PDFs one at a time
@@ -654,7 +655,7 @@ class PDFBatchUploader:
                             status_line = f"[{pdf_idx}/{total_pdfs}] {pdf_path.name} ✗ ({error.split(':')[0]})"
                             print(f"\r{status_line:<80}")
                         else:
-                            print(f"  ✗ ERROR: {error}", file=sys.stderr, flush=True)
+                            print(f"{timestamp()}   ✗ ERROR: {error}", file=sys.stderr, flush=True)
                         stats["errors"] += 1
                     else:
                         # Points are already uploaded via streaming (points list will be empty)
@@ -669,7 +670,7 @@ class PDFBatchUploader:
                                 status_line = f"[{pdf_idx}/{total_pdfs}] {pdf_path.name} ✓ ({file_chunk_count} chunks)"
                                 print(f"\r{status_line:<80}")
                             else:
-                                print(f"  ✓ complete ({file_chunk_count} chunks)", flush=True)
+                                print(f"{timestamp()}   ✓ complete ({file_chunk_count} chunks)", flush=True)
 
         except KeyboardInterrupt:
             # Let the signal handler in CLI handle it

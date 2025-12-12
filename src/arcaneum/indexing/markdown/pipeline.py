@@ -38,6 +38,7 @@ class MarkdownIndexingPipeline:
         file_workers: int = 1,
         embedding_workers: int = 4,
         embedding_batch_size: int = 256,
+        streaming: bool = False,
     ):
         """Initialize markdown indexing pipeline.
 
@@ -49,6 +50,8 @@ class MarkdownIndexingPipeline:
             file_workers: Number of markdown files to process in parallel (default: 1)
             embedding_workers: Number of parallel workers for embedding generation (default: 4)
             embedding_batch_size: Batch size for embedding generation (default: 256, optimized from 200 per arcaneum-9kgg)
+            streaming: Upload embeddings immediately after each batch instead of accumulating
+                in memory. Reduces memory usage from O(total_chunks) to O(batch_size).
         """
         self.qdrant = qdrant_client
         self.embeddings = embedding_client
@@ -56,6 +59,7 @@ class MarkdownIndexingPipeline:
         self.file_workers = file_workers
         self.embedding_workers = embedding_workers
         self.embedding_batch_size = embedding_batch_size
+        self.streaming = streaming
 
         # Initialize components with custom or default exclude patterns
         if exclude_patterns is None:
@@ -234,47 +238,102 @@ class MarkdownIndexingPipeline:
                     # \r returns to line start, spaces clear previous longer text
                     print(f"\r{embedding_ts}   → embedding ({file_chunk_count} chunks) {progress}    ", end="", flush=True)
 
-            # Generate embeddings in parallel using ThreadPoolExecutor
-            embeddings = self.embeddings.embed_parallel(
-                texts,
-                model_name,
-                max_workers=self.embedding_workers,
-                batch_size=self.embedding_batch_size,
-                progress_callback=embedding_progress if verbose else None
-            )
-            embedding_elapsed = time.time() - embedding_start
-
-            if verbose:
-                # Show final batch count, then newline and summary
-                print(f"\r{embedding_ts}   → embedding ({file_chunk_count} chunks) [{total_batches}/{total_batches} batches]    ")
-                print(f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed/total_batches:.2f}s/batch)", flush=True)
-
-            # Stage 4: Create points
-            points = []
+            # Track upload state
             point_id = point_id_start
-            for chunk, embedding in zip(chunks, embeddings):
-                payload = {
-                    **chunk.metadata,
-                    'text': chunk.text,
-                }
+            uploaded_count = 0
 
-                # Handle named vectors if needed
-                vector_name = model_config.get('vector_name')
-                if vector_name:
-                    vector = {vector_name: embedding}
-                else:
-                    vector = embedding
+            # Handle named vectors
+            vector_name = model_config.get('vector_name')
 
-                point = PointStruct(
-                    id=point_id,
-                    vector=vector,
-                    payload=payload
+            if self.streaming:
+                # Streaming mode: upload each batch immediately after embedding
+                # Memory usage is O(batch_size) instead of O(total_chunks)
+                def on_embed_batch(batch_idx: int, start_idx: int, batch_embeddings):
+                    nonlocal point_id, uploaded_count
+                    # Get corresponding chunks for this batch
+                    batch_chunks = chunks[start_idx:start_idx + len(batch_embeddings)]
+                    # Create points for this batch
+                    points = []
+                    for chunk, embedding in zip(batch_chunks, batch_embeddings):
+                        payload = {
+                            **chunk.metadata,
+                            'text': chunk.text,
+                        }
+                        if vector_name:
+                            vector = {vector_name: embedding}
+                        else:
+                            vector = embedding
+                        points.append(PointStruct(
+                            id=point_id,
+                            vector=vector,
+                            payload=payload
+                        ))
+                        point_id += 1
+                    # Upload batch
+                    if verbose:
+                        print(f"\n{timestamp()}   → uploading batch ({len(points)} chunks, {uploaded_count}/{file_chunk_count} total)", flush=True)
+                    self.qdrant.upsert(collection_name=collection_name, points=points)
+                    uploaded_count += len(points)
+
+                # Embed with streaming (accumulate=False)
+                self.embeddings.embed_parallel(
+                    texts,
+                    model_name,
+                    max_workers=self.embedding_workers,
+                    batch_size=self.embedding_batch_size,
+                    progress_callback=embedding_progress if verbose else None,
+                    on_batch_complete=on_embed_batch,
+                    accumulate=False
                 )
+                embedding_elapsed = time.time() - embedding_start
 
-                points.append(point)
-                point_id += 1
+                if verbose:
+                    # Show final batch count, then newline and summary
+                    print(f"\r{embedding_ts}   → embedding ({file_chunk_count} chunks) [{total_batches}/{total_batches} batches]    ")
+                    print(f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed/total_batches:.2f}s/batch)", flush=True)
 
-            return (points, file_chunk_count, None)
+                # Return empty points since we already uploaded
+                return ([], file_chunk_count, None)
+
+            else:
+                # Non-streaming mode: embed all, return points for caller to upload
+                embeddings = self.embeddings.embed_parallel(
+                    texts,
+                    model_name,
+                    max_workers=self.embedding_workers,
+                    batch_size=self.embedding_batch_size,
+                    progress_callback=embedding_progress if verbose else None
+                )
+                embedding_elapsed = time.time() - embedding_start
+
+                if verbose:
+                    # Show final batch count, then newline and summary
+                    print(f"\r{embedding_ts}   → embedding ({file_chunk_count} chunks) [{total_batches}/{total_batches} batches]    ")
+                    print(f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed/total_batches:.2f}s/batch)", flush=True)
+
+                # Stage 4: Create points
+                points = []
+                for chunk, embedding in zip(chunks, embeddings):
+                    payload = {
+                        **chunk.metadata,
+                        'text': chunk.text,
+                    }
+
+                    if vector_name:
+                        vector = {vector_name: embedding}
+                    else:
+                        vector = embedding
+
+                    point = PointStruct(
+                        id=point_id,
+                        vector=vector,
+                        payload=payload
+                    )
+
+                    points.append(point)
+                    point_id += 1
+
+                return (points, file_chunk_count, None)
 
         except Exception as e:
             error_msg = str(e)

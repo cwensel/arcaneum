@@ -1,7 +1,7 @@
 """Embedding client utilities with FastEmbed (RDR-002)."""
 
 from fastembed import TextEmbedding
-from typing import Dict, List
+from typing import Dict, List, Optional
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 from arcaneum.paths import get_models_dir
@@ -509,8 +509,10 @@ class EmbeddingClient:
         max_workers: int = 4,
         batch_size: int = None,
         timeout: int = 300,
-        progress_callback: callable = None
-    ) -> List[List[float]]:
+        progress_callback: callable = None,
+        on_batch_complete: callable = None,
+        accumulate: bool = True
+    ) -> Optional[List[List[float]]]:
         """Generate embeddings with batched processing.
 
         Note: Despite the name "parallel", GPU mode uses SEQUENTIAL batching. The "parallel"
@@ -525,6 +527,11 @@ class EmbeddingClient:
         Current implementation: Sequential batch processing for GPU.
         Large batch sizes (512-1024) maximize GPU utilization (arcaneum-i7oa).
 
+        Streaming mode (accumulate=False):
+        When accumulate=False and on_batch_complete is provided, embeddings are passed to the
+        callback after each batch and not accumulated in memory. This reduces memory usage
+        from O(total_chunks) to O(batch_size), enabling processing of arbitrarily large files.
+
         Args:
             texts: List of text strings to embed
             model_name: Model identifier (stella, jina, modernbert, bge)
@@ -532,9 +539,15 @@ class EmbeddingClient:
             batch_size: Chunk size for batches (default: None = auto-optimal, can override with explicit value)
             timeout: Timeout in seconds (ignored in single-threaded mode)
             progress_callback: Optional callback(batch_idx, total_batches) called after each batch completes
+            on_batch_complete: Optional callback(batch_idx, start_idx, embeddings) for streaming mode.
+                Called after each batch with the batch embeddings. Use with accumulate=False for
+                memory-efficient streaming where caller handles each batch (e.g., upload to Qdrant).
+            accumulate: If True (default), return all embeddings. If False, don't accumulate
+                embeddings in memory - caller must use on_batch_complete to handle each batch.
+                Returns None when accumulate=False.
 
         Returns:
-            List of embedding vectors in original order
+            List of embedding vectors in original order, or None if accumulate=False
 
         Raises:
             ValueError: If model_name is not recognized
@@ -549,6 +562,10 @@ class EmbeddingClient:
             >>> texts = ["text1", "text2", ..., "text1000"]
             >>> embeddings = client.embed_parallel(texts, "stella")  # Uses optimal batch size
             >>> embeddings = client.embed_parallel(texts, "stella", batch_size=256)  # Override
+            >>> # Streaming mode - process each batch without accumulating
+            >>> def handle_batch(batch_idx, start_idx, embeddings):
+            ...     upload_to_qdrant(embeddings)
+            >>> client.embed_parallel(texts, "stella", on_batch_complete=handle_batch, accumulate=False)
         """
         # Get model once
         _ = self.get_model(model_name)
@@ -572,9 +589,13 @@ class EmbeddingClient:
             # Memory optimization: Pre-allocate numpy array instead of list.extend()
             # List.extend() over-allocates by 25-50% during growth, causing memory bloat.
             # Pre-allocation uses exact memory needed. (arcaneum-q6by)
+            # Only allocate if accumulating results.
             import numpy as np
             dim = self.get_dimensions(model_name)
-            all_embeddings = np.zeros((len(texts), dim), dtype=np.float32)
+            if accumulate:
+                all_embeddings = np.zeros((len(texts), dim), dtype=np.float32)
+            else:
+                all_embeddings = None
 
             total_batches = (len(texts) + batch_size - 1) // batch_size
             batch_idx = 0
@@ -588,8 +609,14 @@ class EmbeddingClient:
                 batch_elapsed = time.time() - batch_start_time
                 logger.debug(f"Batch {batch_idx + 1}/{total_batches}: {actual_batch_size} chunks embedded in {batch_elapsed:.2f}s ({actual_batch_size/batch_elapsed:.1f} chunks/s)")
 
+                # Call batch complete callback if provided (for streaming upload)
+                if on_batch_complete:
+                    on_batch_complete(batch_idx, start_idx, batch_embeddings)
+
                 # Fill pre-allocated array in place (no list over-allocation)
-                all_embeddings[offset:offset + actual_batch_size] = batch_embeddings
+                # Only if accumulating results
+                if accumulate:
+                    all_embeddings[offset:offset + actual_batch_size] = batch_embeddings
                 offset += actual_batch_size
 
                 batch_idx += 1
@@ -600,8 +627,11 @@ class EmbeddingClient:
         # For CPU models: ThreadPoolExecutor can provide speedup
         # This is experimental - benchmark results will determine if kept
         else:
-            # Pre-allocate result list to maintain order
-            all_embeddings = [None] * len(texts)
+            # Pre-allocate result list to maintain order (only if accumulating)
+            if accumulate:
+                all_embeddings = [None] * len(texts)
+            else:
+                all_embeddings = None
 
             # Create batches with their start indices
             batches = []
@@ -616,30 +646,39 @@ class EmbeddingClient:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 # Submit all batch jobs
                 future_to_batch = {}
-                for start_idx, end_idx, batch_texts in batches:
+                for batch_idx, (start_idx, end_idx, batch_texts) in enumerate(batches):
                     future = executor.submit(self.embed, batch_texts, model_name)
-                    future_to_batch[future] = (start_idx, end_idx)
+                    future_to_batch[future] = (batch_idx, start_idx, end_idx)
 
                 # Collect results as they complete
                 for future in as_completed(future_to_batch):
-                    start_idx, end_idx = future_to_batch[future]
+                    batch_idx, start_idx, end_idx = future_to_batch[future]
                     try:
                         batch_embeddings = future.result(timeout=timeout)
-                        # Place results in correct position
-                        all_embeddings[start_idx:end_idx] = batch_embeddings
+
+                        # Call batch complete callback if provided (for streaming upload)
+                        # Note: batches may complete out of order with ThreadPoolExecutor
+                        if on_batch_complete:
+                            on_batch_complete(batch_idx, start_idx, batch_embeddings)
+
+                        # Place results in correct position (only if accumulating)
+                        if accumulate:
+                            all_embeddings[start_idx:end_idx] = batch_embeddings
                         completed_batches += 1
                         if progress_callback:
                             progress_callback(completed_batches, total_batches)
                     except TimeoutError:
                         # Log timeout error
                         logger.error(f"Batch {start_idx}-{end_idx} timed out (exceeded {timeout}s)")
-                        # Fill with None to indicate failure
-                        all_embeddings[start_idx:end_idx] = [None] * (end_idx - start_idx)
+                        # Fill with None to indicate failure (only if accumulating)
+                        if accumulate:
+                            all_embeddings[start_idx:end_idx] = [None] * (end_idx - start_idx)
                     except Exception as e:
                         # Log error but don't fail entire batch
                         logger.error(f"Batch {start_idx}-{end_idx} failed: {e}")
-                        # Fill with None to indicate failure
-                        all_embeddings[start_idx:end_idx] = [None] * (end_idx - start_idx)
+                        # Fill with None to indicate failure (only if accumulating)
+                        if accumulate:
+                            all_embeddings[start_idx:end_idx] = [None] * (end_idx - start_idx)
 
             # Memory cleanup: Clear futures dictionary to release references (arcaneum-64yl)
             # Future objects hold references to results and callbacks that prevent GC
@@ -649,11 +688,13 @@ class EmbeddingClient:
             gc.collect()
 
             # Check for any failures (handle both list and numpy array cases)
-            failed_indices = [i for i, emb in enumerate(all_embeddings) if emb is None]
-            if failed_indices:
-                raise RuntimeError(
-                    f"Failed to generate embeddings for {len(failed_indices)} texts at indices: {failed_indices[:10]}..."
-                )
+            # Only check if accumulating
+            if accumulate:
+                failed_indices = [i for i, emb in enumerate(all_embeddings) if emb is None]
+                if failed_indices:
+                    raise RuntimeError(
+                        f"Failed to generate embeddings for {len(failed_indices)} texts at indices: {failed_indices[:10]}..."
+                    )
 
             return all_embeddings
 

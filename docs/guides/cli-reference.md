@@ -343,6 +343,7 @@ Additional options for `arc index` commands:
 - `--workers N`: Number of parallel upload workers (default: 4)
 - `--force`: Force reindex all files (skip incremental sync)
 - `--offline`: Use cached models only (no network calls)
+- `--streaming`: Stream embeddings to Qdrant immediately (lower memory usage)
 
 **Performance Tuning:**
 
@@ -351,6 +352,13 @@ Additional options for `arc index` commands:
   - Limited benefit from thread parallelism due to embedding lock (see Architecture Notes below)
 - `--process-priority low|normal|high`: Process scheduling priority [default: normal]
   - Use `low` for background indexing to avoid blocking foreground tasks
+
+**Memory Optimization:**
+
+- `--streaming`: Upload embeddings immediately after each batch instead of accumulating all in memory
+  - Reduces memory from O(total_chunks × vector_dim) to O(batch_size × vector_dim)
+  - Recommended for large files or collections
+  - Partial uploads can be recovered with `--verify` flag
 
 **Note on Parallelism:** File and embedding worker flags were removed because they provided minimal benefit
 due to the embedding lock (required for GPU thread-safety). The single-threaded embedding approach with

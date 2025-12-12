@@ -181,7 +181,8 @@ class SourceCodeIndexer:
         vector_name: Optional[str] = None,
         parallel_workers: Optional[int] = None,
         embedding_workers: int = 4,
-        embedding_batch_size: int = 512
+        embedding_batch_size: int = 512,
+        streaming: bool = False
     ):
         """Initialize source code indexer.
 
@@ -196,6 +197,8 @@ class SourceCodeIndexer:
             parallel_workers: Number of parallel workers for file processing (None = cpu_count // 2)
             embedding_workers: Number of parallel workers for embedding generation (default: 4)
             embedding_batch_size: Batch size for embedding generation (default: 512, GPU-optimal per arcaneum-i7oa, arcaneum-2m1i)
+            streaming: Upload embeddings immediately after each batch instead of accumulating
+                in memory. Reduces memory usage from O(total_chunks) to O(batch_size).
         """
         self.qdrant_indexer = qdrant_indexer
         self.git_discovery = GitProjectDiscovery()
@@ -217,6 +220,7 @@ class SourceCodeIndexer:
         # Configure embedding parallelism
         self.embedding_workers = max(1, embedding_workers)
         self.embedding_batch_size = max(1, embedding_batch_size)
+        self.streaming = streaming
 
         # Default extensions (15+ languages from RDR-005)
         self.extensions = extensions or [
@@ -655,73 +659,131 @@ class SourceCodeIndexer:
                 # \r returns to line start, spaces clear previous longer text
                 print(f"\r{embedding_ts}   → embedding ({total_chunks} chunks) {progress}    ", end="", flush=True)
 
-        # Embed all texts in parallel
         texts = [chunk.content for chunk in all_chunks]
-        all_embeddings = self.embedding_client.embed_parallel(
-            texts,
-            self.embedding_model_id,
-            max_workers=self.embedding_workers,
-            batch_size=self.embedding_batch_size,
-            progress_callback=embedding_progress if verbose else None
-        )
+        uploaded = 0
 
-        # Record embedding stage timing
-        if profiler:
-            profiler.record_stage("embedding", time.time() - embedding_start, total_chunks)
+        if self.streaming:
+            # Streaming mode: embed and upload each batch immediately
+            # Memory usage is O(batch_size) instead of O(total_chunks)
+            def on_embed_batch(batch_idx: int, start_idx: int, batch_embeddings):
+                nonlocal uploaded
+                # Get corresponding chunks for this batch
+                batch_chunks = all_chunks[start_idx:start_idx + len(batch_embeddings)]
+                # Attach embeddings to chunks
+                for chunk, embedding in zip(batch_chunks, batch_embeddings):
+                    chunk.embedding = embedding
+                # Upload batch
+                if verbose:
+                    print(f"\n{timestamp()}   → uploading batch ({len(batch_chunks)} chunks, {uploaded}/{total_chunks} total)", flush=True)
+                batch_uploaded = self.qdrant_indexer.upload_chunks(
+                    collection_name,
+                    batch_chunks,
+                    vector_name=self.vector_name,
+                    bulk_mode=True
+                )
+                uploaded += batch_uploaded
 
-        # Show timing summary in verbose mode
-        if verbose:
-            embedding_elapsed = time.time() - embedding_start
-            # Show final batch count, then newline and summary
-            print(f"\r{embedding_ts}   → embedding ({total_chunks} chunks) [{total_batches}/{total_batches} batches]    ")
-            console.print(
-                f"{timestamp()}      embedded {total_chunks} chunks in {embedding_elapsed:.2f}s "
-                f"({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed/total_batches:.2f}s/batch)"
+            # Embed with streaming (accumulate=False)
+            self.embedding_client.embed_parallel(
+                texts,
+                self.embedding_model_id,
+                max_workers=self.embedding_workers,
+                batch_size=self.embedding_batch_size,
+                progress_callback=embedding_progress if verbose else None,
+                on_batch_complete=on_embed_batch,
+                accumulate=False
             )
 
-        # Attach embeddings to chunks
-        # Note: Embeddings can be numpy arrays or lists - Qdrant client handles both
-        for chunk, embedding in zip(all_chunks, all_embeddings):
-            chunk.embedding = embedding
+            # Record embedding stage timing (includes upload time in streaming mode)
+            if profiler:
+                profiler.record_stage("embedding", time.time() - embedding_start, total_chunks)
 
-        # Show upload progress
-        if verbose:
-            console.print(f"{timestamp()}   → uploading ({total_files} files, {len(all_chunks)} chunks)")
+            # Show timing summary in verbose mode
+            if verbose:
+                embedding_elapsed = time.time() - embedding_start
+                # Show final batch count, then newline and summary
+                print(f"\r{embedding_ts}   → embedding ({total_chunks} chunks) [{total_batches}/{total_batches} batches]    ")
+                console.print(
+                    f"{timestamp()}      embedded {total_chunks} chunks in {embedding_elapsed:.2f}s "
+                    f"({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed/total_batches:.2f}s/batch)"
+                )
+
+            self.stats["chunks_uploaded"] += uploaded
+            self.stats["projects_indexed"] += 1
+
+            # Memory cleanup
+            del all_chunks
+            del texts
+            import gc
+            gc.collect()
+
         else:
-            print(
-                f"\r[{project_num}/{total_projects}] {identifier}: "
-                f"→ uploading ({total_files} files, {len(all_chunks)} chunks)" + " " * 20,
-                end="",
-                flush=True,
-                file=sys.stdout
+            # Non-streaming mode: embed all, then upload (original behavior)
+            all_embeddings = self.embedding_client.embed_parallel(
+                texts,
+                self.embedding_model_id,
+                max_workers=self.embedding_workers,
+                batch_size=self.embedding_batch_size,
+                progress_callback=embedding_progress if verbose else None
             )
 
-        # Track upload time for profiler
-        upload_start = time.time()
+            # Record embedding stage timing
+            if profiler:
+                profiler.record_stage("embedding", time.time() - embedding_start, total_chunks)
 
-        # Upload to Qdrant with bulk mode for 1.3-1.5x speedup (RDR-013 Phase 1)
-        # Bulk mode disables HNSW indexing during upload, rebuilds after completion
-        uploaded = self.qdrant_indexer.upload_chunks(
-            collection_name,
-            all_chunks,
-            vector_name=self.vector_name,
-            bulk_mode=True
-        )
+            # Show timing summary in verbose mode
+            if verbose:
+                embedding_elapsed = time.time() - embedding_start
+                # Show final batch count, then newline and summary
+                print(f"\r{embedding_ts}   → embedding ({total_chunks} chunks) [{total_batches}/{total_batches} batches]    ")
+                console.print(
+                    f"{timestamp()}      embedded {total_chunks} chunks in {embedding_elapsed:.2f}s "
+                    f"({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed/total_batches:.2f}s/batch)"
+                )
 
-        # Record upload stage timing
-        if profiler:
-            profiler.record_stage("upload", time.time() - upload_start, uploaded)
+            # Attach embeddings to chunks
+            # Note: Embeddings can be numpy arrays or lists - Qdrant client handles both
+            for chunk, embedding in zip(all_chunks, all_embeddings):
+                chunk.embedding = embedding
 
-        self.stats["chunks_uploaded"] += uploaded
-        self.stats["projects_indexed"] += 1
+            # Show upload progress
+            if verbose:
+                console.print(f"{timestamp()}   → uploading ({total_files} files, {len(all_chunks)} chunks)")
+            else:
+                print(
+                    f"\r[{project_num}/{total_projects}] {identifier}: "
+                    f"→ uploading ({total_files} files, {len(all_chunks)} chunks)" + " " * 20,
+                    end="",
+                    flush=True,
+                    file=sys.stdout
+                )
 
-        # Memory cleanup: Release large data structures after upload (arcaneum-b8lg)
-        # These can hold 100MB+ for large projects, preventing GC between projects
-        del all_chunks
-        del texts
-        del all_embeddings
-        import gc
-        gc.collect()
+            # Track upload time for profiler
+            upload_start = time.time()
+
+            # Upload to Qdrant with bulk mode for 1.3-1.5x speedup (RDR-013 Phase 1)
+            # Bulk mode disables HNSW indexing during upload, rebuilds after completion
+            uploaded = self.qdrant_indexer.upload_chunks(
+                collection_name,
+                all_chunks,
+                vector_name=self.vector_name,
+                bulk_mode=True
+            )
+
+            # Record upload stage timing
+            if profiler:
+                profiler.record_stage("upload", time.time() - upload_start, uploaded)
+
+            self.stats["chunks_uploaded"] += uploaded
+            self.stats["projects_indexed"] += 1
+
+            # Memory cleanup: Release large data structures after upload (arcaneum-b8lg)
+            # These can hold 100MB+ for large projects, preventing GC between projects
+            del all_chunks
+            del texts
+            del all_embeddings
+            import gc
+            gc.collect()
 
         # Calculate files/chunks for this project
         project_files = self.stats["files_processed"] - initial_files

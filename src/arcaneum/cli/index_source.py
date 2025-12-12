@@ -40,6 +40,7 @@ def index_source_command(
     force: bool,
     no_gpu: bool,
     verify: bool,
+    streaming: bool,
     verbose: bool,
     debug: bool,
     profile: bool,
@@ -294,7 +295,8 @@ def index_source_command(
             vector_name=vector_name,  # Use auto-detected or specified vector name
             parallel_workers=actual_file_workers,  # File processing parallelism
             embedding_workers=actual_embedding_workers,  # Embedding generation parallelism
-            embedding_batch_size=embedding_batch_size  # Embedding batch size
+            embedding_batch_size=embedding_batch_size,  # Embedding batch size
+            streaming=streaming  # Stream embeddings to Qdrant immediately
         )
 
         # Pre-verify if requested - find incomplete items to include in indexing

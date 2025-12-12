@@ -87,6 +87,7 @@ arc index pdf <directory> --collection <name> --model <model>
 - `--model`: Embedding model (stella, bge, modernbert, jina) [default: stella]
 - `--force`: Force reindex all files (bypass incremental sync)
 - `--no-gpu`: Disable GPU acceleration (GPU enabled by default for 1.5-3x speedup)
+- `--streaming`: Stream embeddings to Qdrant immediately (lower memory usage)
 - `--verbose`: Verbose output (show progress, suppress library warnings)
 - `--debug`: Debug mode (show all library warnings including transformers)
 - `--json`: Output JSON format
@@ -168,6 +169,15 @@ arc index pdf ./pdfs \
   --model stella \
   --embedding-batch-size 500 \
   --process-priority low
+```
+
+**Streaming mode (lower memory for large collections):**
+
+```bash
+arc index pdf ./pdfs \
+  --collection pdf-docs \
+  --model stella \
+  --streaming
 ```
 
 **Conservative (25% of CPU, good for background processing):**
@@ -337,9 +347,10 @@ sudo apt-get install poppler-utils
 
 For large PDFs or many parallel workers:
 
-1. Reduce workers: `--workers 2`
-2. Use on-disk vectors in collection config
-3. Disable HNSW indexing during upload
+1. Use streaming mode: `--streaming` (uploads embeddings immediately, reduces memory)
+2. Reduce workers: `--workers 2`
+3. Use on-disk vectors in collection config
+4. Disable HNSW indexing during upload
 
 ### GPU Memory Errors (MPS/CUDA)
 

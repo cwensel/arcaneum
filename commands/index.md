@@ -22,6 +22,7 @@ Index PDFs, markdown, or source code into Qdrant collections for semantic search
 - --force: Force reindex all files
 - --randomize: Randomize file processing order (useful for parallel indexing)
 - --no-gpu: Disable GPU acceleration (GPU enabled by default)
+- --streaming: Stream embeddings to Qdrant immediately (lower memory usage)
 - --verbose: Show detailed progress (suppress library warnings)
 - --debug: Show all library warnings including transformers
 - --json: Output in JSON format
@@ -71,6 +72,10 @@ ls ~/notes/*.md | /index markdown --from-file - --collection Notes
 
 # Force CPU-only mode (disable GPU)
 /index pdf ~/Documents/Research --collection PDFs --model stella --no-gpu
+
+# Streaming mode (lower memory for large collections)
+/index pdf ~/Documents/Research --collection PDFs --streaming
+/index code ~/projects/myapp --collection MyCode --streaming
 
 # Parallel indexing from multiple terminals (randomize order)
 /index pdf ~/Documents/Research --collection PDFs --randomize

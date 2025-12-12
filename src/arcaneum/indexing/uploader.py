@@ -47,6 +47,7 @@ class PDFBatchUploader:
         embedding_timeout: int = 300,
         markdown_conversion: bool = True,
         preserve_images: bool = False,
+        streaming: bool = False,
     ):
         """Initialize batch uploader.
 
@@ -70,6 +71,8 @@ class PDFBatchUploader:
             embedding_timeout: Timeout in seconds for embedding generation (default: 300)
             markdown_conversion: Convert PDF to markdown with structure (default: True, RDR-016)
             preserve_images: Extract images for multimodal search (default: False, RDR-016)
+            streaming: Upload embeddings immediately after each batch instead of accumulating
+                in memory. Reduces memory usage from O(total_chunks) to O(batch_size).
         """
         self.qdrant = qdrant_client
         self.embeddings = embedding_client
@@ -82,6 +85,7 @@ class PDFBatchUploader:
         self.pdf_timeout = pdf_timeout
         self.ocr_page_timeout = ocr_page_timeout
         self.embedding_timeout = embedding_timeout
+        self.streaming = streaming
 
         # Apply memory-aware worker limits
         # Estimate 500MB per PDF file worker (images, OCR, embeddings)
@@ -345,70 +349,122 @@ class PDFBatchUploader:
             # GPU hardware parallelism happens WITHIN each batch, not across batches.
             embedding_client = self._shared_embedding_client
             embedding_start_time = time.time()
-            embeddings = embedding_client.embed_parallel(
-                texts,
-                model_name,
-                max_workers=self.embedding_workers,
-                batch_size=self.embedding_batch_size,
-                timeout=self.embedding_timeout,
-                progress_callback=embedding_progress if verbose else None
-            )
-            embedding_elapsed = time.time() - embedding_start_time
 
-            if verbose:
-                # Show final batch count, then newline and summary
-                print(f"\r{embedding_ts}   → embedding ({file_chunk_count} chunks) [{total_batches}/{total_batches} batches]    ")
-                print(f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed/total_batches:.2f}s/batch)", flush=True)
-
-            # Stage 5: Create and upload points in batches (streaming upload)
-            # This avoids holding all points in memory at once
-            # Use self.batch_size for consistency (512, GPU-optimal per arcaneum-2m1i)
-            UPLOAD_BATCH_SIZE = self.batch_size
-            points_batch = []
+            # Track upload state (used by both streaming and non-streaming paths)
             point_id = point_id_start
             uploaded_count = 0
 
-            for chunk, embedding in zip(chunks, embeddings):
-                point = PointStruct(
-                    id=point_id,
-                    vector={model_name: embedding},
-                    payload={
-                        'text': chunk.text,
-                        **chunk.metadata
-                    }
-                )
-                points_batch.append(point)
-                point_id += 1
+            if self.streaming:
+                # Streaming mode: upload each batch immediately after embedding
+                # Memory usage is O(batch_size) instead of O(total_chunks)
+                def on_embed_batch(batch_idx: int, start_idx: int, batch_embeddings):
+                    nonlocal point_id, uploaded_count
+                    # Get corresponding chunks for this batch
+                    batch_chunks = chunks[start_idx:start_idx + len(batch_embeddings)]
+                    # Create and upload points immediately
+                    points = []
+                    for chunk, embedding in zip(batch_chunks, batch_embeddings):
+                        points.append(PointStruct(
+                            id=point_id,
+                            vector={model_name: embedding},
+                            payload={
+                                'text': chunk.text,
+                                **chunk.metadata
+                            }
+                        ))
+                        point_id += 1
+                    # Upload batch
+                    if verbose:
+                        print(f"\n{timestamp()}   → uploading batch ({len(points)} chunks, {uploaded_count}/{file_chunk_count} total)", flush=True)
+                    self._upload_batch(collection_name, points)
+                    uploaded_count += len(points)
 
-                # Upload batch when threshold reached
-                if len(points_batch) >= UPLOAD_BATCH_SIZE:
+                # Embed with streaming (accumulate=False)
+                embedding_client.embed_parallel(
+                    texts,
+                    model_name,
+                    max_workers=self.embedding_workers,
+                    batch_size=self.embedding_batch_size,
+                    timeout=self.embedding_timeout,
+                    progress_callback=embedding_progress if verbose else None,
+                    on_batch_complete=on_embed_batch,
+                    accumulate=False
+                )
+                embedding_elapsed = time.time() - embedding_start_time
+
+                if verbose:
+                    # Show final batch count, then newline and summary
+                    print(f"\r{embedding_ts}   → embedding ({file_chunk_count} chunks) [{total_batches}/{total_batches} batches]    ")
+                    print(f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed/total_batches:.2f}s/batch)", flush=True)
+
+                # Clear lists to free memory
+                del texts, chunks
+                import gc
+                gc.collect()
+
+            else:
+                # Non-streaming mode: embed all, then upload in batches (original behavior)
+                embeddings = embedding_client.embed_parallel(
+                    texts,
+                    model_name,
+                    max_workers=self.embedding_workers,
+                    batch_size=self.embedding_batch_size,
+                    timeout=self.embedding_timeout,
+                    progress_callback=embedding_progress if verbose else None
+                )
+                embedding_elapsed = time.time() - embedding_start_time
+
+                if verbose:
+                    # Show final batch count, then newline and summary
+                    print(f"\r{embedding_ts}   → embedding ({file_chunk_count} chunks) [{total_batches}/{total_batches} batches]    ")
+                    print(f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed/total_batches:.2f}s/batch)", flush=True)
+
+                # Stage 5: Create and upload points in batches
+                # This avoids holding all points in memory at once
+                UPLOAD_BATCH_SIZE = self.embedding_batch_size  # Use same batch size as embedding
+                points_batch = []
+
+                for chunk, embedding in zip(chunks, embeddings):
+                    point = PointStruct(
+                        id=point_id,
+                        vector={model_name: embedding},
+                        payload={
+                            'text': chunk.text,
+                            **chunk.metadata
+                        }
+                    )
+                    points_batch.append(point)
+                    point_id += 1
+
+                    # Upload batch when threshold reached
+                    if len(points_batch) >= UPLOAD_BATCH_SIZE:
+                        if not verbose:
+                            print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → uploading batch ({uploaded_count}/{file_chunk_count}){' '*15}", end="", flush=True)
+                        else:
+                            print(f"{timestamp()}   → uploading batch ({len(points_batch)} chunks, {uploaded_count}/{file_chunk_count} total)", flush=True)
+
+                        self._upload_batch(collection_name, points_batch)
+                        uploaded_count += len(points_batch)
+
+                        # Clear batch (no gc.collect per batch - do once per file instead)
+                        points_batch.clear()
+
+                # Upload remaining points
+                if points_batch:
                     if not verbose:
-                        print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → uploading batch ({uploaded_count}/{file_chunk_count}){' '*15}", end="", flush=True)
+                        print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → uploading final batch ({uploaded_count}/{file_chunk_count}){' '*15}", end="", flush=True)
                     else:
-                        print(f"{timestamp()}   → uploading batch ({len(points_batch)} chunks, {uploaded_count}/{file_chunk_count} total)", flush=True)
+                        print(f"{timestamp()}   → uploading final batch ({len(points_batch)} chunks)", flush=True)
 
                     self._upload_batch(collection_name, points_batch)
                     uploaded_count += len(points_batch)
-
-                    # Clear batch (no gc.collect per batch - do once per file instead)
                     points_batch.clear()
 
-            # Upload remaining points
-            if points_batch:
-                if not verbose:
-                    print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → uploading final batch ({uploaded_count}/{file_chunk_count}){' '*15}", end="", flush=True)
-                else:
-                    print(f"{timestamp()}   → uploading final batch ({len(points_batch)} chunks)", flush=True)
-
-                self._upload_batch(collection_name, points_batch)
-                uploaded_count += len(points_batch)
-                points_batch.clear()
-
-            # Clear large lists to free memory and garbage collect ONCE per file (arcaneum-d432)
-            # This reduces gc.collect() overhead from 100+ calls to ~1 per file
-            del texts, embeddings, chunks, points_batch
-            import gc
-            gc.collect()
+                # Clear large lists to free memory and garbage collect ONCE per file (arcaneum-d432)
+                # This reduces gc.collect() overhead from 100+ calls to ~1 per file
+                del texts, embeddings, chunks, points_batch
+                import gc
+                gc.collect()
 
             # Return empty list since we already uploaded
             # uploaded_count is used for stats

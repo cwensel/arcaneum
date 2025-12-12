@@ -41,6 +41,7 @@ def index_pdfs_command(
     offline: bool,
     randomize: bool,
     verify: bool,
+    streaming: bool,
     verbose: bool,
     debug: bool,
     output_json: bool
@@ -270,6 +271,7 @@ def index_pdfs_command(
             embedding_timeout=300,  # 5 minute timeout for embeddings
             markdown_conversion=not normalize_only,  # RDR-016: markdown by default
             preserve_images=preserve_images,  # RDR-016: images off by default
+            streaming=streaming,  # Stream embeddings to Qdrant immediately
         )
 
         # Pre-load model to avoid "hang" during first file processing (similar to markdown indexing)

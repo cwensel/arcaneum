@@ -40,6 +40,7 @@ def index_markdown_command(
     offline: bool,
     randomize: bool,
     verify: bool,
+    streaming: bool,
     verbose: bool,
     debug: bool,
     output_json: bool
@@ -192,6 +193,7 @@ def index_markdown_command(
             file_workers=actual_file_workers,
             embedding_workers=actual_embedding_workers,
             embedding_batch_size=embedding_batch_size,
+            streaming=streaming,  # Stream embeddings to Qdrant immediately
         )
 
         # Show configuration

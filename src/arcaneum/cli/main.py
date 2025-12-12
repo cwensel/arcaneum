@@ -168,10 +168,11 @@ def index():
 @click.option('--offline', is_flag=True, help='Offline mode (use cached models only, no network)')
 @click.option('--randomize', is_flag=True, help='Randomize file processing order (useful for parallel indexing)')
 @click.option('--verify', is_flag=True, help='Verify collection integrity after indexing (fsck-like check)')
+@click.option('--streaming', is_flag=True, help='Stream embeddings to Qdrant immediately (lower memory usage)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 @click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_pdf(path, from_file, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, no_gpu, offline, randomize, verify, verbose, debug, output_json):
+def index_pdf(path, from_file, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, no_gpu, offline, randomize, verify, streaming, verbose, debug, output_json):
     """Index PDF files"""
     # Validate that exactly one of path or from_file is provided
     if not path and not from_file:
@@ -182,7 +183,7 @@ def index_pdf(path, from_file, collection, model, embedding_batch_size, no_ocr, 
         raise click.Abort()
 
     from arcaneum.cli.index_pdfs import index_pdfs_command
-    index_pdfs_command(path, from_file, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, no_gpu, offline, randomize, verify, verbose, debug, output_json)
+    index_pdfs_command(path, from_file, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, no_gpu, offline, randomize, verify, streaming, verbose, debug, output_json)
 
 
 @index.command('code')
@@ -199,11 +200,12 @@ def index_pdf(path, from_file, collection, model, embedding_batch_size, no_ocr, 
 @click.option('--force', is_flag=True, help='Force reindex all projects')
 @click.option('--no-gpu', is_flag=True, help='Disable GPU acceleration (use CPU only, 2-3x slower)')
 @click.option('--verify', is_flag=True, help='Verify and repair incomplete items after indexing (fsck-like check)')
+@click.option('--streaming', is_flag=True, help='Stream embeddings to Qdrant immediately (lower memory usage)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 @click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
 @click.option('--profile', is_flag=True, help='Show pipeline performance profiling (stage breakdown, throughput)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_code(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, depth, process_priority, not_nice, force, no_gpu, verify, verbose, debug, profile, output_json):
+def index_code(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, depth, process_priority, not_nice, force, no_gpu, verify, streaming, verbose, debug, profile, output_json):
     """Index source code"""
     # Validate that exactly one of path or from_file is provided
     if not path and not from_file:
@@ -214,7 +216,7 @@ def index_code(path, from_file, collection, model, embedding_batch_size, chunk_s
         raise click.Abort()
 
     from arcaneum.cli.index_source import index_source_command
-    index_source_command(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, depth, process_priority, not_nice, force, no_gpu, verify, verbose, debug, profile, output_json)
+    index_source_command(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, depth, process_priority, not_nice, force, no_gpu, verify, streaming, verbose, debug, profile, output_json)
 
 
 @index.command('markdown')
@@ -235,10 +237,11 @@ def index_code(path, from_file, collection, model, embedding_batch_size, chunk_s
 @click.option('--offline', is_flag=True, help='Offline mode (use cached models only, no network)')
 @click.option('--randomize', is_flag=True, help='Randomize file processing order (useful for parallel indexing)')
 @click.option('--verify', is_flag=True, help='Verify collection integrity after indexing (fsck-like check)')
+@click.option('--streaming', is_flag=True, help='Stream embeddings to Qdrant immediately (lower memory usage)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 @click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_markdown(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, no_gpu, offline, randomize, verify, verbose, debug, output_json):
+def index_markdown(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, no_gpu, offline, randomize, verify, streaming, verbose, debug, output_json):
     """Index markdown files"""
     # Validate that exactly one of path or from_file is provided
     if not path and not from_file:
@@ -249,7 +252,7 @@ def index_markdown(path, from_file, collection, model, embedding_batch_size, chu
         raise click.Abort()
 
     from arcaneum.cli.index_markdown import index_markdown_command
-    index_markdown_command(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, no_gpu, offline, randomize, verify, verbose, debug, output_json)
+    index_markdown_command(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, no_gpu, offline, randomize, verify, streaming, verbose, debug, output_json)
 
 
 @cli.command('store')

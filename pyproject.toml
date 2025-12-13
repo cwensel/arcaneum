@@ -50,6 +50,8 @@ dependencies = [
     "markdown-it-py>=4.0.0",
     "python-frontmatter>=1.1.0",
     "pygments>=2.19.0",
+    # SOCKS proxy support for httpx (required when running in Claude Code sandbox)
+    "socksio>=1.0.0",
 ]
 
 [project.optional-dependencies]

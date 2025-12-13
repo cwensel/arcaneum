@@ -1,0 +1,19 @@
+{
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true,
+    "excludedCommands": ["arc"]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(arc:*)",
+      "Bash(arc search:*)",
+      "Bash(arc collection:*)",
+      "Bash(arc models:*)",
+      "Bash(arc index:*)",
+      "Bash(arc config:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

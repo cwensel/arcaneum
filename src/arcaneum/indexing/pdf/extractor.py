@@ -151,6 +151,32 @@ class PDFExtractor:
 
         return text, metadata
 
+    def _has_type3_fonts(self, pdf_path: Path) -> bool:
+        """Check if PDF uses Type3 fonts which can cause PyMuPDF4LLM to hang.
+
+        Type3 fonts are user-defined fonts where each character is drawn using
+        PDF graphics commands. PyMuPDF4LLM's style analysis can hang indefinitely
+        on PDFs with Type3 fonts due to complex font processing.
+
+        Returns:
+            True if PDF uses Type3 fonts (should skip markdown conversion)
+        """
+        try:
+            with pymupdf.open(pdf_path) as doc:
+                for page in doc:
+                    fonts = page.get_fonts()
+                    for font in fonts:
+                        # font tuple: (xref, ext, type, basefont, name, encoding)
+                        font_type = font[2] if len(font) > 2 else ""
+                        if "Type3" in font_type:
+                            logger.debug(f"Type3 font detected in {pdf_path.name}, "
+                                       f"will use normalized extraction")
+                            return True
+                return False
+        except Exception as e:
+            logger.debug(f"Error checking fonts in {pdf_path.name}: {e}")
+            return False
+
     def _get_layout_analysis(self, pdf_path: Path) -> Optional[Dict[str, Any]]:
         """Get layout analysis using pymupdf-layout for better structure detection.
 
@@ -243,9 +269,17 @@ class PDFExtractor:
         If pymupdf-layout is available, uses layout analysis to enhance
         structure detection and semantic understanding.
 
-        Falls back to normalized extraction if markdown conversion fails
-        (e.g., font errors, malformed PDFs).
+        Falls back to normalized extraction if:
+        - PDF uses Type3 fonts (causes PyMuPDF4LLM to hang)
+        - Font errors occur (code=4: no font file for digest)
+        - Other markdown conversion failures
         """
+        # Check for Type3 fonts which cause PyMuPDF4LLM to hang indefinitely
+        if self._has_type3_fonts(pdf_path):
+            logger.info(f"Skipping markdown conversion for {pdf_path.name} "
+                       f"(Type3 fonts detected - known PyMuPDF4LLM hang issue)")
+            return self._extract_with_pymupdf_normalized(pdf_path)
+
         try:
             # Get layout analysis for enhanced structure detection (optional)
             layout_info = self._get_layout_analysis(pdf_path) if self.use_layout_analysis else None

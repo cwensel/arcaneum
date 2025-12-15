@@ -684,6 +684,11 @@ class SourceCodeIndexer:
                 )
                 uploaded += batch_uploaded
 
+                # Release embedding references after upload to allow GC (arcaneum-mem-leak)
+                # Without this, embeddings stay in memory via chunk.embedding until end of job
+                for chunk in batch_chunks:
+                    chunk.embedding = None
+
             # Embed with streaming (accumulate=False)
             self.embedding_client.embed_parallel(
                 texts,

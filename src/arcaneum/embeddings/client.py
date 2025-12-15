@@ -37,7 +37,11 @@ EMBEDDING_MODELS = {
         "description": "Code-specific SOTA (896D, 32K context, Sept 2025, fast)",
         "available": True,
         "recommended_for": "code",
-        "size": "medium"  # 500M params
+        "size": "large",  # 500M params but Qwen2 attention needs ~4GB per batch
+        # Limit seq_length to control attention memory: O(batch × seq_len²)
+        # Model supports 32K but was trained on 512; 8192 is recommended max
+        # See: https://huggingface.co/jinaai/jina-code-embeddings-0.5b
+        "max_seq_length": 8192
     },
     "jina-code-1.5b": {
         "name": "jinaai/jina-code-embeddings-1.5b",
@@ -46,7 +50,8 @@ EMBEDDING_MODELS = {
         "description": "Code-specific SOTA (1536D, 32K context, Sept 2025, highest quality)",
         "available": True,
         "recommended_for": "code",
-        "size": "large"  # 1.5B params
+        "size": "large",  # 1.5B params
+        "max_seq_length": 8192  # Same as 0.5b - limit attention memory
     },
     "codesage-large": {
         "name": "codesage/codesage-large",
@@ -341,6 +346,12 @@ class EmbeddingClient:
                             trust_remote_code=True  # Required for stella and other custom models
                         )
                         model_obj._backend = "sentence-transformers"
+                        # Apply max_seq_length limit if configured (arcaneum-mem-leak)
+                        # This controls attention memory: O(batch × seq_len²)
+                        if "max_seq_length" in config:
+                            original_max = model_obj.max_seq_length
+                            model_obj.max_seq_length = config["max_seq_length"]
+                            logger.info(f"Set {model_name} max_seq_length: {original_max} → {config['max_seq_length']}")
                         self._models[model_name] = model_obj
                     except Exception as e:
                         # If local_files_only fails, cache may be incomplete (e.g., missing custom code)
@@ -362,6 +373,11 @@ class EmbeddingClient:
                             trust_remote_code=True  # Required for stella and other custom models
                         )
                         model_obj._backend = "sentence-transformers"
+                        # Apply max_seq_length limit if configured (arcaneum-mem-leak)
+                        if "max_seq_length" in config:
+                            original_max = model_obj.max_seq_length
+                            model_obj.max_seq_length = config["max_seq_length"]
+                            logger.info(f"Set {model_name} max_seq_length: {original_max} → {config['max_seq_length']}")
                         self._models[model_name] = model_obj
                     except Exception as e:
                         # Detect and report network/SSL errors with helpful messages
@@ -384,7 +400,7 @@ class EmbeddingClient:
 
         return self._models[model_name]
 
-    def embed(self, texts: List[str], model_name: str, batch_size: int = 512) -> List[List[float]]:
+    def embed(self, texts: List[str], model_name: str, batch_size: int = 512, max_internal_batch: int = None) -> List[List[float]]:
         """Generate embeddings for texts using specified model.
 
         Processes in batches to optimize GPU utilization.
@@ -396,6 +412,7 @@ class EmbeddingClient:
             texts: List of text strings to embed
             model_name: Model identifier (stella, jina, modernbert, bge)
             batch_size: Batch size for model.encode() (default: 512 for GPU optimization)
+            max_internal_batch: Optional maximum for internal batch size (for OOM recovery)
 
         Returns:
             List of embedding vectors
@@ -405,9 +422,9 @@ class EmbeddingClient:
         """
         # No lock needed - single-threaded embedding is faster for GPU models
         # GPU parallelism is via large batches (256-512), not thread-level parallelism
-        return self._embed_impl(texts, model_name, batch_size=batch_size)
+        return self._embed_impl(texts, model_name, batch_size=batch_size, max_internal_batch=max_internal_batch)
 
-    def _embed_impl(self, texts: List[str], model_name: str, batch_size: int = 512) -> List[List[float]]:
+    def _embed_impl(self, texts: List[str], model_name: str, batch_size: int = 512, max_internal_batch: int = None) -> List[List[float]]:
         """Internal implementation of embedding (called with or without lock).
 
         Optimized GPU→CPU transfer strategies for reduced overhead (arcaneum-ppa2).
@@ -422,6 +439,7 @@ class EmbeddingClient:
             texts: List of text strings to embed
             model_name: Model identifier
             batch_size: Batch size for model.encode() (default: 512, but see internal_batch_size logic)
+            max_internal_batch: Optional maximum for internal batch size (for OOM recovery)
 
         Returns:
             List of embedding vectors (as lists or arrays)
@@ -459,6 +477,11 @@ class EmbeddingClient:
                     # Fallback if memory detection fails
                     internal_batch_size = 64
                     logger.debug(f"Memory detection failed, using fallback internal_batch_size={internal_batch_size}")
+
+                # Apply max_internal_batch limit if specified (for OOM recovery)
+                if max_internal_batch is not None and max_internal_batch < internal_batch_size:
+                    logger.debug(f"Applying OOM recovery limit: {internal_batch_size} → {max_internal_batch}")
+                    internal_batch_size = max_internal_batch
             else:
                 # CPU: Use conservative batches
                 internal_batch_size = min(batch_size, 256)
@@ -597,6 +620,7 @@ class EmbeddingClient:
             # Pre-allocation uses exact memory needed. (arcaneum-q6by)
             # Only allocate if accumulating results.
             import numpy as np
+            import gc
             dim = self.get_dimensions(model_name)
             if accumulate:
                 all_embeddings = np.zeros((len(texts), dim), dtype=np.float32)
@@ -606,12 +630,77 @@ class EmbeddingClient:
             total_batches = (len(texts) + batch_size - 1) // batch_size
             batch_idx = 0
             offset = 0
+
+            # Memory leak prevention: Clear MPS/CUDA cache based on model size
+            # Large models (Qwen2-based jina-code-0.5b/1.5b, stella, nomic) need aggressive
+            # cache clearing because attention mechanism allocates large contiguous blocks.
+            # (arcaneum-mem-leak)
+            model_config = EMBEDDING_MODELS.get(model_name, {})
+            model_size = model_config.get("size", "small")
+
+            # Determine cache clearing strategy based on model size
+            # Large models: clear BEFORE each batch to maximize available memory
+            # Medium models: clear every 5 batches
+            # Small models: clear every 10 batches
+            if model_size == "large":
+                cache_clear_interval = 1  # Every batch
+                clear_before_batch = True
+            elif model_size == "medium":
+                cache_clear_interval = 3  # Every 3 batches
+                clear_before_batch = True
+            else:
+                cache_clear_interval = 10  # Every 10 batches
+                clear_before_batch = False
+
+            logger.debug(f"Model {model_name} size={model_size}, cache_clear_interval={cache_clear_interval}, clear_before={clear_before_batch}")
+
+            # OOM recovery: track if we need to reduce batch size for this job
+            effective_batch_size = batch_size
+            oom_retry_count = 0
+            max_oom_retries = 3
+
             for start_idx in range(0, len(texts), batch_size):
+                # For memory-hungry models, clear cache BEFORE embedding to maximize
+                # available memory for attention allocations (arcaneum-mem-leak)
+                if clear_before_batch and batch_idx > 0:
+                    gc.collect()
+                    self._clear_gpu_cache()
+                    logger.debug(f"Cleared GPU cache before batch {batch_idx + 1}")
+
                 batch_start_time = time.time()
                 end_idx = min(start_idx + batch_size, len(texts))
                 batch_texts = texts[start_idx:end_idx]
                 actual_batch_size = len(batch_texts)
-                batch_embeddings = self.embed(batch_texts, model_name, batch_size=batch_size)
+
+                # OOM recovery: retry with progressively smaller internal batches (arcaneum-mem-leak)
+                # The max_internal_batch parameter limits the batch size passed to model.encode()
+                batch_embeddings = None
+                current_max_internal = effective_batch_size
+                while batch_embeddings is None:
+                    try:
+                        batch_embeddings = self.embed(
+                            batch_texts, model_name,
+                            batch_size=batch_size,
+                            max_internal_batch=current_max_internal if current_max_internal != batch_size else None
+                        )
+                    except RuntimeError as e:
+                        if "out of memory" in str(e).lower() and oom_retry_count < max_oom_retries:
+                            oom_retry_count += 1
+                            # Reduce internal batch size by half, minimum 1
+                            new_max = max(1, current_max_internal // 2)
+                            logger.warning(
+                                f"OOM at batch {batch_idx + 1}, reducing internal batch size: "
+                                f"{current_max_internal} → {new_max} (retry {oom_retry_count}/{max_oom_retries})"
+                            )
+                            current_max_internal = new_max
+                            effective_batch_size = new_max  # Remember for future batches
+                            # Clear cache and retry
+                            gc.collect()
+                            self._clear_gpu_cache()
+                        else:
+                            # Not OOM or max retries exceeded, re-raise
+                            raise
+
                 batch_elapsed = time.time() - batch_start_time
                 logger.debug(f"Batch {batch_idx + 1}/{total_batches}: {actual_batch_size} chunks embedded in {batch_elapsed:.2f}s ({actual_batch_size/batch_elapsed:.1f} chunks/s)")
 
@@ -628,6 +717,20 @@ class EmbeddingClient:
                 batch_idx += 1
                 if progress_callback:
                     progress_callback(batch_idx, total_batches)
+
+                # Periodic GPU cache clearing to prevent memory leak (arcaneum-mem-leak)
+                # MPS/CUDA cache allocations for reuse, but this causes OOM on long jobs.
+                # For models with clear_before_batch, this is redundant but harmless.
+                if not clear_before_batch and batch_idx % cache_clear_interval == 0:
+                    del batch_embeddings  # Release reference before GC
+                    gc.collect()
+                    self._clear_gpu_cache()
+                    logger.debug(f"Cleared GPU cache after batch {batch_idx}")
+
+            # Final cleanup
+            gc.collect()
+            self._clear_gpu_cache()
+
             return all_embeddings
 
         # For CPU models: ThreadPoolExecutor can provide speedup
@@ -760,15 +863,20 @@ class EmbeddingClient:
     def _clear_gpu_cache(self):
         """Clear GPU memory cache (CUDA or MPS).
 
+        Best practice: synchronize() before empty_cache() to ensure all
+        GPU operations complete before releasing memory. (arcaneum-mem-leak)
+
         Note:
-            This helps free GPU memory after releasing models.
+            This helps free GPU memory after releasing models or between batches.
         """
         try:
             import torch
             if self._device == "cuda":
+                torch.cuda.synchronize()
                 torch.cuda.empty_cache()
                 logger.debug("Cleared CUDA cache")
             elif self._device == "mps":
+                torch.mps.synchronize()
                 torch.mps.empty_cache()
                 logger.debug("Cleared MPS cache")
         except Exception as e:

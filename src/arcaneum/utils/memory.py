@@ -120,31 +120,34 @@ def estimate_safe_batch_size_v2(
     if device_type == "mps":
         available_gb = available_gpu_bytes / (1024 ** 3)
 
-        # Optimal batch sizes from empirical testing (RDR-013, arcaneum-i7oa)
+        # Optimal batch sizes from empirical testing (RDR-013, arcaneum-i7oa, arcaneum-mem-leak)
         # Larger batches = fewer kernel launches = better GPU utilization
         # Values tuned for sustained GPU inference without OOM
-        # NOTE: Qwen2-based models (jina-code-0.5b/1.5b) need small batches due to
-        # attention memory scaling with sequence length (up to 32K context)
+        #
+        # NOTE: Qwen2-based models (jina-code-0.5b/1.5b) have attention O(seq_len²)
+        # With max_seq_length=8192 (set in client.py), attention memory is bounded.
+        # Batch sizes calibrated for 8K seq_length; if changed, adjust these.
         OPTIMAL_BATCH_SIZES = {
             'stella': 512,
             'jina': 512,
             'jina-code': 512,
-            'jina-code-0.5b': 64,    # Qwen2-based, 32K context - needs small batches
-            'jina-code-1.5b': 32,    # Qwen2-based, 32K context - needs very small batches
+            'jina-code-0.5b': 32,    # Qwen2-based, 8K seq (limited from 32K), moderate batches
+            'jina-code-1.5b': 16,    # Qwen2-based, 8K seq, smaller batches for 1.5B params
             'codesage-large': 256,   # ~400M params
-            'nomic-code': 32,        # 7B params, very large model
+            'nomic-code': 8,         # 7B params, very large model
             'bge-large': 512,
             'bge-base': 512,
             'bge-small': 512,
         }
 
         # Minimum memory requirements (model weights + reasonable batch headroom)
+        # With max_seq_length=8192, attention memory is bounded to ~128MB per seq
         MIN_MEMORY_GB = {
             'stella': 4.0,           # 2.5GB model + 1.5GB for batching
             'jina': 2.0,             # 0.5GB model + 1.5GB for batching
             'jina-code': 2.0,
-            'jina-code-0.5b': 6.0,   # 2GB model + 4GB for attention on long sequences
-            'jina-code-1.5b': 10.0,  # 4GB model + 6GB for attention on long sequences
+            'jina-code-0.5b': 6.0,   # 2GB model + 4GB for attention (8K seq_len)
+            'jina-code-1.5b': 10.0,  # 4GB model + 6GB for attention (8K seq_len)
             'codesage-large': 3.0,   # 1.5GB model + 1.5GB for batching
             'nomic-code': 20.0,      # ~14GB model + 6GB for batching (7B params)
             'bge-large': 2.5,

@@ -320,7 +320,8 @@ class EmbeddingClient:
                     if "ssl" in error_msg or "certificate" in error_msg:
                         raise RuntimeError(
                             f"SSL certificate verification failed while downloading model '{model_name}'.\n"
-                            f"If you are using a VPN, please disable it and try again.\n\n"
+                            f"For corporate proxies with self-signed certificates, run:\n"
+                            f"  export ARC_SSL_VERIFY=false\n\n"
                             f"Original error: {e}"
                         ) from e
                     elif "connection" in error_msg or "network" in error_msg or "timeout" in error_msg:
@@ -400,7 +401,8 @@ class EmbeddingClient:
                         if "ssl" in error_msg or "certificate" in error_msg:
                             raise RuntimeError(
                                 f"SSL certificate verification failed while downloading model '{model_name}'.\n"
-                                f"If you are using a VPN, please disable it and try again.\n\n"
+                                f"For corporate proxies with self-signed certificates, run:\n"
+                                f"  export ARC_SSL_VERIFY=false\n\n"
                                 f"Original error: {e}"
                             ) from e
                         elif "connection" in error_msg or "network" in error_msg or "timeout" in error_msg:

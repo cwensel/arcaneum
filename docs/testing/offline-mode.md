@@ -1,21 +1,24 @@
 # Corporate Network Setup
 
-## For Self-Signed SSL Certificates
+## SSL Certificate Handling
 
-Set environment variables BEFORE running arc commands:
+SSL certificate verification is **disabled by default** for compatibility with corporate proxies
+that use self-signed certificates. This means arc commands work out of the box behind corporate VPNs.
 
 ```bash
-# Disable SSL verification (use on trusted networks only)
-export PYTHONHTTPSVERIFY=0
-export REQUESTS_CA_BUNDLE=""
-export CURL_CA_BUNDLE=""
-
-# Then run normally
-arc index pdf ./pdfs --collection docs --model stella
-arc index code ./code --collection code --model jina-code
+# Just works - no configuration needed
+arc search semantic "query" --collection MyCollection
+arc index code ./code --collection code
 ```
 
-## For Offline Mode (Recommended)
+To enable strict SSL verification (not recommended for corporate networks):
+
+```bash
+export ARC_SSL_VERIFY=true
+arc search semantic "query" --collection MyCollection
+```
+
+## For Offline Mode (Air-gapped Networks)
 
 Set environment variables to use only cached models:
 
@@ -30,20 +33,22 @@ arc index code ./code --collection code --model jina-code
 ```
 
 Or use the `--offline` flag:
+
 ```bash
 arc index pdf ./pdfs --collection docs --model stella --offline
 arc index code ./code --collection code --model jina-code --offline
 ```
 
-## When to Use
+## When to Use Offline Mode
 
-✅ **Use --offline when:**
-- Behind corporate proxy with SSL issues
+Use `--offline` when:
+
 - Models are already downloaded
-- No internet connection
+- No internet connection (air-gapped)
 - Want to ensure no network calls
 
-❌ **Don't use --offline when:**
+Don't use `--offline` when:
+
 - Models not downloaded yet
 - Want to check for model updates
 
@@ -82,66 +87,28 @@ SentenceTransformer('jinaai/jina-embeddings-v2-base-code', cache_folder=cache_di
 scp -r ~/.arcaneum/models/ corporate-machine:~/.arcaneum/
 ```
 
-### Step 3: Set Environment Variables
-
-Add to your `~/.bashrc` or `~/.zshrc` (BEFORE running any arc commands):
+### Step 3: Use arc Normally
 
 ```bash
-# For offline mode (recommended - works reliably)
-export HF_HUB_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
-
-# For SSL bypass (set in shell, not via --no-verify-ssl flag)
-export PYTHONHTTPSVERIFY=0
-export REQUESTS_CA_BUNDLE=""
-export CURL_CA_BUNDLE=""
-export SSL_CERT_FILE=""
-```
-
-Then restart your shell or run:
-```bash
-source ~/.bashrc  # or ~/.zshrc
-```
-
-**IMPORTANT:** Environment variables MUST be set in your shell before running arc. The `--no-verify-ssl` flag has limitations due to fastembed's early initialization.
-
-### Step 4: Use arc Normally
-
-```bash
-# Models are cached in ~/.arcaneum/models, offline mode active - no network/SSL issues!
+# SSL bypass is automatic, models cached - just works!
 arc index pdf ./pdfs --collection docs --model stella
 arc index code ./code --collection code --model jina-code
+arc search semantic "query" --collection MyCollection
 ```
 
-**Why environment variables?**
-- ✓ Set once, works for all commands
-- ✓ More reliable than runtime flags (set before Python imports)
-- ✓ Works with fastembed's early initialization
-- ✓ No code changes needed
+For air-gapped networks (no internet at all), add offline mode:
 
-**Note:** Models are now stored in `~/.arcaneum/models/` by default. Use `arc config show-cache-dir` to verify the location.
-
-## Verification
-
-### With --offline:
-```
-Source Code Indexing Configuration
-  Collection: code (type: code)
-  Embedding: jinaai/jina-embeddings-v2-base-code
-  Vector: jina-code
-  Pipeline: Git Discover → AST Chunk → Embed (batched) → Upload
-  Mode: Offline (cached models only)
+```bash
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
 ```
 
-### With --no-verify-ssl:
-```
-PDF Indexing Configuration
-  Collection: docs (type: pdf)
-  Model: stella → dunzhang/stella_en_1.5B_v5
-  OCR: tesseract (eng)
-  Pipeline: PDF → Extract → [OCR if needed] → Chunk → Embed → Upload
-  Upload: Atomic per-document (safer)
-  SSL Verification: Disabled (VPN mode)
-```
+**Note:** Models are stored in `~/.arcaneum/models/` by default. Use `arc config show-cache-dir` to verify the location.
 
-Both prevent SSL certificate errors!
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ARC_SSL_VERIFY` | `false` | Set to `true` to enable strict SSL verification |
+| `HF_HUB_OFFLINE` | `0` | Set to `1` for offline mode (no network calls) |
+| `TRANSFORMERS_OFFLINE` | `0` | Set to `1` for offline mode |

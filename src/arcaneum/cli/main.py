@@ -21,6 +21,12 @@ if sys.version_info < MIN_PYTHON:
     print(f"[ERROR] Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+ required")
     sys.exit(1)
 
+# SSL configuration (must happen BEFORE any embedding library imports)
+# Check for ARC_SSL_VERIFY=false to disable SSL certificate verification
+# This is needed for corporate proxies with self-signed certificates
+from arcaneum.ssl_config import configure_ssl_from_env
+configure_ssl_from_env()
+
 
 @click.group()
 @click.version_option(version=__version__)

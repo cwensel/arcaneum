@@ -169,12 +169,12 @@ def index_source_command(
                             device_type=device_type
                         )
                     else:
-                        embedding_batch_size = 256  # Fallback
+                        embedding_batch_size = 128  # Fallback
                 except Exception:
-                    embedding_batch_size = 256  # Fallback on error
+                    embedding_batch_size = 128  # Fallback on error
             else:
                 # CPU mode: use conservative default
-                embedding_batch_size = 256
+                embedding_batch_size = 128
 
         qdrant_indexer = QdrantIndexer(qdrant_client)
 

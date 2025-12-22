@@ -182,8 +182,8 @@ class SourceCodeIndexer:
         vector_name: Optional[str] = None,
         parallel_workers: Optional[int] = None,
         embedding_workers: int = 4,
-        embedding_batch_size: int = 512,
-        streaming: bool = False
+        embedding_batch_size: int = 128,
+        streaming: bool = True
     ):
         """Initialize source code indexer.
 
@@ -200,6 +200,7 @@ class SourceCodeIndexer:
             embedding_batch_size: Batch size for embedding generation (default: 512, GPU-optimal per arcaneum-i7oa, arcaneum-2m1i)
             streaming: Upload embeddings immediately after each batch instead of accumulating
                 in memory. Reduces memory usage from O(total_chunks) to O(batch_size).
+                Default: True for memory efficiency.
         """
         self.qdrant_indexer = qdrant_indexer
         self.git_discovery = GitProjectDiscovery()
@@ -628,12 +629,11 @@ class SourceCodeIndexer:
         # Generate embeddings in parallel batches (Phase 2 RDR-013)
         total_chunks = len(all_chunks)
         total_batches = (total_chunks + self.embedding_batch_size - 1) // self.embedding_batch_size
-        embedding_ts = timestamp()  # Capture timestamp at start of embedding
 
         # Show embedding progress
         if verbose:
             # Print initial line without newline so we can update it in-place
-            print(f"{embedding_ts}   → embedding ({total_chunks} chunks)", end="", flush=True)
+            print(f"{timestamp()}   → embedding ({total_chunks} chunks)", end="", flush=True)
         else:
             print(
                 f"\r[{project_num}/{total_projects}] {identifier}: "
@@ -645,20 +645,59 @@ class SourceCodeIndexer:
 
         # Track embedding time for profiler
         embedding_start = time.time()
+        # Track recent chunk rates for more accurate ETA (not skewed by early OOM retries)
+        recent_chunk_rates = []  # chunks per second
+        last_batch_end = embedding_start
+        last_chunks_done = 0
 
         # Progress callback for verbose mode - updates line in-place with ETA
-        def embedding_progress(batch_idx: int, total_batches: int):
-            if verbose:
-                elapsed = time.time() - embedding_start
+        # Extended signature: batch_idx, total_batches, effective_batch_size, chunks_done, total_chunks
+        def embedding_progress(batch_idx: int, total_batches: int,
+                               effective_batch_size: int = None, chunks_done: int = None,
+                               total_chunks_param: int = None):
+            nonlocal last_batch_end, last_chunks_done
+            if not verbose:
+                return
+
+            now = time.time()
+            batch_time = now - last_batch_end
+
+            # Use extended info if available, otherwise fall back to original calculation
+            if chunks_done is not None and total_chunks_param is not None:
+                chunks_in_batch = chunks_done - last_chunks_done
+                last_chunks_done = chunks_done
+                remaining_chunks = total_chunks_param - chunks_done
+
+                # Track chunks/second rate for last 5 batches
+                if batch_time > 0 and chunks_in_batch > 0:
+                    rate = chunks_in_batch / batch_time
+                    recent_chunk_rates.append(rate)
+                    if len(recent_chunk_rates) > 5:
+                        recent_chunk_rates.pop(0)
+
+                if recent_chunk_rates:
+                    avg_rate = sum(recent_chunk_rates) / len(recent_chunk_rates)
+                    eta = remaining_chunks / avg_rate if avg_rate > 0 else 0
+                    # Show effective batch size if different from original
+                    batch_info = f"batch={effective_batch_size}" if effective_batch_size and effective_batch_size != self.embedding_batch_size else ""
+                    progress = f"[{chunks_done}/{total_chunks_param} chunks{', ' + batch_info if batch_info else ''}, ~{format_duration(eta)} remaining]"
+                else:
+                    progress = f"[{chunks_done}/{total_chunks_param} chunks]"
+            else:
+                # Legacy fallback
+                last_batch_end = now
                 if batch_idx > 0:
+                    elapsed = now - embedding_start
                     avg_per_batch = elapsed / batch_idx
                     remaining = total_batches - batch_idx
                     eta = remaining * avg_per_batch
                     progress = f"[{batch_idx}/{total_batches} batches, ~{format_duration(eta)} remaining]"
                 else:
                     progress = f"[0/{total_batches} batches]"
-                # \r returns to line start, spaces clear previous longer text
-                print(f"\r{embedding_ts}   → embedding ({total_chunks} chunks) {progress}    ", end="", flush=True)
+
+            last_batch_end = now
+            # Use fresh timestamp for each update
+            print(f"\r{timestamp()}   → embedding ({total_chunks} chunks) {progress}    ", end="", flush=True)
 
         texts = [chunk.content for chunk in all_chunks]
         uploaded = 0
@@ -708,7 +747,7 @@ class SourceCodeIndexer:
             if verbose:
                 embedding_elapsed = time.time() - embedding_start
                 # Show final batch count, then newline and summary
-                print(f"\r{embedding_ts}   → embedding ({total_chunks} chunks) [{total_batches}/{total_batches} batches]    ")
+                print(f"\r{timestamp()}   → embedding ({total_chunks} chunks) [{total_batches}/{total_batches} batches, complete]    ")
                 console.print(
                     f"{timestamp()}      embedded {total_chunks} chunks in {embedding_elapsed:.2f}s "
                     f"({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed/total_batches:.2f}s/batch)"
@@ -741,7 +780,7 @@ class SourceCodeIndexer:
             if verbose:
                 embedding_elapsed = time.time() - embedding_start
                 # Show final batch count, then newline and summary
-                print(f"\r{embedding_ts}   → embedding ({total_chunks} chunks) [{total_batches}/{total_batches} batches]    ")
+                print(f"\r{timestamp()}   → embedding ({total_chunks} chunks) [{total_batches}/{total_batches} batches, complete]    ")
                 console.print(
                     f"{timestamp()}      embedded {total_chunks} chunks in {embedding_elapsed:.2f}s "
                     f"({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed/total_batches:.2f}s/batch)"

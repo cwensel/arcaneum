@@ -630,6 +630,7 @@ class EmbeddingClient:
             total_batches = (len(texts) + batch_size - 1) // batch_size
             batch_idx = 0
             offset = 0
+            chunks_embedded = 0  # Track actual chunks processed for progress
 
             # Memory leak prevention: Clear MPS/CUDA cache based on model size
             # Large models (Qwen2-based jina-code-0.5b/1.5b, stella, nomic) need aggressive
@@ -654,10 +655,10 @@ class EmbeddingClient:
 
             logger.debug(f"Model {model_name} size={model_size}, cache_clear_interval={cache_clear_interval}, clear_before={clear_before_batch}")
 
-            # OOM recovery: track if we need to reduce batch size for this job
+            # OOM recovery: track effective batch size across all batches
+            # Start with requested batch_size, reduce on OOM until we reach minimum
             effective_batch_size = batch_size
-            oom_retry_count = 0
-            max_oom_retries = 3
+            min_batch_size = 8  # Minimum viable batch size before giving up
 
             for start_idx in range(0, len(texts), batch_size):
                 # For memory-hungry models, clear cache BEFORE embedding to maximize
@@ -674,34 +675,92 @@ class EmbeddingClient:
 
                 # OOM recovery: retry with progressively smaller internal batches (arcaneum-mem-leak)
                 # The max_internal_batch parameter limits the batch size passed to model.encode()
+                # Keep halving until we reach min_batch_size or succeed
                 batch_embeddings = None
                 current_max_internal = effective_batch_size
+                batch_retry_count = 0
+
                 while batch_embeddings is None:
                     try:
-                        batch_embeddings = self.embed(
+                        # Synchronize GPU before embedding to surface any pending async errors
+                        # Metal/MPS errors can be raised asynchronously after previous operations
+                        self._sync_gpu_if_needed()
+
+                        result = self.embed(
                             batch_texts, model_name,
                             batch_size=batch_size,
                             max_internal_batch=current_max_internal if current_max_internal != batch_size else None
                         )
-                    except RuntimeError as e:
-                        if "out of memory" in str(e).lower() and oom_retry_count < max_oom_retries:
-                            oom_retry_count += 1
-                            # Reduce internal batch size by half, minimum 1
-                            new_max = max(1, current_max_internal // 2)
-                            logger.warning(
+
+                        # Synchronize again after embedding to catch any errors before considering batch done
+                        self._sync_gpu_if_needed()
+
+                        # Validate embeddings - Metal OOM can corrupt results without raising exceptions
+                        # The errors are printed to stderr but embeddings may contain NaN/garbage
+                        if not self._validate_embeddings(result, len(batch_texts), model_name):
+                            raise RuntimeError("GPU produced invalid embeddings (likely OOM corruption)")
+
+                        batch_embeddings = result
+
+                    except Exception as e:
+                        # Detect GPU OOM from various sources:
+                        # - PyTorch: "out of memory", "CUDA out of memory"
+                        # - Metal/MPS: "Insufficient Memory", "kIOGPUCommandBufferCallbackErrorOutOfMemory"
+                        # - Generic: "command buffer exited with error status"
+                        # - Our validation: "invalid embeddings"
+                        error_str = str(e).lower()
+                        is_oom = any(pattern in error_str for pattern in [
+                            "out of memory",
+                            "insufficient memory",
+                            "kiogpucommandbuffercallbackerroroutofmemory",
+                            "command buffer exited with error status",
+                            "mps backend out of memory",
+                            "cuda error: out of memory",
+                            "invalid embeddings",  # Our validation error
+                            "oom corruption",
+                        ])
+
+                        # Keep retrying with smaller batches until we hit minimum
+                        if is_oom and current_max_internal > min_batch_size:
+                            batch_retry_count += 1
+                            # Halve the batch size (more gradual than /4)
+                            new_max = max(min_batch_size, current_max_internal // 2)
+
+                            # Single clean warning message
+                            import sys
+                            print(
+                                f"\n⚠ GPU OOM: batch size {current_max_internal} → {new_max}, retrying...",
+                                file=sys.stderr, flush=True
+                            )
+                            logger.debug(
                                 f"OOM at batch {batch_idx + 1}, reducing internal batch size: "
-                                f"{current_max_internal} → {new_max} (retry {oom_retry_count}/{max_oom_retries})"
+                                f"{current_max_internal} → {new_max} (attempt {batch_retry_count})"
                             )
                             current_max_internal = new_max
                             effective_batch_size = new_max  # Remember for future batches
-                            # Clear cache and retry
+
+                            # Clear cache and wait for GPU to recover
                             gc.collect()
                             self._clear_gpu_cache()
+                            # Brief pause to let GPU recover
+                            time.sleep(0.5)
+                        elif is_oom:
+                            # Already at minimum batch size - provide helpful error message
+                            raise RuntimeError(
+                                f"GPU out of memory even at minimum batch size ({min_batch_size}).\n\n"
+                                f"Suggestions:\n"
+                                f"  1. Use CPU instead: --no-gpu\n"
+                                f"  2. Close other GPU-intensive applications\n"
+                                f"  3. Try a smaller model (e.g., bge-small instead of jina-code)\n"
+                                f"  4. Reduce chunk count by filtering files\n\n"
+                                f"Original error: {e}"
+                            ) from e
                         else:
-                            # Not OOM or max retries exceeded, re-raise
+                            # Not OOM, re-raise original error
                             raise
 
                 batch_elapsed = time.time() - batch_start_time
+                chunks_embedded += actual_batch_size
                 logger.debug(f"Batch {batch_idx + 1}/{total_batches}: {actual_batch_size} chunks embedded in {batch_elapsed:.2f}s ({actual_batch_size/batch_elapsed:.1f} chunks/s)")
 
                 # Call batch complete callback if provided (for streaming upload)
@@ -716,7 +775,14 @@ class EmbeddingClient:
 
                 batch_idx += 1
                 if progress_callback:
-                    progress_callback(batch_idx, total_batches)
+                    # Pass extended progress info: batch_idx, total_batches, effective_batch_size, chunks_done, total_chunks
+                    # Callback can accept 2 args (legacy) or 5 args (extended)
+                    import inspect
+                    sig = inspect.signature(progress_callback)
+                    if len(sig.parameters) >= 5:
+                        progress_callback(batch_idx, total_batches, effective_batch_size, chunks_embedded, len(texts))
+                    else:
+                        progress_callback(batch_idx, total_batches)
 
                 # Periodic GPU cache clearing to prevent memory leak (arcaneum-mem-leak)
                 # MPS/CUDA cache allocations for reuse, but this causes OOM on long jobs.
@@ -882,6 +948,93 @@ class EmbeddingClient:
         except Exception as e:
             # Not fatal if cache clearing fails
             logger.debug(f"Could not clear GPU cache: {e}")
+
+    def _sync_gpu_if_needed(self):
+        """Synchronize GPU to surface any pending async errors.
+
+        Metal/MPS operations can raise errors asynchronously after the Python
+        call returns. Calling synchronize() forces any pending GPU operations
+        to complete and raises any errors that occurred.
+
+        This is lighter weight than _clear_gpu_cache() - it only syncs, doesn't
+        clear memory.
+        """
+        if not self.use_gpu or self._device == "cpu":
+            return
+
+        try:
+            import torch
+            if self._device == "cuda":
+                torch.cuda.synchronize()
+            elif self._device == "mps":
+                torch.mps.synchronize()
+        except Exception as e:
+            # Re-raise as this might be a GPU OOM we need to catch
+            raise
+
+    def _validate_embeddings(self, embeddings, expected_count: int, model_name: str) -> bool:
+        """Validate embeddings are not corrupted by GPU OOM.
+
+        Metal/MPS OOM errors can corrupt embeddings without raising Python exceptions.
+        The errors are printed to stderr but the function returns garbage data.
+
+        Args:
+            embeddings: The embeddings array to validate
+            expected_count: Expected number of embeddings
+            model_name: Model name for dimension lookup
+
+        Returns:
+            True if embeddings are valid, False if corrupted
+        """
+        import numpy as np
+
+        try:
+            # Check for None
+            if embeddings is None:
+                logger.debug("Embeddings validation failed: None returned")
+                return False
+
+            # Convert to numpy if needed
+            if hasattr(embeddings, 'numpy'):
+                embeddings = embeddings.numpy()
+            elif not isinstance(embeddings, np.ndarray):
+                embeddings = np.array(embeddings)
+
+            # Check shape
+            expected_dims = self.get_dimensions(model_name)
+            if len(embeddings.shape) != 2:
+                logger.debug(f"Embeddings validation failed: wrong shape {embeddings.shape}")
+                return False
+
+            if embeddings.shape[0] != expected_count:
+                logger.debug(f"Embeddings validation failed: count mismatch {embeddings.shape[0]} vs {expected_count}")
+                return False
+
+            if embeddings.shape[1] != expected_dims:
+                logger.debug(f"Embeddings validation failed: dims mismatch {embeddings.shape[1]} vs {expected_dims}")
+                return False
+
+            # Check for NaN or Inf values (common with GPU memory corruption)
+            if np.any(np.isnan(embeddings)):
+                logger.debug("Embeddings validation failed: contains NaN values")
+                return False
+
+            if np.any(np.isinf(embeddings)):
+                logger.debug("Embeddings validation failed: contains Inf values")
+                return False
+
+            # Check for all-zero vectors (another sign of corruption)
+            zero_vectors = np.all(embeddings == 0, axis=1)
+            if np.any(zero_vectors):
+                zero_count = np.sum(zero_vectors)
+                logger.debug(f"Embeddings validation failed: {zero_count} all-zero vectors")
+                return False
+
+            return True
+
+        except Exception as e:
+            logger.debug(f"Embeddings validation failed with error: {e}")
+            return False
 
     def get_loaded_models(self) -> List[str]:
         """Get list of currently loaded models.

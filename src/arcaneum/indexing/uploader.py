@@ -40,7 +40,7 @@ class PDFBatchUploader:
         ocr_threshold: int = 100,
         ocr_workers: Optional[int] = None,
         embedding_workers: int = 4,
-        embedding_batch_size: int = 512,
+        embedding_batch_size: int = 128,
         file_workers: int = 1,
         max_memory_gb: Optional[float] = None,
         pdf_timeout: int = 600,
@@ -48,7 +48,7 @@ class PDFBatchUploader:
         embedding_timeout: int = 300,
         markdown_conversion: bool = True,
         preserve_images: bool = False,
-        streaming: bool = False,
+        streaming: bool = True,
     ):
         """Initialize batch uploader.
 
@@ -74,6 +74,7 @@ class PDFBatchUploader:
             preserve_images: Extract images for multimodal search (default: False, RDR-016)
             streaming: Upload embeddings immediately after each batch instead of accumulating
                 in memory. Reduces memory usage from O(total_chunks) to O(batch_size).
+                Default: True for memory efficiency.
         """
         self.qdrant = qdrant_client
         self.embeddings = embedding_client

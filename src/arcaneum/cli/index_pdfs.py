@@ -218,14 +218,14 @@ def index_pdfs_command(
                     embedding_batch_size = auto_batch_size
                 else:
                     # GPU memory detection failed, use fallback
-                    embedding_batch_size = 256
+                    embedding_batch_size = 128
                     if not output_json:
                         console.print(
-                            "[yellow]⚠️  GPU memory detection failed, using default batch size: 256[/yellow]"
+                            "[yellow]⚠️  GPU memory detection failed, using default batch size: 128[/yellow]"
                         )
             else:
                 # CPU mode: use conservative default
-                embedding_batch_size = 256
+                embedding_batch_size = 128
         else:
             # User explicitly set batch size - respect it but check if it seems risky
             if not no_gpu:

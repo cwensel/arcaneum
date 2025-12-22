@@ -128,16 +128,16 @@ def estimate_safe_batch_size_v2(
         # With max_seq_length=8192 (set in client.py), attention memory is bounded.
         # Batch sizes calibrated for 8K seq_length; if changed, adjust these.
         OPTIMAL_BATCH_SIZES = {
-            'stella': 512,
-            'jina': 512,
-            'jina-code': 512,
-            'jina-code-0.5b': 32,    # Qwen2-based, 8K seq (limited from 32K), moderate batches
+            'stella': 128,           # Conservative for 1.5B model
+            'jina': 128,
+            'jina-code': 32,          # Memory leak at 128, stable at 32
+            'jina-code-0.5b': 32,    # Qwen2-based, 8K seq (limited from 32K), attention O(seq²)
             'jina-code-1.5b': 16,    # Qwen2-based, 8K seq, smaller batches for 1.5B params
-            'codesage-large': 256,   # ~400M params
+            'codesage-large': 128,   # ~400M params
             'nomic-code': 8,         # 7B params, very large model
-            'bge-large': 512,
-            'bge-base': 512,
-            'bge-small': 512,
+            'bge-large': 128,
+            'bge-base': 128,
+            'bge-small': 256,        # Tiny model, can handle larger batches
         }
 
         # Minimum memory requirements (model weights + reasonable batch headroom)
@@ -155,7 +155,7 @@ def estimate_safe_batch_size_v2(
             'bge-small': 1.5,
         }
 
-        optimal = OPTIMAL_BATCH_SIZES.get(model_name, 512)
+        optimal = OPTIMAL_BATCH_SIZES.get(model_name, 128)  # Conservative fallback
         min_required = MIN_MEMORY_GB.get(model_name, 4.0)
 
         if available_gb >= min_required:

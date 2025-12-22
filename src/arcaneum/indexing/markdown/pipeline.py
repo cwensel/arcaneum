@@ -38,8 +38,8 @@ class MarkdownIndexingPipeline:
         exclude_patterns: List[str] = None,
         file_workers: int = 1,
         embedding_workers: int = 4,
-        embedding_batch_size: int = 256,
-        streaming: bool = False,
+        embedding_batch_size: int = 128,
+        streaming: bool = True,
     ):
         """Initialize markdown indexing pipeline.
 
@@ -53,6 +53,7 @@ class MarkdownIndexingPipeline:
             embedding_batch_size: Batch size for embedding generation (default: 256, optimized from 200 per arcaneum-9kgg)
             streaming: Upload embeddings immediately after each batch instead of accumulating
                 in memory. Reduces memory usage from O(total_chunks) to O(batch_size).
+                Default: True for memory efficiency.
         """
         self.qdrant = qdrant_client
         self.embeddings = embedding_client

@@ -28,7 +28,7 @@ EMBEDDING_MODELS = {
         "description": "Code-specific (768D, 8K context, legacy v2 model)",
         "available": True,
         "recommended_for": "code",
-        "size": "small"  # ~137M params
+        "size": "medium"  # ~137M params but 8K context causes attention memory buildup
     },
     "jina-code-0.5b": {
         "name": "jinaai/jina-code-embeddings-0.5b",
@@ -528,6 +528,9 @@ class EmbeddingClient:
                 batch_size = len(batch_embeddings)
                 all_embeddings[offset:offset + batch_size] = batch_embeddings
                 offset += batch_size
+                # Release batch references to prevent memory accumulation in loop scope
+                del batch_embeddings
+                del batch
 
             return all_embeddings
 
@@ -784,11 +787,16 @@ class EmbeddingClient:
                     else:
                         progress_callback(batch_idx, total_batches)
 
+                # CRITICAL: Delete batch_embeddings after each iteration to prevent memory leak
+                # Without this, the variable persists in loop scope and accumulates memory
+                # This must happen BEFORE the periodic cleanup check (arcaneum-mem-leak)
+                del batch_embeddings
+                del batch_texts
+
                 # Periodic GPU cache clearing to prevent memory leak (arcaneum-mem-leak)
                 # MPS/CUDA cache allocations for reuse, but this causes OOM on long jobs.
                 # For models with clear_before_batch, this is redundant but harmless.
                 if not clear_before_batch and batch_idx % cache_clear_interval == 0:
-                    del batch_embeddings  # Release reference before GC
                     gc.collect()
                     self._clear_gpu_cache()
                     logger.debug(f"Cleared GPU cache after batch {batch_idx}")

@@ -728,6 +728,9 @@ class SourceCodeIndexer:
                 for chunk in batch_chunks:
                     chunk.embedding = None
 
+                # Release batch_embeddings reference to prevent accumulation in callback closure
+                del batch_embeddings
+
             # Embed with streaming (accumulate=False)
             self.embedding_client.embed_parallel(
                 texts,
@@ -756,11 +759,15 @@ class SourceCodeIndexer:
             self.stats["chunks_uploaded"] += uploaded
             self.stats["projects_indexed"] += 1
 
-            # Memory cleanup
+            # Memory cleanup (streaming mode)
+            # Release large data structures and clear GPU cache between projects
             del all_chunks
             del texts
             import gc
             gc.collect()
+            # Clear GPU cache if using GPU to prevent memory buildup across projects
+            if self.embedding_client.use_gpu:
+                self.embedding_client._clear_gpu_cache()
 
         else:
             # Non-streaming mode: embed all, then upload (original behavior)
@@ -829,6 +836,9 @@ class SourceCodeIndexer:
             del all_embeddings
             import gc
             gc.collect()
+            # Clear GPU cache if using GPU to prevent memory buildup across projects
+            if self.embedding_client.use_gpu:
+                self.embedding_client._clear_gpu_cache()
 
         # Calculate files/chunks for this project
         project_files = self.stats["files_processed"] - initial_files

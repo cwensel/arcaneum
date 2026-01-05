@@ -168,7 +168,8 @@ class PDFBatchUploader:
         pdf_idx: int,
         total_pdfs: int,
         worker_id: int = 0,
-        scanned_files: Optional[Set[str]] = None
+        scanned_files: Optional[Set[str]] = None,
+        force_reindex: bool = False
     ) -> Tuple[List[PointStruct], int, Optional[str]]:
         """Process a single PDF: extract, OCR, chunk, embed, create points.
 
@@ -183,6 +184,7 @@ class PDFBatchUploader:
             pdf_idx: Current PDF index (for progress)
             total_pdfs: Total number of PDFs (for progress)
             worker_id: ID of worker processing this PDF (for per-worker embedding client)
+            force_reindex: If True, skip content hash check and reindex even if already indexed
 
         Returns:
             Tuple of (points list, chunk count, error message or None)
@@ -200,7 +202,8 @@ class PDFBatchUploader:
 
             # Stage 0.5: Check if content exists (by file_hash) - if so, handle as metadata update, not re-index
             # This prevents re-indexing files that just need metadata migration (file_quick_hashes dict)
-            old_paths = self.sync.find_file_by_content_hash(collection_name, file_hash)
+            # Skip this check if force_reindex is True - we want to reindex regardless
+            old_paths = self.sync.find_file_by_content_hash(collection_name, file_hash) if not force_reindex else []
             if old_paths:
                 # Check if any old paths still exist on filesystem
                 existing_old_paths = self.sync.filter_existing_paths(old_paths)
@@ -562,15 +565,19 @@ class PDFBatchUploader:
         scanned_files = {str(p.absolute()) for p in all_pdf_files}
 
         # Filter to unindexed files via metadata queries (unless force_reindex)
-        if verbose:
-            print(f"{timestamp()} 🔍 Scanning collection for existing files...")
+        logger.debug(f"force_reindex={force_reindex}")
 
         if force_reindex:
+            if verbose:
+                print(f"{timestamp()} 🔄 Force reindex enabled, skipping sync check...")
             pdf_files = all_pdf_files
             logger.info(f"Force reindex: processing all {len(pdf_files)} PDFs")
             if verbose:
                 print(f"{timestamp()} 🔄 Force reindex: {len(pdf_files)} PDFs to process")
         else:
+            if verbose:
+                print(f"{timestamp()} 🔍 Scanning collection for existing files...")
+
             pdf_files, already_indexed = self.sync.get_unindexed_files(collection_name, all_pdf_files)
 
             logger.info(f"Incremental sync: {len(pdf_files)} need processing, "
@@ -634,7 +641,8 @@ class PDFBatchUploader:
                             pdf_idx,
                             total_pdfs,
                             worker_id,
-                            scanned_files
+                            scanned_files,
+                            force_reindex
                         )
                         future_to_pdf[future] = (pdf_idx, pdf_path)
 
@@ -705,7 +713,8 @@ class PDFBatchUploader:
                         pdf_idx,
                         total_pdfs,
                         0,  # worker_id = 0 for sequential mode
-                        scanned_files
+                        scanned_files,
+                        force_reindex
                     )
 
                     if error:

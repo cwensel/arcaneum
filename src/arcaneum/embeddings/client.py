@@ -14,13 +14,24 @@ logger = logging.getLogger(__name__)
 # Model configurations with dimensions
 # Note: "stella" is an alias for bge-large since actual stella (dunzhang/stella_en_1.5B_v5)
 # is not available in FastEmbed
+#
 # Model configurations with multiple backends
+#
+# IMPORTANT - Memory and Batch Size Configuration:
+# ================================================
+# Each SentenceTransformers model MUST specify "params_billions" for automatic batch sizing.
+# Batch size is derived from model size to prevent GPU OOM errors:
+#
+#   params_billions >= 1.0  → batch_size = 16  (large models like stella, jina-code-1.5b)
+#   params_billions >= 0.3  → batch_size = 32  (medium models like jina-code-0.5b)
+#   params_billions <  0.3  → batch_size = 128 (small models)
+#
+# The batch size calculation happens in memory.py:get_batch_size_for_model_params()
+# This prevents the common bug of adding a new large model without adjusting batch size.
+#
+# See also: memory.py for the batch size derivation logic
 EMBEDDING_MODELS = {
     # Code-specific models (SentenceTransformers)
-    # Size categories for MPS memory management:
-    #   "small" = <500M params (batch_size=64)
-    #   "medium" = 500M-1B params (batch_size=32)
-    #   "large" = >1B params (batch_size=8)
     "jina-code": {
         "name": "jinaai/jina-embeddings-v2-base-code",
         "dimensions": 768,
@@ -28,7 +39,8 @@ EMBEDDING_MODELS = {
         "description": "Code-specific (768D, 8K context, legacy v2 model)",
         "available": True,
         "recommended_for": "code",
-        "size": "medium"  # ~137M params but 8K context causes attention memory buildup
+        "params_billions": 0.137,  # ~137M params
+        "max_seq_length": 8192,  # Limit attention memory: O(batch × seq_len²)
     },
     "jina-code-0.5b": {
         "name": "jinaai/jina-code-embeddings-0.5b",
@@ -37,7 +49,7 @@ EMBEDDING_MODELS = {
         "description": "Code-specific SOTA (896D, 32K context, Sept 2025, fast)",
         "available": True,
         "recommended_for": "code",
-        "size": "large",  # 500M params but Qwen2 attention needs ~4GB per batch
+        "params_billions": 0.5,  # 500M params, Qwen2 attention needs ~4GB per batch
         # Limit seq_length to control attention memory: O(batch × seq_len²)
         # Model supports 32K but was trained on 512; 8192 is recommended max
         # See: https://huggingface.co/jinaai/jina-code-embeddings-0.5b
@@ -50,7 +62,7 @@ EMBEDDING_MODELS = {
         "description": "Code-specific SOTA (1536D, 32K context, Sept 2025, highest quality)",
         "available": True,
         "recommended_for": "code",
-        "size": "large",  # 1.5B params
+        "params_billions": 1.5,  # 1.5B params
         "max_seq_length": 8192  # Same as 0.5b - limit attention memory
     },
     "codesage-large": {
@@ -60,7 +72,8 @@ EMBEDDING_MODELS = {
         "description": "CodeSage V2 (1024D, 9 languages, Dec 2024)",
         "available": True,
         "recommended_for": "code",
-        "size": "medium"  # ~400M params
+        "params_billions": 0.4,  # ~400M params
+        "max_seq_length": 8192,  # Limit attention memory: O(batch × seq_len²)
     },
     "nomic-code": {
         "name": "nomic-ai/nomic-embed-code",
@@ -69,7 +82,8 @@ EMBEDDING_MODELS = {
         "description": "Nomic Code (3584D, 7B params, 6 languages, 2025)",
         "available": True,
         "recommended_for": "code",
-        "size": "large"  # 7B params - very large
+        "params_billions": 7.0,  # 7B params - very large
+        "max_seq_length": 8192,  # Limit attention memory: O(batch × seq_len²)
     },
 
     # General purpose models (SentenceTransformers)
@@ -80,7 +94,8 @@ EMBEDDING_MODELS = {
         "description": "General purpose (1024D, high quality for docs/PDFs)",
         "available": True,
         "recommended_for": "pdf",
-        "size": "large"  # 1.5B params
+        "params_billions": 1.5,  # 1.5B params
+        # Note: Model default max_seq_length=512, don't override
     },
 
     # Jina models (FastEmbed)
@@ -137,7 +152,7 @@ EMBEDDING_MODELS = {
         "backend": "sentence-transformers",
         "description": "MiniLM (384D, lightweight, fast)",
         "available": True,
-        "size": "small"  # ~22M params
+        "params_billions": 0.022,  # ~22M params
     },
     "gte-base": {
         "name": "thenlper/gte-base",
@@ -145,7 +160,7 @@ EMBEDDING_MODELS = {
         "backend": "sentence-transformers",
         "description": "GTE Base (768D, general purpose retrieval)",
         "available": True,
-        "size": "small"  # ~110M params
+        "params_billions": 0.110,  # ~110M params
     },
     "e5-base": {
         "name": "intfloat/e5-base-v2",
@@ -153,7 +168,7 @@ EMBEDDING_MODELS = {
         "backend": "sentence-transformers",
         "description": "E5 Base v2 (768D, multilingual, strong performance)",
         "available": True,
-        "size": "small"  # ~110M params
+        "params_billions": 0.110,  # ~110M params
     },
 }
 
@@ -636,32 +651,45 @@ class EmbeddingClient:
             chunks_embedded = 0  # Track actual chunks processed for progress
 
             # Memory leak prevention: Clear MPS/CUDA cache based on model size
-            # Large models (Qwen2-based jina-code-0.5b/1.5b, stella, nomic) need aggressive
+            # Large models (stella, jina-code-1.5b, nomic-code) need aggressive
             # cache clearing because attention mechanism allocates large contiguous blocks.
             # (arcaneum-mem-leak)
+            #
+            # Cache clearing strategy is derived from params_billions:
+            #   >= 1.0B params: clear BEFORE each batch (large models)
+            #   >= 0.3B params: clear every 3 batches (medium models)
+            #   <  0.3B params: clear every 10 batches (small models)
             model_config = EMBEDDING_MODELS.get(model_name, {})
-            model_size = model_config.get("size", "small")
+            params_billions = model_config.get("params_billions")
 
-            # Determine cache clearing strategy based on model size
-            # Large models: clear BEFORE each batch to maximize available memory
-            # Medium models: clear every 5 batches
-            # Small models: clear every 10 batches
-            if model_size == "large":
+            # Determine cache clearing strategy based on model params
+            if params_billions is not None and params_billions >= 1.0:
                 cache_clear_interval = 1  # Every batch
                 clear_before_batch = True
-            elif model_size == "medium":
+                model_size_category = "large"
+            elif params_billions is not None and params_billions >= 0.3:
                 cache_clear_interval = 3  # Every 3 batches
                 clear_before_batch = True
+                model_size_category = "medium"
             else:
                 cache_clear_interval = 10  # Every 10 batches
                 clear_before_batch = False
+                model_size_category = "small"
 
-            logger.debug(f"Model {model_name} size={model_size}, cache_clear_interval={cache_clear_interval}, clear_before={clear_before_batch}")
+            logger.debug(f"Model {model_name} params={params_billions}B ({model_size_category}), cache_clear_interval={cache_clear_interval}, clear_before={clear_before_batch}")
 
             # OOM recovery: track effective batch size across all batches
             # Start with requested batch_size, reduce on OOM until we reach minimum
             effective_batch_size = batch_size
             min_batch_size = 8  # Minimum viable batch size before giving up
+
+            # For large models, clear GPU cache BEFORE first batch to ensure maximum
+            # available memory. This is critical when processing multiple files as
+            # memory from PDF extraction may not be fully released yet.
+            if clear_before_batch:
+                gc.collect()
+                self._clear_gpu_cache()
+                logger.debug("Cleared GPU cache before first batch")
 
             for start_idx in range(0, len(texts), batch_size):
                 # For memory-hungry models, clear cache BEFORE embedding to maximize

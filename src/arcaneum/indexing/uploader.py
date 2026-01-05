@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Set
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_not_exception_type
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
+import gc
 import logging
 import os
 import sys
@@ -273,6 +274,9 @@ class PDFBatchUploader:
                 text, extract_meta = self.extractor.extract(pdf_path)
                 print(f"{timestamp()}      extracted {len(text)} chars", flush=True)
 
+            # Memory cleanup after PDF extraction (pymupdf4llm can hold large buffers)
+            gc.collect()
+
             # Stage 2: OCR (if needed)
             if self.ocr_enabled and len(text) < self.ocr_threshold:
                 import pymupdf as fitz
@@ -293,6 +297,9 @@ class PDFBatchUploader:
 
                 if verbose:
                     print(f"{timestamp()}      OCR complete", flush=True)
+
+                # Memory cleanup after OCR (releases image buffers)
+                gc.collect()
 
             # Chunk text with file metadata (two-pass sync support)
             file_path_abs = str(pdf_path.absolute())
@@ -381,6 +388,9 @@ class PDFBatchUploader:
                     self._upload_batch(collection_name, points)
                     uploaded_count += len(points)
 
+                    # Release batch_embeddings reference to prevent accumulation in callback closure
+                    del batch_embeddings
+
                 # Embed with streaming (accumulate=False)
                 embedding_client.embed_parallel(
                     texts,
@@ -399,10 +409,13 @@ class PDFBatchUploader:
                     print(f"\r{embedding_ts}   → embedding ({file_chunk_count} chunks) [{total_batches}/{total_batches} batches]    ")
                     print(f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed/total_batches:.2f}s/batch)", flush=True)
 
-                # Clear lists to free memory
+                # Memory cleanup (streaming mode)
+                # Release large data structures and clear GPU cache between PDFs
                 del texts, chunks
-                import gc
                 gc.collect()
+                # Clear GPU cache if using GPU to prevent memory buildup across PDFs
+                if embedding_client.use_gpu:
+                    embedding_client._clear_gpu_cache()
 
             else:
                 # Non-streaming mode: embed all, then upload in batches (original behavior)
@@ -462,11 +475,13 @@ class PDFBatchUploader:
                     uploaded_count += len(points_batch)
                     points_batch.clear()
 
-                # Clear large lists to free memory and garbage collect ONCE per file (arcaneum-d432)
-                # This reduces gc.collect() overhead from 100+ calls to ~1 per file
+                # Memory cleanup (non-streaming mode)
+                # Release large data structures and clear GPU cache between PDFs
                 del texts, embeddings, chunks, points_batch
-                import gc
                 gc.collect()
+                # Clear GPU cache if using GPU to prevent memory buildup across PDFs
+                if embedding_client.use_gpu:
+                    embedding_client._clear_gpu_cache()
 
             # Return empty list since we already uploaded
             # uploaded_count is used for stats

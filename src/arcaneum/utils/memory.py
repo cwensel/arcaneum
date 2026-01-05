@@ -1,10 +1,74 @@
-"""Memory management utilities for Arcaneum."""
+"""Memory management utilities for Arcaneum.
+
+This module handles GPU memory estimation and batch size calculation for embedding models.
+
+IMPORTANT - Batch Size Derivation from Model Parameters:
+=========================================================
+Batch size is automatically derived from model parameter count to prevent GPU OOM errors.
+This prevents a common bug where a new large model is added without adjusting batch size.
+
+The formula (in get_batch_size_for_model_params):
+  - params >= 1.0B  → batch_size = 16  (e.g., stella 1.5B, jina-code-1.5b)
+  - params >= 0.3B  → batch_size = 32  (e.g., jina-code-0.5b, codesage-large)
+  - params <  0.3B  → batch_size = 128 (e.g., bge-*, jina-code legacy)
+
+Models must specify "params_billions" in their config (see client.py EMBEDDING_MODELS).
+If params_billions is missing, falls back to conservative batch_size=32.
+
+See also: embeddings/client.py EMBEDDING_MODELS for model configurations
+"""
 
 import psutil
 import logging
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+def get_batch_size_for_model_params(params_billions: Optional[float]) -> int:
+    """Derive optimal batch size from model parameter count.
+
+    This function implements the core batch size derivation logic to prevent
+    GPU OOM errors. Larger models need smaller batch sizes because:
+    1. Model weights consume more GPU memory
+    2. Activation memory scales with model size
+    3. Attention memory is O(batch × seq_len²)
+
+    Args:
+        params_billions: Model size in billions of parameters (e.g., 1.5 for stella)
+                        If None, returns conservative default.
+
+    Returns:
+        Recommended batch size (8, 16, 32, or 128)
+
+    Examples:
+        >>> get_batch_size_for_model_params(1.5)   # stella, jina-code-1.5b
+        16
+        >>> get_batch_size_for_model_params(0.5)   # jina-code-0.5b
+        32
+        >>> get_batch_size_for_model_params(0.137) # jina-code legacy
+        128
+        >>> get_batch_size_for_model_params(7.0)   # nomic-code 7B
+        8
+        >>> get_batch_size_for_model_params(None)  # unknown model
+        32
+    """
+    if params_billions is None:
+        logger.warning("Model params_billions not specified, using conservative batch_size=32")
+        return 32
+
+    # Very large models (7B+) need tiny batches
+    if params_billions >= 5.0:
+        return 8
+    # Large models (1B+) need small batches
+    elif params_billions >= 1.0:
+        return 16
+    # Medium models (300M-1B) need moderate batches
+    elif params_billions >= 0.3:
+        return 32
+    # Small models (<300M) can use larger batches
+    else:
+        return 128
 
 
 def get_gpu_memory_info() -> tuple[Optional[int], Optional[int], Optional[str]]:
@@ -120,53 +184,40 @@ def estimate_safe_batch_size_v2(
     if device_type == "mps":
         available_gb = available_gpu_bytes / (1024 ** 3)
 
-        # Optimal batch sizes from empirical testing (RDR-013, arcaneum-i7oa, arcaneum-mem-leak)
-        # Larger batches = fewer kernel launches = better GPU utilization
-        # Values tuned for sustained GPU inference without OOM
-        #
-        # NOTE: Qwen2-based models (jina-code-0.5b/1.5b) have attention O(seq_len²)
-        # With max_seq_length=8192 (set in client.py), attention memory is bounded.
-        # Batch sizes calibrated for 8K seq_length; if changed, adjust these.
-        OPTIMAL_BATCH_SIZES = {
-            'stella': 128,           # Conservative for 1.5B model
-            'jina': 128,
-            'jina-code': 32,          # Memory leak at 128, stable at 32
-            'jina-code-0.5b': 32,    # Qwen2-based, 8K seq (limited from 32K), attention O(seq²)
-            'jina-code-1.5b': 16,    # Qwen2-based, 8K seq, smaller batches for 1.5B params
-            'codesage-large': 128,   # ~400M params
-            'nomic-code': 8,         # 7B params, very large model
-            'bge-large': 128,
-            'bge-base': 128,
-            'bge-small': 256,        # Tiny model, can handle larger batches
-        }
+        # Get model config to derive batch size from params_billions
+        # Import here to avoid circular dependency
+        from arcaneum.embeddings.client import EMBEDDING_MODELS
 
-        # Minimum memory requirements (model weights + reasonable batch headroom)
-        # With max_seq_length=8192, attention memory is bounded to ~128MB per seq
-        MIN_MEMORY_GB = {
-            'stella': 4.0,           # 2.5GB model + 1.5GB for batching
-            'jina': 2.0,             # 0.5GB model + 1.5GB for batching
-            'jina-code': 2.0,
-            'jina-code-0.5b': 6.0,   # 2GB model + 4GB for attention (8K seq_len)
-            'jina-code-1.5b': 10.0,  # 4GB model + 6GB for attention (8K seq_len)
-            'codesage-large': 3.0,   # 1.5GB model + 1.5GB for batching
-            'nomic-code': 20.0,      # ~14GB model + 6GB for batching (7B params)
-            'bge-large': 2.5,
-            'bge-base': 2.0,
-            'bge-small': 1.5,
-        }
+        model_config = EMBEDDING_MODELS.get(model_name, {})
+        params_billions = model_config.get("params_billions")
 
-        optimal = OPTIMAL_BATCH_SIZES.get(model_name, 128)  # Conservative fallback
-        min_required = MIN_MEMORY_GB.get(model_name, 4.0)
+        # Derive optimal batch size from model parameter count
+        # See get_batch_size_for_model_params() for the derivation logic
+        optimal = get_batch_size_for_model_params(params_billions)
+
+        # Minimum memory requirements derived from model size
+        # Formula: model_weights_gb + batch_headroom_gb
+        # - Model weights ≈ params_billions * 2 (fp16) to * 4 (fp32) GB
+        # - Batch headroom ≈ 1.5-6GB depending on attention complexity
+        if params_billions is not None:
+            if params_billions >= 5.0:
+                min_required = params_billions * 2.5 + 6.0  # Very large models
+            elif params_billions >= 1.0:
+                min_required = params_billions * 2.0 + 2.0  # Large models
+            else:
+                min_required = params_billions * 2.0 + 1.5  # Small/medium models
+        else:
+            min_required = 4.0  # Conservative fallback
 
         if available_gb >= min_required:
             # Have enough memory, use optimal batch size
-            logger.debug(f"MPS: {available_gb:.1f}GB available, using optimal batch_size={optimal}")
+            logger.debug(f"MPS: {available_gb:.1f}GB available, using optimal batch_size={optimal} (params={params_billions}B)")
             return optimal
         else:
             # Not enough for optimal batching, scale down proportionally
             scale_factor = available_gb / min_required
             scaled_batch = max(8, int(optimal * scale_factor))
-            logger.debug(f"MPS: {available_gb:.1f}GB available (optimal: {min_required}GB), using batch_size={scaled_batch}")
+            logger.debug(f"MPS: {available_gb:.1f}GB available (need {min_required:.1f}GB), using batch_size={scaled_batch}")
             return min(scaled_batch, 1024)
 
     # CUDA: Use detailed memory model

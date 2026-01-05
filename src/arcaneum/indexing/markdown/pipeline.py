@@ -277,6 +277,9 @@ class MarkdownIndexingPipeline:
                     self.qdrant.upsert(collection_name=collection_name, points=points)
                     uploaded_count += len(points)
 
+                    # Release batch_embeddings reference to prevent accumulation in callback closure
+                    del batch_embeddings
+
                 # Embed with streaming (accumulate=False)
                 self.embeddings.embed_parallel(
                     texts,
@@ -293,6 +296,11 @@ class MarkdownIndexingPipeline:
                     # Show final batch count, then newline and summary
                     print(f"\r{embedding_ts}   → embedding ({file_chunk_count} chunks) [{total_batches}/{total_batches} batches]    ")
                     print(f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed/total_batches:.2f}s/batch)", flush=True)
+
+                # Memory cleanup (streaming mode)
+                # Clear GPU cache if using GPU to prevent memory buildup across files
+                if self.embeddings.use_gpu:
+                    self.embeddings._clear_gpu_cache()
 
                 # Return empty points since we already uploaded
                 return ([], file_chunk_count, None)
@@ -334,6 +342,11 @@ class MarkdownIndexingPipeline:
 
                     points.append(point)
                     point_id += 1
+
+                # Memory cleanup (non-streaming mode)
+                # Clear GPU cache if using GPU to prevent memory buildup across files
+                if self.embeddings.use_gpu:
+                    self.embeddings._clear_gpu_cache()
 
                 return (points, file_chunk_count, None)
 

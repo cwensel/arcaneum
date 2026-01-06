@@ -1,6 +1,6 @@
 {
   "name": "arc",
-  "description": "CLI tools for semantic and full-text search across Qdrant and MeiliSearch. Manage Docker instances, index PDFs, markdown, and source code with AST-aware chunking, frontmatter extraction, git awareness, and dual-indexing support. Store agent-generated content for long-term memory with rich metadata.",
+  "description": "CLI tools for semantic and full-text search across Qdrant and MeiliSearch. Manage Docker instances, index PDFs, markdown, and source code with AST-aware chunking, frontmatter extraction, git awareness, and dual-indexing support. Store agent-generated content for long-term memory with rich metadata. Agents using this plugin require Bash(arc:*) permission.",
   "version": "0.1.0",
   "author": {
     "name": "Arcaneum Contributors",

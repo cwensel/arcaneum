@@ -95,9 +95,36 @@ arc search text "validateToken" --index MyCode --limit 10
 
 ## Requirements
 
-- `arc` CLI installed and in PATH
+- `arc` CLI installed and in PATH (`pip install arcaneum`)
 - Qdrant and/or MeiliSearch backend running
 - Collections indexed with content
+
+## Agent Integration
+
+If you're creating a custom agent that uses this plugin, add the following to your agent's
+`allowedTools` frontmatter:
+
+```yaml
+allowedTools:
+  - "Bash(arc:*)"
+```
+
+This permits all arc subcommands (search, collection, index, etc.).
+
+Example agent frontmatter:
+
+```yaml
+---
+name: my-research-agent
+description: Agent that searches indexed collections
+allowedTools:
+  - "Bash(arc:*)"
+  - "Read"
+  - "Grep"
+---
+```
+
+Without this permission, the agent will fail when attempting to run arc commands.
 
 ## License
 

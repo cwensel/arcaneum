@@ -10,6 +10,7 @@ import json
 import os
 import signal
 
+from .interaction_logger import interaction_logger
 from .logging_config import setup_logging_default, setup_logging_verbose, setup_logging_debug
 from .utils import set_process_priority, create_qdrant_client
 from ..config import load_config, DEFAULT_MODELS
@@ -114,6 +115,15 @@ def index_pdfs_command(
         sys.exit(130)
 
     signal.signal(signal.SIGINT, signal_handler)
+
+    # Start interaction logging (RDR-018)
+    interaction_logger.start(
+        "index", "pdf",
+        collection=collection,
+        path=path,
+        from_file=from_file,
+        force=force,
+    )
 
     try:
         # Handle file list if provided
@@ -421,11 +431,20 @@ def index_pdfs_command(
                 if stats['errors'] > 0:
                     console.print(f"\n[yellow]⚠ {stats['errors']} errors occurred[/yellow]")
 
+        # Log successful operation (RDR-018)
+        interaction_logger.finish(
+            result_count=stats.get('files', 0),
+            chunks=stats.get('chunks', 0),
+            errors=stats.get('errors', 0),
+        )
+
     except KeyboardInterrupt:
+        interaction_logger.finish(error="interrupted by user")
         console.print("\n\nIndexing interrupted by user")
         sys.exit(130)
 
     except Exception as e:
+        interaction_logger.finish(error=str(e))
         if output_json:
             result = {
                 "success": False,

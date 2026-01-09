@@ -9,6 +9,7 @@ import json
 import os
 import signal
 
+from .interaction_logger import interaction_logger
 from .logging_config import setup_logging_default, setup_logging_verbose, setup_logging_debug
 from .utils import create_qdrant_client
 from ..config import load_config, DEFAULT_MODELS
@@ -95,6 +96,16 @@ def index_markdown_command(
         sys.exit(130)
 
     signal.signal(signal.SIGINT, signal_handler)
+
+    # Start interaction logging (RDR-018)
+    interaction_logger.start(
+        "index", "markdown",
+        collection=collection,
+        path=path,
+        from_file=from_file,
+        recursive=recursive,
+        force=force,
+    )
 
     try:
         # Handle file list if provided
@@ -288,12 +299,21 @@ def index_markdown_command(
             # Summary already printed by pipeline
             pass
 
+        # Log successful operation (RDR-018)
+        interaction_logger.finish(
+            result_count=stats.get('files', 0),
+            chunks=stats.get('chunks', 0),
+            errors=stats.get('errors', 0),
+        )
+
         sys.exit(0)
 
     except KeyboardInterrupt:
+        interaction_logger.finish(error="interrupted by user")
         console.print("\n\nIndexing interrupted by user")
         sys.exit(130)
     except Exception as e:
+        interaction_logger.finish(error=str(e))
         if output_json:
             print(json.dumps({"error": str(e)}))
         else:
@@ -336,6 +356,14 @@ def store_command(
         logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
     else:
         logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
+
+    # Start interaction logging (RDR-018)
+    interaction_logger.start(
+        "store", None,
+        collection=collection,
+        title=title,
+        category=category,
+    )
 
     try:
         # Read content
@@ -440,9 +468,16 @@ def store_command(
             if stats.get('persisted') and not verbose:
                 console.print(f"📁 {stats['path']}")
 
+        # Log successful operation (RDR-018)
+        interaction_logger.finish(
+            result_count=1,
+            chunks=stats.get('chunks', 0),
+        )
+
         sys.exit(0)
 
     except Exception as e:
+        interaction_logger.finish(error=str(e))
         if output_json:
             print(json.dumps({"error": str(e)}))
         else:

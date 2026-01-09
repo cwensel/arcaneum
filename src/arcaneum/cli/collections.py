@@ -16,6 +16,7 @@ from arcaneum.indexing.collection_metadata import (
     CollectionType,
 )
 from arcaneum.cli.errors import InvalidArgumentError, ResourceNotFoundError
+from arcaneum.cli.interaction_logger import interaction_logger
 from arcaneum.cli.output import print_json, print_error, print_success
 from arcaneum.cli.utils import create_qdrant_client
 
@@ -59,6 +60,14 @@ def create_collection_command(
         output_json: Output as JSON
         collection_type: Type of collection ("pdf", "code", or "markdown")
     """
+    # Start interaction logging (RDR-018)
+    interaction_logger.start(
+        "collection", "create",
+        collection=name,
+        collection_type=collection_type,
+        model=model,
+    )
+
     try:
         # Infer model from collection_type if not provided
         if model is None:
@@ -140,9 +149,14 @@ def create_collection_command(
                 dims = EMBEDDING_MODELS[m]["dimensions"]
                 console.print(f"  • {m}: {dims}D")
 
+        # Log successful operation (RDR-018)
+        interaction_logger.finish()
+
     except (InvalidArgumentError, ResourceNotFoundError):
+        interaction_logger.finish(error="invalid argument or resource not found")
         raise  # Re-raise our custom exceptions to be handled by main()
     except Exception as e:
+        interaction_logger.finish(error=str(e))
         print_error(f"Failed to create collection: {e}", output_json)
         sys.exit(1)
 
@@ -154,6 +168,9 @@ def list_collections_command(verbose: bool, output_json: bool):
         verbose: Show detailed information
         output_json: Output as JSON
     """
+    # Start interaction logging (RDR-018)
+    interaction_logger.start("collection", "list")
+
     try:
         client = create_qdrant_client()
         collections = client.get_collections()
@@ -206,7 +223,11 @@ def list_collections_command(verbose: bool, output_json: bool):
 
             console.print(table)
 
+        # Log successful operation (RDR-018)
+        interaction_logger.finish(result_count=len(collections.collections))
+
     except Exception as e:
+        interaction_logger.finish(error=str(e))
         print_error(f"Failed to list collections: {e}", output_json)
         sys.exit(1)
 
@@ -219,6 +240,9 @@ def delete_collection_command(name: str, confirm: bool, output_json: bool):
         confirm: Skip confirmation prompt
         output_json: Output as JSON
     """
+    # Start interaction logging (RDR-018)
+    interaction_logger.start("collection", "delete", collection=name)
+
     try:
         if not confirm:
             if output_json:
@@ -237,9 +261,14 @@ def delete_collection_command(name: str, confirm: bool, output_json: bool):
         else:
             console.print(f"[green]✅ Deleted collection '{name}'[/green]")
 
+        # Log successful operation (RDR-018)
+        interaction_logger.finish()
+
     except (InvalidArgumentError, ResourceNotFoundError):
+        interaction_logger.finish(error="invalid argument or resource not found")
         raise  # Re-raise our custom exceptions
     except Exception as e:
+        interaction_logger.finish(error=str(e))
         print_error(f"Failed to delete collection: {e}", output_json)
         sys.exit(1)
 
@@ -251,6 +280,9 @@ def info_collection_command(name: str, output_json: bool):
         name: Collection name
         output_json: Output as JSON
     """
+    # Start interaction logging (RDR-018)
+    interaction_logger.start("collection", "info", collection=name)
+
     try:
         client = create_qdrant_client()
         info = client.get_collection(name)
@@ -304,7 +336,11 @@ def info_collection_command(name: str, output_json: bool):
             console.print(f"  m: {hnsw.m}")
             console.print(f"  ef_construct: {hnsw.ef_construct}")
 
+        # Log successful operation (RDR-018)
+        interaction_logger.finish()
+
     except Exception as e:
+        interaction_logger.finish(error=str(e))
         print_error(f"Failed to get collection info: {e}", output_json)
         sys.exit(1)
 
@@ -316,6 +352,9 @@ def items_collection_command(name: str, output_json: bool):
         name: Collection name
         output_json: Output as JSON
     """
+    # Start interaction logging (RDR-018)
+    interaction_logger.start("collection", "items", collection=name)
+
     try:
         client = create_qdrant_client()
 
@@ -449,7 +488,11 @@ def items_collection_command(name: str, output_json: bool):
                     )
                 console.print(table)
 
+        # Log successful operation (RDR-018)
+        interaction_logger.finish(result_count=len(items_list))
+
     except Exception as e:
+        interaction_logger.finish(error=str(e))
         print_error(f"Failed to list collection items: {e}", output_json)
         sys.exit(1)
 
@@ -468,6 +511,9 @@ def verify_collection_command(
         verbose: Show detailed file-level results
         output_json: Output as JSON
     """
+    # Start interaction logging (RDR-018)
+    interaction_logger.start("collection", "verify", collection=name, project=project)
+
     try:
         from arcaneum.indexing.verify import CollectionVerifier
 
@@ -606,7 +652,15 @@ def verify_collection_command(
                     if len(needs_repair) > 10:
                         console.print(f"  [dim]... and {len(needs_repair) - 10} more[/dim]")
 
+        # Log successful operation (RDR-018)
+        interaction_logger.finish(
+            result_count=result.total_items,
+            is_healthy=result.is_healthy,
+            incomplete_items=result.incomplete_items,
+        )
+
     except Exception as e:
+        interaction_logger.finish(error=str(e))
         print_error(f"Failed to verify collection: {e}", output_json)
         sys.exit(1)
 

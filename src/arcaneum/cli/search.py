@@ -18,6 +18,7 @@ from ..search import (
 )
 from ..paths import get_models_dir
 from .errors import InvalidArgumentError, ResourceNotFoundError
+from .interaction_logger import interaction_logger
 from .utils import create_qdrant_client
 
 console = Console()
@@ -82,28 +83,47 @@ def search_command(
             except ValueError as e:
                 raise InvalidArgumentError(f"Invalid filter: {e}")
 
-        # Execute search
+        # Execute search with interaction logging (RDR-018)
         if verbose:
             logger.info(f"Searching collection '{collection}' for: \"{query}\"")
 
         start_time = time.time()
 
-        results = search_collection(
-            client=client,
-            embedder=embedder,
+        # Start interaction logging
+        interaction_logger.start(
+            "search", "semantic",
+            collection=collection,
             query=query,
-            collection_name=collection,
-            vector_name=vector_name,
             limit=limit,
             offset=offset,
-            query_filter=query_filter,
-            score_threshold=score_threshold
+            filters=filter_arg if filter_arg else None,
+            score_threshold=score_threshold,
         )
 
-        execution_time_ms = (time.time() - start_time) * 1000
+        try:
+            results = search_collection(
+                client=client,
+                embedder=embedder,
+                query=query,
+                collection_name=collection,
+                vector_name=vector_name,
+                limit=limit,
+                offset=offset,
+                query_filter=query_filter,
+                score_threshold=score_threshold
+            )
 
-        if verbose:
-            logger.info(f"Search completed in {execution_time_ms:.1f}ms")
+            execution_time_ms = (time.time() - start_time) * 1000
+
+            if verbose:
+                logger.info(f"Search completed in {execution_time_ms:.1f}ms")
+
+            # Log successful search
+            interaction_logger.finish(result_count=len(results))
+        except Exception as e:
+            # Log failed search
+            interaction_logger.finish(error=str(e))
+            raise
 
         # Format and output results
         if output_json:

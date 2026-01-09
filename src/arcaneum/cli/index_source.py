@@ -9,6 +9,7 @@ from typing import Optional
 from rich.console import Console
 from rich import print as rprint
 
+from .interaction_logger import interaction_logger
 from .logging_config import setup_logging_default, setup_logging_verbose, setup_logging_debug
 from .utils import set_process_priority, create_qdrant_client
 from arcaneum.indexing.source_code_pipeline import SourceCodeIndexer
@@ -102,6 +103,16 @@ def index_source_command(
         sys.exit(130)
 
     signal.signal(signal.SIGINT, signal_handler)
+
+    # Start interaction logging (RDR-018)
+    interaction_logger.start(
+        "index", "code",
+        collection=collection,
+        path=path,
+        from_file=from_file,
+        depth=depth,
+        force=force,
+    )
 
     try:
         # Handle file list if provided
@@ -369,13 +380,22 @@ def index_source_command(
             import json
             print(json.dumps(stats, indent=2))
 
+        # Log successful operation (RDR-018)
+        interaction_logger.finish(
+            result_count=stats.get('projects_processed', 0),
+            files=stats.get('files_processed', 0),
+            chunks=stats.get('chunks_uploaded', 0),
+        )
+
         sys.exit(0)
 
     except KeyboardInterrupt:
+        interaction_logger.finish(error="interrupted by user")
         console.print("\n\nIndexing interrupted by user")
         sys.exit(130)  # Standard exit code for SIGINT
 
     except Exception as e:
+        interaction_logger.finish(error=str(e))
         logger.error(f"Indexing failed: {e}", exc_info=verbose)
         if not output_json:
             console.print(f"\n[bold red]Error:[/bold red] {e}")

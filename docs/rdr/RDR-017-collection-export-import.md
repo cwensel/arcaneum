@@ -106,7 +106,8 @@ Users with indexed collections on one machine may want to:
    | `file_path`              | Yes | Yes  | Yes      |
    | `git_project_root`       | -   | Yes  | -        |
    | `git_project_identifier` | -   | Yes  | -        |
-   | `git_branch/commit_hash` | -   | Yes  | -        |
+   | `git_branch`             | -   | Yes  | -        |
+   | `git_commit_hash`        | -   | Yes  | -        |
    | `file_hash`              | Yes | -    | Yes      |
    | `page_count`             | Yes | -    | -        |
    | `line_count`             | -   | Yes  | -        |
@@ -130,28 +131,37 @@ Add two new CLI commands to the `arc collection` subgroup:
 arc collection export <name> -o <file.arcexp>
 arc collection import <file.arcexp> [--into <name>]
 
-# Subset export: specific repo from code collection
-arc collection export CodeCollection -o arcaneum.arcexp \
-    --filter-project arcaneum#main
+# Path-based filtering (works on file_path - all collection types)
+arc collection export MyPDFs -o reports.arcexp --include "*/reports/*.pdf"
+arc collection export MyPDFs -o single.arcexp --include "/path/to/specific.pdf"
+arc collection export Docs -o subset.arcexp --exclude "*/drafts/*"
 
-# Subset export: specific files by glob pattern
-arc collection export MyPDFs -o reports.arcexp \
-    --filter-glob "*/reports/*.pdf"
+# Multiple patterns (OR for includes, AND for excludes)
+arc collection export MyPDFs -o subset.arcexp \
+    --include "*/reports/*.pdf" --include "*/docs/*.pdf" \
+    --exclude "*/temp/*"
 
-# Subset export: specific file by path
-arc collection export MyPDFs -o single.arcexp \
-    --filter-file "/path/to/specific.pdf"
+# Code: path-based filtering (if collection indexes multiple root paths)
+arc collection export Code -o repos.arcexp --include "~/repos/*"
+
+# Code: repo-based filtering (on git_project metadata)
+arc collection export Code -o arcaneum.arcexp --repo arcaneum        # all branches
+arc collection export Code -o main.arcexp --repo arcaneum#main       # specific branch
+arc collection export Code -o multi.arcexp --repo arcaneum --repo mylib  # multiple repos
+
+# Code: combined path + repo filtering
+arc collection export Code -o subset.arcexp \
+    --include "~/repos/*" \
+    --repo arcaneum#main \
+    --exclude "*/test/*"
 
 # Detached export: strip root prefix, store relative paths (shareable)
 arc collection export MyCode -o shareable.arcexp --detach
 
-# Import detached export with new root
-arc collection import shareable.arcexp --remap /home/bob/projects
+# Import detached export with new root (--attach is symmetric with --detach)
+arc collection import shareable.arcexp --attach /home/bob/projects
 
-# Path remapping: auto-detect old root from non-detached export
-arc collection import backup.arcexp --remap /home/bob/projects
-
-# Explicit path mapping when paths differ
+# Path substitution for non-detached exports (explicit old:new mapping)
 arc collection import backup.arcexp --remap /Users/alice/docs:/home/bob/documents
 
 # Optional: JSONL format for debugging
@@ -198,11 +208,31 @@ float-to-string conversion overhead.
 
 #### Filter Implementation Notes
 
-- **`--filter-glob`**: Uses Python's `fnmatch` module to match against the full `file_path`
-  payload value. The pattern is matched against the entire path, not just the filename.
-- **`--filter-project`**: Matches against `git_project_identifier` payload field (code
-  collections only). Format: `project_name#branch` or just `project_name`.
-- **`--filter-file`**: Exact match against `file_path` payload field.
+**Filter flags:**
+
+| Flag | Target Field | Matching | Use Case |
+| --- | --- | --- | --- |
+| `--include <glob>` | `file_path` | fnmatch glob | PDF, Markdown, Code path filtering |
+| `--exclude <glob>` | `file_path` | fnmatch glob | Exclude paths from export |
+| `--repo <name>` | `git_project_name` | exact match | Code: all branches of repo |
+| `--repo <name>#<branch>` | `git_project_identifier` | exact match | Code: specific branch |
+
+**Filter logic (all must pass):**
+
+1. **Include patterns**: If any `--include` specified, `file_path` must match at least one
+   pattern (multiple includes = OR).
+2. **Exclude patterns**: `file_path` must NOT match any exclude pattern (multiple excludes
+   = AND).
+3. **Repo filter** (code only): If `--repo` specified, must match at least one repo
+   (multiple repos = OR).
+4. **No filters**: Export entire collection.
+
+**Implementation:**
+
+- `--include`/`--exclude`: Uses Python's `fnmatch` module, matched against full `file_path`.
+- `--repo`: Uses Qdrant's native filtering for efficiency. `--repo arcaneum` filters on
+  `git_project_name == "arcaneum"`, `--repo arcaneum#main` filters on
+  `git_project_identifier == "arcaneum#main"`.
 - **Metadata point preservation**: Filtered exports always include the reserved metadata
   point (UUID `00000000-0000-0000-0000-000000000001`) regardless of filter criteria, as
   it is required for collection recreation on import.
@@ -337,32 +367,37 @@ def import_collection(client, input_path: str, path_remaps: list[tuple[str, str]
               help="Output file path (.arcexp or .jsonl)")
 @click.option("--format", "fmt", type=click.Choice(["binary", "jsonl"]),
               default="binary", help="Export format (default: binary)")
-@click.option("--filter-project", help="Export only specific git project (code)")
-@click.option("--filter-glob", help="Export files matching glob pattern")
-@click.option("--filter-file", help="Export specific file by path")
+@click.option("--include", "includes", multiple=True,
+              help="Include files matching glob pattern (file_path)")
+@click.option("--exclude", "excludes", multiple=True,
+              help="Exclude files matching glob pattern (file_path)")
+@click.option("--repo", "repos", multiple=True,
+              help="Filter by repo name or repo#branch (code collections)")
 @click.option("--detach", is_flag=True,
               help="Strip root prefix, store relative paths (shareable)")
 @click.option("--json", "output_json", is_flag=True, help="Output stats as JSON")
-def export(name: str, output: str, fmt: str, filter_project: str,
-           filter_glob: str, filter_file: str, detach: bool, output_json: bool):
+def export(name: str, output: str, fmt: str, includes: tuple,
+           excludes: tuple, repos: tuple, detach: bool, output_json: bool):
     """Export collection to portable format.
 
     Default format is compressed binary (.arcexp) for efficiency.
     Use --format jsonl for human-readable debug output.
 
-    Subset export options:
-      --filter-project  Export specific git repo (e.g., "arcaneum#main")
-      --filter-glob     Export files matching pattern (e.g., "*/reports/*.pdf")
-      --filter-file     Export single file by exact path
+    Filter options (all filters combined with AND):
+      --include   Include files matching glob pattern on file_path (multiple = OR)
+      --exclude   Exclude files matching glob pattern on file_path (multiple = AND)
+      --repo      Filter by repo name (all branches) or repo#branch (code only)
 
     Path options:
-      --detach          Strip common root prefix from paths, storing relative paths.
-                        Use --remap on import to attach new root. Enables sharing
-                        collections without exposing your directory structure.
+      --detach    Strip common root prefix from paths, storing relative paths.
+                  Use --attach on import to prepend new root. Enables sharing
+                  collections without exposing your directory structure.
 
     Examples:
         arc collection export MyPDFs -o backup.arcexp
-        arc collection export Code -o repo.arcexp --filter-project arcaneum#main
+        arc collection export MyPDFs -o reports.arcexp --include "*/reports/*.pdf"
+        arc collection export Code -o arcaneum.arcexp --repo arcaneum#main
+        arc collection export Code -o subset.arcexp --include "~/repos/*" --repo arcaneum#main
         arc collection export MyCode -o shareable.arcexp --detach
     """
     from arcaneum.cli.export_import import BinaryExporter, JsonlExporter
@@ -370,10 +405,10 @@ def export(name: str, output: str, fmt: str, filter_project: str,
     client = get_qdrant_client()
 
     # Build filter based on options
-    scroll_filter = build_export_filter(
-        filter_project=filter_project,
-        filter_glob=filter_glob,
-        filter_file=filter_file
+    scroll_filter, path_filter = build_export_filter(
+        includes=includes,
+        excludes=excludes,
+        repos=repos
     )
 
     def progress(current, total):
@@ -389,8 +424,9 @@ def export(name: str, output: str, fmt: str, filter_project: str,
     result = exporter.export(
         collection_name=name,
         output_path=Path(output),
-        filter_query=scroll_filter,
-        detach=detach,  # Strip root prefix, store relative paths
+        scroll_filter=scroll_filter,  # Qdrant filter (for --repo)
+        path_filter=path_filter,       # Post-scroll filter (for --include/--exclude)
+        detach=detach,                 # Strip root prefix, store relative paths
         progress_callback=progress if not output_json else None
     )
 
@@ -406,24 +442,27 @@ def export(name: str, output: str, fmt: str, filter_project: str,
 @collection.command("import")
 @click.argument("file", type=click.Path(exists=True))
 @click.option("--into", "target_name", help="Target collection name")
+@click.option("--attach", "attach_root",
+              help="Attach root path to relative paths (for detached exports)")
 @click.option("--remap", "remaps", multiple=True,
-              help="Path remapping: new_root (auto-detect) or old:new (explicit)")
+              help="Path substitution: old:new prefix mapping (for non-detached exports)")
 @click.option("--json", "output_json", is_flag=True, help="Output stats as JSON")
-def import_collection(file: str, target_name: str, remaps: tuple, output_json: bool):
+def import_collection(file: str, target_name: str, attach_root: str,
+                      remaps: tuple, output_json: bool):
     """Import collection from export file.
 
     Automatically detects format from file content (binary .arcexp or JSONL).
 
     Path handling options:
-      --remap      Update paths for new machine. Two forms:
-                   - Single path: prepend new root to relative paths (for detached exports)
-                     or replace auto-detected root_prefix (for normal exports)
-                   - old:new: explicit prefix substitution
+      --attach     Prepend root path to relative paths. Use with detached exports.
+                   Symmetric with --detach on export.
+      --remap      Explicit path substitution (old:new format). Use with non-detached
+                   exports to update absolute paths for new machine.
 
     Examples:
         arc collection import backup.arcexp
         arc collection import backup.arcexp --into MyPDFs-restored
-        arc collection import shareable.arcexp --remap /home/bob/projects
+        arc collection import shareable.arcexp --attach /home/bob/projects
         arc collection import backup.arcexp --remap /Users/alice/docs:/home/bob/docs
     """
     from arcaneum.cli.export_import import BinaryImporter, JsonlImporter
@@ -431,15 +470,13 @@ def import_collection(file: str, target_name: str, remaps: tuple, output_json: b
     client = get_qdrant_client()
     input_path = Path(file)
 
-    # Parse path remappings (single arg = auto-detect, old:new = explicit)
+    # Parse path remappings (old:new explicit substitution)
     path_remaps = []
-    auto_remap_target = None
     for remap in remaps:
-        if ':' in remap:
-            old, new = remap.split(':', 1)
-            path_remaps.append((old, new))
-        else:
-            auto_remap_target = remap  # Use root_prefix from header
+        if ':' not in remap:
+            raise click.UsageError("--remap requires old:new format (e.g., /old/path:/new/path)")
+        old, new = remap.split(':', 1)
+        path_remaps.append((old, new))
 
     # Auto-detect format by reading first bytes
     with open(input_path, 'rb') as f:
@@ -458,8 +495,8 @@ def import_collection(file: str, target_name: str, remaps: tuple, output_json: b
     result = importer.import_collection(
         input_path=input_path,
         target_name=target_name,
-        path_remaps=path_remaps if path_remaps else None,
-        auto_remap_target=auto_remap_target,  # Uses root_prefix from header
+        attach_root=attach_root,       # For detached exports: prepend this root
+        path_remaps=path_remaps if path_remaps else None,  # For non-detached: old:new substitution
         progress_callback=progress if not output_json else None
     )
 
@@ -551,7 +588,7 @@ def import_collection(file: str, target_name: str, remaps: tuple, output_json: b
 
 - **Compact files**: ~10x smaller than JSON, transfers faster
 - **Fast I/O**: Binary serialization avoids string conversion overhead
-- **Selective export**: Filter by project, file hash, or other payload fields
+- **Selective export**: Filter by path patterns (--include/--exclude) or repo (--repo)
 - **CLI integration**: Consistent with existing `arc collection` commands
 - **Streaming**: Memory-efficient for large collections
 - **Debug option**: JSONL available when inspection needed
@@ -619,12 +656,12 @@ Create `tests/test_export_import.py` with:
 - `tests/test_export_import.py` - New file: tests
 - `docs/guides/cli-reference.md` - Document new commands
 - `docs/guides/qdrant-migration.md` - Add export as option
-- `pyproject.toml` - Add msgpack dependency if not present
+- `pyproject.toml` - Add msgpack and numpy dependencies
 
 ### Dependencies
 
-- `msgpack` - Compact binary serialization (lightweight)
-- `numpy` - Vector array handling (likely already installed)
+- `msgpack` - Compact binary serialization (must be added to pyproject.toml)
+- `numpy` - Vector array handling (must be added to pyproject.toml)
 - `gzip` - Compression (stdlib)
 
 ## Validation
@@ -664,25 +701,37 @@ Create `tests/test_export_import.py` with:
 8. **Scenario**: Verify chunk integrity after import
    **Expected Result**: `arc collection verify` passes (all chunks present)
 
-9. **Scenario**: Export subset by project identifier
-   **Expected Result**: Only chunks from specified repo exported
+9. **Scenario**: Export code collection with `--repo arcaneum` (all branches)
+   **Expected Result**: Only chunks from arcaneum repo exported (all branches)
 
-10. **Scenario**: Export subset by glob pattern
-    **Expected Result**: Only files matching pattern exported
+10. **Scenario**: Export code collection with `--repo arcaneum#main` (specific branch)
+    **Expected Result**: Only chunks from arcaneum#main exported
 
-11. **Scenario**: Export with --detach flag
+11. **Scenario**: Export with `--include "*.py"` and `--exclude "*/test/*"`
+    **Expected Result**: Only Python files outside test directories exported
+
+12. **Scenario**: Export code with `--include "~/repos/*"` (path-based filtering)
+    **Expected Result**: Only files under ~/repos/ exported
+
+13. **Scenario**: Combined `--include "~/repos/*" --repo arcaneum#main`
+    **Expected Result**: Only arcaneum#main files that are under ~/repos/ exported
+
+14. **Scenario**: Combined `--repo arcaneum#main --exclude "*/test/*"`
+    **Expected Result**: arcaneum#main files excluding test directories
+
+15. **Scenario**: Export with --detach flag
     **Expected Result**: Paths stored as relative (root prefix stripped), header has
     `detached: true` and `root_prefix` set to stripped prefix
 
-12. **Scenario**: Import detached export with --remap
+16. **Scenario**: Import detached export with --attach
     **Expected Result**: New root prepended to relative paths, resulting in valid
     absolute paths on new machine
 
-13. **Scenario**: Import detached export without --remap
+17. **Scenario**: Import detached export without --attach
     **Expected Result**: Paths remain relative; search works but file lookup would fail
 
-14. **Scenario**: Import with single-arg --remap (auto-detect root from normal export)
-    **Expected Result**: Old `root_prefix` from header replaced with new path in all
+18. **Scenario**: Import non-detached export with --remap (explicit old:new substitution)
+    **Expected Result**: Old path prefix replaced with new path prefix in all
     `file_path` fields
 
 ### Performance Validation
@@ -713,10 +762,13 @@ Create `tests/test_export_import.py` with:
 
 ### Post-Import Workflow
 
-After importing with `--remap`:
+After importing with path adjustments:
 
 ```bash
-# Import with path remapping
+# Import detached export with --attach (symmetric with --detach)
+arc collection import shareable.arcexp --attach /home/bob/projects
+
+# Import non-detached export with --remap (explicit path substitution)
 arc collection import backup.arcexp --remap /Users/alice:/home/bob
 
 # Verify chunk integrity (existing command - checks for missing chunks)
@@ -727,7 +779,7 @@ arc collection items MyCollection
 ```
 
 **Note**: The existing `arc collection verify` checks chunk completeness (are all chunks
-present for each file), NOT file existence on disk. Verifying files exist at remapped
+present for each file), NOT file existence on disk. Verifying files exist at new
 paths would require a new feature.
 
 ### Future Enhancements

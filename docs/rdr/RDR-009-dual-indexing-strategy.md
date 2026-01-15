@@ -64,12 +64,14 @@ achieve 2-command workflow.
 
 ### Technical Environment
 
-- **Qdrant**: v1.15.4+ (Docker from RDR-002)
-- **MeiliSearch**: v1.24.0 (Docker from RDR-008)
+- **Qdrant**: v1.16.2+ (Docker from RDR-002)
+- **MeiliSearch**: v1.32.x (Docker from RDR-008)
 - **Python**: >= 3.12
-- **qdrant-client**: >= 1.15.0 (with FastEmbed)
-- **meilisearch-python**: >= 0.31.0
-- **CLI Framework**: Click (from RDR-003)
+- **qdrant-client**: >= 1.16.1 (with FastEmbed)
+- **meilisearch**: >= 0.39.0
+- **CLI Framework**: Click >= 8.3.0 (from RDR-003)
+- **Rich**: >= 14.2.0
+- **Pydantic**: >= 2.12.3
 
 ## Research Findings
 
@@ -91,15 +93,16 @@ achieve 2-command workflow.
 
 **Perfect Field Alignment:**
 
-| Field Name (Qdrant) | Field Name (MeiliSearch) | Use Case |
-|---------------------|-------------------------|----------|
-| `file_path` | `file_path` | Location tracking |
-| `programming_language` | `language` | Code language filter |
-| `git_project_name` | `project` | Project identifier |
-| `git_branch` | `branch` | Branch-aware search |
-| `filename` | `filename` | File name search |
-| `line_number` | `line_number` | Line-level precision |
-| `chunk_index` | `chunk_index` | Document ordering |
+| Field Name (Qdrant)      | Field Name (MeiliSearch) | Use Case             |
+|--------------------------|--------------------------|----------------------|
+| `file_path`              | `file_path`              | Location tracking    |
+| `programming_language`   | `language`               | Code language filter |
+| `git_project_identifier` | `git_project_identifier` | Project identifier   |
+| `git_branch`             | `branch`                 | Branch-aware search  |
+| `filename`               | `filename`               | File name search     |
+| `line_number`            | `line_number`            | Line-level precision |
+| `chunk_index`            | `chunk_index`            | Document ordering    |
+| `file_extension`         | `file_extension`         | File type filter     |
 
 **Cooperative Workflow:**
 
@@ -206,13 +209,13 @@ create a corpus and sync directories.
 ```text
 User Workflow (2 commands):
 ┌──────────────────────────────────────────────────────────────┐
-│  Command 1: arcaneum create-corpus my-pdfs --type pdf        │
+│  Command 1: arc corpus create my-pdfs --type pdf-docs        │
 │                                                               │
 │  ├─> Creates Qdrant collection 'my-pdfs'                    │
 │  └─> Creates MeiliSearch index 'my-pdfs'                    │
 └──────────────────────────────────────────────────────────────┘
 ┌──────────────────────────────────────────────────────────────┐
-│  Command 2: arcaneum sync-directory ./docs --corpus my-pdfs  │
+│  Command 2: arc corpus sync my-pdfs ./docs                   │
 │                                                               │
 │  ├─> Discovers PDFs in ./docs                               │
 │  ├─> Chunks and generates embeddings                        │
@@ -228,8 +231,11 @@ Result: Searchable corpus in both systems
 **CLI Signature:**
 
 ```bash
-arc corpus create <name> --type <source-code|pdf> [--models <models>]
+arc corpus create <name> --type <source-code|pdf-docs|markdown-docs> [--models <models>]
 ```
+
+**Note**: Type aliases are supported for convenience: `code` → `source-code`,
+`pdf` → `pdf-docs`, `markdown` → `markdown-docs`.
 
 **Implementation:**
 
@@ -237,41 +243,37 @@ arc corpus create <name> --type <source-code|pdf> [--models <models>]
 # src/arcaneum/cli/corpus.py
 
 import click
-from rich.console import Console
 from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance, HnswConfigDiff
 from ..fulltext.client import FullTextClient
-from ..fulltext.indexes import get_index_settings
+from ..fulltext.indexes import get_index_settings, get_available_index_types
+from ..cli.output import print_success, print_error, print_info
 
-console = Console()
-
-@click.command('create-corpus')
+@corpus.command('create')
 @click.argument('name')
 @click.option(
-    '--type',
-    type=click.Choice(['source-code', 'pdf']),
+    '--type', 'corpus_type',
+    type=click.Choice(get_available_index_types()),
     required=True,
-    help='Corpus type'
+    help='Corpus type (source-code, pdf-docs, markdown-docs, or aliases: code, pdf, markdown)'
 )
 @click.option(
     '--models',
     default='stella,jina',
     help='Embedding models (comma-separated)'
 )
-@click.option('--qdrant-url', default='http://localhost:6333')
-@click.option('--meili-url', default='http://localhost:7700')
-@click.option('--meili-key', envvar='MEILI_MASTER_KEY')
-def create_corpus(name, type, models, qdrant_url, meili_url, meili_key):
+@click.option('--json', 'output_json', is_flag=True, help='Output as JSON')
+def create_corpus(name, corpus_type, models, output_json):
     """Create both Qdrant collection and MeiliSearch index."""
 
-    console.print(f"[bold cyan]Creating corpus '{name}'[/bold cyan]")
-    console.print(f"Type: {type}, Models: {models}\n")
+    print_info(f"Creating corpus '{name}'")
+    print_info(f"Type: {corpus_type}, Models: {models}")
 
     # Parse models
     model_list = models.split(',')
 
     # Step 1: Create Qdrant collection
-    console.print("[bold]Step 1/2: Creating Qdrant collection...[/bold]")
+    print_info("Step 1/2: Creating Qdrant collection...")
     try:
         qdrant = QdrantClient(url=qdrant_url)
 
@@ -290,42 +292,35 @@ def create_corpus(name, type, models, qdrant_url, meili_url, meili_key):
             hnsw_config=HnswConfigDiff(m=16, ef_construct=100),
             on_disk_payload=True
         )
-        console.print(f"[green]✅ Qdrant collection '{name}' created[/green]")
+        print_success(f"Qdrant collection '{name}' created")
     except Exception as e:
-        console.print(f"[red]❌ Qdrant collection creation failed: {e}[/red]")
+        print_error(f"Qdrant collection creation failed: {e}")
         raise click.Abort()
 
     # Step 2: Create MeiliSearch index
-    console.print("\n[bold]Step 2/2: Creating MeiliSearch index...[/bold]")
+    print_info("Step 2/2: Creating MeiliSearch index...")
     try:
         meili = FullTextClient(meili_url, meili_key)
-        settings = get_index_settings(type)
+        settings = get_index_settings(corpus_type)
         meili.create_index(name, primary_key='id', settings=settings)
-        console.print(f"[green]✅ MeiliSearch index '{name}' created[/green]")
+        print_success(f"MeiliSearch index '{name}' created")
     except Exception as e:
-        console.print(f"[red]❌ MeiliSearch index creation failed: {e}[/red]")
-        console.print(
-            f"[yellow]Note: Qdrant collection '{name}' was created "
-            f"successfully[/yellow]"
-        )
+        print_error(f"MeiliSearch index creation failed: {e}")
+        print_info(f"Note: Qdrant collection '{name}' was created successfully")
         raise click.Abort()
 
-    console.print(
-        f"\n[bold green]🎉 Corpus '{name}' ready for indexing![/bold green]"
-    )
-    console.print(f"Next: arcaneum sync-directory <path> --corpus {name}")
+    print_success(f"Corpus '{name}' ready for indexing!")
+    print_info(f"Next: arc corpus sync {name} <path>")
 ```
 
 **Error Handling Strategy**: Fail-fast, clear messages, no complex rollback
 
-**Estimated Effort**: 4-6 hours (CLI integration, tests, docs)
-
-#### Component 2: sync-directory Command (PRIMARY)
+#### Component 2: sync Command (PRIMARY)
 
 **CLI Signature:**
 
 ```bash
-arc corpus sync <name> <path> [--models <models>]
+arc corpus sync <name> <path> [--models <models>] [--file-types <extensions>]
 ```
 
 **Implementation Pattern:**
@@ -335,33 +330,21 @@ arc corpus sync <name> <path> [--models <models>]
 
 import click
 from pathlib import Path
-from rich.console import Console
 from rich.progress import track
 from ..indexing.dual_indexer import DualIndexer
 from ..embeddings.client import EmbeddingClient
+from ..cli.output import print_success, print_error, print_info
 
-console = Console()
-
-@click.command('sync-directory')
+@corpus.command('sync')
+@click.argument('corpus_name')
 @click.argument('directory', type=click.Path(exists=True))
-@click.option('--corpus', required=True, help='Corpus name')
 @click.option('--models', default='stella,jina', help='Embedding models')
 @click.option('--file-types', help='File extensions to index (e.g., .py,.md)')
-@click.option('--qdrant-url', default='http://localhost:6333')
-@click.option('--meili-url', default='http://localhost:7700')
-@click.option('--meili-key', envvar='MEILI_MASTER_KEY')
-def sync_directory(
-    directory,
-    corpus,
-    models,
-    file_types,
-    qdrant_url,
-    meili_url,
-    meili_key
-):
+@click.option('--json', 'output_json', is_flag=True, help='Output as JSON')
+def sync_directory(corpus_name, directory, models, file_types, output_json):
     """Index directory to both Qdrant and MeiliSearch."""
 
-    console.print(f"[bold cyan]Syncing '{directory}' to corpus '{corpus}'[/bold cyan]")
+    print_info(f"Syncing '{directory}' to corpus '{corpus_name}'")
 
     # Initialize clients
     qdrant = QdrantClient(url=qdrant_url)
@@ -372,15 +355,15 @@ def sync_directory(
     dual_indexer = DualIndexer(
         qdrant_client=qdrant,
         meili_client=meili,
-        collection_name=corpus,
-        index_name=corpus
+        collection_name=corpus_name,
+        index_name=corpus_name
     )
 
     # Discover files
     dir_path = Path(directory)
     files = list(dir_path.rglob('*.pdf'))  # Or *.py for code
 
-    console.print(f"Found {len(files)} files to index\n")
+    print_info(f"Found {len(files)} files to index")
 
     # Process files
     total_indexed = 0
@@ -414,11 +397,8 @@ def sync_directory(
         qdrant_count, meili_count = dual_indexer.index_batch(documents)
         total_indexed += len(documents)
 
-    console.print(f"\n[green]✅ Indexed {total_indexed} chunks to both systems[/green]")
+    print_success(f"Indexed {total_indexed} chunks to both systems")
 ```
-
-**Estimated Effort**: 8-10 hours (file discovery, integrate chunking, dual
-indexing)
 
 #### Component 3: Shared Metadata Schema
 
@@ -467,9 +447,13 @@ def to_qdrant_point(doc: DualIndexDocument, point_id: int):
         vector=doc.vectors,
         payload={
             "file_path": doc.file_path,
-            "programming_language": doc.language,  # Qdrant convention
-            "git_project_name": doc.project,
+            "programming_language": doc.language,
+            "git_project_identifier": doc.git_project_identifier,
+            "git_branch": doc.branch,
             "content": doc.content,
+            "filename": doc.filename,
+            "file_extension": doc.file_extension,
+            "chunk_index": doc.chunk_index,
             ...
         }
     )
@@ -480,13 +464,15 @@ def to_meilisearch_doc(doc: DualIndexDocument):
         "id": doc.id,
         "content": doc.content,
         "file_path": doc.file_path,
-        "language": doc.language,  # MeiliSearch convention
-        "project": doc.project,
+        "language": doc.language,
+        "git_project_identifier": doc.git_project_identifier,
+        "branch": doc.branch,
+        "filename": doc.filename,
+        "file_extension": doc.file_extension,
+        "chunk_index": doc.chunk_index,
         ...
     }
 ```
-
-**Estimated Effort**: 4 hours (schema definition, conversion functions)
 
 #### Component 4: DualIndexer Orchestrator
 
@@ -517,36 +503,34 @@ class DualIndexer:
         return len(qdrant_points), len(meili_docs)
 ```
 
-**Estimated Effort**: 2 hours (thin wrapper around existing clients)
-
 ### Implementation Example
 
 **Complete 2-Command Workflow:**
 
 ```bash
 # 1. Create corpus (both systems)
-arc corpus create my-pdfs --type pdf --models stella,bge
+arc corpus create my-pdfs --type pdf-docs --models stella,bge
 
 # 2. Sync directory (index to both systems)
 arc corpus sync my-pdfs ./research-papers
 
 # Done! Search both ways:
-arc find my-pdfs "machine learning"
-arc match my-pdfs '"neural networks"'
+arc search semantic "machine learning" --collection my-pdfs
+arc search text '"neural networks"' --index my-pdfs
 ```
 
 **Source Code Example:**
 
 ```bash
-# 1. Create corpus for code
-arc corpus create my-code --type source-code --models stella,jina
+# 1. Create corpus for code (using alias 'code' for 'source-code')
+arc corpus create my-code --type code --models stella,jina
 
 # 2. Sync git repository
 arc corpus sync my-code ./src --file-types .py,.js
 
 # Search:
-arc find my-code "authentication" --filter language=python
-arc match my-code '"def authenticate"'
+arc search semantic "authentication" --collection my-code --filter language=python
+arc search text '"def authenticate"' --index my-code
 ```
 
 ## Alternatives Considered
@@ -558,7 +542,7 @@ document level
 
 ```bash
 arc collection create my-pdfs --models stella,bge
-arc fulltext create-index my-pdfs --type pdf
+arc fulltext create-index my-pdfs --type pdf-docs
 arc corpus sync my-pdfs ./docs
 ```
 
@@ -605,11 +589,11 @@ cooperative use cases. This alternative abandons that goal.
 
 ### Alternative 3: Auto-Create on First Sync
 
-**Description**: sync-directory auto-creates corpus if missing
+**Description**: sync auto-creates corpus if missing
 
 ```bash
 # Single command (corpus auto-created)
-arc corpus sync my-pdfs ./docs --type pdf --models stella,bge
+arc corpus sync my-pdfs ./docs --type pdf-docs --models stella,bge
 ```
 
 **Pros:**
@@ -632,10 +616,10 @@ for understanding and debugging.
 ### Positive Consequences
 
 1. **Minimal Commands**: 2-command workflow achieves user's primary goal
-2. **Simple Implementation**: 16-20 hours total (NOT 60-80)
+2. **Simple Implementation**: Builds on existing RDR-008 infrastructure
 3. **Cooperative Search**: Shared metadata enables semantic → exact workflows
 4. **Optimal DX**: Fewest commands, clear workflow, easy to remember
-5. **Discoverable**: `arcaneum create-corpus --help` shows all options
+5. **Discoverable**: `arc corpus create --help` shows all options
 6. **Fast Indexing**: Dual indexing overhead ~20% (acceptable)
 7. **Explicit Setup**: Users know corpus created before indexing
 8. **Clear Errors**: Fail-fast with helpful messages
@@ -661,7 +645,7 @@ for understanding and debugging.
 **Mitigation**:
 
 - Check both services healthy before creating corpus
-- `arcaneum create-corpus --validate` pings both servers first
+- `arc corpus create --validate` pings both servers first
 - Clear error: "MeiliSearch not accessible at <http://localhost:7700>"
 
 **Risk**: Syncing large directories takes too long
@@ -694,19 +678,7 @@ for understanding and debugging.
 
 ### Step-by-Step Implementation
 
-#### Step 1: Implement create-corpus Command
-
-Create `src/arcaneum/cli/corpus.py`:
-
-- `create-corpus` command with type selection
-- Sequential API calls to both systems
-- Fail-fast error handling
-- Health check option
-- Register with main CLI
-
-**Estimated effort**: 4 hours
-
-#### Step 2: Implement Shared Schema
+#### Step 1: Implement Shared Schema
 
 Create `src/arcaneum/schema/document.py`:
 
@@ -715,9 +687,7 @@ Create `src/arcaneum/schema/document.py`:
 - `to_meilisearch_doc()` conversion
 - Field naming convention documentation
 
-**Estimated effort**: 3 hours
-
-#### Step 3: Implement DualIndexer
+#### Step 2: Implement DualIndexer
 
 Create `src/arcaneum/indexing/dual_indexer.py`:
 
@@ -726,31 +696,38 @@ Create `src/arcaneum/indexing/dual_indexer.py`:
 - Error handling per system
 - Logging and progress tracking
 
-**Estimated effort**: 2 hours
+#### Step 3: Implement corpus create Command
 
-#### Step 4: Implement sync-directory Command
+Complete `src/arcaneum/cli/corpus.py`:
 
-Create `src/arcaneum/cli/sync.py`:
+- `corpus create` command with type selection
+- Sequential API calls to both systems
+- Fail-fast error handling
+- Health check option
+
+**Note**: CLI command structure already exists in `main.py` as stubs.
+
+#### Step 4: Implement corpus sync Command
+
+Complete `src/arcaneum/cli/sync.py`:
 
 - File discovery logic
-- Integration with existing chunking (RDR-004, RDR-005)
+- Integration with existing chunking (RDR-004, RDR-005, RDR-014)
 - Dual indexing via `DualIndexer`
 - Progress tracking
 - Change detection (index only new/modified)
 
-**Estimated effort**: 8 hours
+**Note**: CLI command structure already exists in `main.py` as stubs.
 
 #### Step 5: Testing
 
 Create comprehensive tests:
 
 - Unit tests for schema conversions
-- Integration tests for create-corpus
-- Integration tests for sync-directory
+- Integration tests for corpus create
+- Integration tests for corpus sync
 - End-to-end workflow tests
 - Error scenario tests
-
-**Estimated effort**: 6 hours
 
 #### Step 6: Documentation
 
@@ -761,31 +738,13 @@ Update documentation:
 - Troubleshooting guide
 - Update RDR index
 
-**Estimated effort**: 3 hours
-
-### Total Estimated Effort
-
-**26 hours** (~3 days of focused work)
-
-**Effort Breakdown:**
-
-- Step 1: create-corpus (4h)
-- Step 2: Shared schema (3h)
-- Step 3: DualIndexer (2h)
-- Step 4: sync-directory (8h)
-- Step 5: Testing (6h)
-- Step 6: Documentation (3h)
-
 **Note**: This RDR implements the complete workflow. Follow-up RDRs
-(arcaneum-69, arcaneum-70) can extend sync-directory for type-specific
-optimizations.
+(arcaneum-69, arcaneum-70) can extend sync for type-specific optimizations.
 
 ### Files to Create
 
 **New Modules:**
 
-- `src/arcaneum/cli/corpus.py` - create-corpus command
-- `src/arcaneum/cli/sync.py` - sync-directory command
 - `src/arcaneum/schema/document.py` - Shared document schema
 - `src/arcaneum/indexing/dual_indexer.py` - Dual indexing orchestrator
 
@@ -797,21 +756,28 @@ optimizations.
 - `tests/indexing/test_dual_indexer.py` - Dual indexer tests
 - `tests/integration/test_2command_workflow.py` - End-to-end tests
 
+### Files to Complete (stubs exist)
+
+- `src/arcaneum/cli/corpus.py` - Implement create_corpus_command()
+- `src/arcaneum/cli/sync.py` - Implement sync_directory_command()
+
 ### Files to Modify
 
-- `src/arcaneum/cli/main.py` - Register create-corpus and sync-directory
 - `README.md` - Add 2-command workflow examples
 - `docs/rdr/README.md` - Reference RDR-009
 
+**Note**: CLI command registration already exists in `main.py` (corpus group
+with create and sync subcommands).
+
 ### Dependencies
 
-Already satisfied by RDR-003 and RDR-008:
+Already satisfied by RDR-003 and RDR-008 (see pyproject.toml):
 
-- qdrant-client[fastembed] >= 1.15.0
-- meilisearch-python >= 0.31.0
-- click >= 8.1.0
-- rich >= 13.0.0
-- pydantic >= 2.0.0
+- qdrant-client >= 1.16.1
+- meilisearch >= 0.39.0
+- click >= 8.3.0
+- rich >= 14.2.0
+- pydantic >= 2.12.3
 
 ## Validation
 
@@ -828,8 +794,8 @@ Already satisfied by RDR-003 and RDR-008:
 
 - **Setup**: Both Qdrant and MeiliSearch running
 - **Action**:
-  1. `arcaneum create-corpus research-pdfs --type pdf --models stella,bge`
-  2. `arcaneum sync-directory ./papers --corpus research-pdfs`
+  1. `arc corpus create research-pdfs --type pdf-docs --models stella,bge`
+  2. `arc corpus sync research-pdfs ./papers`
 - **Expected**:
   - Both Qdrant collection and MeiliSearch index created
   - All PDFs indexed to both systems
@@ -840,18 +806,18 @@ Already satisfied by RDR-003 and RDR-008:
 
 - **Setup**: Both systems running
 - **Action**:
-  1. `arcaneum create-corpus my-code --type source-code --models stella,jina`
-  2. `arcaneum sync-directory ./src --corpus my-code --file-types .py,.js`
+  1. `arc corpus create my-code --type source-code --models stella,jina`
+  2. `arc corpus sync my-code ./src --file-types .py,.js`
 - **Expected**:
   - Corpus created with code-optimized settings
   - Python and JavaScript files indexed
   - Both systems have same documents
   - Can search by language filter in both
 
-#### Scenario 3: MeiliSearch Down During create-corpus
+#### Scenario 3: MeiliSearch Down During corpus create
 
 - **Setup**: Stop MeiliSearch container
-- **Action**: `arcaneum create-corpus test --type pdf`
+- **Action**: `arc corpus create test --type pdf-docs`
 - **Expected**:
   - Qdrant collection created successfully
   - MeiliSearch index creation fails with clear error
@@ -863,7 +829,7 @@ Already satisfied by RDR-003 and RDR-008:
 - **Setup**: Corpus already exists with 100 files indexed
 - **Action**:
   1. Add 10 new PDFs to directory
-  2. `arcaneum sync-directory ./papers --corpus research-pdfs`
+  2. `arc corpus sync research-pdfs ./papers`
 - **Expected**:
   - Only 10 new PDFs indexed (change detection works)
   - Existing documents unchanged
@@ -873,9 +839,9 @@ Already satisfied by RDR-003 and RDR-008:
 
 - **Setup**: Code corpus indexed via 2-command workflow
 - **Action**:
-  1. `arc find my-code "authentication"`
+  1. `arc search semantic "authentication" --collection my-code`
   2. Note file_path from results
-  3. `arc match my-code '"def authenticate"' --filter 'file_path = <noted_path>'`
+  3. `arc search text '"def authenticate"' --index my-code --filter 'file_path = <noted_path>'`
 - **Expected**:
   - Semantic search finds related patterns
   - Exact search verifies specific implementation
@@ -933,29 +899,29 @@ Already satisfied by RDR-003 and RDR-008:
 
 1. **Minimize Commands over Architectural Purity**: 2-command workflow is
    primary goal
-2. **create-corpus as PRIMARY Command**: Not optional, core workflow
-3. **sync-directory with Dual Indexing**: Indexes to both systems automatically
+2. **corpus create as PRIMARY Command**: Not optional, core workflow
+3. **corpus sync with Dual Indexing**: Indexes to both systems automatically
 4. **Fail-Fast Error Handling**: No complex rollback, clear error messages
 5. **Shared Metadata**: Enables cooperative search workflows
 
-### Complexity Reassessment
+### Existing Infrastructure (RDR-008)
 
-**Original Estimate**: 60-80 hours (over-engineered)
+The following components are already implemented and available:
 
-**Actual Estimate**: 26 hours
-
-**Why Different:**
-
-- No distributed transactions needed (just sequential API calls)
-- No complex rollback (fail-fast is sufficient)
-- Reuse existing chunking logic from RDR-004, RDR-005
-- DualIndexer is thin wrapper (not complex orchestrator)
+- `FullTextClient` class with create_index, add_documents, search methods
+- Index settings templates: `SOURCE_CODE_SETTINGS`, `PDF_DOCS_SETTINGS`,
+  `MARKDOWN_DOCS_SETTINGS`
+- Type aliases: `code` → `source-code`, `pdf` → `pdf-docs`, `markdown` →
+  `markdown-docs`
+- CLI command stubs registered in `main.py` (corpus group)
+- Output helpers: `print_success`, `print_error`, `print_info`
+- Interaction logging framework (RDR-018)
 
 ### Future Enhancements
 
 **Hybrid Search with RRF:**
 
-- `arc find my-code "query" --hybrid` (queries both, merges results)
+- `arc search hybrid "query" --corpus my-code` (queries both, merges results)
 - Configurable weights (70% semantic, 30% exact)
 
 **Corpus Management:**
@@ -971,10 +937,9 @@ Already satisfied by RDR-003 and RDR-008:
 
 ### Success Criteria
 
-- ✅ 2-command workflow: create-corpus + sync-directory
+- ✅ 2-command workflow: corpus create + corpus sync
 - ✅ Both systems created and indexed automatically
 - ✅ Shared metadata enables cooperative search
-- ✅ Implementation < 30 hours
 - ✅ Dual indexing overhead < 20%
 - ✅ Clear error messages for all failure modes
 - ✅ Markdownlint compliant

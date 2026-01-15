@@ -180,7 +180,41 @@ def search_text_command(
     except (InvalidArgumentError, ResourceNotFoundError):
         raise  # Re-raise our custom exceptions for main() to handle
     except Exception as e:
-        console.print(f"[ERROR] Search failed: {e}", style="red")
+        error_str = str(e)
+        # Check for MeiliSearch filter attribute error
+        if "is not filterable" in error_str or "invalid_search_filter" in error_str:
+            import re
+            attr_match = re.search(r"Attribute `(\w+)`", error_str)
+            bad_attr = attr_match.group(1) if attr_match else None
+
+            # Fetch filterable attributes for this index
+            try:
+                settings = client.get_index_settings(index_name)
+                filterable = settings.get('filterableAttributes', [])
+
+                if bad_attr:
+                    console.print(f"[red][ERROR] Filter attribute '{bad_attr}' is not filterable.[/red]")
+                else:
+                    console.print(f"[red][ERROR] Invalid filter attribute.[/red]")
+
+                if filterable:
+                    console.print(f"\nAvailable filterable attributes for index '{index_name}':")
+                    for attr in filterable:
+                        console.print(f"  - {attr}")
+                    if bad_attr:
+                        # Suggest similar attribute if there's a close match
+                        for attr in filterable:
+                            if bad_attr.lower() in attr.lower() or attr.lower() in bad_attr.lower():
+                                console.print(f"\n[yellow]Hint: Try --filter \"{attr}=<value>\"[/yellow]")
+                                break
+                else:
+                    console.print(f"\n[yellow]Index '{index_name}' has no filterable attributes configured.[/yellow]")
+                    console.print("[dim]Filters cannot be used with this index.[/dim]")
+            except Exception:
+                console.print(f"[red][ERROR] Search failed: {e}[/red]")
+        else:
+            console.print(f"[red][ERROR] Search failed: {e}[/red]")
+
         if verbose:
             import traceback
             traceback.print_exc()
@@ -200,7 +234,8 @@ def fulltext():
 @click.option('--type', 'index_type',
               type=click.Choice(['source-code', 'source-code-fulltext', 'pdf-docs', 'markdown-docs',
                                  'code', 'code-fulltext', 'pdf', 'markdown']),
-              help='Index type (determines settings)')
+              required=True,
+              help='Index type (determines searchable/filterable attributes)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
 def create_index(name, index_type, output_json):
     """Create a new MeiliSearch index."""
@@ -218,23 +253,23 @@ def create_index(name, index_type, output_json):
         if client.index_exists(name):
             raise InvalidArgumentError(f"Index '{name}' already exists")
 
-        # Get settings if type specified
-        settings = None
-        if index_type:
-            settings = get_index_settings(index_type)
-            if not output_json:
-                print_info(f"Using {index_type} settings")
+        # Get settings based on type
+        settings = get_index_settings(index_type)
+        if not output_json:
+            print_info(f"Using {index_type} settings")
 
         client.create_index(name, primary_key='id', settings=settings)
 
-        data = {"name": name}
-        if settings:
-            data["searchableAttributes"] = len(settings.get('searchableAttributes', []))
-            data["filterableAttributes"] = len(settings.get('filterableAttributes', []))
+        data = {
+            "name": name,
+            "type": index_type,
+            "searchableAttributes": len(settings.get('searchableAttributes', [])),
+            "filterableAttributes": len(settings.get('filterableAttributes', [])),
+        }
 
         print_success(f"Created index '{name}'", json_output=output_json, data=data)
 
-        if not output_json and settings:
+        if not output_json:
             print_info(f"  Searchable attributes: {data['searchableAttributes']}")
             print_info(f"  Filterable attributes: {data['filterableAttributes']}")
 

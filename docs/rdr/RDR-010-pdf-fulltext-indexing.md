@@ -3,15 +3,17 @@
 ## Metadata
 
 - **Date**: 2025-10-21
+- **Updated**: 2026-01-14
 - **Status**: Recommendation
 - **Type**: Feature
 - **Priority**: High
-- **Related Issues**: arcaneum-69
+- **Related Issues**: arcaneum-69, arcaneum-5ysl, arcaneum-h6bo
 - **Related Tests**: PDF full-text indexing tests, dual indexing integration tests
 
 ## Problem Statement
 
-Create a PDF indexing pipeline for MeiliSearch that enables exact phrase search and keyword matching across PDF documents. The system must:
+Create a PDF indexing pipeline for MeiliSearch that enables exact phrase search and
+keyword matching across PDF documents. The system must:
 
 1. **Reuse RDR-004 extraction pipeline** - PyMuPDF + OCR for text extraction
 2. **Index to MeiliSearch** - Text-only (no vectors), page-level granularity
@@ -45,10 +47,48 @@ Arcaneum provides two complementary search systems:
 - Duplicate detection and updates
 - Change detection using file hash strategy
 
+### CLI Naming Convention (Updated 2026-01-14)
+
+This RDR follows the symmetric CLI naming convention established for semantic/text
+operations (see arcaneum-h6bo):
+
+```bash
+# Search commands (existing)
+arc search semantic "query" --collection X    # Vector search (Qdrant)
+arc search text "query" --index X             # Full-text search (MeiliSearch)
+
+# Index commands (symmetric naming)
+arc index semantic pdf /path --collection X   # Semantic indexing (Qdrant)
+arc index text pdf /path --index X            # Full-text indexing (MeiliSearch) - THIS RDR
+
+# Management commands
+arc collection list/create/delete             # Qdrant collection management
+arc indexes list/create/delete                # MeiliSearch index management
+```
+
+**Note**: The existing `arc index pdf` command will be renamed to `arc index semantic pdf`
+as part of arcaneum-h6bo. This RDR implements the complementary `arc index text pdf` command.
+
+### Relationship to RDR-009 Dual Indexing
+
+RDR-009 implements dual indexing via `arc corpus sync`, which indexes to BOTH Qdrant
+and MeiliSearch simultaneously. This RDR provides a **standalone MeiliSearch-only**
+pathway that complements (not replaces) the dual-indexing workflow:
+
+| Command                  | Target           | Use Case                            |
+|--------------------------|------------------|-------------------------------------|
+| `arc index semantic pdf` | Qdrant only      | Semantic search without full-text   |
+| `arc index text pdf`     | MeiliSearch only | Full-text search without embeddings |
+| `arc corpus sync`        | Both             | Unified dual-index corpus           |
+
+**Key difference**: `arc index text pdf` uses **page-level** documents for precise
+citations, while `arc corpus sync` uses **chunk-level** documents for consistency
+with Qdrant vector chunks. See "Page-Level vs Chunk-Level" section below.
+
 ### Technical Environment
 
 - **Python**: >= 3.12
-- **MeiliSearch**: v1.24.0 (from RDR-008)
+- **MeiliSearch**: v1.32.0 (from RDR-008, updated)
 - **PDF Libraries** (from RDR-004):
   - PyMuPDF (fitz) >= 1.23.0 - Primary text extraction
   - pdfplumber >= 0.10.0 - Table extraction fallback
@@ -56,7 +96,7 @@ Arcaneum provides two complementary search systems:
   - Tesseract 5.x with pytesseract - Default OCR
   - EasyOCR >= 1.7.0 - Alternative for mixed content
 - **MeiliSearch Client**:
-  - meilisearch-python >= 0.31.0
+  - meilisearch-python >= 0.31.0 (per pyproject.toml)
 - **Supporting Libraries**:
   - pdf2image, opencv-python-headless (for OCR)
   - tenacity (retry logic)
@@ -112,10 +152,10 @@ Arcaneum provides two complementary search systems:
 
 **Analysis:**
 
-| Approach | Pros | Cons | Use Case |
-|----------|------|------|----------|
-| **Page-level** | Exact location (page N), smaller chunks, precise results | More documents, slight overhead | ✅ Research papers, technical docs |
-| **Document-level** | Fewer documents, simpler structure | No page precision, large chunks | Books, novels |
+| Approach           | Pros                                | Cons                            | Use Case                   |
+|--------------------|-------------------------------------|---------------------------------|----------------------------|
+| **Page-level**     | Exact location, smaller chunks      | More documents, slight overhead | Research papers, tech docs |
+| **Document-level** | Fewer documents, simpler structure  | No page precision, large chunks | Books, novels              |
 
 **Decision**: **Page-level indexing** (RDR-004 already chunks by page).
 
@@ -130,26 +170,26 @@ Arcaneum provides two complementary search systems:
 
 **Metadata alignment between Qdrant (RDR-004) and MeiliSearch (this RDR):**
 
-| Field (Qdrant) | Field (MeiliSearch) | Purpose |
-|----------------|---------------------|---------|
-| `file_path` | `file_path` | Location tracking |
-| `filename` | `filename` | File name search |
-| `page_number` | `page_number` | Page-level precision |
-| `file_hash` | `file_hash` | Duplicate detection |
-| `extraction_method` | `extraction_method` | Metadata tracking |
-| `is_image_pdf` | `is_image_pdf` | OCR flag |
-| `ocr_confidence` | `ocr_confidence` | Quality indicator |
+| Field (Qdrant)      | Field (MeiliSearch)  | Purpose              |
+|---------------------|----------------------|----------------------|
+| `file_path`         | `file_path`          | Location tracking    |
+| `filename`          | `filename`           | File name search     |
+| `page_number`       | `page_number`        | Page-level precision |
+| `file_hash`         | `file_hash`          | Duplicate detection  |
+| `extraction_method` | `extraction_method`  | Metadata tracking    |
+| `is_image_pdf`      | `is_image_pdf`       | OCR flag             |
+| `ocr_confidence`    | `ocr_confidence`     | Quality indicator    |
 
 **Cooperative workflow:**
 
 ```bash
 # 1. Semantic discovery
-arc find research-papers "machine learning algorithms"
+arc search semantic "machine learning algorithms" --collection research-papers
 
 # Results show: paper.pdf (pages 5-7 relevant)
 
 # 2. Exact verification
-arc match research-papers '"gradient descent algorithm"' \
+arc search text '"gradient descent algorithm"' --index research-papers \
   --filter 'file_path = paper.pdf AND page_number >= 5 AND page_number <= 7'
 ```
 
@@ -269,7 +309,7 @@ PDF_DOCS_SETTINGS = {
 
 **Three-Phase PDF Full-Text Indexing Pipeline:**
 
-```
+```text
 Phase 1: PDF Extraction (REUSE RDR-004)
 ├─ PyMuPDF primary extraction
 ├─ pdfplumber fallback for complex tables
@@ -290,20 +330,20 @@ Phase 3: Batch Upload to MeiliSearch
 
 **Key Differences from RDR-004:**
 
-| Aspect | RDR-004 (Qdrant) | This RDR (MeiliSearch) |
-|--------|------------------|------------------------|
-| **Data type** | Vectors + text | Text only |
-| **Chunking** | Token-aware (512-1024) | Page-level (full page) |
-| **Embedding** | FastEmbed required | NOT required |
-| **Batch size** | 100-200 points | 1000 documents |
-| **Index structure** | Named vectors | Searchable attributes |
-| **Search type** | Semantic similarity | Exact phrase, keyword |
+| Aspect              | RDR-004 (Qdrant)       | This RDR (MeiliSearch)   |
+|---------------------|------------------------|--------------------------|
+| **Data type**       | Vectors + text         | Text only                |
+| **Chunking**        | Token-aware (512-1024) | Page-level (full page)   |
+| **Embedding**       | FastEmbed required     | NOT required             |
+| **Batch size**      | 100-200 points         | 1000 documents           |
+| **Index structure** | Named vectors          | Searchable attributes    |
+| **Search type**     | Semantic similarity    | Exact phrase, keyword    |
 
 ### Technical Design
 
 #### Architecture Overview
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │           PDF Full-Text Indexing Pipeline                    │
 └─────────────────────────────────────────────────────────────┘
@@ -363,7 +403,7 @@ Phase 3: Batch Upload to MeiliSearch
 
 #### Module Structure
 
-```
+```text
 src/arcaneum/
 ├── indexing/
 │   ├── pdf/  (FROM RDR-004 - REUSE)
@@ -384,8 +424,12 @@ src/arcaneum/
 │   ├── client.py                 # FullTextClient (RDR-008)
 │   └── indexes.py                # PDF_DOCS_SETTINGS (RDR-008)
 └── cli/
-    └── index_pdfs_fulltext.py    # CLI: arcaneum fulltext index-pdfs (NEW)
+    ├── index_text.py             # CLI: arc index text pdf/code/markdown (NEW)
+    └── indexes.py                # CLI: arc indexes list/create/delete (RENAME from fulltext.py)
 ```
+
+**Note**: The CLI module `fulltext.py` will be renamed to `indexes.py` as part of
+the CLI restructure (arcaneum-h6bo). The command `arc fulltext` becomes `arc indexes`.
 
 #### Implementation Components
 
@@ -613,7 +657,8 @@ class PDFFullTextIndexer:
 ##### Component 2: CLI Integration (NEW)
 
 ```python
-# src/arcaneum/cli/index_pdfs_fulltext.py
+# src/arcaneum/cli/index_text.py
+# Command: arc index text pdf
 
 import click
 from pathlib import Path
@@ -627,7 +672,14 @@ from ..indexing.fulltext.pdf_indexer import PDFFullTextIndexer
 console = Console()
 
 
-@click.command('index-pdfs-fulltext')
+# This is a subcommand group under 'arc index text'
+@click.group('text')
+def index_text():
+    """Index content to MeiliSearch for full-text search."""
+    pass
+
+
+@index_text.command('pdf')
 @click.argument('directory', type=click.Path(exists=True))
 @click.option('--index', required=True, help='MeiliSearch index name')
 @click.option('--recursive/--no-recursive', default=True,
@@ -636,34 +688,38 @@ console = Console()
               help='Enable OCR for scanned PDFs')
 @click.option('--batch-size', type=int, default=1000,
               help='Batch size for document upload')
-@click.option('--meili-url', default='http://localhost:7700',
-              help='MeiliSearch URL')
-@click.option('--meili-key', envvar='MEILI_MASTER_KEY',
-              help='MeiliSearch master key')
-def index_pdfs_fulltext(
+@click.option('--force', is_flag=True, help='Force reindex all files')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def index_text_pdf(
     directory,
     index,
     recursive,
     ocr,
     batch_size,
-    meili_url,
-    meili_key
+    force,
+    output_json
 ):
-    """Index PDFs to MeiliSearch for full-text search."""
+    """Index PDFs to MeiliSearch for full-text search.
 
+    Example:
+        arc index text pdf ./research-papers --index MyPDFs
+        arc index text pdf ./docs --index Docs --no-ocr --force
+    """
     console.print(f"[bold cyan]Indexing PDFs to MeiliSearch[/bold cyan]")
     console.print(f"Directory: {directory}")
     console.print(f"Index: {index}")
     console.print(f"OCR: {'Enabled' if ocr else 'Disabled'}\n")
 
-    # Initialize MeiliSearch client
-    meili_client = FullTextClient(meili_url, meili_key)
+    # Get MeiliSearch client (uses environment/auto-generated key)
+    from ..paths import get_meilisearch_api_key
+    import os
+
+    url = os.environ.get('MEILISEARCH_URL', 'http://localhost:7700')
+    api_key = get_meilisearch_api_key()
+    meili_client = FullTextClient(url, api_key)
 
     # Ensure index exists with correct settings
-    try:
-        meili_client.get_index(index)
-        console.print(f"✅ Index '{index}' found")
-    except Exception:
+    if not meili_client.index_exists(index):
         console.print(f"Creating index '{index}'...")
         meili_client.create_index(
             name=index,
@@ -671,6 +727,8 @@ def index_pdfs_fulltext(
             settings=PDF_DOCS_SETTINGS
         )
         console.print(f"✅ Index '{index}' created with PDF settings")
+    else:
+        console.print(f"✅ Index '{index}' found")
 
     # Initialize indexer
     indexer = PDFFullTextIndexer(
@@ -683,7 +741,8 @@ def index_pdfs_fulltext(
     # Index directory
     stats = indexer.index_directory(
         directory=Path(directory),
-        recursive=recursive
+        recursive=recursive,
+        force_reindex=force
     )
 
     # Print statistics
@@ -704,28 +763,21 @@ def index_pdfs_fulltext(
 docker compose up -d meilisearch
 
 # 2. Create MeiliSearch index with PDF settings
-export MEILI_MASTER_KEY=your_master_key
-python -m arcaneum.cli.main fulltext create-index research-pdfs --type pdf-docs
+arc indexes create research-pdfs --type pdf
 
 # 3. Index PDFs to MeiliSearch (this RDR)
-python -m arcaneum.cli.main index-pdfs-fulltext ./research-papers \
-  --index research-pdfs \
-  --recursive \
-  --ocr
+arc index text pdf ./research-papers --index research-pdfs
 
 # 4. Search PDFs with exact phrases
-python -m arcaneum.cli.main fulltext search '"gradient descent algorithm"' \
-  --index research-pdfs \
+arc search text '"gradient descent algorithm"' --index research-pdfs \
   --filter 'page_number > 5'
 
 # 5. Combined workflow (semantic + exact)
 # Step 1: Semantic discovery
-python -m arcaneum.cli.main search "machine learning optimization" \
-  --collection research-papers
+arc search semantic "machine learning optimization" --collection research-papers
 
 # Step 2: Exact verification on relevant file
-python -m arcaneum.cli.main fulltext search '"stochastic gradient descent"' \
-  --index research-pdfs \
+arc search text '"stochastic gradient descent"' --index research-pdfs \
   --filter 'file_path = paper.pdf'
 ```
 
@@ -733,14 +785,26 @@ python -m arcaneum.cli.main fulltext search '"stochastic gradient descent"' \
 
 ```bash
 # 1. Create corpus (both Qdrant + MeiliSearch)
-arc corpus create research-pdfs --type pdf
+arc corpus create research-pdfs --type pdf --model nomic-embed-text-v1.5
 
 # 2. Sync directory (indexes to both systems)
-arc corpus sync research-pdfs ./research-papers
+arc corpus sync ./research-papers --corpus research-pdfs
 
 # Now searchable via both:
-# - Semantic: arc find research-pdfs "query"
-# - Exact: arc match research-pdfs '"exact phrase"'
+arc search semantic "query" --collection research-pdfs
+arc search text '"exact phrase"' --index research-pdfs
+```
+
+**Standalone Indexing (without dual corpus):**
+
+```bash
+# MeiliSearch-only (no embeddings required)
+arc indexes create my-pdfs --type pdf
+arc index text pdf ./documents --index my-pdfs
+
+# Qdrant-only (semantic search)
+arc collection create my-pdfs --type pdf --model nomic-embed-text-v1.5
+arc index semantic pdf ./documents --collection my-pdfs
 ```
 
 ## Alternatives Considered
@@ -762,7 +826,8 @@ arc corpus sync research-pdfs ./research-papers
 - ❌ Search results less actionable (no citation location)
 - ❌ Doesn't align with RDR-004's page-level chunking
 
-**Reason for rejection**: Page-level precision is critical for research papers and technical documentation. Users need exact page numbers for citations.
+**Reason for rejection**: Page-level precision is critical for research papers and
+technical documentation. Users need exact page numbers for citations.
 
 ### Alternative 2: Separate Extraction Pipeline (Don't Reuse RDR-004)
 
@@ -780,7 +845,8 @@ arc corpus sync research-pdfs ./research-papers
 - ❌ **Inconsistent extraction** (different text for same PDF)
 - ❌ **Wasted effort** (RDR-004 is production-ready)
 
-**Reason for rejection**: Violates DRY principle. RDR-004 extraction is robust and tested. Reusing it ensures consistency and reduces maintenance.
+**Reason for rejection**: Violates DRY principle. RDR-004 extraction is robust and
+tested. Reusing it ensures consistency and reduces maintenance.
 
 ### Alternative 3: Token-Aware Chunking (Like RDR-004)
 
@@ -798,7 +864,8 @@ arc corpus sync research-pdfs ./research-papers
 - ❌ **MeiliSearch doesn't use embeddings** (token limits irrelevant)
 - ❌ **Breaks cooperative workflow** (Qdrant page 7 ≠ MeiliSearch results)
 
-**Reason for rejection**: MeiliSearch doesn't generate embeddings, so token limits don't apply. Page-level indexing preserves document structure for citations.
+**Reason for rejection**: MeiliSearch doesn't generate embeddings, so token limits
+don't apply. Page-level indexing preserves document structure for citations.
 
 ### Alternative 4: Elasticsearch Instead of MeiliSearch
 
@@ -931,14 +998,15 @@ def extract(self, pdf_path: Path) -> Tuple[List[PageText], dict]:
 
 #### Step 3: Implement CLI Command
 
-Create `src/arcaneum/cli/index_pdfs_fulltext.py`:
+Create `src/arcaneum/cli/index_text.py`:
 
-- `index-pdfs-fulltext` command
-- Directory argument + options (--index, --recursive, --ocr, --batch-size)
-- MeiliSearch client initialization
+- `arc index text pdf` command (subcommand under `arc index text`)
+- Directory argument + options (--index, --recursive, --ocr, --batch-size, --force)
+- MeiliSearch client initialization (via `get_meilisearch_api_key()`)
 - Index existence check + creation with PDF_DOCS_SETTINGS
 - Call `PDFFullTextIndexer.index_directory()`
 - Print statistics
+- Mirror patterns from `cli/index_pdfs.py` (semantic indexing)
 
 **Estimated effort**: 3 hours
 
@@ -957,9 +1025,11 @@ Create `src/arcaneum/indexing/fulltext/sync.py`:
 
 Update `src/arcaneum/cli/sync.py` (from RDR-009):
 
-- Add `--fulltext-only` flag (index only to MeiliSearch, skip Qdrant)
-- Integrate `PDFFullTextIndexer` alongside Qdrant indexing
+- Add `--text-only` flag (index only to MeiliSearch, skip Qdrant)
+- Integrate `PDFFullTextIndexer` as MeiliSearch backend
 - Dual indexing workflow: Extract once → Index to both
+- Note: `corpus sync` uses **chunk-level** docs (consistent with Qdrant)
+- Note: `arc index text pdf` uses **page-level** docs (this RDR)
 
 **Estimated effort**: 4 hours
 
@@ -1015,7 +1085,7 @@ Update documentation:
 - `src/arcaneum/indexing/fulltext/__init__.py`
 - `src/arcaneum/indexing/fulltext/pdf_indexer.py` - PDFFullTextIndexer class
 - `src/arcaneum/indexing/fulltext/sync.py` - Change detection logic
-- `src/arcaneum/cli/index_pdfs_fulltext.py` - CLI command
+- `src/arcaneum/cli/index_text.py` - CLI command (`arc index text pdf`)
 
 **Tests:**
 
@@ -1027,9 +1097,12 @@ Update documentation:
 **Existing Modules:**
 
 - `src/arcaneum/indexing/pdf/extractor.py` - Add page-level output option
-- `src/arcaneum/cli/sync.py` (from RDR-009) - Integrate full-text indexing
-- `src/arcaneum/cli/main.py` - Register `index-pdfs-fulltext` command
+- `src/arcaneum/cli/sync.py` (from RDR-009) - Add `--text-only` flag
+- `src/arcaneum/cli/main.py` - Register `arc index text` subcommand group
+- `src/arcaneum/cli/fulltext.py` - Rename to `indexes.py` (arcaneum-h6bo)
+- `src/arcaneum/fulltext/indexes.py` - Update PDF_DOCS_SETTINGS (arcaneum-i0be)
 - `README.md` - Add full-text PDF indexing examples
+- `CLAUDE.md` - Update CLI quick reference
 
 ### Dependencies
 
@@ -1061,7 +1134,7 @@ Already satisfied by RDR-004 and RDR-008:
 #### Scenario 1: Text PDF Indexing
 
 - **Setup**: Machine-generated PDF with embedded text
-- **Action**: `arcaneum index-pdfs-fulltext ./docs --index test-pdfs`
+- **Action**: `arc index text pdf ./docs --index test-pdfs`
 - **Expected**:
   - PDF extracted via PyMuPDF (no OCR)
   - Page-level documents created (1 per page)
@@ -1071,7 +1144,7 @@ Already satisfied by RDR-004 and RDR-008:
 #### Scenario 2: Scanned PDF with OCR
 
 - **Setup**: Image-only PDF (scanned document)
-- **Action**: `arcaneum index-pdfs-fulltext ./scans --index test-pdfs --ocr`
+- **Action**: `arc index text pdf ./scans --index test-pdfs`
 - **Expected**:
   - PDF extracted via PyMuPDF (< 100 chars)
   - OCR triggered (Tesseract)
@@ -1081,7 +1154,7 @@ Already satisfied by RDR-004 and RDR-008:
 #### Scenario 3: Change Detection (Already Indexed)
 
 - **Setup**: PDF already indexed with file_hash in MeiliSearch
-- **Action**: Re-run `arcaneum index-pdfs-fulltext ./docs --index test-pdfs`
+- **Action**: Re-run `arc index text pdf ./docs --index test-pdfs`
 - **Expected**:
   - File hash computed
   - MeiliSearch queried for existing document
@@ -1092,9 +1165,9 @@ Already satisfied by RDR-004 and RDR-008:
 
 - **Setup**: PDF indexed to both Qdrant (RDR-004) and MeiliSearch (this RDR)
 - **Action**:
-  1. `arc find research-pdfs "machine learning"`
+  1. `arc search semantic "machine learning" --collection research-pdfs`
   2. Note file_path from results (e.g., `ml-paper.pdf`)
-  3. `arc match research-pdfs '"neural network architecture"' --filter 'file_path = ml-paper.pdf'`
+  3. `arc search text '"neural network architecture"' --index research-pdfs --filter 'file_path = ml-paper.pdf'`
 - **Expected**:
   - Semantic search returns relevant PDF
   - Exact search finds specific phrase in that PDF
@@ -1103,7 +1176,7 @@ Already satisfied by RDR-004 and RDR-008:
 #### Scenario 5: Large PDF Collection (1000+ PDFs)
 
 - **Setup**: Directory with 1000+ PDFs
-- **Action**: `arcaneum index-pdfs-fulltext ./large-collection --index test-pdfs`
+- **Action**: `arc index text pdf ./large-collection --index test-pdfs`
 - **Expected**:
   - Progress bar shows indexing status
   - Batches of 1000 documents uploaded
@@ -1162,6 +1235,8 @@ Already satisfied by RDR-004 and RDR-008:
 3. **Shared Metadata Schema**: Cooperative workflows with Qdrant (RDR-009)
 4. **File Hash Change Detection**: Idempotent re-indexing
 5. **Batch Size 1000**: Optimized for MeiliSearch (vs 100-200 for Qdrant)
+6. **Symmetric CLI Naming**: `arc index text pdf` mirrors `arc index semantic pdf`
+7. **Standalone Option**: Full-text indexing without requiring embeddings/Qdrant
 
 ### Future Enhancements
 
@@ -1199,8 +1274,10 @@ Already satisfied by RDR-004 and RDR-008:
 - ✅ Shared metadata with Qdrant (RDR-009)
 - ✅ File hash-based change detection
 - ✅ Batch upload 1000 documents per batch
-- ✅ CLI command: `arcaneum index-pdfs-fulltext`
+- ✅ CLI command: `arc index text pdf` (symmetric with `arc index semantic pdf`)
+- ✅ Management commands: `arc indexes list/create/delete`
 - ✅ Cooperative workflow: Semantic → Exact search
+- ✅ Standalone indexing: MeiliSearch-only without embeddings
 - ✅ Implementation < 30 hours
 - ✅ Markdownlint compliant
 
@@ -1208,3 +1285,37 @@ This RDR provides the complete specification for indexing PDFs to MeiliSearch
 for full-text exact phrase and keyword search, complementary to Qdrant's
 semantic search (RDR-004), reusing the robust extraction pipeline and
 maintaining shared metadata for cooperative workflows.
+
+## Appendix: CLI Command Summary
+
+After implementation (including arcaneum-h6bo rename):
+
+```bash
+# Index content
+arc index semantic pdf /path --collection X   # Qdrant (vectors)
+arc index semantic code /path --collection X
+arc index semantic markdown /path --collection X
+arc index text pdf /path --index X            # MeiliSearch (full-text)
+arc index text code /path --index X           # Future
+arc index text markdown /path --index X       # Future
+
+# Search
+arc search semantic "query" --collection X    # Vector similarity
+arc search text "query" --index X             # Keyword/phrase match
+
+# Manage Qdrant
+arc collection list
+arc collection create NAME --type TYPE --model MODEL
+arc collection delete NAME
+
+# Manage MeiliSearch
+arc indexes list
+arc indexes create NAME --type TYPE
+arc indexes delete NAME
+arc indexes info NAME
+
+# Dual indexing (both systems)
+arc corpus create NAME --type TYPE --model MODEL
+arc corpus sync /path --corpus NAME
+arc corpus sync /path --corpus NAME --text-only  # MeiliSearch only
+```

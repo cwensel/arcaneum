@@ -70,6 +70,139 @@ def map_corpus_type_to_canonical(corpus_type: str) -> str:
     return type_map.get(corpus_type, corpus_type)
 
 
+def list_corpora_command(verbose: bool, output_json: bool):
+    """List all corpora with parity status.
+
+    A corpus is a paired Qdrant collection + MeiliSearch index.
+    This command discovers all such pairs and shows their sync status.
+
+    Args:
+        verbose: Show detailed information (models, chunks)
+        output_json: Output as JSON
+    """
+    from rich.table import Table
+
+    interaction_logger.start("corpus", "list")
+
+    try:
+        # Gather Qdrant collections
+        qdrant_collections = {}
+        try:
+            qdrant = create_qdrant_client()
+            collections = qdrant.get_collections()
+            for col in collections.collections:
+                metadata = get_collection_metadata(qdrant, col.name)
+                col_info = qdrant.get_collection(col.name)
+                # Subtract 1 for the metadata point
+                chunk_count = col_info.points_count - 1 if col_info.points_count > 0 else 0
+                qdrant_collections[col.name] = {
+                    "type": metadata.get("collection_type"),
+                    "model": metadata.get("model"),
+                    "chunks": chunk_count,
+                }
+        except Exception as e:
+            if not output_json:
+                print_error(f"Could not connect to Qdrant: {e}")
+
+        # Gather MeiliSearch indexes
+        meili_indexes = {}
+        try:
+            meili = get_meili_client()
+            if meili.health_check():
+                indexes = meili.list_indexes()
+                for idx in indexes:
+                    name = idx['uid']
+                    try:
+                        stats = meili.get_index_stats(name)
+                        meili_indexes[name] = {
+                            "chunks": stats.get('numberOfDocuments', 0),
+                        }
+                    except Exception:
+                        meili_indexes[name] = {"chunks": 0}
+        except Exception as e:
+            if not output_json:
+                print_error(f"Could not connect to MeiliSearch: {e}")
+
+        # Build unified corpus list
+        all_names = set(qdrant_collections.keys()) | set(meili_indexes.keys())
+        corpora = []
+
+        for name in sorted(all_names):
+            q_info = qdrant_collections.get(name)
+            m_info = meili_indexes.get(name)
+
+            # Determine parity status
+            if q_info and m_info:
+                status = "synced"
+            elif q_info:
+                status = "qdrant_only"
+            else:
+                status = "meili_only"
+
+            corpus_type = q_info.get("type") if q_info else None
+            model = q_info.get("model") if q_info else None
+            q_chunks = q_info.get("chunks", 0) if q_info else 0
+            m_chunks = m_info.get("chunks", 0) if m_info else 0
+
+            corpora.append({
+                "name": name,
+                "type": corpus_type,
+                "model": model,
+                "status": status,
+                "qdrant_chunks": q_chunks,
+                "meili_chunks": m_chunks,
+            })
+
+        # Output
+        if output_json:
+            print_json("success", f"Found {len(corpora)} corpora", {"corpora": corpora})
+        else:
+            if not corpora:
+                print_info("No corpora found")
+                print_info("Create one with: arc corpus create <name> --type <pdf|code|markdown>")
+            else:
+                table = Table(title="Corpora")
+                table.add_column("Name", style="cyan")
+                table.add_column("Type", style="blue")
+                table.add_column("Status", style="green")
+                if verbose:
+                    table.add_column("Model", style="magenta")
+                    table.add_column("Q Chunks", style="yellow")
+                    table.add_column("M Chunks", style="yellow")
+
+                for c in corpora:
+                    # Format status with color
+                    status = c["status"]
+                    if status == "synced":
+                        status_str = "[green]synced[/green]"
+                    elif status == "qdrant_only":
+                        status_str = "[yellow]qdrant_only[/yellow]"
+                    else:
+                        status_str = "[yellow]meili_only[/yellow]"
+
+                    row = [
+                        c["name"],
+                        c["type"] or "—",
+                        status_str,
+                    ]
+                    if verbose:
+                        row.extend([
+                            c["model"] or "—",
+                            str(c["qdrant_chunks"]),
+                            str(c["meili_chunks"]),
+                        ])
+                    table.add_row(*row)
+
+                console.print(table)
+
+        interaction_logger.finish(result_count=len(corpora))
+
+    except Exception as e:
+        interaction_logger.finish(error=str(e))
+        print_error(f"Failed to list corpora: {e}", output_json)
+        sys.exit(1)
+
+
 def create_corpus_command(
     name: str,
     corpus_type: str,

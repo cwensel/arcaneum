@@ -549,6 +549,15 @@ def corpus():
     pass
 
 
+@corpus.command('list')
+@click.option('--verbose', '-v', is_flag=True, help='Show detailed information')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def list_corpora(verbose, output_json):
+    """List all corpora with parity status."""
+    from arcaneum.cli.corpus import list_corpora_command
+    list_corpora_command(verbose, output_json)
+
+
 @corpus.command('create')
 @click.argument('name')
 @click.option('--type', 'corpus_type', type=click.Choice(['pdf', 'code', 'markdown']), required=True, help='Corpus type')

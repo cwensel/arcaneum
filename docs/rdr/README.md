@@ -22,8 +22,8 @@ This directory contains Recommendation Data Records (RDRs) - detailed technical 
 | 014 | [Markdown Content Indexing with Directory Sync and Direct Injection](RDR-014-markdown-indexing.md)      | Implemented    | High     |
 | 015 | [Retain Memory Management System](RDR-015-retain-memory-management.md)                                  | Recommendation | High     |
 | 016 | [PDF Text Normalization and Markdown Conversion](RDR-016-pdf-text-normalization.md)                     | Implemented    | High     |
-| 017 | [Collection Export and Import for Cross-Machine Migration](RDR-017-collection-export-import.md)         | Recommendation | High     |
-| 018 | [Arc CLI Interaction Logging for Claude Code](RDR-018-claude-interaction-logging.md)                    | Recommendation | High     |
+| 017 | [Collection Export and Import for Cross-Machine Migration](RDR-017-collection-export-import.md)         | Implemented    | High     |
+| 018 | [Arc CLI Interaction Logging for Claude Code](RDR-018-claude-interaction-logging.md)                    | Implemented    | High     |
 
 ## What are RDRs?
 

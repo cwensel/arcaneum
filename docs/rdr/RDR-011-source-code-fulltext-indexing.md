@@ -3,23 +3,30 @@
 ## Metadata
 
 - **Date**: 2025-10-27
+- **Updated**: 2026-01-15
 - **Status**: Recommendation
 - **Type**: Feature
 - **Priority**: High
-- **Related Issues**: arcaneum-70, arcaneum-86, arcaneum-87, arcaneum-88, arcaneum-89, arcaneum-90, arcaneum-91, arcaneum-92
+- **Related Issues**: arcaneum-70, arcaneum-86 through arcaneum-92, arcaneum-vau8,
+  arcaneum-03wm, arcaneum-40m1, arcaneum-y53c, arcaneum-efmz, arcaneum-xoiq,
+  arcaneum-e2gn
 - **Related Tests**: Source code full-text indexing tests, dual indexing integration tests
 
 ## Problem Statement
 
-Create a production-ready source code indexing system for MeiliSearch that enables exact phrase search and keyword matching across source code with git awareness and function/class-level precision. The system must:
+Create a production-ready source code indexing system for MeiliSearch that enables
+exact phrase search and keyword matching across source code with git awareness and
+function/class-level precision. The system must:
 
 1. **Index at function/class granularity** - Enable precise location results like "found in calculate_total() lines 42-67"
 2. **Git awareness** - Multi-branch support with same composite identifier pattern as RDR-005
 3. **Dual indexing** - Integrate with RDR-005 vector indexing for efficient parallel indexing
 4. **Change detection** - Metadata-based sync using MeiliSearch as single source of truth
-5. **Exact search** - Support phrase matching, regex, and keyword searches complementary to RDR-005 semantic search
+5. **Exact search** - Support phrase matching, regex, and keyword searches
+   complementary to RDR-005 semantic search
 
-This addresses the need for exact string matching in code ("find def authenticate") complementary to semantic search ("find authentication patterns") from RDR-005.
+This addresses the need for exact string matching in code ("find def authenticate")
+complementary to semantic search ("find authentication patterns") from RDR-005.
 
 ## Context
 
@@ -37,22 +44,52 @@ Arcaneum provides semantic search via Qdrant (RDR-005) but requires complementar
 1. User: "Find authentication patterns" → Claude uses **semantic search** (RDR-005)
 2. User: "Find exact string 'def authenticate'" → Claude uses **full-text search** (this RDR)
 
-**Parallel to RDR-010**: Just as RDR-010 indexes PDFs to MeiliSearch (complementary to RDR-004 vector), this RDR indexes source code to MeiliSearch (complementary to RDR-005 vector).
+**Parallel to RDR-010**: Just as RDR-010 indexes PDFs to MeiliSearch (complementary
+to RDR-004 vector), this RDR indexes source code to MeiliSearch (complementary to
+RDR-005 vector).
 
 ### Technical Environment
 
 - **Python**: >= 3.12
-- **MeiliSearch**: v1.24.0 (from RDR-008)
+- **MeiliSearch**: v1.32.x (from RDR-008, updated 2026-01-14)
 - **Git**: >= 2.30 (for metadata extraction)
 - **AST Parsing**:
-  - tree-sitter-language-pack >= 0.5.0 (165+ languages, from RDR-005)
-  - LlamaIndex >= 0.9.0 (CodeSplitter integration, from RDR-005)
+  - tree-sitter-language-pack >= 0.10.0 (130+ languages, from RDR-005)
+  - **Note**: LlamaIndex CodeSplitter is NOT used for function extraction (it's
+    for chunking). We use tree-sitter directly via `get_parser()`.
 - **MeiliSearch Client**:
   - meilisearch-python >= 0.31.0 (from RDR-008)
 - **Supporting Libraries**:
-  - GitPython >= 3.1.40 (from RDR-005)
+  - GitPython >= 3.1.45 (from RDR-005)
   - tenacity (retry logic)
   - tqdm/rich (progress tracking)
+
+### CLI Naming Convention (Updated 2026-01-15)
+
+This RDR follows the symmetric CLI naming convention established for semantic/text
+operations (see arcaneum-h6bo in RDR-010):
+
+```bash
+# Search commands (existing)
+arc search semantic "query" --collection X    # Vector search (Qdrant)
+arc search text "query" --index X             # Full-text search (MeiliSearch)
+
+# Index commands (symmetric naming)
+arc index source /path --collection X         # Semantic indexing (Qdrant) - RDR-005
+arc index text pdf /path --index X            # Full-text PDF (MeiliSearch) - RDR-010
+arc index text code /path --index X           # Full-text code (MeiliSearch) - THIS RDR
+
+# Dual indexing (RDR-009 pattern)
+arc corpus create NAME --type code --model MODEL
+arc corpus sync /path --corpus NAME           # Indexes to BOTH Qdrant and MeiliSearch
+
+# Management commands
+arc collection list/create/delete             # Qdrant collection management
+arc indexes list/create/delete                # MeiliSearch index management
+```
+
+**Note**: The `arc fulltext` command group was renamed to `arc indexes` per
+arcaneum-h6bo. This RDR uses the updated naming.
 
 ## Research Findings
 
@@ -123,41 +160,52 @@ Arcaneum provides semantic search via Qdrant (RDR-005) but requires complementar
 }
 ```
 
-**MeiliSearch Index Settings**:
+**MeiliSearch Index Settings** (Updated 2026-01-15):
 
 ```python
+# src/arcaneum/fulltext/indexes.py
+# NOTE: This is a NEW settings dict for function-level indexing.
+# The existing SOURCE_CODE_SETTINGS is for chunk-level (RDR-005 style).
+
 SOURCE_CODE_FULLTEXT_SETTINGS = {
     "searchableAttributes": [
-        "content",           # Primary search field
-        "function_name",     # For identifier search
-        "class_name",        # For class search
-        "qualified_name",    # For fully-qualified searches
+        "content",           # Primary search field (function/class code)
+        "function_name",     # For identifier search (single name, not array)
+        "class_name",        # For class search (single name, not array)
+        "qualified_name",    # For fully-qualified searches (e.g., "MyClass.method")
         "filename",          # For file-specific searches
     ],
     "filterableAttributes": [
-        "programming_language",
-        "git_project_name",
-        "git_branch",
-        "git_project_identifier",  # Composite for branch-specific queries
-        "file_path",
-        "code_type",
+        "programming_language",     # Language filter (aligned with RDR-005)
+        "git_project_name",         # Project name only
+        "git_branch",               # Branch name
+        "git_project_identifier",   # Composite "project#branch" for branch-specific queries
+        "git_commit_hash",          # For change detection (NEW)
+        "file_path",                # File location
+        "code_type",                # "function", "class", "method", "module" (NEW)
+        "file_extension",           # For file type filtering
     ],
     "sortableAttributes": [
-        "start_line",  # For sorting by location
+        "start_line",  # CRITICAL: For sorting by location in file
     ],
     "typoTolerance": {
         "enabled": True,
         "minWordSizeForTypos": {
-            "oneTypo": 7,   # Higher threshold for code
+            "oneTypo": 7,   # Higher threshold for code identifiers
             "twoTypos": 12
         }
     },
-    "stopWords": [],  # Preserve all code keywords
+    "stopWords": [],  # Preserve all code keywords (def, class, function, etc.)
     "pagination": {
-        "maxTotalHits": 10000
+        "maxTotalHits": 10000  # Higher than default: function-level = more docs per file
     }
 }
 ```
+
+**Note**: This differs from the existing `SOURCE_CODE_SETTINGS` in `fulltext/indexes.py`
+which is designed for chunk-level indexing. This RDR proposes function-level granularity
+requiring different fields (single function_name vs array, code_type for definition type,
+start_line for precise location).
 
 #### 3. Git Change Detection Strategy (arcaneum-88)
 
@@ -235,24 +283,114 @@ def delete_branch_documents(
 - Branch-level deletion (other branches unaffected)
 - Same pattern as RDR-005 for consistency
 
-#### 4. Tree-Sitter Function/Class Extraction (arcaneum-89)
+#### 4. Tree-Sitter Function/Class Extraction (arcaneum-89, Updated 2026-01-15)
 
-**Approach**: Reuse RDR-005's tree-sitter integration with different queries
+**IMPORTANT CLARIFICATION**: This RDR uses tree-sitter DIRECTLY for function/class
+extraction, NOT LlamaIndex CodeSplitter. CodeSplitter is designed for chunking
+(creating overlapping text chunks for embeddings) and does NOT provide function
+names, qualified names, or line ranges.
 
-**Function/Class Extraction**:
+**Difference from RDR-005's ast_chunker.py**:
+
+| Component  | ast_chunker.py (RDR-005)                       | ast_extractor.py (THIS RDR)                  |
+| ---------- | ---------------------------------------------- | -------------------------------------------- |
+| Purpose    | Create overlapping chunks for embeddings       | Extract discrete function/class definitions  |
+| Output     | `List[Chunk]` (content + method)               | `List[CodeDefinition]` (name, lines, type)   |
+| Boundaries | May split mid-function for optimal embed size  | Exact function/class boundaries              |
+| Used by    | Semantic search (Qdrant)                       | Full-text search (MeiliSearch)               |
+
+**Approach**: Use tree-sitter-language-pack directly via `get_parser()` and traverse
+the AST to find function/class definition nodes.
+
+**Key tree-sitter Node Properties**:
+
+```python
+# Node properties for extraction (from py-tree-sitter)
+node.type          # "function_definition", "class_definition", etc.
+node.start_point   # Point(row, column) - 0-indexed line number
+node.end_point     # Point(row, column) - 0-indexed line number
+node.text          # bytes - actual code content
+node.children      # list[Node] - child nodes
+node.child_by_field_name("name")  # Get identifier node
+```
+
+**Function/Class Extraction Implementation**:
 
 ```python
 from tree_sitter_language_pack import get_parser
+from tree_sitter import Node
+from dataclasses import dataclass
+from typing import List, Optional
+
+@dataclass
+class CodeDefinition:
+    """Function/class definition with location."""
+    name: str
+    qualified_name: str
+    code_type: str  # "function", "class", "method", "module"
+    start_line: int  # 1-indexed for user display
+    end_line: int
+    content: str
+    file_path: str
+
+# Language -> node types that represent definitions
+DEFINITION_TYPES = {
+    "python": {
+        "function_definition": "function",
+        "class_definition": "class",
+    },
+    "javascript": {
+        "function_declaration": "function",
+        "class_declaration": "class",
+        "method_definition": "method",
+    },
+    "typescript": {
+        "function_declaration": "function",
+        "class_declaration": "class",
+        "method_definition": "method",
+        "interface_declaration": "interface",
+    },
+    "java": {
+        "method_declaration": "method",
+        "class_declaration": "class",
+        "interface_declaration": "interface",
+    },
+    "go": {
+        "function_declaration": "function",
+        "method_declaration": "method",
+        "type_declaration": "class",  # structs
+    },
+    "rust": {
+        "function_item": "function",
+        "impl_item": "class",
+        "struct_item": "class",
+        "trait_item": "interface",
+    },
+    # ... 130+ languages supported
+}
 
 class ASTFunctionExtractor:
-    """Extract function/class definitions with line ranges."""
+    """Extract function/class definitions using tree-sitter directly."""
 
+    # Language mapping: file extension -> tree-sitter language name
     LANGUAGE_MAP = {
         ".py": "python",
         ".java": "java",
         ".js": "javascript",
+        ".jsx": "javascript",
         ".ts": "typescript",
-        # ... 165+ languages supported
+        ".tsx": "typescript",
+        ".go": "go",
+        ".rs": "rust",
+        ".c": "c",
+        ".cpp": "cpp",
+        ".cs": "c_sharp",
+        ".rb": "ruby",
+        ".php": "php",
+        ".swift": "swift",
+        ".kt": "kotlin",
+        ".scala": "scala",
+        # ... (reuse LANGUAGE_MAP from ast_chunker.py)
     }
 
     def extract_definitions(
@@ -261,91 +399,146 @@ class ASTFunctionExtractor:
         code: str
     ) -> List[CodeDefinition]:
         """
-        Extract function/class definitions with line numbers.
+        Extract function/class definitions with line ranges.
 
-        Returns list of CodeDefinition with:
-        - name: identifier (function/class name)
-        - qualified_name: full path (e.g., "MyClass.method")
-        - code_type: "function", "class", "method", "module"
-        - start_line: beginning line number
-        - end_line: ending line number
-        - content: actual code text
+        Uses tree-sitter directly (NOT LlamaIndex CodeSplitter).
+
+        Returns list of CodeDefinition objects.
+        Fallback to module-level if AST parsing fails.
         """
+        import os
         file_ext = os.path.splitext(file_path)[1].lower()
         language = self.LANGUAGE_MAP.get(file_ext)
 
-        if not language:
+        if not language or language not in DEFINITION_TYPES:
             # Fallback: entire file as "module"
-            return [self._create_module_definition(code)]
+            return [self._create_module_definition(file_path, code)]
 
         try:
             parser = get_parser(language)
             tree = parser.parse(bytes(code, "utf8"))
 
             definitions = []
-
-            # Language-specific queries
-            if language == "python":
-                definitions = self._extract_python_definitions(tree, code)
-            elif language == "javascript" or language == "typescript":
-                definitions = self._extract_js_definitions(tree, code)
-            # ... other languages
+            self._extract_from_node(
+                tree.root_node,
+                code,
+                language,
+                file_path,
+                definitions,
+                parent_name=None
+            )
 
             # Add module-level code if any
-            module_code = self._extract_module_code(code, definitions)
+            module_code = self._extract_module_code(code, definitions, file_path)
             if module_code:
                 definitions.append(module_code)
 
-            return definitions
+            return definitions if definitions else [self._create_module_definition(file_path, code)]
 
         except Exception as e:
             logger.warning(f"AST extraction failed for {file_path}: {e}")
-            return [self._create_module_definition(code)]
+            return [self._create_module_definition(file_path, code)]
 
-    def _extract_python_definitions(
+    def _extract_from_node(
         self,
-        tree,
+        node: Node,
+        code: str,
+        language: str,
+        file_path: str,
+        definitions: List[CodeDefinition],
+        parent_name: Optional[str]
+    ):
+        """Recursively extract definitions from AST nodes."""
+        def_types = DEFINITION_TYPES.get(language, {})
+
+        if node.type in def_types:
+            # Get the name from the identifier child
+            name_node = node.child_by_field_name("name")
+            name = name_node.text.decode("utf8") if name_node else "anonymous"
+
+            # Build qualified name (e.g., "MyClass.method")
+            qualified = f"{parent_name}.{name}" if parent_name else name
+
+            # Line numbers: tree-sitter uses 0-indexed, convert to 1-indexed
+            start_line = node.start_point.row + 1
+            end_line = node.end_point.row + 1
+
+            definitions.append(CodeDefinition(
+                name=name,
+                qualified_name=qualified,
+                code_type=def_types[node.type],
+                start_line=start_line,
+                end_line=end_line,
+                content=node.text.decode("utf8"),
+                file_path=file_path
+            ))
+
+            # Recurse into nested definitions (e.g., methods in classes)
+            for child in node.children:
+                self._extract_from_node(
+                    child, code, language, file_path,
+                    definitions, parent_name=qualified
+                )
+        else:
+            # Not a definition node, but might contain definitions
+            for child in node.children:
+                self._extract_from_node(
+                    child, code, language, file_path,
+                    definitions, parent_name=parent_name
+                )
+
+    def _create_module_definition(
+        self,
+        file_path: str,
         code: str
-    ) -> List[CodeDefinition]:
-        """Extract Python function/class definitions."""
-        query = """
-        (function_definition
-          name: (identifier) @function.name
-        ) @function.definition
-
-        (class_definition
-          name: (identifier) @class.name
-        ) @class.definition
-        """
-
-        # Execute tree-sitter query
-        # Extract line numbers from nodes
-        # Return CodeDefinition objects
-        pass
+    ) -> CodeDefinition:
+        """Create a module-level definition for the entire file."""
+        lines = code.splitlines()
+        return CodeDefinition(
+            name="module",
+            qualified_name="module",
+            code_type="module",
+            start_line=1,
+            end_line=len(lines) if lines else 1,
+            content=code,
+            file_path=file_path
+        )
 ```
 
 **Fallback Strategy**:
 
 - If AST parsing fails: Index entire file as single "module" document
+- If language not in DEFINITION_TYPES: Index as "module"
 - Ensures all code is indexed even if tree-sitter fails
-- Graceful degradation
+- Graceful degradation with warning logs
 
-#### 5. Dual Indexing Workflow (arcaneum-90)
+#### 5. Dual Indexing Workflow (arcaneum-90, Updated 2026-01-15)
 
-**Pattern**: Parallel dual indexing with shared processing (RDR-009 pattern)
+**IMPORTANT**: RDR-009 establishes `arc corpus sync` as THE dual indexing command.
+This RDR does NOT propose a new dual-indexing pathway. Instead:
+
+- **PRIMARY**: Standalone `arc index text code` command (MeiliSearch only)
+- **SECONDARY**: Ensure compatibility with `arc corpus sync` (RDR-009)
+
+**Pattern**: Use RDR-009's established dual indexing via `arc corpus sync`
 
 **Workflow**:
 
 ```bash
-# Single command indexes to both systems
-arc index-code ./src --corpus MyCode
+# Dual indexing via RDR-009 (RECOMMENDED)
+arc corpus create MyCode --type code --model stella
+arc corpus sync ./src --corpus MyCode
+# Creates: Qdrant "MyCode" collection + MeiliSearch "MyCode" index
+
+# Standalone full-text only (this RDR)
+arc index text code ./src --index MyCode-fulltext
 ```
 
-**Implementation**:
+**Implementation** (integrated with RDR-009's DualIndexer):
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
-│           Dual Indexing Pipeline (Single Pass)              │
+│     arc corpus sync (RDR-009 Dual Indexing)                  │
 └─────────────────────────────────────────────────────────────┘
                               │
                  ┌────────────┴────────────┐
@@ -363,24 +556,31 @@ arc index-code ./src --corpus MyCode
           ┌───────────────────┴───────────────────┐
           │                                       │
     RDR-005: Generate                    RDR-011: Extract
-    embedding chunks                     function/class metadata
+    embedding chunks                     function/class definitions
+    (via ast_chunker.py)                 (via ast_extractor.py)
           │                                       │
     Upload to Qdrant                      Upload to MeiliSearch
-    (collection: MyCode)                  (index: MyCode-fulltext)
+    (via DualIndexer)                     (via DualIndexer)
 ```
 
 **Benefits**:
 
 - Single pass over codebase (efficient)
 - Consistent git metadata across both systems
-- Shared AST parsing (performance optimization)
-- Simple UX: one command for dual indexing
+- Uses established RDR-009 DualIndexer infrastructure
+- No new dual-indexing command to maintain
 
 **Comparison to RDR-010 (PDF)**:
 
-- RDR-010: Separate commands (different processing: OCR vs text-only)
-- RDR-011: Unified command (shared processing: git + AST)
-- Tighter integration justified for source code
+- RDR-010: `arc index text pdf` is standalone (no embedding generation)
+- RDR-011: `arc index text code` is also standalone (this RDR)
+- Dual indexing: Both use `arc corpus sync` (RDR-009)
+
+**Scope Clarification**:
+
+- This RDR focuses on the **standalone** `arc index text code` command
+- Dual indexing is handled by RDR-009's `arc corpus sync`
+- Ensure `DualIndexDocument` schema supports function-level fields (already does)
 
 #### 6. Batch Upload Optimization (arcaneum-91)
 
@@ -425,37 +625,62 @@ def upload_documents_batch(
 - Prevents memory buildup
 - User sees incremental progress
 
-#### 7. CLI Command Structure (arcaneum-92)
+#### 7. CLI Command Structure (arcaneum-92, Updated 2026-01-15)
 
-**Dual Indexing** (extend RDR-005's existing command):
+**IMPORTANT**: CLI command naming updated per arcaneum-h6bo. The `arc fulltext`
+command group was renamed to `arc indexes`.
+
+**Dual Indexing** (use RDR-009's `arc corpus sync`):
 
 ```bash
-arc index-code ./src --corpus MyCode
-# Creates: Qdrant "MyCode" + MeiliSearch "MyCode-fulltext"
+# Create corpus (both Qdrant collection + MeiliSearch index)
+arc corpus create MyCode --type code --model stella
+
+# Sync directory to both systems
+arc corpus sync ./src --corpus MyCode
+# Result: Qdrant "MyCode" collection + MeiliSearch "MyCode" index
 ```
 
-**Full-Text Only** (new command):
+**Full-Text Only** (new command, this RDR):
 
 ```bash
-arc fulltext index-code ./src --index MyCode-fulltext
+# Standalone MeiliSearch indexing (no embeddings)
+arc index text code ./src --index MyCode-fulltext
 ```
 
 **Search** (existing from RDR-008):
 
 ```bash
-arc fulltext search '"def authenticate"' \
+# Full-text search
+arc search text '"def authenticate"' \
   --index MyCode-fulltext \
-  --filter 'language = python AND git_branch = main'
+  --filter 'programming_language = python AND git_branch = main'
 ```
 
-**Project Management** (new commands):
+**Index Management** (uses `arc indexes`, not `arc fulltext`):
 
 ```bash
-# List indexed projects with commit hashes
-arc fulltext list-projects --index MyCode-fulltext
+# List MeiliSearch indexes
+arc indexes list
 
-# Delete specific project/branch
-arc fulltext delete-project arcaneum#main --index MyCode-fulltext
+# Create index with source code settings
+arc indexes create MyCode-fulltext --type source-code
+
+# Delete index
+arc indexes delete MyCode-fulltext
+
+# Show index info
+arc indexes info MyCode-fulltext
+```
+
+**Project Management within Index** (new commands for this RDR):
+
+```bash
+# List indexed git projects with commit hashes
+arc indexes list-projects --index MyCode-fulltext
+
+# Delete specific project/branch from index
+arc indexes delete-project arcaneum#main --index MyCode-fulltext
 ```
 
 ## Proposed Solution
@@ -769,30 +994,46 @@ class SourceCodeFullTextIndexer:
 
 ### Implementation Example
 
-**Complete Workflow**:
+**Complete Workflow** (Updated 2026-01-15):
 
 ```bash
-# 1. Create MeiliSearch index with source code settings
-export MEILI_MASTER_KEY=your_master_key
-arc fulltext create-index MyCode-fulltext --type source-code
+# Option A: Dual indexing via RDR-009 (RECOMMENDED for most users)
+# ---------------------------------------------------------------
 
-# 2. Dual index source code (RDR-005 + this RDR)
-arc index-code ./src --corpus MyCode
-# Creates: Qdrant "MyCode" + MeiliSearch "MyCode-fulltext"
+# 1. Create corpus (both Qdrant collection + MeiliSearch index)
+arc corpus create MyCode --type code --model stella
+
+# 2. Sync directory to both systems
+arc corpus sync ./src --corpus MyCode
+# Result: Qdrant "MyCode" + MeiliSearch "MyCode" index
+
+# 3. Search both ways
+arc search semantic "authentication patterns" --collection MyCode
+arc search text '"def authenticate"' --index MyCode
+
+
+# Option B: Standalone full-text only (this RDR)
+# -----------------------------------------------
+
+# 1. Create MeiliSearch index with source code settings
+arc indexes create MyCode-fulltext --type source-code
+
+# 2. Index source code to MeiliSearch only (no embeddings)
+arc index text code ./src --index MyCode-fulltext
 
 # 3. Search for exact phrase
-arc fulltext search '"def authenticate"' --index MyCode-fulltext
+arc search text '"def authenticate"' --index MyCode-fulltext
 
 # 4. Search with filters
-arc fulltext search 'calculate_total' \
+arc search text 'calculate_total' \
   --index MyCode-fulltext \
-  --filter 'language = python AND git_branch = main'
+  --filter 'programming_language = python AND git_branch = main'
 
 # 5. List indexed projects
-arc fulltext list-projects --index MyCode-fulltext
+arc indexes list-projects --index MyCode-fulltext
 
 # 6. Delete specific branch
-arc fulltext delete-project arcaneum#feature-x --index MyCode-fulltext
+arc indexes delete-project arcaneum#feature-x --index MyCode-fulltext
 ```
 
 ## Alternatives Considered
@@ -814,7 +1055,9 @@ arc fulltext delete-project arcaneum#feature-x --index MyCode-fulltext
 - **Doesn't match RDR-010 pattern** (page-level for PDFs)
 - **Poor UX** (users need line numbers for code search)
 
-**Reason for rejection**: Line-level precision is critical for code search. Users need exact locations for citations and navigation. Function/class-level provides perfect balance.
+**Reason for rejection**: Line-level precision is critical for code search. Users need
+exact locations for citations and navigation. Function/class-level provides perfect
+balance.
 
 ### Alternative 2: Line-Based Indexing (One Document Per Line)
 
@@ -855,7 +1098,8 @@ arc fulltext index-code ./src --index MyCode-fulltext  # MeiliSearch only
 - **Inconsistent metadata** (slight timing differences)
 - **Against RDR-009 pattern** (dual indexing recommended)
 
-**Reason for rejection**: Source code indexing shares too much processing (git, AST) to justify separate commands. Parallel dual indexing is more efficient.
+**Reason for rejection**: Source code indexing shares too much processing (git, AST)
+to justify separate commands. Parallel dual indexing is more efficient.
 
 ### Alternative 4: Regex Function Extraction (No Tree-Sitter)
 
@@ -874,7 +1118,7 @@ arc fulltext index-code ./src --index MyCode-fulltext  # MeiliSearch only
 - **No line numbers** (hard to extract accurately)
 - **Against RDR-005** (already have tree-sitter)
 
-**Reason for rejection**: Tree-sitter already integrated from RDR-005, more accurate, handles 165+ languages.
+**Reason for rejection**: Tree-sitter already integrated from RDR-005, more accurate, handles 130+ languages.
 
 ## Trade-offs and Consequences
 
@@ -885,7 +1129,7 @@ arc fulltext index-code ./src --index MyCode-fulltext  # MeiliSearch only
 3. **Metadata-Based Sync**: MeiliSearch as single source of truth, idempotent reindexing
 4. **Parallel Dual Indexing**: Single pass over codebase, shared git/AST processing
 5. **Filter-Based Deletion**: Branch-specific updates don't affect other branches
-6. **165+ Language Support**: Tree-sitter covers all major programming languages
+6. **130+ Language Support**: Tree-sitter covers all major programming languages
 7. **Proven Patterns**: Reuses RDR-005 (git), RDR-008 (MeiliSearch), RDR-010 (page-level)
 8. **Simple UX**: One command for dual indexing, clear CLI structure
 
@@ -927,47 +1171,54 @@ arc fulltext index-code ./src --index MyCode-fulltext  # MeiliSearch only
 
 ### Prerequisites
 
-- [x] RDR-005: Git-aware vector indexing (reuse git discovery, AST parsing)
-- [x] RDR-008: MeiliSearch server setup (deployment, client)
-- [x] RDR-010: PDF full-text indexing (patterns reference)
-- [ ] Python >= 3.12 installed
-- [ ] tree-sitter-language-pack installed
-- [ ] meilisearch-python >= 0.31.0 installed
-- [ ] GitPython >= 3.1.40 installed
+- [x] RDR-005: Git-aware vector indexing (reuse git discovery) - **Implemented**
+- [x] RDR-008: MeiliSearch server setup (deployment, client) - **Implemented**
+- [x] RDR-009: Dual indexing strategy (DualIndexer, DualIndexDocument) - **Implemented**
+- [x] RDR-010: PDF full-text indexing (patterns reference) - **Implemented**
+- [x] Python >= 3.12 installed
+- [x] tree-sitter-language-pack >= 0.10.0 installed
+- [x] meilisearch-python >= 0.31.0 installed
+- [x] GitPython >= 3.1.45 installed
 
-### Step-by-Step Implementation
+### Step-by-Step Implementation (Updated 2026-01-15)
 
-#### Step 1: Create AST Function/Class Extractor
+#### Step 1: Create AST Function/Class Extractor (NEW)
 
 Create `src/arcaneum/indexing/fulltext/ast_extractor.py`:
 
-- Implement `ASTFunctionExtractor` class
-- Language detection from file extensions
-- Tree-sitter query execution for function/class definitions
-- Extract line ranges (start_line, end_line)
+- **NOTE**: This is a NEW component, distinct from `ast_chunker.py` (RDR-005)
+- Implement `ASTFunctionExtractor` class using tree-sitter DIRECTLY
+- Do NOT use LlamaIndex CodeSplitter (it's for chunking, not extraction)
+- Use `get_parser()` from tree-sitter-language-pack
+- Traverse AST via `node.start_point.row`, `node.end_point.row`
+- Extract function/class definitions with `node.child_by_field_name("name")`
+- Language detection from file extensions (reuse LANGUAGE_MAP from ast_chunker.py)
 - Handle nested functions with qualified names
 - Fallback to module-level if parsing fails
-- Extract module-level code (not in functions)
 
-**Estimated effort**: 2-3 days
+**Key difference from ast_chunker.py**:
 
-#### Step 2: Create Metadata-Based Sync Module
+- ast_chunker.py: Creates overlapping chunks for embeddings (Qdrant)
+- ast_extractor.py: Extracts discrete definitions with line ranges (MeiliSearch)
 
-Create `src/arcaneum/indexing/fulltext/sync.py`:
+#### Step 2: Extend Metadata-Based Sync for MeiliSearch
 
-- Implement `GitMetadataSync` class (mirrors RDR-005 pattern)
+Extend existing `src/arcaneum/indexing/fulltext/sync.py` (from RDR-010):
+
+- Add `GitCodeMetadataSync` class (mirrors RDR-005's `GitMetadataSync`)
 - Query MeiliSearch for indexed (project#branch, commit) tuples
+- Reuse patterns from RDR-010's PDF sync
 - Cache results to avoid repeated queries
 - Provide `should_reindex_project()` method
-- Single source of truth (MeiliSearch metadata)
 
-**Estimated effort**: 1 day
+**NOTE**: fulltext/sync.py already exists from RDR-010; extend it for code.
 
-#### Step 3: Create MeiliSearch Indexer
+#### Step 3: Create Source Code MeiliSearch Indexer
 
 Create `src/arcaneum/indexing/fulltext/code_indexer.py`:
 
 - Implement `SourceCodeFullTextIndexer` orchestrator
+- Pattern after `PDFFullTextIndexer` from RDR-010
 - Reuse RDR-005 git discovery (`GitProjectDiscovery`)
 - Integrate AST extractor for function/class extraction
 - Build MeiliSearch documents with full metadata
@@ -975,36 +1226,35 @@ Create `src/arcaneum/indexing/fulltext/code_indexer.py`:
 - Batch upload with progress tracking (1000 docs)
 - Integrate with metadata-based sync
 
-**Estimated effort**: 3-4 days
+#### Step 4: Verify Compatibility with RDR-009 Dual Indexing
 
-#### Step 4: Extend RDR-005 for Dual Indexing
+Update integration with RDR-009's `arc corpus sync`:
 
-Update `src/arcaneum/indexing/source_code_pipeline.py`:
-
-- Add optional full-text indexing flag to existing `index-code` command
-- When `--corpus` flag used: index to BOTH Qdrant and MeiliSearch
-- Share git discovery, file reading, AST parsing
-- Parallel output: embedding chunks → Qdrant, function metadata → MeiliSearch
-- Progress tracking shows both operations
-
-**Estimated effort**: 2-3 days
+- **DO NOT create new dual-indexing command**
+- Verify `DualIndexDocument` schema supports function-level fields (it does)
+- Verify `DualIndexer` can handle source code documents
+- Ensure `arc corpus sync` correctly routes code to both systems
+- Test: `arc corpus create X --type code && arc corpus sync ./src --corpus X`
 
 #### Step 5: Create CLI Commands
 
-Create `src/arcaneum/cli/fulltext_code.py`:
+Extend `src/arcaneum/cli/index_text.py` (pattern from RDR-010):
 
-- Implement `fulltext index-code` subcommand (standalone full-text only)
-- Implement `fulltext list-projects` subcommand
-- Implement `fulltext delete-project` subcommand
-- Register with main CLI
-- Add SOURCE_CODE_FULLTEXT_SETTINGS to `src/arcaneum/fulltext/indexes.py`
+- Add `index_text_code_command()` function
+- Register as `arc index text code` subcommand
+- Mirror `index_text_pdf_command()` parameters
+- Options: --index, --recursive, --depth, --force, --batch-size
 
-Update `src/arcaneum/cli/index.py`:
+Add to `src/arcaneum/cli/indexes.py`:
 
-- Extend existing `index-code` command with dual indexing support
-- When `--corpus` specified: trigger both RDR-005 and RDR-011 indexing
+- Add `list-projects` subcommand to `arc indexes`
+- Add `delete-project` subcommand to `arc indexes`
 
-**Estimated effort**: 2 days
+Update `src/arcaneum/fulltext/indexes.py`:
+
+- Add `SOURCE_CODE_FULLTEXT_SETTINGS` constant
+
+**NOTE**: Use `arc indexes` not `arc fulltext` (renamed per arcaneum-h6bo)
 
 #### Step 6: Testing
 
@@ -1032,45 +1282,53 @@ Update documentation:
 
 **Estimated effort**: 2 days
 
-### Files to Create
+### Files to Create (Updated 2026-01-15)
 
 **New Modules**:
 
-- `src/arcaneum/indexing/fulltext/__init__.py` - Module init
-- `src/arcaneum/indexing/fulltext/ast_extractor.py` - Function/class extraction
-- `src/arcaneum/indexing/fulltext/sync.py` - Metadata-based sync
-- `src/arcaneum/indexing/fulltext/code_indexer.py` - MeiliSearch indexer
-- `src/arcaneum/cli/fulltext_code.py` - CLI commands
+- `src/arcaneum/indexing/fulltext/ast_extractor.py` - Function/class extraction (NEW)
+  - **NOTE**: This is distinct from ast_chunker.py - different purpose
+- `src/arcaneum/indexing/fulltext/code_indexer.py` - MeiliSearch code indexer
 
 **Tests**:
 
 - `tests/indexing/fulltext/test_ast_extractor.py` - Extractor tests
-- `tests/indexing/fulltext/test_sync.py` - Sync tests
 - `tests/indexing/fulltext/test_code_indexer.py` - Indexer tests
 - `tests/integration/test_fulltext_code_indexing.py` - End-to-end tests
-- `tests/integration/test_dual_indexing.py` - Dual indexing tests
 
-### Files to Modify
+### Files to Modify (Updated 2026-01-15)
 
 **Existing Modules**:
 
-- `src/arcaneum/indexing/source_code_pipeline.py` - Add dual indexing support
-- `src/arcaneum/cli/index.py` - Extend `index-code` command
+- `src/arcaneum/indexing/fulltext/sync.py` - Add git project sync for code
+  - Already exists from RDR-010; extend for git metadata
+- `src/arcaneum/cli/index_text.py` - Add `arc index text code` subcommand
+  - Pattern after `index_text_pdf_command()`
+- `src/arcaneum/cli/indexes.py` - Add list-projects, delete-project subcommands
 - `src/arcaneum/fulltext/indexes.py` - Add SOURCE_CODE_FULLTEXT_SETTINGS
-- `README.md` - Add full-text code search examples
 - `docs/rdr/README.md` - Update RDR index
+
+**NOT Modified** (per design clarification):
+
+- `src/arcaneum/indexing/source_code_pipeline.py` - NO changes needed
+  - Dual indexing handled by RDR-009's `arc corpus sync`
+- `src/arcaneum/cli/index.py` - NO new `--corpus` flag
+  - Use `arc corpus sync` instead (RDR-009)
 
 ### Dependencies
 
-Already satisfied by RDR-005 and RDR-008:
+Already satisfied by pyproject.toml:
 
-- tree-sitter-language-pack >= 0.5.0 (from RDR-005)
-- llama-index >= 0.9.0 (from RDR-005)
-- GitPython >= 3.1.40 (from RDR-005)
-- meilisearch-python >= 0.31.0 (from RDR-008)
-- tenacity >= 8.2.0
-- tqdm >= 4.65.0
-- rich >= 13.0.0
+- tree-sitter-language-pack >= 0.10.0 (from RDR-005)
+- llama-index-core >= 0.14.6 (for AST chunking in RDR-005, NOT used here)
+- GitPython >= 3.1.45 (from RDR-005)
+- meilisearch >= 0.31.0 (from RDR-008)
+- tenacity >= 9.1.2
+- tqdm >= 4.67.1
+- rich >= 14.2.0
+
+**NOTE**: LlamaIndex is NOT used for function extraction in this RDR.
+We use tree-sitter directly via `get_parser()`.
 
 ## Validation
 
@@ -1172,14 +1430,23 @@ Already satisfied by RDR-005 and RDR-008:
 
 ## References
 
-### Related RDRs
+### Related RDRs (Updated 2026-01-15)
 
-- [RDR-005: Git-Aware Source Code Indexing](RDR-005-source-code-indexing.md) - **PRIMARY DEPENDENCY** (git discovery, AST parsing)
-- [RDR-008: Full-Text Search Server Setup](RDR-008-fulltext-search-server-setup.md) - MeiliSearch deployment, client
-- [RDR-009: Dual Indexing Strategy](RDR-009-dual-indexing-strategy.md) - Shared metadata patterns
-- [RDR-010: PDF Full-Text Indexing](RDR-010-pdf-fulltext-indexing.md) - Parallel pattern reference
+- [RDR-005: Git-Aware Source Code Indexing](RDR-005-source-code-indexing.md) - **Implemented**
+  - Reuse: git discovery (`GitProjectDiscovery`), LANGUAGE_MAP
+  - Note: ast_chunker.py is for chunking, NOT function extraction
+- [RDR-008: Full-Text Search Server Setup](RDR-008-fulltext-search-server-setup.md) - **Implemented**
+  - MeiliSearch v1.32.x deployment, client
+- [RDR-009: Dual Indexing Strategy](RDR-009-dual-indexing-strategy.md) - **Implemented**
+  - Use `arc corpus sync` for dual indexing (NOT new command)
+  - DualIndexer, DualIndexDocument schema
+- [RDR-010: PDF Full-Text Indexing](RDR-010-pdf-fulltext-indexing.md) - **Implemented**
+  - Pattern reference for `arc index text code`
+  - CLI renamed: `arc fulltext` → `arc indexes` (arcaneum-h6bo)
 
 ### Beads Issues
+
+**Original Research**:
 
 - [arcaneum-70](../../.beads/arcaneum.db) - Original RDR request
 - [arcaneum-86](../../.beads/arcaneum.db) - Indexing granularity research
@@ -1190,22 +1457,39 @@ Already satisfied by RDR-005 and RDR-008:
 - [arcaneum-91](../../.beads/arcaneum.db) - Batch upload optimization
 - [arcaneum-92](../../.beads/arcaneum.db) - CLI command structure
 
+**2026-01-15 Review Issues**:
+
+- arcaneum-vau8 - Update technical environment section
+- arcaneum-03wm - CRITICAL: Rewrite AST extraction to use tree-sitter directly
+- arcaneum-40m1 - Update CLI command naming
+- arcaneum-y53c - Update SOURCE_CODE_FULLTEXT_SETTINGS
+- arcaneum-efmz - Clarify dual indexing with RDR-009
+- arcaneum-xoiq - Clarify ast_extractor vs ast_chunker
+- arcaneum-e2gn - Update Related RDRs status
+
 ### Official Documentation
 
 - **MeiliSearch Documentation**: <https://www.meilisearch.com/docs>
 - **meilisearch-python Client**: <https://github.com/meilisearch/meilisearch-python>
-- **tree-sitter-language-pack**: <https://github.com/grantjenks/py-tree-sitter-language-pack>
+- **tree-sitter-language-pack**: <https://github.com/Goldziher/tree-sitter-language-pack>
+  - Note: Maintained replacement for grantjenks/py-tree-sitter-language-pack
+- **py-tree-sitter**: <https://tree-sitter.github.io/py-tree-sitter/>
 - **GitPython Documentation**: <https://gitpython.readthedocs.io/>
 
 ## Notes
 
-### Key Design Decisions
+### Key Design Decisions (Updated 2026-01-15)
 
 1. **Function/Class-Level Granularity**: Provides precise line ranges while maintaining semantic boundaries
-2. **Reuse RDR-005 Components 100%**: Git discovery, AST parsing, change detection patterns
-3. **Metadata-Based Sync**: MeiliSearch as single source of truth (consistent with RDR-005)
-4. **Parallel Dual Indexing**: Single pass over codebase for efficiency
-5. **Filter-Based Branch Deletion**: Branch-specific updates, other branches unaffected
+2. **Reuse RDR-005 Git Components**: Git discovery (`GitProjectDiscovery`), LANGUAGE_MAP
+3. **NEW AST Extractor (NOT reusing ast_chunker.py)**:
+   - ast_chunker.py = overlapping chunks for embeddings (Qdrant)
+   - ast_extractor.py = discrete definitions with line ranges (MeiliSearch)
+4. **Use tree-sitter DIRECTLY**: NOT LlamaIndex CodeSplitter (which is for chunking)
+5. **Metadata-Based Sync**: MeiliSearch as single source of truth (mirrors RDR-005 pattern)
+6. **Use RDR-009 for Dual Indexing**: `arc corpus sync` instead of new command
+7. **Filter-Based Branch Deletion**: Branch-specific updates, other branches unaffected
+8. **CLI Naming Convention**: `arc index text code` (parallel to `arc index text pdf`)
 
 ### Future Enhancements
 
@@ -1244,17 +1528,19 @@ Already satisfied by RDR-005 and RDR-008:
 - **Nested functions**: Indexed separately, may lose some context
   - *Mitigation*: Use qualified names to maintain hierarchy
 
-### Success Criteria
+### Success Criteria (Updated 2026-01-15)
 
 - ✅ Function/class-level indexing with line ranges
 - ✅ Git-aware multi-branch support (composite identifiers)
 - ✅ Metadata-based sync (MeiliSearch as source of truth)
-- ✅ Parallel dual indexing with RDR-005
+- ✅ Dual indexing via `arc corpus sync` (RDR-009)
 - ✅ Filter-based branch-specific deletion
-- ✅ 165+ language support via tree-sitter
-- ✅ CLI command extensions for consistency
+- ✅ 130+ language support via tree-sitter
+- ✅ CLI commands: `arc index text code`, `arc indexes list-projects`
 - ✅ Batch upload optimization (1000 docs)
-- ✅ Implementation < 20 days
 - ✅ Markdownlint compliant
 
-This RDR provides the complete specification for indexing source code to MeiliSearch for full-text exact phrase and keyword search at function/class granularity, complementary to Qdrant's semantic search (RDR-005), reusing git discovery and AST parsing infrastructure, and enabling parallel dual indexing for efficiency.
+This RDR provides the complete specification for indexing source code to MeiliSearch
+for full-text exact phrase and keyword search at function/class granularity,
+complementary to Qdrant's semantic search (RDR-005), reusing git discovery
+infrastructure, and enabling parallel dual indexing via RDR-009 for efficiency.

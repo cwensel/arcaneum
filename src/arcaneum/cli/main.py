@@ -522,6 +522,15 @@ def corpus_parity(name, dry_run, verbose, output_json):
     parity_command(name, dry_run, verbose, output_json)
 
 
+@corpus.command('info')
+@click.argument('name')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def corpus_info(name, output_json):
+    """Show combined corpus information (collection + index)."""
+    from arcaneum.cli.corpus import corpus_info_command
+    corpus_info_command(name, output_json)
+
+
 # Diagnostics command (RDR-006 enhancement)
 @cli.command('doctor')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed diagnostic information')

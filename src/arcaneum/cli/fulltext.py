@@ -460,3 +460,481 @@ def update_settings(name, index_type, output_json):
     except Exception as e:
         print_error(f"Failed to update settings: {e}", json_output=output_json)
         sys.exit(1)
+
+
+@fulltext.command('verify')
+@click.argument('name')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def verify_index(name, output_json):
+    """Verify index health and integrity.
+
+    Checks that the index is accessible, documents are retrievable,
+    and settings are properly configured.
+
+    Examples:
+        arc indexes verify MyIndex
+        arc indexes verify MyIndex --json
+    """
+    # Start interaction logging (RDR-018)
+    interaction_logger.start("indexes", "verify", index=name)
+
+    try:
+        client = get_client()
+
+        # Verify server is available
+        if not client.health_check():
+            raise ResourceNotFoundError(
+                "MeiliSearch server not available. "
+                "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
+            )
+
+        # Check if index exists
+        if not client.index_exists(name):
+            raise ResourceNotFoundError(f"Index '{name}' not found")
+
+        # Get index details
+        stats = client.get_index_stats(name)
+        settings = client.get_index_settings(name)
+
+        # Perform health checks
+        issues = []
+        warnings = []
+
+        doc_count = stats.get('numberOfDocuments', 0)
+        is_indexing = stats.get('isIndexing', False)
+
+        # Check if index is currently processing
+        if is_indexing:
+            warnings.append("Index is currently processing documents")
+
+        # Check searchable attributes
+        searchable = settings.get('searchableAttributes', [])
+        if not searchable or searchable == ['*']:
+            warnings.append("Searchable attributes not explicitly defined (using wildcard)")
+
+        # Check filterable attributes
+        filterable = settings.get('filterableAttributes', [])
+        if not filterable:
+            warnings.append("No filterable attributes defined")
+
+        # Try to retrieve a sample document to verify accessibility
+        sample_accessible = False
+        try:
+            sample_results = client.search(name, "", limit=1)
+            if sample_results.get('hits'):
+                sample_accessible = True
+        except Exception as e:
+            issues.append(f"Failed to retrieve sample document: {e}")
+
+        is_healthy = len(issues) == 0
+
+        data = {
+            "name": name,
+            "is_healthy": is_healthy,
+            "document_count": doc_count,
+            "is_indexing": is_indexing,
+            "searchable_attributes": len(searchable) if searchable != ['*'] else "all",
+            "filterable_attributes": len(filterable),
+            "sample_accessible": sample_accessible,
+            "issues": issues,
+            "warnings": warnings,
+        }
+
+        if output_json:
+            status = "success" if is_healthy else "warning"
+            msg = f"Index '{name}' is healthy" if is_healthy else f"Index '{name}' has issues"
+            print_json(status, msg, data)
+        else:
+            console.print(f"\n[bold cyan]Index: {name}[/bold cyan]\n")
+
+            # Status
+            if is_healthy:
+                console.print(f"[green]Status: Healthy[/green]")
+            else:
+                console.print(f"[red]Status: Issues detected[/red]")
+
+            # Stats
+            console.print(f"Documents: {doc_count:,}")
+            if is_indexing:
+                console.print(f"[yellow]Currently indexing...[/yellow]")
+
+            # Settings summary
+            if searchable == ['*']:
+                console.print(f"Searchable: All attributes")
+            else:
+                console.print(f"Searchable: {len(searchable)} attributes")
+            console.print(f"Filterable: {len(filterable)} attributes")
+
+            # Sample accessibility
+            if sample_accessible:
+                console.print(f"[green]Sample retrieval: OK[/green]")
+            elif doc_count > 0:
+                console.print(f"[red]Sample retrieval: Failed[/red]")
+
+            # Issues
+            if issues:
+                console.print(f"\n[red]Issues:[/red]")
+                for issue in issues:
+                    console.print(f"  [red]• {issue}[/red]")
+
+            # Warnings
+            if warnings:
+                console.print(f"\n[yellow]Warnings:[/yellow]")
+                for warning in warnings:
+                    console.print(f"  [yellow]• {warning}[/yellow]")
+
+            if is_healthy and not warnings:
+                console.print(f"\n[green]All checks passed[/green]")
+
+        # Log successful operation (RDR-018)
+        interaction_logger.finish(
+            is_healthy=is_healthy,
+            document_count=doc_count,
+            issues=len(issues),
+            warnings=len(warnings),
+        )
+
+    except ResourceNotFoundError:
+        interaction_logger.finish(error="resource not found")
+        raise
+    except Exception as e:
+        interaction_logger.finish(error=str(e))
+        print_error(f"Failed to verify index: {e}", json_output=output_json)
+        sys.exit(1)
+
+
+@fulltext.command('items')
+@click.argument('name')
+@click.option('--limit', type=int, default=100, help='Maximum number of items to show')
+@click.option('--offset', type=int, default=0, help='Number of items to skip')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def list_items(name, limit, offset, output_json):
+    """List indexed documents in an index.
+
+    Shows unique source files/paths that have been indexed,
+    similar to 'arc collection items' for Qdrant.
+
+    Examples:
+        arc indexes items MyIndex
+        arc indexes items MyIndex --limit 50
+        arc indexes items MyIndex --json
+    """
+    # Start interaction logging (RDR-018)
+    interaction_logger.start("indexes", "items", index=name, limit=limit, offset=offset)
+
+    try:
+        client = get_client()
+
+        # Verify server is available
+        if not client.health_check():
+            raise ResourceNotFoundError(
+                "MeiliSearch server not available. "
+                "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
+            )
+
+        # Check if index exists
+        if not client.index_exists(name):
+            raise ResourceNotFoundError(f"Index '{name}' not found")
+
+        # Get all documents to find unique files
+        # MeiliSearch doesn't have direct aggregation, so we fetch and dedupe
+        items_by_path = {}
+        batch_offset = offset
+        batch_size = 1000  # Internal batch size for fetching
+
+        while True:
+            # Use search with empty query to get all documents
+            results = client.search(
+                name,
+                "",
+                limit=batch_size,
+                offset=batch_offset,
+                attributes_to_retrieve=['file_path', 'filename', 'file_hash', 'page_number', 'language', 'project']
+            )
+
+            hits = results.get('hits', [])
+            if not hits:
+                break
+
+            for hit in hits:
+                file_path = hit.get('file_path') or hit.get('filename')
+                if file_path and file_path not in items_by_path:
+                    items_by_path[file_path] = {
+                        'file_path': file_path,
+                        'filename': hit.get('filename'),
+                        'file_hash': hit.get('file_hash'),
+                        'language': hit.get('language'),
+                        'project': hit.get('project'),
+                        'chunk_count': 1,
+                    }
+                elif file_path:
+                    items_by_path[file_path]['chunk_count'] += 1
+
+            batch_offset += len(hits)
+
+            # Stop if we've collected enough unique items
+            if len(items_by_path) >= limit + offset:
+                break
+
+            # Also stop if we got fewer results than requested (no more data)
+            if len(hits) < batch_size:
+                break
+
+        # Convert to list and apply limit
+        items_list = list(items_by_path.values())
+        total_items = len(items_list)
+        items_list = items_list[:limit]
+
+        if output_json:
+            data = {
+                "index": name,
+                "total_items": total_items,
+                "showing": len(items_list),
+                "offset": offset,
+                "items": items_list,
+            }
+            print_json("success", f"Found {total_items} unique items in index '{name}'", data)
+        else:
+            console.print(f"\n[bold cyan]Index: {name}[/bold cyan]")
+            console.print(f"Unique items: {total_items}\n")
+
+            if not items_list:
+                print_info("No items found")
+            else:
+                table = Table(title="Indexed Files")
+                table.add_column("File", style="cyan", no_wrap=False)
+                table.add_column("Language", style="green")
+                table.add_column("Project", style="yellow")
+                table.add_column("Chunks", style="magenta")
+
+                for item in sorted(items_list, key=lambda x: x.get('filename') or x['file_path']):
+                    display_name = item.get('filename') or item['file_path']
+                    table.add_row(
+                        display_name,
+                        item.get('language') or '-',
+                        item.get('project') or '-',
+                        str(item['chunk_count']),
+                    )
+
+                console.print(table)
+
+                if total_items > limit:
+                    console.print(f"\n[dim]Showing {len(items_list)} of {total_items} items. Use --limit to see more.[/dim]")
+
+        # Log successful operation (RDR-018)
+        interaction_logger.finish(result_count=len(items_list), total_items=total_items)
+
+    except ResourceNotFoundError:
+        interaction_logger.finish(error="resource not found")
+        raise
+    except Exception as e:
+        interaction_logger.finish(error=str(e))
+        print_error(f"Failed to list index items: {e}", json_output=output_json)
+        sys.exit(1)
+
+
+@fulltext.command('export')
+@click.argument('name')
+@click.option('-o', '--output', required=True, type=click.Path(), help='Output file path (.jsonl)')
+@click.option('--json', 'output_json', is_flag=True, help='Output stats as JSON')
+def export_index(name, output, output_json):
+    """Export index documents to JSONL file.
+
+    Exports all documents from a MeiliSearch index for backup or migration.
+
+    Examples:
+        arc indexes export MyIndex -o backup.jsonl
+        arc indexes export MyIndex -o backup.jsonl --json
+    """
+    from pathlib import Path
+
+    # Start interaction logging (RDR-018)
+    interaction_logger.start("indexes", "export", index=name, output=output)
+
+    try:
+        client = get_client()
+
+        # Verify server is available
+        if not client.health_check():
+            raise ResourceNotFoundError(
+                "MeiliSearch server not available. "
+                "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
+            )
+
+        # Check if index exists
+        if not client.index_exists(name):
+            raise ResourceNotFoundError(f"Index '{name}' not found")
+
+        output_path = Path(output)
+        exported_count = 0
+        batch_size = 1000
+        batch_offset = 0
+
+        if not output_json:
+            console.print(f"Exporting index '{name}'...")
+
+        with open(output_path, 'w') as f:
+            # Write header with index metadata
+            stats = client.get_index_stats(name)
+            settings = client.get_index_settings(name)
+            index_obj = client.get_index(name)
+
+            header = {
+                '_type': 'index_metadata',
+                'name': name,
+                'primary_key': index_obj.primary_key,
+                'settings': settings,
+                'exported_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+            }
+            f.write(json.dumps(header) + '\n')
+
+            # Export documents in batches
+            while True:
+                results = client.search(name, "", limit=batch_size, offset=batch_offset)
+                hits = results.get('hits', [])
+
+                if not hits:
+                    break
+
+                for hit in hits:
+                    doc = {'_type': 'document', **hit}
+                    f.write(json.dumps(doc) + '\n')
+                    exported_count += 1
+
+                batch_offset += len(hits)
+
+                if not output_json:
+                    console.print(f"  Exported {exported_count} documents...", end='\r')
+
+                if len(hits) < batch_size:
+                    break
+
+        file_size = output_path.stat().st_size
+
+        if output_json:
+            data = {
+                "index": name,
+                "output_path": str(output_path),
+                "exported_count": exported_count,
+                "file_size_bytes": file_size,
+            }
+            print_json("success", f"Exported {exported_count} documents", data)
+        else:
+            size_mb = file_size / (1024 * 1024)
+            console.print(f"\n[green]Exported {exported_count} documents to {output_path}[/green]")
+            console.print(f"File size: {size_mb:.2f} MB")
+
+        # Log successful operation (RDR-018)
+        interaction_logger.finish(exported_count=exported_count, file_size_bytes=file_size)
+
+    except ResourceNotFoundError:
+        interaction_logger.finish(error="resource not found")
+        raise
+    except Exception as e:
+        interaction_logger.finish(error=str(e))
+        print_error(f"Failed to export index: {e}", json_output=output_json)
+        sys.exit(1)
+
+
+@fulltext.command('import')
+@click.argument('file', type=click.Path(exists=True))
+@click.option('--into', 'target_name', help='Target index name (defaults to original name)')
+@click.option('--json', 'output_json', is_flag=True, help='Output stats as JSON')
+def import_index(file, target_name, output_json):
+    """Import index documents from JSONL file.
+
+    Imports documents from a previously exported JSONL file.
+    Creates the index if it doesn't exist, using the exported settings.
+
+    Examples:
+        arc indexes import backup.jsonl
+        arc indexes import backup.jsonl --into NewIndex
+        arc indexes import backup.jsonl --json
+    """
+    from pathlib import Path
+
+    # Start interaction logging (RDR-018)
+    interaction_logger.start("indexes", "import", source_file=file, target_name=target_name)
+
+    try:
+        client = get_client()
+
+        # Verify server is available
+        if not client.health_check():
+            raise ResourceNotFoundError(
+                "MeiliSearch server not available. "
+                "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
+            )
+
+        input_path = Path(file)
+        metadata = None
+        documents = []
+        imported_count = 0
+
+        if not output_json:
+            console.print(f"Reading export file...")
+
+        # Read the file
+        with open(input_path, 'r') as f:
+            for line in f:
+                if not line.strip():
+                    continue
+
+                record = json.loads(line)
+                record_type = record.pop('_type', 'document')
+
+                if record_type == 'index_metadata':
+                    metadata = record
+                elif record_type == 'document':
+                    documents.append(record)
+
+        if not metadata:
+            raise InvalidArgumentError("Export file missing index metadata header")
+
+        # Determine target index name
+        index_name = target_name or metadata['name']
+
+        # Create index if it doesn't exist
+        if not client.index_exists(index_name):
+            if not output_json:
+                console.print(f"Creating index '{index_name}'...")
+
+            client.create_index(
+                name=index_name,
+                primary_key=metadata.get('primary_key', 'id'),
+                settings=metadata.get('settings'),
+            )
+
+        # Import documents in batches
+        batch_size = 1000
+        if not output_json:
+            console.print(f"Importing {len(documents)} documents...")
+
+        for i in range(0, len(documents), batch_size):
+            batch = documents[i:i + batch_size]
+            client.add_documents(index_name, batch)
+            imported_count += len(batch)
+
+            if not output_json:
+                console.print(f"  Imported {imported_count} documents...", end='\r')
+
+        if output_json:
+            data = {
+                "index": index_name,
+                "imported_count": imported_count,
+                "source_file": str(input_path),
+            }
+            print_json("success", f"Imported {imported_count} documents into '{index_name}'", data)
+        else:
+            console.print(f"\n[green]Imported {imported_count} documents into '{index_name}'[/green]")
+
+        # Log successful operation (RDR-018)
+        interaction_logger.finish(imported_count=imported_count, index=index_name)
+
+    except (InvalidArgumentError, ResourceNotFoundError):
+        interaction_logger.finish(error="invalid argument or resource not found")
+        raise
+    except Exception as e:
+        interaction_logger.finish(error=str(e))
+        print_error(f"Failed to import index: {e}", json_output=output_json)
+        sys.exit(1)

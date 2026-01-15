@@ -355,6 +355,68 @@ def index_text():
     pass
 
 
+@index_text.command('code')
+@click.argument('path', type=click.Path(exists=True), required=False)
+@click.option('--from-file', help='Read file paths from list (one per line, or "-" for stdin)')
+@click.option('--index', 'index_name', required=True, help='MeiliSearch index name')
+@click.option('--recursive/--no-recursive', default=True, help='Search subdirectories recursively')
+@click.option('--batch-size', type=int, default=1000, help='Documents per batch upload (default: 1000)')
+@click.option('--force', is_flag=True, help='Force reindex all files')
+@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def index_text_code(path, from_file, index_name, recursive, batch_size, force, verbose, output_json):
+    """Index source code to MeiliSearch for full-text search.
+
+    Indexes source code files for exact keyword and phrase search.
+    Complements semantic search via Qdrant (arc index code).
+
+    Examples:
+        arc index text code ./src --index code-index
+        arc index text code ./repos --index code-index --force
+    """
+    from arcaneum.cli.index_text import index_text_code_command
+    # Validate that exactly one of path or from_file is provided
+    if not path and not from_file:
+        click.echo("Error: Either PATH or --from-file must be provided", err=True)
+        raise click.Abort()
+    if path and from_file:
+        click.echo("Error: Cannot use both PATH and --from-file", err=True)
+        raise click.Abort()
+
+    index_text_code_command(path, from_file, index_name, recursive, batch_size, force, verbose, output_json)
+
+
+@index_text.command('markdown')
+@click.argument('path', type=click.Path(exists=True), required=False)
+@click.option('--from-file', help='Read file paths from list (one per line, or "-" for stdin)')
+@click.option('--index', 'index_name', required=True, help='MeiliSearch index name')
+@click.option('--recursive/--no-recursive', default=True, help='Search subdirectories recursively')
+@click.option('--batch-size', type=int, default=1000, help='Documents per batch upload (default: 1000)')
+@click.option('--force', is_flag=True, help='Force reindex all files')
+@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def index_text_markdown(path, from_file, index_name, recursive, batch_size, force, verbose, output_json):
+    """Index markdown files to MeiliSearch for full-text search.
+
+    Indexes markdown files for exact keyword and phrase search.
+    Complements semantic search via Qdrant (arc index markdown).
+
+    Examples:
+        arc index text markdown ./docs --index docs-index
+        arc index text markdown ./wiki --index wiki-index --force
+    """
+    from arcaneum.cli.index_text import index_text_markdown_command
+    # Validate that exactly one of path or from_file is provided
+    if not path and not from_file:
+        click.echo("Error: Either PATH or --from-file must be provided", err=True)
+        raise click.Abort()
+    if path and from_file:
+        click.echo("Error: Cannot use both PATH and --from-file", err=True)
+        raise click.Abort()
+
+    index_text_markdown_command(path, from_file, index_name, recursive, batch_size, force, verbose, output_json)
+
+
 @index_text.command('pdf')
 @click.argument('path', type=click.Path(exists=True), required=False)
 @click.option('--from-file', help='Read file paths from list (one per line, or "-" for stdin)')

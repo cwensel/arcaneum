@@ -3,7 +3,7 @@
 ## Metadata
 
 - **Date**: 2025-10-21
-- **Status**: Recommendation
+- **Status**: Implemented
 - **Type**: Architecture
 - **Priority**: High
 - **Related Issues**: arcaneum-68, arcaneum-85

@@ -42,11 +42,16 @@ Reference: arcaneum-7 mentioned MeiliSearch as potential solution
 
 ### Technical Environment
 
-- **MeiliSearch**: v1.24.0 (latest stable)
+- **MeiliSearch**: v1.32.x (latest stable as of Jan 2026)
 - **Docker**: Official `getmeili/meilisearch` image
 - **Python**: >= 3.12
-- **meilisearch-python**: Python client library
-- **Existing Stack**: Qdrant (RDR-002), CLI framework (RDR-003), Claude Code integration (RDR-006)
+- **meilisearch-python**: >= 0.39.0 (Python client library)
+- **Existing Stack**: Qdrant v1.16.2 (RDR-002), CLI framework (RDR-003), Claude Code integration (RDR-006)
+
+**Note on MeiliSearch versions**: This RDR was originally written for v1.24.0. Breaking changes since then:
+
+- v1.30.0: Network object structure changed (affects clustering configurations)
+- v1.31.0: S3-streaming snapshots now Enterprise Edition only
 
 **Key Design Principles**:
 - Mirror RDR-002's Docker simplicity
@@ -114,10 +119,11 @@ Six parallel research tracks completed via Beads issues (arcaneum-72 through arc
 - `MEILI_DUMP_DIR`: Backup dump location
 
 **Key Findings**:
+
 - Memory limit must be **manually set** (issue #4686): MeiliSearch doesn't auto-detect Docker container limits
 - Recommendation: Set `MEILI_MAX_INDEXING_MEMORY` to **2/3 of container memory**
 - Health endpoint: `/health` for monitoring
-- Latest v1.24.0: 30% smaller database size, 4x faster updates
+- v1.32.x improvements: Continued performance enhancements since v1.24.0
 
 #### 3. Integration with Qdrant Workflow (RDR-002)
 
@@ -126,8 +132,8 @@ Six parallel research tracks completed via Beads issues (arcaneum-72 through arc
 | Aspect | Qdrant (RDR-002) | MeiliSearch (this RDR) |
 |--------|------------------|----------------------|
 | **Port** | 6333 (REST), 6334 (gRPC) | 7700 (HTTP) |
-| **Volume** | ./qdrant_storage | ./meili_data |
-| **Image** | qdrant/qdrant:v1.15.4 | getmeili/meilisearch:v1.24.0 |
+| **Volume** | qdrant-arcaneum-storage (named) | meilisearch-arcaneum-data (named) |
+| **Image** | qdrant/qdrant:v1.16.2 | getmeili/meilisearch:v1.32 |
 | **Health Check** | `/healthz` | `/health` |
 | **Memory** | 4GB | 4GB (but uses 96-200MB) |
 
@@ -268,24 +274,23 @@ Deploy MeiliSearch alongside Qdrant in unified docker-compose.yml, maintaining:
 **Updated `docker-compose.yml`** (extends RDR-002):
 
 ```yaml
-version: '3.8'
-
 services:
   # Existing Qdrant service (from RDR-002)
   qdrant:
-    image: qdrant/qdrant:v1.15.4
+    image: qdrant/qdrant:v1.16.2
     container_name: qdrant-arcaneum
     restart: unless-stopped
     ports:
       - "6333:6333"  # REST API
       - "6334:6334"  # gRPC API
     volumes:
-      - ./qdrant_storage:/qdrant/storage
-      - ./qdrant_snapshots:/qdrant/snapshots
-      - ./models_cache:/models
+      - qdrant-arcaneum-storage:/qdrant/storage
+      - qdrant-arcaneum-snapshots:/qdrant/snapshots
     environment:
       - QDRANT__LOG_LEVEL=INFO
-      - SENTENCE_TRANSFORMERS_HOME=/models
+      # Disk-biased configuration for low-memory operation
+      - QDRANT__STORAGE__ON_DISK_PAYLOAD=true
+      - QDRANT__STORAGE__WAL__WAL_CAPACITY_MB=16
     deploy:
       resources:
         limits:
@@ -297,19 +302,19 @@ services:
 
   # New MeiliSearch service (this RDR)
   meilisearch:
-    image: getmeili/meilisearch:v1.24.0
+    image: getmeili/meilisearch:v1.32
     container_name: meilisearch-arcaneum
     restart: unless-stopped
     ports:
       - "7700:7700"  # HTTP API
     volumes:
-      - ./meili_data:/meili_data        # Data persistence
-      - ./meili_dumps:/dumps            # Backup dumps
-      - ./meili_snapshots:/snapshots    # Snapshots
+      - meilisearch-arcaneum-data:/meili_data        # Data persistence
+      - meilisearch-arcaneum-dumps:/dumps            # Backup dumps
+      - meilisearch-arcaneum-snapshots:/snapshots    # Snapshots
     environment:
-      # Core settings
+      # Core settings (MEILI_* are MeiliSearch's internal env vars)
       - MEILI_ENV=production
-      - MEILI_MASTER_KEY=${MEILI_MASTER_KEY}  # Set in .env file
+      - MEILI_MASTER_KEY=${MEILISEARCH_API_KEY}  # Maps from Arcaneum's .env
       - MEILI_HTTP_ADDR=0.0.0.0:7700
 
       # Resource management (CRITICAL: Must set manually)
@@ -339,37 +344,38 @@ services:
       start_period: 30s
 
 volumes:
-  qdrant_storage:
-  qdrant_snapshots:
-  models_cache:
-  meili_data:
-  meili_dumps:
-  meili_snapshots:
+  qdrant-arcaneum-storage:
+    driver: local
+  qdrant-arcaneum-snapshots:
+    driver: local
+  meilisearch-arcaneum-data:
+    driver: local
+  meilisearch-arcaneum-dumps:
+    driver: local
+  meilisearch-arcaneum-snapshots:
+    driver: local
 ```
 
 **Environment Variables** (`.env` file):
 
 ```bash
 # Qdrant settings (from RDR-002)
-QDRANT_PORT=6333
+QDRANT_URL=http://localhost:6333
 
 # MeiliSearch settings (new)
-MEILI_MASTER_KEY=your_secure_master_key_here_min_16_chars
-MEILI_PORT=7700
+# These are Arcaneum's application-level variables (used by Python client)
+# Docker Compose maps MEILISEARCH_API_KEY to MeiliSearch's internal MEILI_MASTER_KEY
+MEILISEARCH_URL=http://localhost:7700
+MEILISEARCH_API_KEY=your_secure_master_key_here_min_16_chars
 ```
 
 #### Directory Structure
 
 ```
 arcaneum/
-├── docker-compose.yml           # Combined Qdrant + MeiliSearch
+├── deploy/
+│   └── docker-compose.yml       # Combined Qdrant + MeiliSearch
 ├── .env                         # Environment variables
-├── qdrant_storage/              # Qdrant data (from RDR-002)
-├── qdrant_snapshots/            # Qdrant backups (from RDR-002)
-├── models_cache/                # FastEmbed models (from RDR-002)
-├── meili_data/                  # MeiliSearch data (NEW)
-├── meili_dumps/                 # MeiliSearch backups (NEW)
-├── meili_snapshots/             # MeiliSearch snapshots (NEW)
 ├── scripts/
 │   ├── qdrant-manage.sh        # Qdrant management (from RDR-002)
 │   └── meilisearch-manage.sh   # MeiliSearch management (NEW)
@@ -381,6 +387,13 @@ arcaneum/
         │   └── indexes.py      # Index configuration
         └── cli/
             └── fulltext.py     # CLI commands (NEW)
+
+# Note: Data is stored in Docker named volumes (not local directories):
+# - qdrant-arcaneum-storage
+# - qdrant-arcaneum-snapshots
+# - meilisearch-arcaneum-data
+# - meilisearch-arcaneum-dumps
+# - meilisearch-arcaneum-snapshots
 ```
 
 #### Management Script
@@ -399,63 +412,63 @@ if [ -f .env ]; then
     export $(cat .env | grep -v '^#' | xargs)
 fi
 
-MEILI_URL="${MEILI_URL:-http://localhost:7700}"
+MEILISEARCH_URL="${MEILISEARCH_URL:-http://localhost:7700}"
 
 case "$1" in
     start)
-        echo "🚀 Starting MeiliSearch..."
-        docker compose up -d meilisearch
+        echo "Starting MeiliSearch..."
+        docker compose -f deploy/docker-compose.yml up -d meilisearch
         sleep 3
-        if curl -sf "${MEILI_URL}/health" > /dev/null; then
-            echo "✅ MeiliSearch started successfully"
-            echo "📊 HTTP API: ${MEILI_URL}"
+        if curl -sf "${MEILISEARCH_URL}/health" > /dev/null; then
+            echo "MeiliSearch started successfully"
+            echo "HTTP API: ${MEILISEARCH_URL}"
         else
-            echo "❌ MeiliSearch failed to start"
+            echo "MeiliSearch failed to start"
             exit 1
         fi
         ;;
 
     stop)
-        echo "🛑 Stopping MeiliSearch..."
-        docker compose stop meilisearch
-        echo "✅ MeiliSearch stopped"
+        echo "Stopping MeiliSearch..."
+        docker compose -f deploy/docker-compose.yml stop meilisearch
+        echo "MeiliSearch stopped"
         ;;
 
     restart)
-        echo "🔄 Restarting MeiliSearch..."
-        docker compose restart meilisearch
+        echo "Restarting MeiliSearch..."
+        docker compose -f deploy/docker-compose.yml restart meilisearch
         sleep 2
-        curl -sf "${MEILI_URL}/health" && echo "✅ Restarted"
+        curl -sf "${MEILISEARCH_URL}/health" && echo "Restarted"
         ;;
 
     logs)
-        docker compose logs -f meilisearch
+        docker compose -f deploy/docker-compose.yml logs -f meilisearch
         ;;
 
     status)
-        echo "📊 MeiliSearch Status:"
-        docker compose ps meilisearch
+        echo "MeiliSearch Status:"
+        docker compose -f deploy/docker-compose.yml ps meilisearch
         echo ""
-        if curl -sf "${MEILI_URL}/health" > /dev/null; then
-            echo "✅ Healthy"
-            curl -sf -H "Authorization: Bearer ${MEILI_MASTER_KEY}" \
-                "${MEILI_URL}/stats" | jq '.' || echo "Stats unavailable"
+        if curl -sf "${MEILISEARCH_URL}/health" > /dev/null; then
+            echo "Healthy"
+            curl -sf -H "Authorization: Bearer ${MEILISEARCH_API_KEY}" \
+                "${MEILISEARCH_URL}/stats" | jq '.' || echo "Stats unavailable"
         else
-            echo "❌ Unhealthy"
+            echo "Unhealthy"
         fi
         ;;
 
     create-dump)
-        echo "📦 Creating dump..."
-        curl -X POST "${MEILI_URL}/dumps" \
-          -H "Authorization: Bearer ${MEILI_MASTER_KEY}"
-        echo "✅ Dump creation initiated"
+        echo "Creating dump..."
+        curl -X POST "${MEILISEARCH_URL}/dumps" \
+          -H "Authorization: Bearer ${MEILISEARCH_API_KEY}"
+        echo "Dump creation initiated"
         ;;
 
     list-indexes)
-        echo "📋 MeiliSearch Indexes:"
-        curl -sf -H "Authorization: Bearer ${MEILI_MASTER_KEY}" \
-            "${MEILI_URL}/indexes" | jq '.results[] | {uid: .uid, primaryKey: .primaryKey}'
+        echo "MeiliSearch Indexes:"
+        curl -sf -H "Authorization: Bearer ${MEILISEARCH_API_KEY}" \
+            "${MEILISEARCH_URL}/indexes" | jq '.results[] | {uid: .uid, primaryKey: .primaryKey}'
         ;;
 
     *)
@@ -510,16 +523,16 @@ class FullTextClient:
         Returns:
             Created index object
         """
-        # Create index
+        # Create index - returns TaskInfo object (not dict)
         task = self.client.create_index(name, {'primaryKey': primary_key})
-        self.client.wait_for_task(task['taskUid'])
+        self.client.wait_for_task(task.task_uid)
 
         index = self.client.index(name)
 
         # Apply settings if provided
         if settings:
             task = index.update_settings(settings)
-            self.client.wait_for_task(task['taskUid'])
+            self.client.wait_for_task(task.task_uid)
 
         return index
 
@@ -535,7 +548,7 @@ class FullTextClient:
     def delete_index(self, name: str) -> None:
         """Delete an index."""
         task = self.client.delete_index(name)
-        self.client.wait_for_task(task['taskUid'])
+        self.client.wait_for_task(task.task_uid)
 
     def add_documents(
         self,
@@ -696,6 +709,11 @@ def get_index_settings(index_type: str) -> Dict[str, Any]:
 
 #### CLI Integration
 
+**Note on CLI Structure**: The main.py already defines `arc search text` for full-text search
+(integrated into the `search` command group alongside `arc search semantic`). The implementation
+below provides the `search_text_command` function that main.py imports, plus index management
+commands under a separate `fulltext` group for administration tasks.
+
 **`src/arcaneum/cli/fulltext.py`**:
 
 ```python
@@ -713,9 +731,59 @@ from ..fulltext.indexes import get_index_settings
 console = Console()
 
 
+def get_client() -> FullTextClient:
+    """Get MeiliSearch client from environment variables."""
+    url = os.environ.get('MEILISEARCH_URL', 'http://localhost:7700')
+    api_key = os.environ.get('MEILISEARCH_API_KEY')
+    if not api_key:
+        raise click.ClickException(
+            "MEILISEARCH_API_KEY environment variable required"
+        )
+    return FullTextClient(url, api_key)
+
+
+def search_text_command(query, index_name, filter_arg, limit, offset, output_json, verbose):
+    """
+    Implementation for 'arc search text' command.
+    Called from main.py search group.
+    """
+    try:
+        client = get_client()
+        results = client.search(
+            index_name,
+            query,
+            filter=filter_arg,
+            limit=limit,
+            attributes_to_highlight=['content']
+        )
+
+        if output_json:
+            import json
+            print(json.dumps(results, indent=2))
+            return
+
+        console.print(f"\n[bold]Search Results[/bold] ({results['processingTimeMs']}ms)")
+        console.print(f"Found {results['estimatedTotalHits']} matches\n")
+
+        for i, hit in enumerate(results['hits'], 1):
+            console.print(f"[cyan]{i}. {hit.get('filename', hit.get('file_path', 'Unknown'))}[/cyan]")
+            if 'line_number' in hit:
+                console.print(f"   Line: {hit['line_number']}")
+
+            # Show highlighted content
+            if '_formatted' in hit and 'content' in hit['_formatted']:
+                content = hit['_formatted']['content'][:200]
+                console.print(f"   {content}...\n")
+
+    except Exception as e:
+        console.print(f"[ERROR] Search failed: {e}", style="red")
+        raise SystemExit(1)
+
+
+# Index management commands (arc fulltext ...)
 @click.group()
 def fulltext():
-    """Full-text search commands (MeiliSearch)."""
+    """Full-text index management commands (MeiliSearch)."""
     pass
 
 
@@ -724,18 +792,10 @@ def fulltext():
 @click.option('--type', 'index_type',
               type=click.Choice(['source-code', 'pdf-docs']),
               help='Index type (determines settings)')
-@click.option('--url', default='http://localhost:7700',
-              help='MeiliSearch URL')
-@click.option('--api-key', envvar='MEILI_MASTER_KEY',
-              help='Master key (or set MEILI_MASTER_KEY env var)')
-def create_index(name, index_type, url, api_key):
+def create_index(name, index_type):
     """Create a new full-text search index."""
-    if not api_key:
-        console.print("❌ API key required (--api-key or MEILI_MASTER_KEY)", style="red")
-        raise click.Abort()
-
     try:
-        client = FullTextClient(url, api_key)
+        client = get_client()
 
         # Get settings if type specified
         settings = None
@@ -743,32 +803,30 @@ def create_index(name, index_type, url, api_key):
             settings = get_index_settings(index_type)
             console.print(f"Using {index_type} settings")
 
-        index = client.create_index(name, primary_key='id', settings=settings)
-        console.print(f"✅ Created index '{name}'")
+        client.create_index(name, primary_key='id', settings=settings)
+        console.print(f"Created index '{name}'")
 
         if settings:
             console.print(f"  Searchable attributes: {len(settings['searchableAttributes'])}")
             console.print(f"  Filterable attributes: {len(settings['filterableAttributes'])}")
 
     except Exception as e:
-        console.print(f"❌ Failed to create index: {e}", style="red")
-        raise click.Abort()
+        console.print(f"[ERROR] Failed to create index: {e}", style="red")
+        raise SystemExit(1)
 
 
 @fulltext.command('list-indexes')
-@click.option('--url', default='http://localhost:7700',
-              help='MeiliSearch URL')
-@click.option('--api-key', envvar='MEILI_MASTER_KEY',
-              help='Master key')
-def list_indexes(url, api_key):
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def list_indexes(output_json):
     """List all full-text search indexes."""
-    if not api_key:
-        console.print("❌ API key required", style="red")
-        raise click.Abort()
-
     try:
-        client = FullTextClient(url, api_key)
+        client = get_client()
         indexes = client.list_indexes()
+
+        if output_json:
+            import json
+            print(json.dumps(indexes, indent=2))
+            return
 
         table = Table(title="MeiliSearch Indexes")
         table.add_column("Name", style="cyan")
@@ -785,92 +843,55 @@ def list_indexes(url, api_key):
         console.print(table)
 
     except Exception as e:
-        console.print(f"❌ Failed to list indexes: {e}", style="red")
-        raise click.Abort()
+        console.print(f"[ERROR] Failed to list indexes: {e}", style="red")
+        raise SystemExit(1)
 
 
 @fulltext.command('delete-index')
 @click.argument('name')
-@click.option('--url', default='http://localhost:7700')
-@click.option('--api-key', envvar='MEILI_MASTER_KEY')
 @click.option('--confirm/--no-confirm', default=False,
               help='Skip confirmation prompt')
-def delete_index(name, url, api_key, confirm):
+def delete_index(name, confirm):
     """Delete a full-text search index."""
-    if not api_key:
-        console.print("❌ API key required", style="red")
-        raise click.Abort()
-
     if not confirm:
         if not click.confirm(f"Delete index '{name}'? This cannot be undone."):
             console.print("Cancelled.")
             return
 
     try:
-        client = FullTextClient(url, api_key)
+        client = get_client()
         client.delete_index(name)
-        console.print(f"✅ Deleted index '{name}'")
+        console.print(f"Deleted index '{name}'")
 
     except Exception as e:
-        console.print(f"❌ Failed to delete index: {e}", style="red")
-        raise click.Abort()
-
-
-@fulltext.command('search')
-@click.argument('query')
-@click.option('--index', required=True, help='Index to search')
-@click.option('--filter', help='Filter expression (e.g., language = python)')
-@click.option('--limit', type=int, default=10, help='Max results')
-@click.option('--url', default='http://localhost:7700')
-@click.option('--api-key', envvar='MEILI_MASTER_KEY')
-def search(query, index, filter, limit, url, api_key):
-    """Search a full-text index."""
-    if not api_key:
-        console.print("❌ API key required", style="red")
-        raise click.Abort()
-
-    try:
-        client = FullTextClient(url, api_key)
-        results = client.search(
-            index,
-            query,
-            filter=filter,
-            limit=limit,
-            attributes_to_highlight=['content']
-        )
-
-        console.print(f"\n[bold]Search Results[/bold] ({results['processingTimeMs']}ms)")
-        console.print(f"Found {results['estimatedTotalHits']} matches\n")
-
-        for i, hit in enumerate(results['hits'], 1):
-            console.print(f"[cyan]{i}. {hit.get('filename', hit.get('file_path', 'Unknown'))}[/cyan]")
-            if 'line_number' in hit:
-                console.print(f"   Line: {hit['line_number']}")
-
-            # Show highlighted content
-            if '_formatted' in hit and 'content' in hit['_formatted']:
-                content = hit['_formatted']['content'][:200]
-                console.print(f"   {content}...\n")
-
-    except Exception as e:
-        console.print(f"❌ Search failed: {e}", style="red")
-        raise click.Abort()
+        console.print(f"[ERROR] Failed to delete index: {e}", style="red")
+        raise SystemExit(1)
 ```
 
-**Register with main CLI** (`src/arcaneum/cli/main.py`):
+**Integration with main CLI** (`src/arcaneum/cli/main.py`):
+
+The search command is already defined in main.py as `arc search text`. The fulltext
+group provides index administration commands:
 
 ```python
-# Add to main.py
+# main.py already has:
+@search.command('text')
+def search_text(query, index_name, filter_arg, limit, offset, output_json, verbose):
+    """Keyword-based full-text search"""
+    from arcaneum.cli.fulltext import search_text_command
+    search_text_command(query, index_name, filter_arg, limit, offset, output_json, verbose)
+
+# Add fulltext admin commands
 from .fulltext import fulltext
-
-@click.group()
-def cli():
-    """Arcaneum CLI"""
-    pass
-
-# Register fulltext commands
 cli.add_command(fulltext)
 ```
+
+**CLI Command Summary**:
+
+- `arc search text "query" --index IndexName` - Full-text search (parallel to `arc search semantic`)
+- `arc fulltext create-index name --type source-code` - Create index with settings
+- `arc fulltext list-indexes` - List all MeiliSearch indexes
+- `arc fulltext delete-index name` - Delete an index
 
 ### Implementation Example
 
@@ -878,37 +899,42 @@ cli.add_command(fulltext)
 
 ```bash
 # 1. Start both services
-docker compose up -d
+docker compose -f deploy/docker-compose.yml up -d
 
 # Verify both running
 scripts/qdrant-manage.sh status
 scripts/meilisearch-manage.sh status
 
-# 2. Create full-text indexes
-export MEILI_MASTER_KEY=your_secure_key
+# 2. Set environment variables
+export MEILISEARCH_URL=http://localhost:7700
+export MEILISEARCH_API_KEY=your_secure_key
 
-python -m arcaneum.cli.main fulltext create-index source-code --type source-code
-python -m arcaneum.cli.main fulltext create-index pdf-docs --type pdf-docs
+# 3. Create full-text indexes
+arc fulltext create-index source-code --type source-code
+arc fulltext create-index pdf-docs --type pdf-docs
 
-# 3. List indexes
-python -m arcaneum.cli.main fulltext list-indexes
+# 4. List indexes
+arc fulltext list-indexes
 
-# 4. Index documents (future: arcaneum-68 will implement dual indexing)
+# 5. Index documents (future: RDR-009 will implement dual indexing)
 # Documents indexed to both Qdrant (vectors) and MeiliSearch (text)
 
-# 5. Search examples
-# Exact phrase search
-python -m arcaneum.cli.main fulltext search '"def authenticate"' --index source-code
+# 6. Search examples
+# Exact phrase search (using arc search text)
+arc search text '"def authenticate"' --index source-code
 
 # Filtered search
-python -m arcaneum.cli.main fulltext search 'authentication' \
+arc search text 'authentication' \
   --index source-code \
   --filter 'language = python AND project = my-app'
 
 # PDF document search
-python -m arcaneum.cli.main fulltext search 'machine learning' \
+arc search text 'machine learning' \
   --index pdf-docs \
   --filter 'page_number > 10'
+
+# JSON output for scripting
+arc search text 'authentication' --index source-code --json
 ```
 
 ## Alternatives Considered
@@ -932,7 +958,8 @@ python -m arcaneum.cli.main fulltext search 'machine learning' \
 - **Overkill for Arcaneum's use case**: Don't need analytics features
 - **Against simplicity principle**: Contradicts RDR-002's Docker simplicity
 
-**Reason for rejection**: Resource inefficiency and setup complexity contradict Arcaneum's simplicity goals. MeiliSearch sufficient for code/document search use case.
+**Reason for rejection**: Resource inefficiency and setup complexity contradict Arcaneum's
+simplicity goals. MeiliSearch sufficient for code/document search use case.
 
 ### Alternative 2: Separate Docker Compose Files
 
@@ -1040,18 +1067,16 @@ python -m arcaneum.cli.main fulltext search 'machine learning' \
 Extend existing docker-compose.yml from RDR-002:
 
 1. Add meilisearch service with:
-   - Version-pinned image (v1.24.0)
+   - Version-pinned image (v1.32)
    - Port 7700 mapping
-   - Three volumes (data, dumps, snapshots)
-   - Environment variables with MEILI_MASTER_KEY
+   - Three named volumes (data, dumps, snapshots)
+   - Environment variables with MEILISEARCH_API_KEY
    - Resource limits (4GB memory, 4 CPUs)
    - Health check configuration
 
-2. Add volume definitions for MeiliSearch
+2. Add named volume definitions for MeiliSearch (matching Qdrant pattern)
 
-3. Update .gitignore to exclude meili_data/, meili_dumps/, meili_snapshots/
-
-**Estimated effort**: 1 day
+3. Update .env.example with MEILISEARCH_URL and MEILISEARCH_API_KEY
 
 #### Step 2: Create Management Script
 
@@ -1101,11 +1126,11 @@ Create `src/arcaneum/cli/fulltext.py`:
 
 Update configuration system to support MeiliSearch:
 
-1. Add MeiliSearch section to arcaneum.yaml (if using config file)
-2. Environment variable support for MEILI_MASTER_KEY
-3. URL configuration (default: http://localhost:7700)
-
-**Estimated effort**: 1 day
+1. Environment variable support:
+   - MEILISEARCH_URL (default: http://localhost:7700)
+   - MEILISEARCH_API_KEY (required for all operations)
+2. Update .env.example with MeiliSearch variables
+3. Add MeiliSearch connection check to `arc doctor` command
 
 #### Step 6: Testing
 
@@ -1183,12 +1208,15 @@ Add to `pyproject.toml`:
 ```toml
 [project]
 dependencies = [
-    "qdrant-client[fastembed]>=1.15.0",  # Existing from RDR-002
-    "meilisearch>=0.31.0",               # NEW for full-text search
-    "click>=8.1.0",                      # Existing from RDR-003
-    "rich>=13.0.0",                      # Existing from RDR-003
+    "qdrant-client>=1.16.1",             # Existing from RDR-002
+    "meilisearch>=0.39.0",               # NEW for full-text search
+    "click>=8.3.0",                      # Existing from RDR-003
+    "rich>=14.2.0",                      # Existing from RDR-003
 ]
 ```
+
+**Note**: The meilisearch-python client v0.39.0+ returns `TaskInfo` objects from async
+operations. Use `task.task_uid` (attribute access) not `task['taskUid']` (dict access).
 
 ## Validation
 
@@ -1208,17 +1236,20 @@ dependencies = [
 - **Validation**: `scripts/meilisearch-manage.sh status` shows "Healthy"
 
 **Scenario 2: Index Creation with Settings**
-- **Action**: `arcaneum fulltext create-index source-code --type source-code`
+
+- **Action**: `arc fulltext create-index source-code --type source-code`
 - **Expected**: Index created with SOURCE_CODE_SETTINGS applied
 - **Validation**: Verify filterable/searchable attributes via MeiliSearch API
 
 **Scenario 3: Exact Phrase Search**
-- **Action**: `arcaneum fulltext search '"def authenticate"' --index source-code`
+
+- **Action**: `arc search text '"def authenticate"' --index source-code`
 - **Expected**: Returns only documents with exact phrase "def authenticate"
 - **Validation**: Check results contain exact match, case-insensitive
 
 **Scenario 4: Filtered Search**
-- **Action**: `arcaneum fulltext search 'authentication' --index source-code --filter 'language = python'`
+
+- **Action**: `arc search text 'authentication' --index source-code --filter 'language = python'`
 - **Expected**: Returns Python files only containing "authentication"
 - **Validation**: All results have language='python' in metadata
 
@@ -1242,11 +1273,11 @@ dependencies = [
 
 ### Security Validation
 
-- MEILI_MASTER_KEY required in production mode
+- MEILISEARCH_API_KEY required in production mode
 - No hardcoded credentials in docker-compose.yml (uses .env)
 - Health endpoint accessible without authentication
 - Search endpoints require API key
-- Volume permissions: User-only write (0755)
+- Named volumes managed by Docker (not local directories)
 
 ## References
 
@@ -1254,7 +1285,7 @@ dependencies = [
 - **MeiliSearch GitHub**: https://github.com/meilisearch/meilisearch
 - **meilisearch-python SDK**: https://github.com/meilisearch/meilisearch-python
 - **Docker Hub Image**: https://hub.docker.com/r/getmeili/meilisearch
-- **MeiliSearch v1.24.0 Release**: https://github.com/meilisearch/meilisearch/releases/tag/v1.24.0
+- **MeiliSearch Releases**: https://github.com/meilisearch/meilisearch/releases
 - **Issue #4686**: Docker memory limit detection problem
 - **Issue #1060**: Phrase search implementation
 - **Beads Issues**: arcaneum-72 through arcaneum-77 (research findings)
@@ -1345,11 +1376,25 @@ dependencies = [
 | **Input** | Embeddings (vectors) | Text documents |
 | **Query** | Vector similarity | Text queries with filters |
 | **Use Case** | "Find similar authentication patterns" | "Find exact string 'def auth'" |
-| **Docker Image** | qdrant/qdrant:v1.15.4 | getmeili/meilisearch:v1.24.0 |
+| **Docker Image** | qdrant/qdrant:v1.16.2 | getmeili/meilisearch:v1.32 |
 | **Memory** | Scales with vectors | 96-200MB typical |
 | **Setup** | Simple | Simple (slightly simpler) |
-| **Client** | qdrant-client + FastEmbed | meilisearch-python |
+| **Client** | qdrant-client + FastEmbed | meilisearch-python >= 0.39.0 |
+| **CLI** | `arc search semantic` | `arc search text` |
+| **Volumes** | Named (qdrant-arcaneum-*) | Named (meilisearch-arcaneum-*) |
 
 Both services follow same architectural principles: simplicity, Docker-first, CLI integration, complementary use cases.
 
 This RDR provides the complete specification for implementing MeiliSearch full-text search server complementary to Qdrant vector search, maintaining Arcaneum's simplicity and resource efficiency goals.
+
+---
+
+**Revision History**:
+
+- 2025-10-21: Initial RDR created
+- 2026-01-14: Updated for current versions and codebase alignment:
+  - MeiliSearch v1.24.0 → v1.32.x, meilisearch-python v0.31.0 → v0.39.0
+  - Fixed TaskInfo attribute access (task.task_uid not task['taskUid'])
+  - Aligned CLI with existing `arc search text` command pattern
+  - Standardized on MEILISEARCH_* environment variables
+  - Switched to named Docker volumes (matching Qdrant pattern)

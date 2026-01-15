@@ -276,30 +276,48 @@ class PDFExtractor:
         """
         # Check for Type3 fonts which cause PyMuPDF4LLM to hang indefinitely
         if self._has_type3_fonts(pdf_path):
-            logger.info(f"Skipping markdown conversion for {pdf_path.name} "
-                       f"(Type3 fonts detected - known PyMuPDF4LLM hang issue)")
+            logger.debug(f"Skipping markdown conversion for {pdf_path.name} "
+                        f"(Type3 fonts detected - known PyMuPDF4LLM hang issue)")
             return self._extract_with_pymupdf_normalized(pdf_path)
 
         try:
             # Get layout analysis for enhanced structure detection (optional)
             layout_info = self._get_layout_analysis(pdf_path) if self.use_layout_analysis else None
 
-            # Convert entire document to markdown
-            # PyMuPDF4LLM includes built-in whitespace normalization
-            md_text = pymupdf4llm.to_markdown(
-                str(pdf_path),
-                ignore_images=self.ignore_images,  # Default: True for performance
-                write_images=self.preserve_images,  # Default: False
-                force_text=True,  # Extract all text (default)
-                table_strategy="lines_strict",  # Accurate table detection
-            )
-
-            # Handle edge cases not covered by PyMuPDF4LLM
-            # (tabs, Unicode whitespace, 4+ newlines)
-            md_text = self._normalize_whitespace_edge_cases(md_text)
+            # Extract page-by-page to track page boundaries
+            # pymupdf4llm.to_markdown with page_chunks gives us per-page text
+            page_texts = []
+            page_boundaries = []
+            current_pos = 0
 
             with pymupdf.open(pdf_path) as doc:
                 page_count = len(doc)
+
+                for page_num in range(page_count):
+                    # Extract single page as markdown
+                    page_md = pymupdf4llm.to_markdown(
+                        str(pdf_path),
+                        pages=[page_num],
+                        ignore_images=self.ignore_images,
+                        write_images=self.preserve_images,
+                        force_text=True,
+                        table_strategy="lines_strict",
+                    )
+
+                    # Normalize the page text
+                    page_md = self._normalize_whitespace_edge_cases(page_md)
+
+                    if page_md.strip():
+                        page_boundaries.append({
+                            'page_number': page_num + 1,
+                            'start_char': current_pos,
+                            'page_text_length': len(page_md)
+                        })
+                        page_texts.append(page_md)
+                        current_pos += len(page_md) + 1  # +1 for newline separator
+
+            # Join pages with newline
+            md_text = '\n'.join(page_texts)
 
             metadata = {
                 'extraction_method': 'pymupdf4llm_markdown',
@@ -308,6 +326,7 @@ class PDFExtractor:
                 'file_size': pdf_path.stat().st_size,
                 'format': 'markdown',
                 'layout_analyzed': layout_info is not None,
+                'page_boundaries': page_boundaries,
             }
 
             # Add layout analysis details if available
@@ -323,9 +342,9 @@ class PDFExtractor:
             # not core text extraction. Fallback maintains quality.
             error_msg = str(e)
             if "font" in error_msg.lower() or "code=4" in error_msg:
-                logger.warning(f"Markdown conversion failed for {pdf_path.name} "
-                             f"(font digest error: {error_msg}). This is a known PyMuPDF4LLM "
-                             f"limitation with certain fonts. Falling back to normalized extraction.")
+                logger.debug(f"Markdown conversion failed for {pdf_path.name} "
+                            f"(font digest error: {error_msg}). This is a known PyMuPDF4LLM "
+                            f"limitation with certain fonts. Falling back to normalized extraction.")
                 # Fall back to normalized extraction - quality is maintained
                 # (only loses fake-bold deduplication optimization)
                 return self._extract_with_pymupdf_normalized(pdf_path)

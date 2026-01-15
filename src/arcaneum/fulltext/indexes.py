@@ -34,7 +34,7 @@ SOURCE_CODE_SETTINGS: Dict[str, Any] = {
 }
 
 
-# Index settings for PDF documents
+# Index settings for PDF documents (RDR-010: enhanced for full-text indexing)
 PDF_DOCS_SETTINGS: Dict[str, Any] = {
     "searchableAttributes": [
         "content",
@@ -47,6 +47,9 @@ PDF_DOCS_SETTINGS: Dict[str, Any] = {
         "file_path",
         "page_number",
         "document_type",
+        "file_hash",           # RDR-010: Change detection
+        "extraction_method",   # RDR-010: Metadata tracking
+        "is_image_pdf",        # RDR-010: OCR flag
     ],
     "sortableAttributes": ["page_number"],
     "typoTolerance": {
@@ -60,7 +63,7 @@ PDF_DOCS_SETTINGS: Dict[str, Any] = {
         "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for"
     ],
     "pagination": {
-        "maxTotalHits": 1000
+        "maxTotalHits": 10000  # RDR-010: Increase for large PDF collections
     }
 }
 

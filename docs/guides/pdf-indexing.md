@@ -428,8 +428,168 @@ DEFAULT_MODELS = {
 }
 ```
 
+## Full-Text Indexing (RDR-010)
+
+In addition to semantic search via Qdrant, PDFs can be indexed to MeiliSearch for
+exact phrase and keyword search. This complements semantic search by providing:
+
+- **Exact phrase matching**: Find specific quotes or terminology
+- **Typo-tolerant search**: Find content despite spelling variations
+- **Page-level granularity**: Results point to specific pages
+
+### Quick Start
+
+```bash
+# Create MeiliSearch index (if not already created)
+arc indexes create pdf-docs --type pdf
+
+# Index PDFs to MeiliSearch for full-text search
+arc index text pdf /path/to/pdfs --index pdf-docs
+```
+
+### Command Options
+
+```bash
+arc index text pdf <directory> --index <name> [options]
+```
+
+**Required:**
+
+- `--index`: Target MeiliSearch index name
+
+**Optional:**
+
+- `--recursive / --no-recursive`: Search subdirectories (default: recursive)
+- `--force`: Force reindex all files (skip change detection)
+- `--ocr / --no-ocr`: Enable/disable OCR for scanned PDFs (default: enabled)
+- `--ocr-language`: OCR language code (default: eng)
+- `--batch-size`: Documents per batch upload (default: 1000)
+- `--verbose`: Show detailed progress
+- `--json`: JSON output for scripting
+
+### Examples
+
+**Index technical documentation:**
+
+```bash
+arc index text pdf ./docs --index pdf-docs
+```
+
+**Index with OCR for scanned documents:**
+
+```bash
+arc index text pdf ./scanned-books --index pdf-docs --ocr-language eng
+```
+
+**Force reindex all PDFs:**
+
+```bash
+arc index text pdf ./pdfs --index pdf-docs --force
+```
+
+**JSON output for scripting:**
+
+```bash
+arc index text pdf ./pdfs --index pdf-docs --json > results.json
+```
+
+### Dual Indexing Strategy
+
+For comprehensive search, index PDFs to both Qdrant (semantic) and MeiliSearch (full-text).
+
+#### Using Corpus Commands (Recommended)
+
+A "corpus" is a paired Qdrant collection and MeiliSearch index that share the same name.
+The `corpus` commands provide a unified workflow for dual indexing:
+
+```bash
+# Create both collection and index in one command
+arc corpus create my-papers --type pdf --models stella
+
+# Index to both systems in one command
+arc corpus sync /path/to/pdfs --corpus my-papers
+
+# Search both systems
+arc search semantic "machine learning" --collection my-papers  # Qdrant
+arc search text '"neural network"' --index my-papers           # MeiliSearch
+```
+
+**Using Existing Collection/Index as a Corpus:**
+
+If you already have a Qdrant collection and MeiliSearch index with the same name,
+you can use `corpus sync` directly without running `corpus create`:
+
+```bash
+# If 'Papers' collection and 'Papers' index already exist:
+arc corpus sync /path/to/pdfs --corpus Papers
+```
+
+The only requirement is that both the collection and index exist with the same name.
+The `corpus create` command is just a convenience that creates both in one step.
+
+#### Using Separate Commands
+
+Alternatively, you can manage Qdrant and MeiliSearch separately:
+
+```bash
+# Step 1: Create collections/indexes
+arc collection create pdf-docs --type pdf      # Qdrant collection
+arc indexes create pdf-docs --type pdf         # MeiliSearch index
+
+# Step 2: Index to Qdrant (semantic search)
+arc index pdf /path/to/pdfs --collection pdf-docs
+
+# Step 3: Index to MeiliSearch (full-text search)
+arc index text pdf /path/to/pdfs --index pdf-docs
+
+# Search semantically (conceptual matches)
+arc search semantic "machine learning techniques" --collection pdf-docs
+
+# Search exact phrases (keyword matches)
+arc search text '"neural network architecture"' --index pdf-docs
+```
+
+### Change Detection
+
+The full-text indexer tracks indexed files using SHA-256 file hashes:
+
+- **First run**: All PDFs are indexed
+- **Subsequent runs**: Only new or modified PDFs are processed
+- **Detection**: Based on file path and content hash
+
+To bypass change detection and reindex everything, use `--force`.
+
+### Document Schema
+
+Each page is indexed as a separate document with the following fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique document ID (filename + path hash + page) |
+| `content` | string | Page text content (searchable) |
+| `filename` | string | PDF filename (searchable) |
+| `file_path` | string | Absolute file path (filterable) |
+| `page_number` | int | Page number (filterable, sortable) |
+| `file_hash` | string | SHA-256 hash for change detection (filterable) |
+| `extraction_method` | string | How text was extracted (filterable) |
+| `is_image_pdf` | bool | Whether OCR was used (filterable) |
+
+### Filtering Examples
+
+```bash
+# Search specific page range
+arc search text "results" --index pdf-docs --filter "page_number > 10 AND page_number < 20"
+
+# Search only OCR'd documents
+arc search text "scanned content" --index pdf-docs --filter "is_image_pdf = true"
+
+# Search by filename pattern (requires exact match)
+arc search text "findings" --index pdf-docs --filter 'filename = "report.pdf"'
+```
+
 ## Related Documentation
 
-- [RDR-004: PDF Bulk Indexing](../docs/rdr/RDR-004-pdf-bulk-indexing.md) - Full specification
-- [RDR-002: Qdrant Integration](../docs/rdr/RDR-002-qdrant-docker-compose.md) - Server setup
-- [RDR-003: Collection Management](../docs/rdr/RDR-003-qdrant-collection-creation-cli.md) - Collection creation
+- [RDR-004: PDF Bulk Indexing](../rdr/RDR-004-pdf-bulk-indexing.md) - Semantic indexing specification
+- [RDR-010: PDF Full-Text Indexing](../rdr/RDR-010-pdf-fulltext-indexing.md) - Full-text indexing specification
+- [RDR-008: Full-Text Search Server Setup](../rdr/RDR-008-fulltext-search-server-setup.md) - MeiliSearch setup
+- [RDR-009: Dual Indexing Strategy](../rdr/RDR-009-dual-indexing-strategy.md) - Dual indexing architecture

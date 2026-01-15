@@ -65,7 +65,27 @@ class FullTextClient:
     def list_indexes(self) -> List[Dict[str, Any]]:
         """List all indexes with their configurations."""
         result = self.client.get_indexes()
-        return result.get('results', [])
+
+        # Extract the list of indexes from the response
+        if isinstance(result, dict):
+            index_list = result.get('results', [])
+        else:
+            index_list = result
+
+        # Convert Index objects to dicts
+        indexes = []
+        for idx in index_list:
+            if hasattr(idx, 'uid'):
+                # It's an Index object
+                indexes.append({
+                    'uid': idx.uid,
+                    'primaryKey': getattr(idx, 'primary_key', None),
+                    'createdAt': getattr(idx, 'created_at', None),
+                    'updatedAt': getattr(idx, 'updated_at', None),
+                })
+            elif isinstance(idx, dict):
+                indexes.append(idx)
+        return indexes
 
     def delete_index(self, name: str) -> None:
         """Delete an index."""
@@ -97,7 +117,8 @@ class FullTextClient:
         self,
         index_name: str,
         documents: List[Dict[str, Any]],
-        primary_key: Optional[str] = None
+        primary_key: Optional[str] = None,
+        timeout_ms: int = 60000
     ) -> Dict[str, Any]:
         """
         Add documents to an index and wait for completion.
@@ -106,13 +127,25 @@ class FullTextClient:
             index_name: Target index name
             documents: List of document dictionaries
             primary_key: Optional primary key field
+            timeout_ms: Timeout in milliseconds for waiting on task completion (default: 60s)
 
         Returns:
             Task result
+
+        Raises:
+            RuntimeError: If the task fails
         """
         index = self.get_index(index_name)
         task = index.add_documents(documents, primary_key)
-        result = self.client.wait_for_task(task.task_uid)
+        result = self.client.wait_for_task(task.task_uid, timeout_in_ms=timeout_ms)
+
+        # Check if task failed
+        status = getattr(result, 'status', None) or (result.get('status') if isinstance(result, dict) else None)
+        if status == 'failed':
+            error = getattr(result, 'error', None) or (result.get('error') if isinstance(result, dict) else None)
+            error_msg = error.get('message', str(error)) if isinstance(error, dict) else str(error)
+            raise RuntimeError(f"Document addition failed: {error_msg}")
+
         return result
 
     def search(
@@ -154,12 +187,24 @@ class FullTextClient:
     def get_index_stats(self, index_name: str) -> Dict[str, Any]:
         """Get statistics for an index."""
         index = self.get_index(index_name)
-        return index.get_stats()
+        stats = index.get_stats()
+        # Convert Pydantic model to dict if needed
+        if hasattr(stats, 'model_dump'):
+            return stats.model_dump(by_alias=True)
+        elif hasattr(stats, 'dict'):
+            return stats.dict(by_alias=True)
+        return stats
 
     def get_index_settings(self, index_name: str) -> Dict[str, Any]:
         """Get settings for an index."""
         index = self.get_index(index_name)
-        return index.get_settings()
+        settings = index.get_settings()
+        # Convert Pydantic model to dict if needed
+        if hasattr(settings, 'model_dump'):
+            return settings.model_dump(by_alias=True)
+        elif hasattr(settings, 'dict'):
+            return settings.dict(by_alias=True)
+        return settings
 
     def update_index_settings(
         self,
@@ -186,3 +231,52 @@ class FullTextClient:
     def get_stats(self) -> Dict[str, Any]:
         """Get global statistics."""
         return self.client.get_all_stats()
+
+    def get_all_file_paths(self, index_name: str) -> set:
+        """Get all unique file_path values from an index.
+
+        Uses faceted search to efficiently get unique file paths.
+
+        Args:
+            index_name: Index to query
+
+        Returns:
+            Set of unique file_path strings
+        """
+        index = self.get_index(index_name)
+        file_paths = set()
+
+        # Use documents endpoint to get all unique file paths
+        # MeiliSearch doesn't have aggregation, so we paginate through documents
+        offset = 0
+        limit = 1000
+
+        while True:
+            result = index.get_documents({
+                'offset': offset,
+                'limit': limit,
+                'fields': ['file_path']
+            })
+
+            # Handle both dict and object results
+            if hasattr(result, 'results'):
+                docs = result.results
+            else:
+                docs = result.get('results', [])
+
+            if not docs:
+                break
+
+            for doc in docs:
+                if hasattr(doc, 'file_path'):
+                    file_paths.add(doc.file_path)
+                elif isinstance(doc, dict) and 'file_path' in doc:
+                    file_paths.add(doc['file_path'])
+
+            offset += limit
+
+            # Check if we've reached the end
+            if len(docs) < limit:
+                break
+
+        return file_paths

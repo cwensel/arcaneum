@@ -125,9 +125,29 @@ arc index pdf ~/Documents/papers --collection MyDocs
 # Index with larger batch size for better throughput
 arc index pdf ~/Documents/papers --collection MyDocs --embedding-batch-size 500
 
-# Search PDFs
+# Search PDFs semantically
 arc search semantic "machine learning techniques" --collection MyDocs
 ```
+
+### Full-Text PDF Search
+
+For exact phrase and keyword search, index PDFs to MeiliSearch.
+The `arc indexes` commands mirror `arc collection` commands:
+
+```bash
+# Create MeiliSearch index (mirrors arc collection create)
+arc indexes create pdf-docs --type pdf
+
+# Index PDFs for full-text search
+arc index text pdf ~/Documents/papers --index pdf-docs
+
+# Search for exact phrases
+arc search text '"neural network architecture"' --index pdf-docs
+```
+
+**Tip:** Use both semantic search (Qdrant) for conceptual matches and full-text
+search (MeiliSearch) for exact phrases. See [PDF Indexing Guide](pdf-indexing.md)
+for the dual indexing workflow.
 
 ### Multi-Branch Code Indexing
 
@@ -413,19 +433,28 @@ arc container start          # Start services
 arc container stop           # Stop services
 arc container status         # Check status
 
-# Collections
+# Collections (Qdrant)
 arc collection list                    # List all collections
 arc collection create NAME --model MODEL --type TYPE
 arc collection items NAME              # List indexed files/repos
 arc collection delete NAME --confirm
 
-# Indexing
+# Full-Text Indexes (MeiliSearch) - mirrors arc collection
+arc indexes create NAME --type TYPE
+arc indexes list
+arc indexes info NAME
+arc indexes delete NAME --confirm
+
+# Indexing (Semantic - Qdrant)
 arc index code PATH --collection NAME
 arc index pdf PATH --collection NAME
 
+# Indexing (Full-Text - MeiliSearch)
+arc index text pdf PATH --index NAME
+
 # Searching
-arc search semantic "query" --collection NAME
-arc search semantic "query" --collection NAME --limit 20
+arc search semantic "query" --collection NAME   # Semantic search
+arc search text "query" --index NAME            # Full-text search
 
 # Configuration
 arc config show-cache-dir    # Show cache location

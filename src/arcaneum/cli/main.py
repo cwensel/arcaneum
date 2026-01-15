@@ -226,11 +226,12 @@ def list_models(output_json):
     list_models_command(output_json)
 
 
-# Indexing commands (RDR-004, RDR-005)
+# Indexing commands (RDR-004, RDR-005, RDR-010)
 @cli.group(cls=HelpfulGroup, usage_examples=[
     'arc index pdf /path/to/pdfs --collection MyPDFs',
     'arc index code /path/to/repo --collection MyCode',
     'arc index markdown /path/to/docs --collection MyDocs',
+    'arc index text pdf /path/to/pdfs --index MyIndex',
 ])
 def index():
     """Index content into collections"""
@@ -345,6 +346,53 @@ def index_markdown(path, from_file, collection, model, embedding_batch_size, chu
     index_markdown_command(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, no_gpu, offline, randomize, verify, streaming, verbose, debug, output_json)
 
 
+# Full-text indexing subgroup (RDR-010: arc index text ...)
+@index.group('text', cls=HelpfulGroup, usage_examples=[
+    'arc index text pdf /path/to/pdfs --index MyPDFs',
+])
+def index_text():
+    """Index content to MeiliSearch for full-text search (RDR-010)"""
+    pass
+
+
+@index_text.command('pdf')
+@click.argument('path', type=click.Path(exists=True), required=False)
+@click.option('--from-file', help='Read file paths from list (one per line, or "-" for stdin)')
+@click.option('--index', 'index_name', required=True, help='MeiliSearch index name')
+@click.option('--recursive/--no-recursive', default=True, help='Search subdirectories recursively')
+@click.option('--no-ocr', is_flag=True, help='Disable OCR (enabled by default for scanned PDFs)')
+@click.option('--ocr-language', default='eng', help='OCR language code')
+@click.option('--ocr-workers', type=int, default=None, help='Parallel OCR workers (default: cpu_count)')
+@click.option('--normalize-only', is_flag=True, help='Skip markdown conversion, only normalize whitespace')
+@click.option('--batch-size', type=int, default=1000, help='Documents per batch upload (default: 1000)')
+@click.option('--force', is_flag=True, help='Force reindex all files')
+@click.option('--process-priority', type=click.Choice(['low', 'normal', 'high']), default='normal', help='Process scheduling priority')
+@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
+@click.option('--debug', is_flag=True, help='Debug mode')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def index_text_pdf(path, from_file, index_name, recursive, no_ocr, ocr_language, ocr_workers, normalize_only, batch_size, force, process_priority, verbose, debug, output_json):
+    """Index PDFs to MeiliSearch for full-text search.
+
+    Extracts text from PDFs and indexes to MeiliSearch for exact phrase
+    and keyword search. Complements semantic search via Qdrant (arc index pdf).
+
+    Examples:
+        arc index text pdf ./research-papers --index research-pdfs
+        arc index text pdf ./docs --index docs --no-ocr --force
+    """
+    # Validate that exactly one of path or from_file is provided
+    if not path and not from_file:
+        click.echo("Error: Either PATH or --from-file must be provided", err=True)
+        raise click.Abort()
+    if path and from_file:
+        click.echo("Error: Cannot use both PATH and --from-file", err=True)
+        raise click.Abort()
+
+    from arcaneum.cli.index_text import index_text_pdf_command
+    ocr_enabled = not no_ocr
+    index_text_pdf_command(path, from_file, index_name, recursive, ocr_enabled, ocr_language, ocr_workers, normalize_only, batch_size, force, process_priority, verbose, debug, output_json)
+
+
 @cli.command('store')
 @click.argument('file', type=click.Path())
 @click.option('--collection', required=True, help='Target collection name')
@@ -446,11 +494,14 @@ def create_corpus(name, corpus_type, models, output_json):
 @click.option('--corpus', required=True, help='Corpus name')
 @click.option('--models', default='stella,jina', help='Embedding models (comma-separated)')
 @click.option('--file-types', help='File extensions to index (e.g., .py,.md)')
+@click.option('--force', is_flag=True, help='Force reindex all files (bypass change detection)')
+@click.option('--verify', is_flag=True, help='Verify collection integrity after indexing')
+@click.option('--verbose', '-v', is_flag=True, help='Show detailed progress (files, chunks, indexing)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def sync_directory(directory, corpus, models, file_types, output_json):
+def sync_directory(directory, corpus, models, file_types, force, verify, verbose, output_json):
     """Index to both vector and full-text"""
     from arcaneum.cli.sync import sync_directory_command
-    sync_directory_command(directory, corpus, models, file_types, output_json)
+    sync_directory_command(directory, corpus, models, file_types, force, verify, verbose, output_json)
 
 
 # Diagnostics command (RDR-006 enhancement)
@@ -471,9 +522,10 @@ cli.add_command(config_group, name='config')
 from arcaneum.cli.docker import container_group
 cli.add_command(container_group, name='container')
 
-# Full-text index management commands (RDR-008)
-from arcaneum.cli.fulltext import fulltext as fulltext_group
-cli.add_command(fulltext_group, name='fulltext')
+# MeiliSearch index management commands (RDR-008, RDR-010)
+# Named 'indexes' to mirror 'collection' for Qdrant
+from arcaneum.cli.fulltext import fulltext as indexes_group
+cli.add_command(indexes_group, name='indexes')
 
 
 def main():

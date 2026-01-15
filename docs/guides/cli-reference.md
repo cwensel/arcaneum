@@ -36,8 +36,9 @@ arc collection delete <name>                  # Delete collection
 ### Indexing Commands
 
 ```bash
-arc index pdf <path> --collection <name>     # Index PDF files
-arc index code <path> --collection <name>   # Index source code
+arc index pdf <path> --collection <name>      # Index PDFs to Qdrant (semantic)
+arc index code <path> --collection <name>     # Index source code to Qdrant
+arc index text pdf <path> --index <name>      # Index PDFs to MeiliSearch (full-text)
 ```
 
 ### Search Commands
@@ -49,20 +50,34 @@ arc search text <query> --index <name>           # Full-text search (MeiliSearch
 
 ### Full-Text Index Management
 
+MeiliSearch index commands mirror Qdrant collection commands:
+
+| Qdrant (arc collection) | MeiliSearch (arc indexes) |
+|-------------------------|----------------------------|
+| `arc collection create` | `arc indexes create` |
+| `arc collection list` | `arc indexes list` |
+| `arc collection info` | `arc indexes info` |
+| `arc collection delete` | `arc indexes delete` |
+
 ```bash
-arc fulltext create-index <name> --type <type>   # Create MeiliSearch index
-arc fulltext list-indexes                        # List all indexes
-arc fulltext info <name>                         # Show index details
-arc fulltext delete-index <name>                 # Delete index
-arc fulltext update-settings <name> --type <type>  # Update index settings
+arc indexes create <name> --type <type>   # Create MeiliSearch index
+arc indexes list                        # List all indexes
+arc indexes info <name>                         # Show index details
+arc indexes delete <name>                 # Delete index
+arc indexes update-settings <name> --type <type>  # Update index settings
 ```
 
 ### Dual Indexing (Qdrant + MeiliSearch)
 
+A "corpus" is a paired Qdrant collection and MeiliSearch index with the same name.
+
 ```bash
-arc corpus create <name> --type <type>        # Create dual corpus
-arc corpus sync <path> --corpus <name>     # Dual indexing
+arc corpus create <name> --type <type> --models <model>  # Create both
+arc corpus sync <path> --corpus <name>                   # Index to both
 ```
+
+**Note:** If you already have a collection and index with the same name, you can
+use `corpus sync` directly - no need to run `corpus create` first.
 
 ## Collection Management Examples
 
@@ -370,6 +385,78 @@ creation time with `arc collection create --type pdf`.
 arc index pdf /path/to/pdfs --collection pdf-docs --debug
 ```
 
+## PDF Full-Text Indexing (MeiliSearch)
+
+Index PDFs to MeiliSearch for exact phrase and keyword search, complementing
+semantic search in Qdrant. This mirrors the `arc collection` commands for Qdrant
+with `arc indexes` commands for MeiliSearch.
+
+### Basic Usage
+
+```bash
+# Create MeiliSearch index first (mirrors arc collection create)
+arc indexes create pdf-docs --type pdf
+
+# Index PDFs to MeiliSearch
+arc index text pdf /path/to/pdfs --index pdf-docs
+```
+
+### Command Options
+
+```bash
+arc index text pdf <directory> --index <name> [options]
+```
+
+**Options:**
+
+- `--index`: Target MeiliSearch index name (required)
+- `--recursive / --no-recursive`: Search subdirectories (default: recursive)
+- `--force`: Force reindex all files (skip change detection)
+- `--ocr / --no-ocr`: Enable/disable OCR for scanned PDFs (default: enabled)
+- `--ocr-language`: OCR language code (default: eng)
+- `--batch-size`: Documents per batch upload (default: 1000)
+- `--verbose`: Show detailed progress
+- `--json`: JSON output for scripting
+
+### Examples
+
+```bash
+# Index with OCR for scanned documents
+arc index text pdf ./scanned-docs --index pdf-docs --ocr-language eng
+
+# Force reindex all
+arc index text pdf ./pdfs --index pdf-docs --force
+
+# Disable OCR (text-only PDFs)
+arc index text pdf ./text-pdfs --index pdf-docs --no-ocr
+
+# JSON output
+arc index text pdf ./pdfs --index pdf-docs --json
+```
+
+### Dual Indexing Workflow
+
+For comprehensive search, index to both Qdrant and MeiliSearch.
+The CLI commands mirror each other: `arc collection` for Qdrant, `arc indexes` for MeiliSearch:
+
+```bash
+# Create both collection and index (mirrored commands)
+arc collection create pdf-docs --type pdf      # Qdrant
+arc indexes create pdf-docs --type pdf  # MeiliSearch
+
+# Index to Qdrant (semantic search)
+arc index pdf /path/to/pdfs --collection pdf-docs
+
+# Index to MeiliSearch (full-text search)
+arc index text pdf /path/to/pdfs --index pdf-docs
+
+# Semantic search (conceptual matches)
+arc search semantic "machine learning" --collection pdf-docs
+
+# Full-text search (exact phrases)
+arc search text '"neural network"' --index pdf-docs
+```
+
 ## Model Selection
 
 ### General Purpose Models
@@ -551,18 +638,18 @@ Full-text search provides exact phrase matching, typo-tolerant keyword search, a
 
 ```bash
 # Create index with type-specific settings
-arc fulltext create-index source-code --type source-code
-arc fulltext create-index pdf-docs --type pdf
-arc fulltext create-index my-docs --type markdown
+arc indexes create source-code --type source-code
+arc indexes create pdf-docs --type pdf
+arc indexes create my-docs --type markdown
 
 # List all indexes
-arc fulltext list-indexes
+arc indexes list
 
 # Show index details
-arc fulltext info source-code
+arc indexes info source-code
 
 # Delete index
-arc fulltext delete-index source-code --confirm
+arc indexes delete source-code --confirm
 ```
 
 **Index Types:**

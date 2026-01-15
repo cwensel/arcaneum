@@ -84,6 +84,7 @@ class DualIndexDocument:
     # File metadata
     file_hash: Optional[str] = None
     file_size: Optional[int] = None
+    quick_hash: Optional[str] = None  # Metadata-based hash (mtime+size) for fast change detection
 
     # Vectors (Qdrant only)
     vectors: Dict[str, List[float]] = field(default_factory=dict)
@@ -172,6 +173,9 @@ def to_qdrant_point(doc: DualIndexDocument, point_id: Optional[int] = None):
 
     if doc.file_size is not None:
         payload["file_size"] = doc.file_size
+
+    if doc.quick_hash:
+        payload["quick_hash"] = doc.quick_hash
 
     # Use document id or provided point_id
     pid = point_id if point_id is not None else doc.id

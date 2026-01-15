@@ -187,21 +187,22 @@ def search_text_command(
         sys.exit(1)
 
 
-# Index management commands (arc fulltext ...)
+# Index management commands (arc indexes ...)
+# Named 'indexes' to mirror 'arc collection' for Qdrant
 @click.group()
 def fulltext():
-    """Full-text index management commands (MeiliSearch)."""
+    """MeiliSearch index management commands (mirrors arc collection)."""
     pass
 
 
-@fulltext.command('create-index')
+@fulltext.command('create')
 @click.argument('name')
 @click.option('--type', 'index_type',
               type=click.Choice(['source-code', 'pdf-docs', 'markdown-docs', 'code', 'pdf', 'markdown']),
               help='Index type (determines settings)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
 def create_index(name, index_type, output_json):
-    """Create a new full-text search index."""
+    """Create a new MeiliSearch index."""
     try:
         client = get_client()
 
@@ -243,10 +244,10 @@ def create_index(name, index_type, output_json):
         sys.exit(1)
 
 
-@fulltext.command('list-indexes')
+@fulltext.command('list')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
 def list_indexes(output_json):
-    """List all full-text search indexes."""
+    """List all MeiliSearch indexes."""
     try:
         client = get_client()
 
@@ -281,11 +282,23 @@ def list_indexes(output_json):
             except Exception:
                 doc_count = "?"
 
+            # Format created date - handle both string and datetime
+            created_at = idx.get('createdAt')
+            if created_at:
+                if hasattr(created_at, 'strftime'):
+                    created_str = created_at.strftime('%Y-%m-%d')
+                elif isinstance(created_at, str):
+                    created_str = created_at[:10]
+                else:
+                    created_str = str(created_at)[:10]
+            else:
+                created_str = 'N/A'
+
             table.add_row(
                 idx['uid'],
                 idx.get('primaryKey', 'N/A'),
                 doc_count,
-                idx.get('createdAt', 'N/A')[:10] if idx.get('createdAt') else 'N/A'
+                created_str
             )
 
         console.print(table)
@@ -372,12 +385,12 @@ def index_info(name, output_json):
         sys.exit(1)
 
 
-@fulltext.command('delete-index')
+@fulltext.command('delete')
 @click.argument('name')
 @click.option('--confirm', is_flag=True, help='Skip confirmation prompt')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
 def delete_index(name, confirm, output_json):
-    """Delete a full-text search index."""
+    """Delete a MeiliSearch index."""
     try:
         client = get_client()
 

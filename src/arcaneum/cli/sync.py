@@ -24,6 +24,7 @@ from ..fulltext.client import FullTextClient
 from ..schema.document import DualIndexDocument
 from ..indexing.dual_indexer import DualIndexer
 from ..indexing.collection_metadata import get_collection_type, get_collection_metadata
+from ..indexing.common.sync import MetadataBasedSync, compute_quick_hash
 from ..config import DEFAULT_MODELS
 
 console = Console()
@@ -75,8 +76,8 @@ def discover_files(
     # Discover files
     files = []
     for ext in extensions:
-        pattern = f"**/*{ext}"
-        found = list(directory.rglob(pattern.lstrip('*/')))
+        pattern = f"*{ext}"  # rglob already handles recursive search
+        found = list(directory.rglob(pattern))
         files.extend(found)
 
     # Sort for consistent ordering
@@ -104,11 +105,13 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any]) -> List[Dict[s
         List of chunk dicts with 'text' and 'metadata'
     """
     from ..indexing.pdf.chunker import PDFChunker
-    from ..indexing.pdf.extractor import extract_pdf_text
+    from ..indexing.pdf.extractor import PDFExtractor
 
-    # Extract text from PDF
-    text_result = extract_pdf_text(file_path)
-    if not text_result or not text_result.get('text'):
+    # Extract text from PDF using PDFExtractor class
+    extractor = PDFExtractor()
+    text, metadata = extractor.extract(file_path)
+
+    if not text or not text.strip():
         logger.warning(f"No text extracted from {file_path}")
         return []
 
@@ -117,10 +120,10 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any]) -> List[Dict[s
     base_metadata = {
         'file_path': str(file_path),
         'filename': file_path.name,
-        'page_boundaries': text_result.get('page_boundaries', []),
+        'page_boundaries': metadata.get('page_boundaries', []),
     }
 
-    chunks = chunker.chunk(text_result['text'], base_metadata)
+    chunks = chunker.chunk(text, base_metadata)
 
     return [{'text': c.text, 'metadata': c.metadata} for c in chunks]
 
@@ -217,6 +220,9 @@ def sync_directory_command(
     corpus: str,
     models: str,
     file_types: Optional[str],
+    force: bool,
+    verify: bool,
+    verbose: bool,
     output_json: bool
 ):
     """Sync a directory to both Qdrant and MeiliSearch.
@@ -230,6 +236,9 @@ def sync_directory_command(
         corpus: Corpus name (must exist)
         models: Comma-separated list of embedding models
         file_types: File extensions to index (e.g., ".py,.js")
+        force: If True, reindex all files (bypass change detection)
+        verify: If True, verify collection integrity after indexing
+        verbose: If True, show detailed progress
         output_json: If True, output JSON format
     """
     # Start interaction logging (RDR-018)
@@ -289,6 +298,9 @@ def sync_directory_command(
         if not output_json:
             print_info(f"Corpus type: {corpus_type}")
             print_info(f"Models: {configured_models}")
+            print_info(f"Dual indexing to:")
+            print_info(f"  - Qdrant collection: {corpus} (semantic search)")
+            print_info(f"  - MeiliSearch index: {corpus} (full-text search)")
 
         # Parse models
         model_list = [m.strip() for m in configured_models.split(',')]
@@ -305,152 +317,520 @@ def sync_directory_command(
             return
 
         if not output_json:
-            print_info(f"Found {len(files)} files to index")
+            print_info(f"Found {len(files)} files in directory")
 
-        # Initialize embedding client
-        use_gpu = not os.environ.get('ARC_NO_GPU', '').lower() in ('1', 'true')
-        embedding_client = EmbeddingClient(use_gpu=use_gpu)
+        # Apply change detection (skip already indexed files) unless --force
+        already_indexed_count = 0
+        meili_backfill_paths = []  # Files in Qdrant but missing from MeiliSearch
+        qdrant_backfill_paths = []  # Files in MeiliSearch but missing from Qdrant
 
-        # Create dual indexer
-        dual_indexer = DualIndexer(
-            qdrant_client=qdrant,
-            meili_client=meili,
-            collection_name=corpus,
-            index_name=corpus
-        )
-
-        # Get model config for chunking
-        first_model = model_list[0]
-        if first_model in DEFAULT_MODELS:
-            model_config = DEFAULT_MODELS[first_model].__dict__
+        if force:
+            if not output_json:
+                print_info("Force mode: reindexing all files")
         else:
-            # Fallback config
-            model_config = {
-                'chunk_size': 512,
-                'chunk_overlap': 50,
-                'char_to_token_ratio': 3.3,
-            }
+            if not output_json:
+                print_info("Checking index parity between Qdrant and MeiliSearch...")
+
+            # Get file paths from both systems
+            sync_manager = MetadataBasedSync(qdrant)
+            meili_file_paths = meili.get_all_file_paths(corpus)
+            qdrant_file_paths = sync_manager._get_indexed_file_paths_set(corpus)
+
+            # Calculate set operations
+            in_both_systems = qdrant_file_paths & meili_file_paths
+            missing_from_meili = qdrant_file_paths - meili_file_paths
+            missing_from_qdrant = meili_file_paths - qdrant_file_paths
+
+            # Files in Qdrant but not in MeiliSearch need backfill
+            if missing_from_meili:
+                meili_backfill_paths = [p for p in missing_from_meili if Path(p).exists()]
+                if not output_json and meili_backfill_paths:
+                    print_info(f"Found {len(meili_backfill_paths)} files in Qdrant missing from MeiliSearch")
+
+            # Files in MeiliSearch but not in Qdrant need backfill
+            if missing_from_qdrant:
+                qdrant_backfill_paths = [p for p in missing_from_qdrant if Path(p).exists()]
+                if not output_json and qdrant_backfill_paths:
+                    print_info(f"Found {len(qdrant_backfill_paths)} files in MeiliSearch missing from Qdrant")
+
+            # Check for new/modified files not in either system
+            # Convert discovered files to absolute path strings for comparison
+            discovered_file_paths = {str(f.absolute()) for f in files}
+            all_indexed_paths = qdrant_file_paths | meili_file_paths
+            new_file_paths = discovered_file_paths - all_indexed_paths
+
+            # Filter to only process new files (not in either system)
+            files_to_process = [f for f in files if str(f.absolute()) in new_file_paths]
+
+            # Count files in both systems (truly skipped)
+            already_indexed_count = len(in_both_systems & discovered_file_paths)
+
+            if not output_json:
+                if already_indexed_count > 0:
+                    print_info(f"Skipping {already_indexed_count} files already in both systems")
+                if len(files_to_process) > 0:
+                    print_info(f"Processing {len(files_to_process)} new files")
+
+            files = files_to_process
+
+        # If no new files but there are files to backfill, continue
+        if not files and not meili_backfill_paths and not qdrant_backfill_paths:
+            if output_json:
+                print_json("success", "All files already indexed", data={
+                    "indexed": 0,
+                    "skipped": already_indexed_count
+                })
+            else:
+                print_info("All files are already indexed in both systems (use --force to reindex)")
+            interaction_logger.finish(result_count=0)
+            return
 
         # Process files
         total_indexed = 0
         total_chunks = 0
+        total_qdrant = 0
+        total_meili = 0
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            console=console,
-            disable=output_json,
-        ) as progress:
-            task = progress.add_task("Indexing...", total=len(files))
+        # Only initialize embedding infrastructure if there are new files to process
+        if files:
+            # Initialize embedding client
+            use_gpu = not os.environ.get('ARC_NO_GPU', '').lower() in ('1', 'true')
+            embedding_client = EmbeddingClient(use_gpu=use_gpu)
 
-            for file_path in files:
-                progress.update(task, description=f"Processing {file_path.name}...")
+            # Create dual indexer
+            dual_indexer = DualIndexer(
+                qdrant_client=qdrant,
+                meili_client=meili,
+                collection_name=corpus,
+                index_name=corpus
+            )
 
-                try:
-                    # Chunk file based on corpus type
-                    if corpus_type == 'pdf':
-                        chunks = chunk_pdf_file(file_path, model_config)
-                    elif corpus_type == 'markdown':
-                        chunks = chunk_markdown_file(
-                            file_path,
-                            model_config.get('chunk_size', 512),
-                            model_config.get('chunk_overlap', 50)
-                        )
-                    elif corpus_type == 'code':
-                        chunks = chunk_code_file(
-                            file_path,
-                            model_config.get('chunk_size', 400),
-                            model_config.get('chunk_overlap', 20)
-                        )
-                    else:
-                        logger.warning(f"Unknown corpus type: {corpus_type}, skipping {file_path}")
-                        continue
+            # Get model config for chunking
+            first_model = model_list[0]
+            if first_model in DEFAULT_MODELS:
+                model_config = DEFAULT_MODELS[first_model].__dict__
+            else:
+                # Fallback config
+                model_config = {
+                    'chunk_size': 512,
+                    'chunk_overlap': 50,
+                    'char_to_token_ratio': 3.3,
+                }
 
-                    if not chunks:
-                        logger.debug(f"No chunks from {file_path}")
-                        progress.advance(task)
-                        continue
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console,
+                disable=output_json,
+            ) as progress:
+                task = progress.add_task("Indexing...", total=len(files))
 
-                    # Build dual index documents
-                    documents = []
-                    file_hash = compute_file_hash(file_path)
+                for file_path in files:
+                    progress.update(task, description=f"Processing {file_path.name}...")
 
-                    for i, chunk in enumerate(chunks):
-                        # Generate embeddings for all models
-                        vectors = {}
-                        for model in model_list:
-                            embeddings = embedding_client.embed([chunk['text']], model)
-                            # Handle both list and numpy array returns
-                            if hasattr(embeddings, 'tolist'):
-                                vectors[model] = embeddings[0].tolist()
-                            else:
-                                vectors[model] = list(embeddings[0])
-
-                        # Create document with shared metadata
-                        doc = DualIndexDocument(
-                            id=str(uuid4()),
-                            content=chunk['text'],
-                            file_path=str(file_path),
-                            filename=file_path.name,
-                            file_extension=file_path.suffix,
-                            chunk_index=i,
-                            chunk_count=len(chunks),
-                            file_hash=file_hash,
-                            file_size=file_path.stat().st_size,
-                            vectors=vectors,
-                        )
-
-                        # Add type-specific metadata
-                        chunk_meta = chunk.get('metadata', {})
+                    try:
+                        # Chunk file based on corpus type
+                        if verbose and not output_json:
+                            progress.console.print(f"[dim]Extracting text from {file_path.name}...[/dim]")
 
                         if corpus_type == 'pdf':
-                            doc.page_number = chunk_meta.get('page_number')
-                            doc.document_type = 'pdf'
-
+                            chunks = chunk_pdf_file(file_path, model_config)
                         elif corpus_type == 'markdown':
-                            doc.language = 'markdown'
-                            doc.section = chunk_meta.get('header_path')
-                            if chunk_meta.get('has_code_blocks'):
-                                doc.tags = ['has-code']
-
+                            chunks = chunk_markdown_file(
+                                file_path,
+                                model_config.get('chunk_size', 512),
+                                model_config.get('chunk_overlap', 50)
+                            )
                         elif corpus_type == 'code':
-                            doc.language = chunk_meta.get('language', 'unknown')
-                            doc.line_number = chunk_meta.get('line_number')
+                            chunks = chunk_code_file(
+                                file_path,
+                                model_config.get('chunk_size', 400),
+                                model_config.get('chunk_overlap', 20)
+                            )
+                        else:
+                            logger.warning(f"Unknown corpus type: {corpus_type}, skipping {file_path}")
+                            continue
 
-                        documents.append(doc)
+                        if not chunks:
+                            if verbose and not output_json:
+                                progress.console.print(f"[yellow]  No text extracted from {file_path.name}[/yellow]")
+                            progress.advance(task)
+                            continue
 
-                    # Index to both systems
-                    if documents:
-                        qdrant_count, meili_count = dual_indexer.index_batch(documents)
-                        total_chunks += len(documents)
+                        if verbose and not output_json:
+                            progress.console.print(f"[dim]  Created {len(chunks)} chunks, generating embeddings...[/dim]")
 
-                    total_indexed += 1
+                        # Build dual index documents
+                        documents = []
+                        file_hash = compute_file_hash(file_path)
+                        quick_hash = compute_quick_hash(file_path)
 
-                except Exception as e:
-                    logger.error(f"Failed to process {file_path}: {e}")
-                    if not output_json:
-                        console.print(f"[yellow]Warning: Failed to process {file_path.name}: {e}[/yellow]")
+                        for i, chunk in enumerate(chunks):
+                            # Generate embeddings for all models
+                            vectors = {}
+                            for model in model_list:
+                                embeddings = embedding_client.embed([chunk['text']], model)
+                                # Handle both list and numpy array returns
+                                if hasattr(embeddings, 'tolist'):
+                                    vectors[model] = embeddings[0].tolist()
+                                else:
+                                    vectors[model] = list(embeddings[0])
 
-                progress.advance(task)
+                            # Create document with shared metadata
+                            doc = DualIndexDocument(
+                                id=str(uuid4()),
+                                content=chunk['text'],
+                                file_path=str(file_path.absolute()),  # Use absolute path for change detection
+                                filename=file_path.name,
+                                file_extension=file_path.suffix,
+                                chunk_index=i,
+                                chunk_count=len(chunks),
+                                file_hash=file_hash,
+                                file_size=file_path.stat().st_size,
+                                quick_hash=quick_hash,
+                                vectors=vectors,
+                            )
+
+                            # Add type-specific metadata
+                            chunk_meta = chunk.get('metadata', {})
+
+                            if corpus_type == 'pdf':
+                                doc.page_number = chunk_meta.get('page_number')
+                                doc.document_type = 'pdf'
+
+                            elif corpus_type == 'markdown':
+                                doc.language = 'markdown'
+                                doc.section = chunk_meta.get('header_path')
+                                if chunk_meta.get('has_code_blocks'):
+                                    doc.tags = ['has-code']
+
+                            elif corpus_type == 'code':
+                                doc.language = chunk_meta.get('language', 'unknown')
+                                doc.line_number = chunk_meta.get('line_number')
+
+                            documents.append(doc)
+
+                        # Index to both systems
+                        if documents:
+                            if verbose and not output_json:
+                                progress.console.print(f"[dim]  Indexing {len(documents)} chunks to Qdrant + MeiliSearch...[/dim]")
+
+                            qdrant_count, meili_count = dual_indexer.index_batch(documents)
+                            total_chunks += len(documents)
+                            total_qdrant += qdrant_count
+                            total_meili += meili_count
+
+                            if verbose and not output_json:
+                                progress.console.print(f"[green]  ✓ {file_path.name}: {len(chunks)} chunks → Qdrant({qdrant_count}) + MeiliSearch({meili_count})[/green]")
+
+                        total_indexed += 1
+
+                    except Exception as e:
+                        logger.error(f"Failed to process {file_path}: {e}")
+                        if not output_json:
+                            progress.console.print(f"[yellow]Warning: Failed to process {file_path.name}: {e}[/yellow]")
+
+                    progress.advance(task)
+
+        # Backfill MeiliSearch for files already in Qdrant but missing from MeiliSearch
+        meili_backfilled = 0
+        meili_backfill_chunks = 0
+        meili_backfill_failed = 0
+
+        if meili_backfill_paths and not force:
+            if not output_json:
+                console.print(f"\n[blue]Backfilling {len(meili_backfill_paths)} files to MeiliSearch...[/blue]")
+
+            from qdrant_client.models import Filter, FieldCondition, MatchValue
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console,
+                disable=output_json,
+            ) as progress:
+                backfill_task = progress.add_task("Backfilling...", total=len(meili_backfill_paths))
+
+                for file_path_str in meili_backfill_paths:
+                    progress.update(backfill_task, description=f"Backfilling {Path(file_path_str).name}...")
+
+                    try:
+                        # Fetch all chunks for this file from Qdrant
+                        points, _ = qdrant.scroll(
+                            collection_name=corpus,
+                            scroll_filter=Filter(
+                                must=[
+                                    FieldCondition(
+                                        key="file_path",
+                                        match=MatchValue(value=file_path_str)
+                                    )
+                                ]
+                            ),
+                            limit=1000,
+                            with_payload=True,
+                            with_vectors=False
+                        )
+
+                        if not points:
+                            progress.advance(backfill_task)
+                            continue
+
+                        # Convert Qdrant points to MeiliSearch documents
+                        meili_docs = []
+                        for point in points:
+                            payload = point.payload
+                            # Create a minimal doc for MeiliSearch
+                            meili_doc = {
+                                "id": str(point.id),
+                                "content": payload.get("text", ""),
+                                "file_path": payload.get("file_path", ""),
+                                "filename": payload.get("filename", ""),
+                                "file_extension": payload.get("file_extension", ""),
+                                "chunk_index": payload.get("chunk_index", 0),
+                            }
+
+                            # Add optional fields
+                            if payload.get("page_number"):
+                                meili_doc["page_number"] = payload["page_number"]
+                            if payload.get("programming_language"):
+                                meili_doc["language"] = payload["programming_language"]
+                            if payload.get("document_type"):
+                                meili_doc["document_type"] = payload["document_type"]
+
+                            meili_docs.append(meili_doc)
+
+                        # Index to MeiliSearch with longer timeout for backfill (2 minutes)
+                        if meili_docs:
+                            meili.add_documents_sync(corpus, meili_docs, timeout_ms=120000)
+                            meili_backfill_chunks += len(meili_docs)
+
+                            if verbose and not output_json:
+                                progress.console.print(f"[green]  ✓ {Path(file_path_str).name}: {len(meili_docs)} chunks → MeiliSearch[/green]")
+
+                        meili_backfilled += 1
+
+                    except Exception as e:
+                        meili_backfill_failed += 1
+                        logger.error(f"Failed to backfill {file_path_str}: {e}")
+                        if not output_json:
+                            progress.console.print(f"[yellow]Warning: Failed to backfill {Path(file_path_str).name}: {e}[/yellow]")
+
+                    progress.advance(backfill_task)
+
+            total_meili += meili_backfill_chunks
+
+        # Backfill Qdrant for files in MeiliSearch but missing from Qdrant
+        # This requires re-processing the files since we need embeddings
+        qdrant_backfilled = 0
+        qdrant_backfill_chunks = 0
+        qdrant_backfill_failed = 0
+
+        if qdrant_backfill_paths and not force:
+            if not output_json:
+                console.print(f"\n[blue]Backfilling {len(qdrant_backfill_paths)} files to Qdrant (requires embedding)...[/blue]")
+
+            # Need embedding client for Qdrant backfill
+            use_gpu = not os.environ.get('ARC_NO_GPU', '').lower() in ('1', 'true')
+            embedding_client = EmbeddingClient(use_gpu=use_gpu)
+
+            # Get model config for chunking
+            first_model = model_list[0]
+            if first_model in DEFAULT_MODELS:
+                model_config = DEFAULT_MODELS[first_model].__dict__
+            else:
+                model_config = {
+                    'chunk_size': 512,
+                    'chunk_overlap': 50,
+                    'char_to_token_ratio': 3.3,
+                }
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console,
+                disable=output_json,
+            ) as progress:
+                backfill_task = progress.add_task("Backfilling Qdrant...", total=len(qdrant_backfill_paths))
+
+                for file_path_str in qdrant_backfill_paths:
+                    file_path = Path(file_path_str)
+                    progress.update(backfill_task, description=f"Backfilling {file_path.name}...")
+
+                    try:
+                        # Chunk file based on corpus type
+                        if corpus_type == 'pdf':
+                            chunks = chunk_pdf_file(file_path, model_config)
+                        elif corpus_type == 'markdown':
+                            chunks = chunk_markdown_file(
+                                file_path,
+                                model_config.get('chunk_size', 512),
+                                model_config.get('chunk_overlap', 50)
+                            )
+                        elif corpus_type == 'code':
+                            chunks = chunk_code_file(
+                                file_path,
+                                model_config.get('chunk_size', 400),
+                                model_config.get('chunk_overlap', 20)
+                            )
+                        else:
+                            progress.advance(backfill_task)
+                            continue
+
+                        if not chunks:
+                            progress.advance(backfill_task)
+                            continue
+
+                        # Build Qdrant documents with embeddings
+                        from qdrant_client.models import PointStruct
+                        points = []
+                        file_hash = compute_file_hash(file_path)
+                        quick_hash = compute_quick_hash(file_path)
+
+                        for i, chunk in enumerate(chunks):
+                            # Generate embeddings for all models
+                            vectors = {}
+                            for model in model_list:
+                                embeddings = embedding_client.embed([chunk['text']], model)
+                                if hasattr(embeddings, 'tolist'):
+                                    vectors[model] = embeddings[0].tolist()
+                                else:
+                                    vectors[model] = list(embeddings[0])
+
+                            # Build payload
+                            payload = {
+                                "text": chunk['text'],
+                                "file_path": str(file_path.absolute()),
+                                "filename": file_path.name,
+                                "file_extension": file_path.suffix,
+                                "chunk_index": i,
+                                "chunk_count": len(chunks),
+                                "file_hash": file_hash,
+                                "file_size": file_path.stat().st_size,
+                                "quick_hash": quick_hash,
+                            }
+
+                            # Add type-specific metadata
+                            chunk_meta = chunk.get('metadata', {})
+                            if corpus_type == 'pdf':
+                                if chunk_meta.get('page_number'):
+                                    payload["page_number"] = chunk_meta["page_number"]
+                                payload["document_type"] = "pdf"
+
+                            points.append(PointStruct(
+                                id=str(uuid4()),
+                                vector=vectors,
+                                payload=payload
+                            ))
+
+                        # Upload to Qdrant
+                        if points:
+                            qdrant.upsert(collection_name=corpus, points=points, wait=True)
+                            qdrant_backfill_chunks += len(points)
+
+                            if verbose and not output_json:
+                                progress.console.print(f"[green]  ✓ {file_path.name}: {len(points)} chunks → Qdrant[/green]")
+
+                        qdrant_backfilled += 1
+
+                    except Exception as e:
+                        qdrant_backfill_failed += 1
+                        logger.error(f"Failed to backfill {file_path_str} to Qdrant: {e}")
+                        if not output_json:
+                            progress.console.print(f"[yellow]Warning: Failed to backfill {file_path.name}: {e}[/yellow]")
+
+                    progress.advance(backfill_task)
+
+            total_qdrant += qdrant_backfill_chunks
 
         # Output results
         data = {
             "corpus": corpus,
             "directory": str(dir_path),
             "files_indexed": total_indexed,
+            "files_skipped": already_indexed_count,
+            "meili_backfilled": meili_backfilled,
+            "meili_backfill_failed": meili_backfill_failed,
+            "qdrant_backfilled": qdrant_backfilled,
+            "qdrant_backfill_failed": qdrant_backfill_failed,
             "total_chunks": total_chunks,
+            "qdrant_indexed": total_qdrant,
+            "meili_indexed": total_meili,
+            "meili_backfilled_chunks": meili_backfill_chunks,
+            "qdrant_backfilled_chunks": qdrant_backfill_chunks,
             "models": model_list,
         }
 
         if output_json:
             print_json("success", f"Indexed {total_indexed} files ({total_chunks} chunks)", data=data)
         else:
-            console.print(f"\n[green]✅ Indexed {total_indexed} files ({total_chunks} chunks) to corpus '{corpus}'[/green]")
+            console.print(f"\n[green]✅ Sync complete for corpus '{corpus}'[/green]")
+
+            # New files (indexed to both systems)
+            if total_indexed > 0:
+                console.print(f"   New files (both systems): {total_indexed} files ({total_chunks} chunks)")
+
+            # Already in both systems
+            if already_indexed_count > 0:
+                console.print(f"   Already synced:           {already_indexed_count} files")
+
+            # MeiliSearch backfill (from Qdrant)
+            if meili_backfilled > 0 or meili_backfill_failed > 0:
+                status = f"{meili_backfilled} files ({meili_backfill_chunks} chunks)"
+                if meili_backfill_failed > 0:
+                    status += f" [yellow]({meili_backfill_failed} failed)[/yellow]"
+                console.print(f"   Backfilled to MeiliSearch: {status}")
+
+            # Qdrant backfill (requires re-embedding)
+            if qdrant_backfilled > 0 or qdrant_backfill_failed > 0:
+                status = f"{qdrant_backfilled} files ({qdrant_backfill_chunks} chunks)"
+                if qdrant_backfill_failed > 0:
+                    status += f" [yellow]({qdrant_backfill_failed} failed)[/yellow]"
+                console.print(f"   Backfilled to Qdrant:      {status}")
+
+            # Totals
+            console.print(f"\n   Total in Qdrant:      {total_qdrant} vectors")
+            console.print(f"   Total in MeiliSearch: {total_meili} documents")
+
             console.print(f"\n[dim]Search with:[/dim]")
             console.print(f"  arc search semantic \"your query\" --collection {corpus}")
             console.print(f"  arc search text \"your query\" --index {corpus}")
+
+        # Post-verify if requested (uses same verifier as index commands)
+        verification_result = None
+        if verify:
+            from ..indexing.verify import CollectionVerifier
+
+            if not output_json:
+                console.print("\n[dim]Verifying collection integrity...[/dim]")
+
+            verifier = CollectionVerifier(qdrant)
+            verification_result = verifier.verify_collection(corpus, verbose=verbose)
+
+            if verification_result.is_healthy:
+                if not output_json:
+                    console.print(f"[green]✓ Collection verified - all {verification_result.complete_items} files complete[/green]")
+            else:
+                incomplete = verification_result.get_items_needing_repair()
+                if not output_json:
+                    console.print(f"[yellow]⚠ Found {len(incomplete)} incomplete files[/yellow]")
+                    for item in incomplete[:5]:
+                        console.print(f"  [yellow]{item}[/yellow]")
+                    if len(incomplete) > 5:
+                        console.print(f"  [dim]... and {len(incomplete) - 5} more[/dim]")
+                    console.print("[dim]Re-run with --force to repair incomplete files[/dim]")
+
+            data["verification"] = {
+                "is_healthy": verification_result.is_healthy,
+                "total_files": verification_result.total_items,
+                "complete_files": verification_result.complete_items,
+                "incomplete_files": verification_result.incomplete_items,
+            }
 
         # Log successful operation (RDR-018)
         interaction_logger.finish(

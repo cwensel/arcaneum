@@ -1,5 +1,6 @@
-"""Collection management CLI commands (RDR-003 with RDR-006 enhancements)."""
+"""Collection management CLI commands (RDR-003 with RDR-006, RDR-017 enhancements)."""
 
+import json
 import sys
 from pathlib import Path
 from rich.console import Console
@@ -664,3 +665,221 @@ def verify_collection_command(
         print_error(f"Failed to verify collection: {e}", output_json)
         sys.exit(1)
 
+
+def export_collection_command(
+    name: str,
+    output: str,
+    fmt: str,
+    includes: tuple,
+    excludes: tuple,
+    repos: tuple,
+    detach: bool,
+    output_json: bool,
+):
+    """Export collection to portable format (RDR-017).
+
+    Args:
+        name: Collection name to export
+        output: Output file path
+        fmt: Export format (binary or jsonl)
+        includes: Include patterns for file_path
+        excludes: Exclude patterns for file_path
+        repos: Repo filters (code collections)
+        detach: Strip root prefix, store relative paths
+        output_json: Output as JSON
+    """
+    from arcaneum.cli.export_import import (
+        BinaryExporter,
+        JsonlExporter,
+        build_export_filter,
+    )
+
+    # Start interaction logging (RDR-018)
+    interaction_logger.start(
+        "collection", "export",
+        collection=name,
+        format=fmt,
+        detach=detach,
+    )
+
+    try:
+        client = create_qdrant_client()
+        output_path = Path(output)
+
+        # Build filters
+        scroll_filter, path_filter = build_export_filter(
+            includes=includes,
+            excludes=excludes,
+            repos=repos,
+        )
+
+        # Select exporter
+        if fmt == "jsonl":
+            exporter = JsonlExporter(client)
+        else:
+            exporter = BinaryExporter(client)
+
+        if output_json:
+            # No progress display for JSON output
+            result = exporter.export(
+                collection_name=name,
+                output_path=output_path,
+                scroll_filter=scroll_filter,
+                path_filter=path_filter,
+                detach=detach,
+            )
+        else:
+            # Use Rich status for progress display
+            from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console,
+            ) as progress_bar:
+                task = progress_bar.add_task("Exporting...", total=None)
+
+                def progress(current, total):
+                    if progress_bar.tasks[task].total is None:
+                        progress_bar.update(task, total=total)
+                    progress_bar.update(task, completed=current)
+
+                result = exporter.export(
+                    collection_name=name,
+                    output_path=output_path,
+                    scroll_filter=scroll_filter,
+                    path_filter=path_filter,
+                    detach=detach,
+                    progress_callback=progress,
+                )
+
+        if not output_json:
+            size_mb = result.file_size_bytes / (1024 * 1024)
+            console.print(f"[green]Exported {result.exported_count} points to {result.output_path}[/green]")
+            console.print(f"File size: {size_mb:.2f} MB")
+            if result.detached:
+                console.print(f"[dim]Root prefix stripped: {result.root_prefix}[/dim]")
+                console.print(f"[dim]Use --attach on import to prepend new root[/dim]")
+        else:
+            print_json("success", f"Exported {result.exported_count} points", result.to_dict())
+
+        # Log successful operation (RDR-018)
+        interaction_logger.finish(
+            exported_count=result.exported_count,
+            file_size_bytes=result.file_size_bytes,
+        )
+
+    except Exception as e:
+        interaction_logger.finish(error=str(e))
+        print_error(f"Failed to export collection: {e}", output_json)
+        sys.exit(1)
+
+
+def import_collection_command(
+    file: str,
+    target_name: str,
+    attach_root: str,
+    remaps: tuple,
+    output_json: bool,
+):
+    """Import collection from export file (RDR-017).
+
+    Args:
+        file: Input file path
+        target_name: Target collection name
+        attach_root: Root path to prepend to relative paths
+        remaps: Path substitutions (old:new format)
+        output_json: Output as JSON
+    """
+    from arcaneum.cli.export_import import BinaryImporter, JsonlImporter
+
+    # Start interaction logging (RDR-018)
+    interaction_logger.start(
+        "collection", "import",
+        source_file=file,
+        target_name=target_name,
+    )
+
+    try:
+        client = create_qdrant_client()
+        input_path = Path(file)
+
+        # Parse path remappings
+        path_remaps = []
+        for remap in remaps:
+            if ":" not in remap:
+                raise InvalidArgumentError(
+                    "--remap requires old:new format (e.g., /old/path:/new/path)"
+                )
+            old, new = remap.split(":", 1)
+            path_remaps.append((old, new))
+
+        # Auto-detect format by reading first bytes
+        with open(input_path, "rb") as f:
+            magic = f.read(4)
+
+        # gzip files start with 0x1f 0x8b
+        if magic[:2] == b"\x1f\x8b":
+            importer = BinaryImporter(client)
+        else:
+            importer = JsonlImporter(client)
+
+        if output_json:
+            # No progress display for JSON output
+            result = importer.import_collection(
+                input_path=input_path,
+                target_name=target_name,
+                attach_root=attach_root,
+                path_remaps=path_remaps if path_remaps else None,
+            )
+        else:
+            # Use Rich status for progress display
+            from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console,
+            ) as progress_bar:
+                task = progress_bar.add_task("Importing...", total=None)
+
+                def progress(current, total):
+                    if progress_bar.tasks[task].total is None:
+                        progress_bar.update(task, total=total)
+                    progress_bar.update(task, completed=current)
+
+                result = importer.import_collection(
+                    input_path=input_path,
+                    target_name=target_name,
+                    attach_root=attach_root,
+                    path_remaps=path_remaps if path_remaps else None,
+                    progress_callback=progress,
+                )
+
+        if not output_json:
+            console.print(
+                f"[green]Imported {result.imported_count} points into "
+                f"'{result.collection_name}'[/green]"
+            )
+            if result.collection_type:
+                console.print(f"Collection type: {result.collection_type}")
+        else:
+            print_json("success", f"Imported {result.imported_count} points", result.to_dict())
+
+        # Log successful operation (RDR-018)
+        interaction_logger.finish(
+            imported_count=result.imported_count,
+            collection_name=result.collection_name,
+        )
+
+    except InvalidArgumentError:
+        interaction_logger.finish(error="invalid argument")
+        raise
+    except Exception as e:
+        interaction_logger.finish(error=str(e))
+        print_error(f"Failed to import collection: {e}", output_json)
+        sys.exit(1)

@@ -3,6 +3,17 @@
 This guide walks through migrating Qdrant from macOS bind mounts to Docker named volumes to eliminate the
 "Unrecognized filesystem" warning and prevent data corruption.
 
+## Migration Options
+
+There are two approaches for migrating Qdrant collections:
+
+| Method | Best For | Features |
+|--------|----------|----------|
+| **Snapshots** (this guide) | Same Qdrant version, full backup | Native format, fastest |
+| **Export/Import** | Cross-machine, selective export | Portable, path remapping |
+
+For cross-machine migration with path adjustments, see the **Export/Import Alternative** section below.
+
 ## Problem
 
 **Symptoms:**
@@ -336,6 +347,58 @@ docker cp qdrant-arcaneum:/qdrant/storage ./local-copy/
 curl -X POST http://localhost:6333/collections/{name}/snapshots
 docker cp qdrant-arcaneum:/qdrant/snapshots/{snapshot} ./
 ```
+
+## Export/Import Alternative
+
+For cross-machine migration or when you need selective export with path remapping, use the CLI
+export/import commands instead of snapshots.
+
+### When to Use Export/Import
+
+- Migrating to a different machine with different paths
+- Sharing collections with team members
+- Selective backup (specific repos or file patterns)
+- Collections that need path adjustments
+
+### Export/Import Workflow
+
+**On source machine:**
+
+```bash
+# Option 1: Detached export (strips root prefix)
+arc collection export MyCode -o shareable.arcexp --detach
+
+# Option 2: Full export (keeps absolute paths)
+arc collection export MyCode -o backup.arcexp
+
+# Selective export (specific repo only)
+arc collection export MyCode -o arcaneum.arcexp --repo arcaneum#main
+```
+
+**Transfer file to target machine, then import:**
+
+```bash
+# Import detached export with new root
+arc collection import shareable.arcexp --attach /home/newuser/projects
+
+# Import with path remapping
+arc collection import backup.arcexp \
+    --remap /Users/olduser:/home/newuser \
+    --into MyCode-migrated
+```
+
+### Export vs Snapshots Comparison
+
+| Feature | Snapshots | Export/Import |
+|---------|-----------|---------------|
+| Format | Native binary | Portable `.arcexp` |
+| Speed | Fastest | Slightly slower |
+| Selective export | No | Yes (filters) |
+| Path remapping | No | Yes |
+| Cross-version | Limited | Yes |
+| Docker required | Yes | No |
+
+See [CLI Reference](cli-reference.md#export-collection) for full export/import documentation.
 
 ## References
 

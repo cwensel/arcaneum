@@ -127,6 +127,87 @@ def collection_verify(name, project, verbose, output_json):
     verify_collection_command(name, project, verbose, output_json)
 
 
+@collection.command('export')
+@click.argument('name')
+@click.option('-o', '--output', required=True, type=click.Path(),
+              help='Output file path (.arcexp or .jsonl)')
+@click.option('--format', 'fmt', type=click.Choice(['binary', 'jsonl']),
+              default='binary', help='Export format (default: binary)')
+@click.option('--include', 'includes', multiple=True,
+              help='Include files matching glob pattern (file_path)')
+@click.option('--exclude', 'excludes', multiple=True,
+              help='Exclude files matching glob pattern (file_path)')
+@click.option('--repo', 'repos', multiple=True,
+              help='Filter by repo name or repo#branch (code collections)')
+@click.option('--detach', is_flag=True,
+              help='Strip root prefix, store relative paths (shareable)')
+@click.option('--json', 'output_json', is_flag=True, help='Output stats as JSON')
+def collection_export(name, output, fmt, includes, excludes, repos, detach, output_json):
+    """Export collection to portable format.
+
+    Default format is compressed binary (.arcexp) for efficiency.
+    Use --format jsonl for human-readable debug output.
+
+    Filter options (all filters combined with AND):
+
+    \b
+      --include   Include files matching glob pattern on file_path (multiple = OR)
+      --exclude   Exclude files matching glob pattern on file_path (multiple = AND)
+      --repo      Filter by repo name (all branches) or repo#branch (code only)
+
+    Path options:
+
+    \b
+      --detach    Strip common root prefix from paths, storing relative paths.
+                  Use --attach on import to prepend new root. Enables sharing
+                  collections without exposing your directory structure.
+
+    Examples:
+
+    \b
+      arc collection export MyPDFs -o backup.arcexp
+      arc collection export MyPDFs -o reports.arcexp --include "*/reports/*.pdf"
+      arc collection export Code -o arcaneum.arcexp --repo arcaneum#main
+      arc collection export Code -o subset.arcexp --include "~/repos/*" --repo arcaneum#main
+      arc collection export MyCode -o shareable.arcexp --detach
+    """
+    from arcaneum.cli.collections import export_collection_command
+    export_collection_command(name, output, fmt, includes, excludes, repos, detach, output_json)
+
+
+@collection.command('import')
+@click.argument('file', type=click.Path(exists=True))
+@click.option('--into', 'target_name', help='Target collection name')
+@click.option('--attach', 'attach_root',
+              help='Attach root path to relative paths (for detached exports)')
+@click.option('--remap', 'remaps', multiple=True,
+              help='Path substitution: old:new prefix mapping (for non-detached exports)')
+@click.option('--json', 'output_json', is_flag=True, help='Output stats as JSON')
+def collection_import(file, target_name, attach_root, remaps, output_json):
+    """Import collection from export file.
+
+    Automatically detects format from file content (binary .arcexp or JSONL).
+
+    Path handling options:
+
+    \b
+      --attach     Prepend root path to relative paths. Use with detached exports.
+                   Symmetric with --detach on export.
+      --remap      Explicit path substitution (old:new format). Use with non-detached
+                   exports to update absolute paths for new machine.
+
+    Examples:
+
+    \b
+      arc collection import backup.arcexp
+      arc collection import backup.arcexp --into MyPDFs-restored
+      arc collection import shareable.arcexp --attach /home/bob/projects
+      arc collection import backup.arcexp --remap /Users/alice/docs:/home/bob/docs
+    """
+    from arcaneum.cli.collections import import_collection_command
+    import_collection_command(file, target_name, attach_root, remaps, output_json)
+
+
 # Models commands
 @cli.group(cls=HelpfulGroup, usage_examples=[
     'arc models list',

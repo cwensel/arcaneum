@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "arcaneum"
-version = "0.1.0"
+version = "0.2.0"
 description = "CLI tools for semantic and full-text search with Qdrant and MeiliSearch"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -52,6 +52,9 @@ dependencies = [
     "pygments>=2.19.0",
     # SOCKS proxy support for httpx (required when running in Claude Code sandbox)
     "socksio>=1.0.0",
+    # Collection export/import (RDR-017)
+    "msgpack>=1.1.0",
+    "numpy>=1.26.0",
 ]
 
 [project.optional-dependencies]

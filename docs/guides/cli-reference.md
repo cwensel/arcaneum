@@ -27,6 +27,9 @@ arc collection create <name> --model <model>  # Create Qdrant collection
 arc collection list                          # List all collections
 arc collection info <name>                    # Show collection details
 arc collection items <name>                   # List indexed files/repos
+arc collection verify <name>                  # Verify collection integrity
+arc collection export <name> -o <file>        # Export to portable format
+arc collection import <file>                  # Import from export file
 arc collection delete <name>                  # Delete collection
 ```
 
@@ -186,6 +189,117 @@ Shows files with size information:
 - Check which branches are indexed
 - Count total chunks per file/repo
 - Export collection metadata for reporting
+
+### Export Collection
+
+Export a collection to a portable format for migration or backup:
+
+```bash
+# Default: Compressed binary format (.arcexp)
+arc collection export MyPDFs -o backup.arcexp
+
+# Human-readable JSONL format (for debugging)
+arc collection export MyPDFs -o backup.jsonl --format jsonl
+
+# Filter by file path patterns
+arc collection export MyPDFs -o reports.arcexp --include "*/reports/*.pdf"
+arc collection export MyPDFs -o subset.arcexp --exclude "*/drafts/*"
+
+# Filter code collections by repo
+arc collection export MyCode -o arcaneum.arcexp --repo arcaneum
+arc collection export MyCode -o main-only.arcexp --repo arcaneum#main
+
+# Combined filters
+arc collection export MyCode -o subset.arcexp \
+    --include "*/src/*" \
+    --repo arcaneum#main \
+    --exclude "*/test/*"
+
+# Detached export (strips root prefix for shareable archives)
+arc collection export MyCode -o shareable.arcexp --detach
+
+# JSON output for scripting
+arc collection export MyPDFs -o backup.arcexp --json
+```
+
+**Filter Options:**
+
+| Option | Description | Example |
+|--------|-------------|---------|
+| `--include` | Include files matching glob (multiple = OR) | `--include "*.pdf"` |
+| `--exclude` | Exclude files matching glob (multiple = AND) | `--exclude "*/temp/*"` |
+| `--repo` | Filter by repo name (code collections) | `--repo arcaneum` |
+| `--repo name#branch` | Filter by repo and branch | `--repo arcaneum#main` |
+| `--detach` | Strip root prefix, store relative paths | `--detach` |
+
+**Export Formats:**
+
+| Format | Extension | Size | Use Case |
+|--------|-----------|------|----------|
+| Binary | `.arcexp` | ~10x smaller | Migration, backup (default) |
+| JSONL | `.jsonl` | Larger | Debugging, inspection |
+
+### Import Collection
+
+Import a collection from an export file:
+
+```bash
+# Import to original collection name
+arc collection import backup.arcexp
+
+# Import to different collection name
+arc collection import backup.arcexp --into MyPDFs-restored
+
+# Import detached export with new root path
+arc collection import shareable.arcexp --attach /home/bob/projects
+
+# Remap paths for cross-machine migration
+arc collection import backup.arcexp --remap /Users/alice/docs:/home/bob/docs
+
+# Multiple path remappings
+arc collection import backup.arcexp \
+    --remap /Users/alice/repos:/home/bob/repos \
+    --remap /Users/alice/docs:/home/bob/documents
+
+# JSON output for scripting
+arc collection import backup.arcexp --json
+```
+
+**Path Handling Options:**
+
+| Option | Description | Use Case |
+|--------|-------------|----------|
+| `--into` | Target collection name | Import to different name |
+| `--attach` | Prepend root to relative paths | For detached exports |
+| `--remap old:new` | Substitute path prefixes | Cross-machine migration |
+
+**Format Auto-Detection:**
+
+Import automatically detects file format (binary or JSONL) from file content.
+
+**Cross-Machine Migration Workflow:**
+
+```bash
+# On source machine: Export with detach
+arc collection export MyCode -o shareable.arcexp --detach
+# Transfer shareable.arcexp to new machine...
+
+# On target machine: Import with attach
+arc collection import shareable.arcexp --attach /home/newuser/projects
+```
+
+**Path Remapping Workflow (non-detached):**
+
+```bash
+# On source machine: Export normally
+arc collection export MyDocs -o backup.arcexp
+# Transfer backup.arcexp to new machine...
+
+# On target machine: Import with path remapping
+arc collection import backup.arcexp \
+    --remap /Users/alice:/home/bob \
+    --into MyDocs-migrated
+```
 
 ## PDF Indexing Examples
 

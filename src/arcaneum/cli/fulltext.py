@@ -198,7 +198,8 @@ def fulltext():
 @fulltext.command('create')
 @click.argument('name')
 @click.option('--type', 'index_type',
-              type=click.Choice(['source-code', 'pdf-docs', 'markdown-docs', 'code', 'pdf', 'markdown']),
+              type=click.Choice(['source-code', 'source-code-fulltext', 'pdf-docs', 'markdown-docs',
+                                 'code', 'code-fulltext', 'pdf', 'markdown']),
               help='Index type (determines settings)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
 def create_index(name, index_type, output_json):
@@ -423,7 +424,8 @@ def delete_index(name, confirm, output_json):
 @fulltext.command('update-settings')
 @click.argument('name')
 @click.option('--type', 'index_type',
-              type=click.Choice(['source-code', 'pdf-docs', 'markdown-docs', 'code', 'pdf', 'markdown']),
+              type=click.Choice(['source-code', 'source-code-fulltext', 'pdf-docs', 'markdown-docs',
+                                 'code', 'code-fulltext', 'pdf', 'markdown']),
               required=True,
               help='Index type to apply settings from')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
@@ -833,6 +835,163 @@ def export_index(name, output, output_json):
     except Exception as e:
         interaction_logger.finish(error=str(e))
         print_error(f"Failed to export index: {e}", json_output=output_json)
+        sys.exit(1)
+
+
+@fulltext.command('list-projects')
+@click.argument('name')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def list_projects(name, output_json):
+    """List indexed git projects in an index (RDR-011).
+
+    Shows all unique git_project_identifier values with their commit hashes.
+    Only applicable for indexes with git-aware source code.
+
+    Examples:
+        arc indexes list-projects MyCode
+        arc indexes list-projects MyCode --json
+    """
+    # Start interaction logging (RDR-018)
+    interaction_logger.start("indexes", "list-projects", index=name)
+
+    try:
+        client = get_client()
+
+        # Verify server is available
+        if not client.health_check():
+            raise ResourceNotFoundError(
+                "MeiliSearch server not available. "
+                "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
+            )
+
+        # Check if index exists
+        if not client.index_exists(name):
+            raise ResourceNotFoundError(f"Index '{name}' not found")
+
+        # Query for unique projects
+        from ..indexing.fulltext.sync import GitCodeMetadataSync
+        sync = GitCodeMetadataSync(client)
+        indexed_projects = sync.get_indexed_projects(name)
+
+        if output_json:
+            data = {
+                "index": name,
+                "total_projects": len(indexed_projects),
+                "projects": [
+                    {"identifier": identifier, "commit_hash": commit}
+                    for identifier, commit in sorted(indexed_projects.items())
+                ]
+            }
+            print_json("success", f"Found {len(indexed_projects)} indexed projects", data)
+        else:
+            console.print(f"\n[bold cyan]Index: {name}[/bold cyan]")
+            console.print(f"Indexed Projects: {len(indexed_projects)}\n")
+
+            if not indexed_projects:
+                print_info("No git projects found in this index")
+                print_info("This index may use simple file-based indexing (not git-aware)")
+            else:
+                table = Table(title="Git Projects")
+                table.add_column("Project Identifier", style="cyan")
+                table.add_column("Commit Hash", style="dim")
+
+                for identifier, commit in sorted(indexed_projects.items()):
+                    table.add_row(identifier, commit[:12] + "...")
+
+                console.print(table)
+
+        # Log successful operation (RDR-018)
+        interaction_logger.finish(result_count=len(indexed_projects))
+
+    except ResourceNotFoundError:
+        interaction_logger.finish(error="resource not found")
+        raise
+    except Exception as e:
+        interaction_logger.finish(error=str(e))
+        print_error(f"Failed to list projects: {e}", json_output=output_json)
+        sys.exit(1)
+
+
+@fulltext.command('delete-project')
+@click.argument('identifier')
+@click.option('--index', 'index_name', required=True, help='MeiliSearch index name')
+@click.option('--confirm', is_flag=True, help='Skip confirmation prompt')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def delete_project(identifier, index_name, confirm, output_json):
+    """Delete all documents for a specific git project/branch (RDR-011).
+
+    Removes all documents matching the git_project_identifier.
+    Other projects/branches in the same index are unaffected.
+
+    Examples:
+        arc indexes delete-project arcaneum#main --index MyCode
+        arc indexes delete-project myrepo#feature-x --index MyCode --confirm
+    """
+    # Start interaction logging (RDR-018)
+    interaction_logger.start("indexes", "delete-project", index=index_name, identifier=identifier)
+
+    try:
+        client = get_client()
+
+        # Verify server is available
+        if not client.health_check():
+            raise ResourceNotFoundError(
+                "MeiliSearch server not available. "
+                "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
+            )
+
+        # Check if index exists
+        if not client.index_exists(index_name):
+            raise ResourceNotFoundError(f"Index '{index_name}' not found")
+
+        # Check how many documents will be deleted
+        from ..indexing.fulltext.sync import GitCodeMetadataSync
+        sync = GitCodeMetadataSync(client)
+        doc_count = sync.get_project_document_count(index_name, identifier)
+
+        if doc_count == 0:
+            if output_json:
+                print_json("warning", f"No documents found for project '{identifier}'", {
+                    "index": index_name,
+                    "identifier": identifier,
+                    "deleted_count": 0
+                })
+            else:
+                print_info(f"No documents found for project '{identifier}' in index '{index_name}'")
+            interaction_logger.finish(deleted_count=0)
+            return
+
+        # Confirm deletion
+        if not confirm and not output_json:
+            if not click.confirm(
+                f"Delete {doc_count} documents for project '{identifier}' from index '{index_name}'? "
+                f"This cannot be undone."
+            ):
+                print_info("Cancelled.")
+                interaction_logger.finish(error="cancelled by user")
+                return
+
+        # Delete documents
+        deleted_count = sync.delete_project_documents(index_name, identifier)
+
+        if output_json:
+            print_json("success", f"Deleted {deleted_count} documents", {
+                "index": index_name,
+                "identifier": identifier,
+                "deleted_count": deleted_count
+            })
+        else:
+            print_success(f"Deleted {deleted_count} documents for project '{identifier}'")
+
+        # Log successful operation (RDR-018)
+        interaction_logger.finish(deleted_count=deleted_count)
+
+    except ResourceNotFoundError:
+        interaction_logger.finish(error="resource not found")
+        raise
+    except Exception as e:
+        interaction_logger.finish(error=str(e))
+        print_error(f"Failed to delete project: {e}", json_output=output_json)
         sys.exit(1)
 
 

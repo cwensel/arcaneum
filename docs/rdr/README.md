@@ -15,8 +15,8 @@ This directory contains Recommendation Data Records (RDRs) - detailed technical 
 | 007 | [Semantic Search CLI for Qdrant Collections](RDR-007-semantic-search.md)                                | Implemented    | High     |
 | 008 | [Full-Text Search Server Setup (MeiliSearch)](RDR-008-fulltext-search-server-setup.md)                  | Implemented    | High     |
 | 009 | [Minimal-Command Dual Indexing Workflow](RDR-009-dual-indexing-strategy.md)                             | Implemented    | High     |
-| 010 | [Bulk PDF Indexing to Full-Text Search (MeiliSearch)](RDR-010-pdf-fulltext-indexing.md)                 | Recommendation | High     |
-| 011 | [Git-Aware Source Code Full-Text Indexing to MeiliSearch](RDR-011-source-code-fulltext-indexing.md)     | Recommendation | High     |
+| 010 | [Bulk PDF Indexing to Full-Text Search (MeiliSearch)](RDR-010-pdf-fulltext-indexing.md)                 | Implemented    | High     |
+| 011 | [Git-Aware Source Code Full-Text Indexing to MeiliSearch](RDR-011-source-code-fulltext-indexing.md)     | Implemented    | High     |
 | 012 | [Claude Code Integration for Full-Text Search](RDR-012-fulltext-search-claude-integration.md)           | Recommendation | High     |
 | 013 | [Indexing Pipeline Performance Optimization](RDR-013-indexing-performance-optimization.md)               | Implemented    | High     |
 | 014 | [Markdown Content Indexing with Directory Sync and Direct Injection](RDR-014-markdown-indexing.md)      | Implemented    | High     |

@@ -148,6 +148,60 @@ class FullTextClient:
 
         return result
 
+    def add_documents_batch_parallel(
+        self,
+        index_name: str,
+        document_batches: List[List[Dict[str, Any]]],
+        primary_key: Optional[str] = None,
+        timeout_ms: int = 120000
+    ) -> Dict[str, Any]:
+        """
+        Add multiple document batches in parallel (enqueue all, then wait).
+
+        This is faster than add_documents_sync for multiple batches because
+        MeiliSearch can process tasks concurrently.
+
+        Args:
+            index_name: Target index name
+            document_batches: List of document batches to upload
+            primary_key: Optional primary key field
+            timeout_ms: Timeout in milliseconds for waiting on all tasks (default: 120s)
+
+        Returns:
+            Dict with 'total_documents' and 'task_count'
+
+        Raises:
+            RuntimeError: If any task fails
+        """
+        if not document_batches:
+            return {'total_documents': 0, 'task_count': 0}
+
+        index = self.get_index(index_name)
+        task_uids = []
+        total_docs = 0
+
+        # Enqueue all batches without waiting
+        for batch in document_batches:
+            if batch:
+                task = index.add_documents(batch, primary_key)
+                task_uids.append(task.task_uid)
+                total_docs += len(batch)
+
+        # Wait for all tasks to complete
+        failed_tasks = []
+        for task_uid in task_uids:
+            result = self.client.wait_for_task(task_uid, timeout_in_ms=timeout_ms)
+            status = getattr(result, 'status', None) or (result.get('status') if isinstance(result, dict) else None)
+            if status == 'failed':
+                error = getattr(result, 'error', None) or (result.get('error') if isinstance(result, dict) else None)
+                error_msg = error.get('message', str(error)) if isinstance(error, dict) else str(error)
+                failed_tasks.append(f"Task {task_uid}: {error_msg}")
+
+        if failed_tasks:
+            raise RuntimeError(f"Document addition failed: {'; '.join(failed_tasks)}")
+
+        return {'total_documents': total_docs, 'task_count': len(task_uids)}
+
     def search(
         self,
         index_name: str,

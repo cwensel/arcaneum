@@ -1,9 +1,9 @@
-"""Index configuration templates for MeiliSearch (RDR-008)."""
+"""Index configuration templates for MeiliSearch (RDR-008, RDR-011)."""
 
 from typing import Dict, Any
 
 
-# Index settings for source code
+# Index settings for source code (chunk-level, existing from RDR-005/RDR-008)
 SOURCE_CODE_SETTINGS: Dict[str, Any] = {
     "searchableAttributes": [
         "content",
@@ -30,6 +30,43 @@ SOURCE_CODE_SETTINGS: Dict[str, Any] = {
     "stopWords": [],  # Preserve all code keywords
     "pagination": {
         "maxTotalHits": 1000
+    }
+}
+
+
+# Index settings for source code with function-level granularity (RDR-011)
+# This is optimized for function/class-level indexing with line ranges
+SOURCE_CODE_FULLTEXT_SETTINGS: Dict[str, Any] = {
+    "searchableAttributes": [
+        "content",           # Primary search field (function/class code)
+        "function_name",     # For identifier search (single name, not array)
+        "class_name",        # For class search (single name, not array)
+        "qualified_name",    # For fully-qualified searches (e.g., "MyClass.method")
+        "filename",          # For file-specific searches
+    ],
+    "filterableAttributes": [
+        "programming_language",     # Language filter (aligned with RDR-005)
+        "git_project_name",         # Project name only
+        "git_branch",               # Branch name
+        "git_project_identifier",   # Composite "project#branch" for branch-specific queries
+        "git_commit_hash",          # For change detection
+        "file_path",                # File location
+        "code_type",                # "function", "class", "method", "module"
+        "file_extension",           # For file type filtering
+    ],
+    "sortableAttributes": [
+        "start_line",  # For sorting by location in file
+    ],
+    "typoTolerance": {
+        "enabled": True,
+        "minWordSizeForTypos": {
+            "oneTypo": 7,   # Higher threshold for code identifiers
+            "twoTypos": 12
+        }
+    },
+    "stopWords": [],  # Preserve all code keywords (def, class, function, etc.)
+    "pagination": {
+        "maxTotalHits": 10000  # Higher than default: function-level = more docs per file
     }
 }
 
@@ -104,7 +141,12 @@ def get_index_settings(index_type: str) -> Dict[str, Any]:
     Get index settings by type.
 
     Args:
-        index_type: 'source-code', 'pdf-docs', 'markdown-docs', 'code', 'pdf', or 'markdown'
+        index_type: One of:
+            - 'source-code': Chunk-level source code (RDR-005/RDR-008)
+            - 'source-code-fulltext': Function-level source code (RDR-011)
+            - 'pdf-docs': PDF documents (RDR-010)
+            - 'markdown-docs': Markdown documents
+            - Aliases: 'code', 'code-fulltext', 'pdf', 'markdown'
 
     Returns:
         Index settings dictionary
@@ -115,6 +157,7 @@ def get_index_settings(index_type: str) -> Dict[str, Any]:
     # Map type aliases to canonical names
     type_aliases = {
         "code": "source-code",
+        "code-fulltext": "source-code-fulltext",
         "pdf": "pdf-docs",
         "markdown": "markdown-docs",
     }
@@ -123,6 +166,7 @@ def get_index_settings(index_type: str) -> Dict[str, Any]:
 
     settings_map = {
         "source-code": SOURCE_CODE_SETTINGS,
+        "source-code-fulltext": SOURCE_CODE_FULLTEXT_SETTINGS,
         "pdf-docs": PDF_DOCS_SETTINGS,
         "markdown-docs": MARKDOWN_DOCS_SETTINGS,
     }
@@ -138,4 +182,8 @@ def get_index_settings(index_type: str) -> Dict[str, Any]:
 
 def get_available_index_types() -> list[str]:
     """Get list of available index types."""
-    return ["source-code", "pdf-docs", "markdown-docs", "code", "pdf", "markdown"]
+    return [
+        "source-code", "source-code-fulltext",
+        "pdf-docs", "markdown-docs",
+        "code", "code-fulltext", "pdf", "markdown"
+    ]

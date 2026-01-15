@@ -4,12 +4,16 @@ This module implements the 'corpus sync' command that indexes documents
 to both Qdrant and MeiliSearch in a single operation.
 """
 
+import gc
 import logging
+import multiprocessing as mp
 import os
 import sys
 import hashlib
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from multiprocessing import cpu_count
 from pathlib import Path
-from typing import List, Optional, Set, Dict, Any
+from typing import List, Optional, Set, Dict, Any, Tuple
 from uuid import uuid4
 
 from rich.console import Console
@@ -29,6 +33,76 @@ from ..config import DEFAULT_MODELS
 
 console = Console()
 logger = logging.getLogger(__name__)
+
+
+def _chunk_code_file_worker(
+    file_path: str,
+    chunk_size: int,
+    chunk_overlap: int,
+) -> Tuple[str, List[Dict[str, Any]], Optional[str]]:
+    """Process a single code file: read and chunk using AST.
+
+    Module-level function for ProcessPoolExecutor pickling.
+
+    Args:
+        file_path: Path to source code file
+        chunk_size: Target chunk size in tokens
+        chunk_overlap: Overlap between chunks in tokens
+
+    Returns:
+        Tuple of (file_path, list of chunk dicts, error or None)
+    """
+    # Lower process priority to avoid starving main process
+    if os.environ.get('ARCANEUM_DISABLE_WORKER_NICE') != '1':
+        try:
+            if hasattr(os, 'nice'):
+                os.nice(10)
+        except Exception:
+            pass
+
+    try:
+        from ..indexing.ast_chunker import ASTCodeChunker
+
+        # Read file
+        file_p = Path(file_path)
+        try:
+            code = file_p.read_text(encoding='utf-8', errors='replace')
+        except Exception as e:
+            return (file_path, [], f"Read error: {e}")
+
+        if not code.strip():
+            return (file_path, [], None)
+
+        # Determine language from extension
+        ext_to_lang = {
+            '.py': 'python', '.js': 'javascript', '.ts': 'typescript',
+            '.java': 'java', '.go': 'go', '.rs': 'rust', '.rb': 'ruby',
+            '.cpp': 'cpp', '.c': 'c', '.h': 'c', '.hpp': 'cpp',
+        }
+        language = ext_to_lang.get(file_p.suffix.lower(), 'unknown')
+
+        # Chunk using AST
+        chunker = ASTCodeChunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        chunks = chunker.chunk_code(file_path, code)
+
+        # Convert to serializable dicts
+        chunk_dicts = []
+        for i, chunk in enumerate(chunks):
+            chunk_dicts.append({
+                'text': chunk.content,
+                'metadata': {
+                    'file_path': file_path,
+                    'filename': file_p.name,
+                    'language': language,
+                    'chunk_index': i,
+                    'method': chunk.method,
+                }
+            })
+
+        return (file_path, chunk_dicts, None)
+
+    except Exception as e:
+        return (file_path, [], str(e))
 
 
 def get_meili_client() -> FullTextClient:
@@ -222,6 +296,7 @@ def sync_directory_command(
     file_types: Optional[str],
     force: bool,
     verify: bool,
+    text_workers: Optional[int],
     verbose: bool,
     output_json: bool
 ):
@@ -238,9 +313,17 @@ def sync_directory_command(
         file_types: File extensions to index (e.g., ".py,.js")
         force: If True, reindex all files (bypass change detection)
         verify: If True, verify collection integrity after indexing
+        text_workers: Number of parallel workers for code chunking (None=auto, 0/1=sequential)
         verbose: If True, show detailed progress
         output_json: If True, output JSON format
     """
+    # Calculate effective text workers
+    if text_workers is None:
+        effective_text_workers = max(1, cpu_count() // 2)
+    elif text_workers <= 1:
+        effective_text_workers = 1  # Sequential
+    else:
+        effective_text_workers = text_workers
     # Start interaction logging (RDR-018)
     interaction_logger.start(
         "corpus", "sync",
@@ -417,6 +500,23 @@ def sync_directory_command(
                     'char_to_token_ratio': 3.3,
                 }
 
+            # Pre-chunk code files in parallel if workers > 1
+            pre_chunked_code_files: Dict[str, List[Dict[str, Any]]] = {}
+            if corpus_type == 'code' and effective_text_workers > 1:
+                if not output_json:
+                    print_info(f"Parallel chunking {len(files)} code files with {effective_text_workers} workers...")
+                pre_chunked_code_files = _parallel_chunk_code_files(
+                    [str(f) for f in files],
+                    model_config.get('chunk_size', 400),
+                    model_config.get('chunk_overlap', 20),
+                    effective_text_workers,
+                    verbose,
+                    output_json,
+                    console,
+                )
+                if not output_json:
+                    print_info(f"Pre-chunked {len(pre_chunked_code_files)} files")
+
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
@@ -444,11 +544,16 @@ def sync_directory_command(
                                 model_config.get('chunk_overlap', 50)
                             )
                         elif corpus_type == 'code':
-                            chunks = chunk_code_file(
-                                file_path,
-                                model_config.get('chunk_size', 400),
-                                model_config.get('chunk_overlap', 20)
-                            )
+                            # Use pre-chunked data if available
+                            file_path_str = str(file_path)
+                            if file_path_str in pre_chunked_code_files:
+                                chunks = pre_chunked_code_files[file_path_str]
+                            else:
+                                chunks = chunk_code_file(
+                                    file_path,
+                                    model_config.get('chunk_size', 400),
+                                    model_config.get('chunk_overlap', 20)
+                                )
                         else:
                             logger.warning(f"Unknown corpus type: {corpus_type}, skipping {file_path}")
                             continue
@@ -543,8 +648,6 @@ def sync_directory_command(
             if not output_json:
                 console.print(f"\n[blue]Backfilling {len(meili_backfill_paths)} files to MeiliSearch...[/blue]")
 
-            from qdrant_client.models import Filter, FieldCondition, MatchValue
-
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
@@ -554,72 +657,11 @@ def sync_directory_command(
                 disable=output_json,
             ) as progress:
                 backfill_task = progress.add_task("Backfilling...", total=len(meili_backfill_paths))
-
-                for file_path_str in meili_backfill_paths:
-                    progress.update(backfill_task, description=f"Backfilling {Path(file_path_str).name}...")
-
-                    try:
-                        # Fetch all chunks for this file from Qdrant
-                        points, _ = qdrant.scroll(
-                            collection_name=corpus,
-                            scroll_filter=Filter(
-                                must=[
-                                    FieldCondition(
-                                        key="file_path",
-                                        match=MatchValue(value=file_path_str)
-                                    )
-                                ]
-                            ),
-                            limit=1000,
-                            with_payload=True,
-                            with_vectors=False
-                        )
-
-                        if not points:
-                            progress.advance(backfill_task)
-                            continue
-
-                        # Convert Qdrant points to MeiliSearch documents
-                        meili_docs = []
-                        for point in points:
-                            payload = point.payload
-                            # Create a minimal doc for MeiliSearch
-                            meili_doc = {
-                                "id": str(point.id),
-                                "content": payload.get("text", ""),
-                                "file_path": payload.get("file_path", ""),
-                                "filename": payload.get("filename", ""),
-                                "file_extension": payload.get("file_extension", ""),
-                                "chunk_index": payload.get("chunk_index", 0),
-                            }
-
-                            # Add optional fields
-                            if payload.get("page_number"):
-                                meili_doc["page_number"] = payload["page_number"]
-                            if payload.get("programming_language"):
-                                meili_doc["language"] = payload["programming_language"]
-                            if payload.get("document_type"):
-                                meili_doc["document_type"] = payload["document_type"]
-
-                            meili_docs.append(meili_doc)
-
-                        # Index to MeiliSearch with longer timeout for backfill (2 minutes)
-                        if meili_docs:
-                            meili.add_documents_sync(corpus, meili_docs, timeout_ms=120000)
-                            meili_backfill_chunks += len(meili_docs)
-
-                            if verbose and not output_json:
-                                progress.console.print(f"[green]  ✓ {Path(file_path_str).name}: {len(meili_docs)} chunks → MeiliSearch[/green]")
-
-                        meili_backfilled += 1
-
-                    except Exception as e:
-                        meili_backfill_failed += 1
-                        logger.error(f"Failed to backfill {file_path_str}: {e}")
-                        if not output_json:
-                            progress.console.print(f"[yellow]Warning: Failed to backfill {Path(file_path_str).name}: {e}[/yellow]")
-
-                    progress.advance(backfill_task)
+                meili_backfilled, meili_backfill_chunks, meili_backfill_failed = _backfill_qdrant_to_meili(
+                    qdrant, meili, corpus, meili_backfill_paths,
+                    verbose, output_json, progress, backfill_task,
+                    fetch_workers=effective_text_workers,
+                )
 
             total_meili += meili_backfill_chunks
 
@@ -648,6 +690,21 @@ def sync_directory_command(
                     'char_to_token_ratio': 3.3,
                 }
 
+            # Pre-chunk code files for backfill in parallel if workers > 1
+            backfill_pre_chunked: Dict[str, List[Dict[str, Any]]] = {}
+            if corpus_type == 'code' and effective_text_workers > 1:
+                if not output_json:
+                    print_info(f"Parallel chunking {len(qdrant_backfill_paths)} code files for backfill...")
+                backfill_pre_chunked = _parallel_chunk_code_files(
+                    qdrant_backfill_paths,
+                    model_config.get('chunk_size', 400),
+                    model_config.get('chunk_overlap', 20),
+                    effective_text_workers,
+                    verbose,
+                    output_json,
+                    console,
+                )
+
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
@@ -673,11 +730,15 @@ def sync_directory_command(
                                 model_config.get('chunk_overlap', 50)
                             )
                         elif corpus_type == 'code':
-                            chunks = chunk_code_file(
-                                file_path,
-                                model_config.get('chunk_size', 400),
-                                model_config.get('chunk_overlap', 20)
-                            )
+                            # Use pre-chunked data if available
+                            if file_path_str in backfill_pre_chunked:
+                                chunks = backfill_pre_chunked[file_path_str]
+                            else:
+                                chunks = chunk_code_file(
+                                    file_path,
+                                    model_config.get('chunk_size', 400),
+                                    model_config.get('chunk_overlap', 20)
+                                )
                         else:
                             progress.advance(backfill_task)
                             continue
@@ -847,6 +908,71 @@ def sync_directory_command(
         sys.exit(1)
 
 
+def _fetch_qdrant_chunks_for_file(
+    qdrant,
+    corpus: str,
+    file_path_str: str,
+) -> Tuple[str, List[Dict[str, Any]], Optional[str]]:
+    """Fetch chunks for a single file from Qdrant.
+
+    Args:
+        qdrant: Qdrant client
+        corpus: Collection name
+        file_path_str: File path to fetch
+
+    Returns:
+        Tuple of (file_path, list of meili docs, error or None)
+    """
+    from qdrant_client.models import Filter, FieldCondition, MatchValue
+
+    try:
+        points, _ = qdrant.scroll(
+            collection_name=corpus,
+            scroll_filter=Filter(
+                must=[
+                    FieldCondition(
+                        key="file_path",
+                        match=MatchValue(value=file_path_str)
+                    )
+                ]
+            ),
+            limit=1000,
+            with_payload=True,
+            with_vectors=False
+        )
+
+        if not points:
+            return (file_path_str, [], None)
+
+        # Convert Qdrant points to MeiliSearch documents
+        meili_docs = []
+        for point in points:
+            payload = point.payload
+            meili_doc = {
+                "id": str(point.id),
+                "content": payload.get("text", ""),
+                "file_path": payload.get("file_path", ""),
+                "filename": payload.get("filename", ""),
+                "file_extension": payload.get("file_extension", ""),
+                "chunk_index": payload.get("chunk_index", 0),
+            }
+
+            # Add optional fields
+            if payload.get("page_number"):
+                meili_doc["page_number"] = payload["page_number"]
+            if payload.get("programming_language"):
+                meili_doc["language"] = payload["programming_language"]
+            if payload.get("document_type"):
+                meili_doc["document_type"] = payload["document_type"]
+
+            meili_docs.append(meili_doc)
+
+        return (file_path_str, meili_docs, None)
+
+    except Exception as e:
+        return (file_path_str, [], str(e))
+
+
 def _backfill_qdrant_to_meili(
     qdrant,
     meili: FullTextClient,
@@ -855,11 +981,18 @@ def _backfill_qdrant_to_meili(
     verbose: bool,
     output_json: bool,
     progress,
-    backfill_task
+    backfill_task,
+    batch_size: int = 1000,
+    fetch_workers: int = 8,
 ) -> tuple:
     """Backfill files from Qdrant to MeiliSearch.
 
     Copies chunk data from Qdrant to MeiliSearch without needing file access.
+    Uses parallel fetches from Qdrant and uploads to MeiliSearch.
+
+    ATOMICITY: Each file is uploaded as a complete unit. If the process is
+    interrupted, files are either fully indexed or not at all - no partial
+    file indexing. Re-running parity will pick up any incomplete files.
 
     Args:
         qdrant: Qdrant client
@@ -870,82 +1003,223 @@ def _backfill_qdrant_to_meili(
         output_json: JSON output mode
         progress: Rich progress instance
         backfill_task: Progress task ID
+        batch_size: Max documents per upload batch (default: 1000)
+        fetch_workers: Number of parallel threads for Qdrant fetches (default: 8)
 
     Returns:
         Tuple of (files_success, chunks_success, files_failed)
     """
-    from qdrant_client.models import Filter, FieldCondition, MatchValue
+    import threading
 
     files_success = 0
-    chunks_success = 0
     files_failed = 0
+    chunks_success = 0
 
-    for file_path_str in file_paths:
-        progress.update(backfill_task, description=f"Backfilling {Path(file_path_str).name}...")
+    # Track completed file uploads (for atomicity)
+    upload_tasks_by_file: Dict[str, List[int]] = {}  # file_path -> [task_uids]
+    completed_files: Set[str] = set()
+    stats_lock = threading.Lock()
+
+    def upload_file_chunks(file_path: str, docs: List[Dict[str, Any]]) -> bool:
+        """Upload all chunks for a single file atomically.
+
+        Returns True if upload was queued successfully.
+        """
+        if not docs:
+            return True
 
         try:
-            # Fetch all chunks for this file from Qdrant
-            points, _ = qdrant.scroll(
-                collection_name=corpus,
-                scroll_filter=Filter(
-                    must=[
-                        FieldCondition(
-                            key="file_path",
-                            match=MatchValue(value=file_path_str)
-                        )
-                    ]
-                ),
-                limit=1000,
-                with_payload=True,
-                with_vectors=False
-            )
+            index = meili.get_index(corpus)
+            task_uids = []
 
-            if not points:
-                progress.advance(backfill_task)
-                continue
+            # Upload in batches, but track all tasks for this file
+            for i in range(0, len(docs), batch_size):
+                batch = docs[i:i + batch_size]
+                task = index.add_documents(batch)
+                task_uids.append(task.task_uid)
 
-            # Convert Qdrant points to MeiliSearch documents
-            meili_docs = []
-            for point in points:
-                payload = point.payload
-                meili_doc = {
-                    "id": str(point.id),
-                    "content": payload.get("text", ""),
-                    "file_path": payload.get("file_path", ""),
-                    "filename": payload.get("filename", ""),
-                    "file_extension": payload.get("file_extension", ""),
-                    "chunk_index": payload.get("chunk_index", 0),
-                }
+            # Track tasks for this file
+            with stats_lock:
+                upload_tasks_by_file[file_path] = task_uids
 
-                # Add optional fields
-                if payload.get("page_number"):
-                    meili_doc["page_number"] = payload["page_number"]
-                if payload.get("programming_language"):
-                    meili_doc["language"] = payload["programming_language"]
-                if payload.get("document_type"):
-                    meili_doc["document_type"] = payload["document_type"]
-
-                meili_docs.append(meili_doc)
-
-            # Index to MeiliSearch with longer timeout (2 minutes)
-            if meili_docs:
-                meili.add_documents_sync(corpus, meili_docs, timeout_ms=120000)
-                chunks_success += len(meili_docs)
-
-                if verbose and not output_json:
-                    progress.console.print(f"[green]  ✓ {Path(file_path_str).name}: {len(meili_docs)} chunks → MeiliSearch[/green]")
-
-            files_success += 1
+            if verbose and not output_json:
+                progress.console.print(
+                    f"[dim]  Queued {len(docs)} chunks for {Path(file_path).name} "
+                    f"({len(task_uids)} batch{'es' if len(task_uids) > 1 else ''})[/dim]"
+                )
+            return True
 
         except Exception as e:
-            files_failed += 1
-            logger.error(f"Failed to backfill {file_path_str}: {e}")
-            if not output_json:
-                progress.console.print(f"[yellow]Warning: Failed to backfill {Path(file_path_str).name}: {e}[/yellow]")
+            logger.error(f"Failed to queue upload for {file_path}: {e}")
+            return False
 
-        progress.advance(backfill_task)
+    # Parallel fetch from Qdrant and queue uploads
+    progress.update(backfill_task, description=f"Fetching & uploading ({fetch_workers} threads)...")
+
+    with ThreadPoolExecutor(max_workers=fetch_workers) as executor:
+        # Submit all fetch tasks
+        futures = {
+            executor.submit(_fetch_qdrant_chunks_for_file, qdrant, corpus, fp): fp
+            for fp in file_paths
+        }
+
+        # Process results as they complete - upload each file atomically
+        for future in as_completed(futures):
+            file_path_str = futures[future]
+            try:
+                fp, docs, error = future.result()
+                if error:
+                    with stats_lock:
+                        files_failed += 1
+                    logger.error(f"Failed to fetch {fp} from Qdrant: {error}")
+                    if not output_json:
+                        progress.console.print(f"[yellow]Warning: Failed to fetch {Path(fp).name}: {error}[/yellow]")
+                elif docs:
+                    # Upload all chunks for this file as a unit
+                    if upload_file_chunks(fp, docs):
+                        with stats_lock:
+                            files_success += 1
+                            chunks_success += len(docs)
+                    else:
+                        with stats_lock:
+                            files_failed += 1
+                else:
+                    # No chunks found, still count as success
+                    with stats_lock:
+                        files_success += 1
+            except Exception as e:
+                with stats_lock:
+                    files_failed += 1
+                logger.error(f"Failed to process {file_path_str}: {e}")
+
+            progress.advance(backfill_task)
+
+    # Wait for all upload tasks to complete, tracking per-file success
+    all_task_uids = []
+    for task_uids in upload_tasks_by_file.values():
+        all_task_uids.extend(task_uids)
+
+    if all_task_uids:
+        progress.update(backfill_task, description=f"Waiting for {len(all_task_uids)} uploads to complete...")
+
+        # Wait for all tasks
+        task_results: Dict[int, bool] = {}  # task_uid -> success
+        for task_uid in all_task_uids:
+            try:
+                result = meili.client.wait_for_task(task_uid, timeout_in_ms=180000)
+                status = getattr(result, 'status', None) or (result.get('status') if isinstance(result, dict) else None)
+                task_results[task_uid] = (status == 'succeeded')
+                if status == 'failed':
+                    error = getattr(result, 'error', None) or (result.get('error') if isinstance(result, dict) else None)
+                    logger.error(f"Upload task {task_uid} failed: {error}")
+            except Exception as e:
+                task_results[task_uid] = False
+                logger.error(f"Upload task {task_uid} error: {e}")
+
+        # Check which files completed successfully (all their tasks succeeded)
+        files_with_failed_uploads = []
+        for file_path, task_uids in upload_tasks_by_file.items():
+            all_succeeded = all(task_results.get(uid, False) for uid in task_uids)
+            if all_succeeded:
+                completed_files.add(file_path)
+            else:
+                files_with_failed_uploads.append(file_path)
+                # Adjust counts - file upload failed
+                with stats_lock:
+                    files_success -= 1
+                    files_failed += 1
+                    # We don't know exact chunk count that failed, but this is conservative
+
+        if files_with_failed_uploads and not output_json:
+            progress.console.print(f"[yellow]Warning: {len(files_with_failed_uploads)} files had upload failures[/yellow]")
+            if verbose:
+                for fp in files_with_failed_uploads[:5]:
+                    progress.console.print(f"[yellow]  - {Path(fp).name}[/yellow]")
+                if len(files_with_failed_uploads) > 5:
+                    progress.console.print(f"[yellow]  ... and {len(files_with_failed_uploads) - 5} more[/yellow]")
+
+    if verbose and not output_json:
+        progress.console.print(f"[green]  ✓ Uploaded {chunks_success} chunks for {len(completed_files)} files to MeiliSearch[/green]")
 
     return files_success, chunks_success, files_failed
+
+
+def _parallel_chunk_code_files(
+    file_paths: List[str],
+    chunk_size: int,
+    chunk_overlap: int,
+    workers: int,
+    verbose: bool,
+    output_json: bool,
+    console,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Pre-chunk code files in parallel using ProcessPoolExecutor.
+
+    Args:
+        file_paths: List of file paths to chunk
+        chunk_size: Target chunk size in tokens
+        chunk_overlap: Overlap between chunks in tokens
+        workers: Number of parallel workers
+        verbose: Show verbose output
+        output_json: JSON output mode
+        console: Rich console for output
+
+    Returns:
+        Dict mapping file_path -> list of chunk dicts
+    """
+    chunked_files = {}
+    errors = []
+
+    if workers <= 1:
+        # Sequential mode
+        for file_path in file_paths:
+            file_path_str, chunks, error = _chunk_code_file_worker(
+                file_path, chunk_size, chunk_overlap
+            )
+            if error:
+                errors.append((file_path_str, error))
+            elif chunks:
+                chunked_files[file_path_str] = chunks
+        return chunked_files
+
+    # Parallel mode
+    try:
+        ctx = mp.get_context('fork') if sys.platform != 'win32' else mp.get_context('spawn')
+    except ValueError:
+        ctx = mp.get_context('spawn')
+
+    with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as executor:
+        futures = {
+            executor.submit(
+                _chunk_code_file_worker,
+                fp, chunk_size, chunk_overlap
+            ): fp
+            for fp in file_paths
+        }
+
+        for future in as_completed(futures):
+            try:
+                file_path_str, chunks, error = future.result()
+                if error:
+                    errors.append((file_path_str, error))
+                    if verbose and not output_json:
+                        console.print(f"[yellow]  Chunking error for {Path(file_path_str).name}: {error}[/yellow]")
+                elif chunks:
+                    chunked_files[file_path_str] = chunks
+            except Exception as e:
+                fp = futures[future]
+                errors.append((fp, str(e)))
+                logger.error(f"Worker exception for {fp}: {e}")
+
+        # Clean up
+        del futures
+
+    gc.collect()
+
+    if verbose and not output_json and errors:
+        console.print(f"[yellow]  {len(errors)} files had chunking errors[/yellow]")
+
+    return chunked_files
 
 
 def _backfill_meili_to_qdrant(
@@ -959,7 +1233,8 @@ def _backfill_meili_to_qdrant(
     verbose: bool,
     output_json: bool,
     progress,
-    backfill_task
+    backfill_task,
+    text_workers: int = 1,
 ) -> tuple:
     """Backfill files from MeiliSearch to Qdrant.
 
@@ -978,6 +1253,7 @@ def _backfill_meili_to_qdrant(
         output_json: JSON output mode
         progress: Rich progress instance
         backfill_task: Progress task ID
+        text_workers: Number of parallel workers for code chunking (1=sequential)
 
     Returns:
         Tuple of (files_success, chunks_success, files_failed, skipped_paths)
@@ -989,11 +1265,42 @@ def _backfill_meili_to_qdrant(
     files_failed = 0
     skipped_paths = []
 
+    # For code corpora with parallel workers, pre-chunk all files in parallel
+    pre_chunked_files: Dict[str, List[Dict[str, Any]]] = {}
+    if corpus_type == 'code' and text_workers > 1:
+        # Filter to existing files first
+        existing_files = []
+        for fp in file_paths:
+            if Path(fp).exists():
+                existing_files.append(fp)
+            else:
+                skipped_paths.append(fp)
+
+        if existing_files:
+            progress.update(backfill_task, description=f"Parallel chunking {len(existing_files)} code files...")
+            pre_chunked_files = _parallel_chunk_code_files(
+                existing_files,
+                model_config.get('chunk_size', 400),
+                model_config.get('chunk_overlap', 20),
+                text_workers,
+                verbose,
+                output_json,
+                progress.console,
+            )
+            if verbose and not output_json:
+                progress.console.print(f"[dim]  Pre-chunked {len(pre_chunked_files)} files in parallel[/dim]")
+
     for file_path_str in file_paths:
         file_path = Path(file_path_str)
         progress.update(backfill_task, description=f"Backfilling {file_path.name}...")
 
-        # Check if file exists on disk
+        # Check if file exists on disk (already checked for pre-chunked code)
+        if file_path_str in skipped_paths:
+            if not output_json:
+                progress.console.print(f"[yellow]  ⚠ {file_path.name}: File not found, skipping[/yellow]")
+            progress.advance(backfill_task)
+            continue
+
         if not file_path.exists():
             skipped_paths.append(file_path_str)
             if not output_json:
@@ -1003,7 +1310,12 @@ def _backfill_meili_to_qdrant(
 
         try:
             # Chunk file based on corpus type
-            if corpus_type == 'pdf':
+            chunks = None
+
+            if corpus_type == 'code' and file_path_str in pre_chunked_files:
+                # Use pre-chunked results
+                chunks = pre_chunked_files[file_path_str]
+            elif corpus_type == 'pdf':
                 chunks = chunk_pdf_file(file_path, model_config)
             elif corpus_type == 'markdown':
                 chunks = chunk_markdown_file(
@@ -1012,6 +1324,7 @@ def _backfill_meili_to_qdrant(
                     model_config.get('chunk_overlap', 50)
                 )
             elif corpus_type == 'code':
+                # Sequential chunking for code (workers=1 or file not in pre-chunked)
                 chunks = chunk_code_file(
                     file_path,
                     model_config.get('chunk_size', 400),
@@ -1033,8 +1346,10 @@ def _backfill_meili_to_qdrant(
             for i, chunk in enumerate(chunks):
                 # Generate embeddings for all models
                 vectors = {}
+                # Get text from chunk - handle both dict (pre-chunked) and Chunk object formats
+                chunk_text = chunk.get('text') if isinstance(chunk, dict) else chunk.content
                 for model in model_list:
-                    embeddings = embedding_client.embed([chunk['text']], model)
+                    embeddings = embedding_client.embed([chunk_text], model)
                     if hasattr(embeddings, 'tolist'):
                         vectors[model] = embeddings[0].tolist()
                     else:
@@ -1042,7 +1357,7 @@ def _backfill_meili_to_qdrant(
 
                 # Build payload
                 payload = {
-                    "text": chunk['text'],
+                    "text": chunk_text,
                     "file_path": str(file_path.absolute()),
                     "filename": file_path.name,
                     "file_extension": file_path.suffix,
@@ -1054,7 +1369,7 @@ def _backfill_meili_to_qdrant(
                 }
 
                 # Add type-specific metadata
-                chunk_meta = chunk.get('metadata', {})
+                chunk_meta = chunk.get('metadata', {}) if isinstance(chunk, dict) else {}
                 if corpus_type == 'pdf':
                     if chunk_meta.get('page_number'):
                         payload["page_number"] = chunk_meta["page_number"]
@@ -1090,6 +1405,7 @@ def _backfill_meili_to_qdrant(
 def parity_command(
     corpus: str,
     dry_run: bool,
+    text_workers: Optional[int],
     verbose: bool,
     output_json: bool
 ):
@@ -1104,9 +1420,18 @@ def parity_command(
     Args:
         corpus: Corpus name
         dry_run: If True, show what would be backfilled without making changes
+        text_workers: Number of parallel workers for code chunking (None=auto, 0/1=sequential)
         verbose: If True, show detailed progress
         output_json: If True, output JSON format
     """
+    # Calculate effective workers
+    if text_workers is None:
+        effective_text_workers = max(1, cpu_count() // 2)
+    elif text_workers <= 1:
+        effective_text_workers = 1  # Sequential
+    else:
+        effective_text_workers = text_workers
+
     interaction_logger.start(
         "corpus", "parity",
         corpus=corpus,
@@ -1264,7 +1589,8 @@ def parity_command(
                 backfill_task = progress.add_task("Backfilling...", total=len(meili_backfill_paths))
                 meili_backfilled, meili_backfill_chunks, meili_backfill_failed = _backfill_qdrant_to_meili(
                     qdrant, meili, corpus, meili_backfill_paths,
-                    verbose, output_json, progress, backfill_task
+                    verbose, output_json, progress, backfill_task,
+                    fetch_workers=effective_text_workers,
                 )
 
         # Backfill Qdrant from MeiliSearch
@@ -1302,7 +1628,8 @@ def parity_command(
                 backfill_task = progress.add_task("Backfilling Qdrant...", total=len(qdrant_backfill_paths))
                 qdrant_backfilled, qdrant_backfill_chunks, qdrant_backfill_failed, _ = _backfill_meili_to_qdrant(
                     qdrant, embedding_client, corpus, corpus_type, model_list, model_config,
-                    qdrant_backfill_paths, verbose, output_json, progress, backfill_task
+                    qdrant_backfill_paths, verbose, output_json, progress, backfill_task,
+                    text_workers=effective_text_workers,
                 )
 
         # Output results

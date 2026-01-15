@@ -110,13 +110,24 @@ class DualIndexer:
         meili_docs = [to_meilisearch_doc(doc) for doc in documents]
         meili_count = 0
 
-        for i in range(0, len(meili_docs), self.batch_size):
-            batch = meili_docs[i:i + self.batch_size]
-            if wait:
-                self.meili.add_documents_sync(self.index_name, batch)
-            else:
-                self.meili.add_documents(self.index_name, batch)
-            meili_count += len(batch)
+        # Split into batches
+        batches = [
+            meili_docs[i:i + self.batch_size]
+            for i in range(0, len(meili_docs), self.batch_size)
+        ]
+
+        if wait and len(batches) > 1:
+            # Use parallel batch upload for multiple batches
+            result = self.meili.add_documents_batch_parallel(self.index_name, batches)
+            meili_count = result['total_documents']
+        else:
+            # Single batch or async mode
+            for batch in batches:
+                if wait:
+                    self.meili.add_documents_sync(self.index_name, batch)
+                else:
+                    self.meili.add_documents(self.index_name, batch)
+                meili_count += len(batch)
 
         logger.debug(f"Indexed {meili_count} documents to MeiliSearch")
 

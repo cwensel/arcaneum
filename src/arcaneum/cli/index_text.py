@@ -1,7 +1,9 @@
-"""CLI commands for full-text indexing to MeiliSearch (RDR-010).
+"""CLI commands for full-text indexing to MeiliSearch (RDR-010, RDR-011).
 
 Provides commands for indexing PDFs, code, and markdown to MeiliSearch
 for exact phrase and keyword search.
+
+RDR-011 adds git-aware function/class-level source code indexing.
 """
 
 import hashlib
@@ -313,21 +315,32 @@ def index_text_code_command(
     index_name: str,
     recursive: bool,
     batch_size: int,
+    workers: Optional[int],
     force: bool,
     verbose: bool,
-    output_json: bool
+    output_json: bool,
+    depth: Optional[int] = None,
+    git_aware: bool = True
 ):
-    """Index source code files to MeiliSearch for full-text search.
+    """Index source code files to MeiliSearch for full-text search (RDR-011).
+
+    This command supports two modes:
+    1. Git-aware mode (default): Discovers git repositories, indexes at
+       function/class level with line ranges, supports multi-branch.
+    2. Simple mode (--no-git): File-based indexing without git awareness.
 
     Args:
-        path: Directory containing source files (or None if using from_file)
+        path: Directory containing source files or git repos
         from_file: Path to file containing list of paths, or "-" for stdin
         index_name: Target MeiliSearch index name
-        recursive: Search subdirectories recursively
+        recursive: Search subdirectories recursively (simple mode only)
         batch_size: Documents per batch upload
-        force: Force reindex all files
+        workers: Parallel workers for AST extraction (None=auto, 0/1=sequential)
+        force: Force reindex all files/projects
         verbose: Verbose output
         output_json: Output JSON format
+        depth: Git discovery depth (git-aware mode only)
+        git_aware: Use git-aware function-level indexing (default: True)
     """
     # Setup logging
     if verbose:
@@ -349,24 +362,10 @@ def index_text_code_command(
         path=path,
         from_file=from_file,
         force=force,
+        git_aware=git_aware,
     )
 
     try:
-        # Handle file list if provided
-        file_list = None
-        source_dir = None
-
-        if from_file:
-            from .utils import read_file_list
-            file_list = read_file_list(from_file, allowed_extensions=None)
-            if not file_list:
-                raise ValueError("No valid files found in the provided list")
-            source_dir = file_list[0].parent
-        else:
-            source_dir = Path(path)
-            if not source_dir.exists():
-                raise ValueError(f"Path does not exist: {path}")
-
         # Initialize MeiliSearch client
         meili_client = get_meili_client()
 
@@ -377,171 +376,18 @@ def index_text_code_command(
                 "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
             )
 
-        # Import settings
-        from ..fulltext.indexes import SOURCE_CODE_SETTINGS
-
-        # Ensure index exists with correct settings
-        if not meili_client.index_exists(index_name):
-            if not output_json:
-                console.print(f"Creating index '{index_name}'...")
-            meili_client.create_index(
-                name=index_name,
-                primary_key='id',
-                settings=SOURCE_CODE_SETTINGS
+        # Use git-aware function-level indexing (RDR-011)
+        if git_aware and not from_file:
+            _index_code_git_aware(
+                path, index_name, meili_client, batch_size, workers,
+                force, verbose, output_json, depth
             )
-            if not output_json:
-                console.print(f"[green]Created index '{index_name}' with source-code settings[/green]")
         else:
-            if not output_json:
-                console.print(f"[blue]Using existing index '{index_name}'[/blue]")
-
-        # Discover source files
-        code_extensions = {'.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.go', '.rs', '.c', '.cpp',
-                          '.h', '.hpp', '.cs', '.rb', '.php', '.swift', '.kt', '.scala', '.sh', '.bash'}
-
-        if file_list:
-            source_files = [f for f in file_list if f.suffix.lower() in code_extensions]
-        else:
-            source_files = []
-            pattern = '**/*' if recursive else '*'
-            for ext in code_extensions:
-                source_files.extend(source_dir.glob(f'{pattern}{ext}'))
-
-        stats = {
-            'total_files': len(source_files),
-            'indexed_files': 0,
-            'skipped_files': 0,
-            'failed_files': 0,
-            'total_documents': 0,
-            'errors': [],
-        }
-
-        if not source_files:
-            if output_json:
-                print(json.dumps({"success": True, "stats": stats}))
-            else:
-                console.print("[yellow]No source code files found to index[/yellow]")
-            interaction_logger.finish(result_count=0)
-            return
-
-        # Show configuration
-        if not output_json:
-            console.print(f"\n[bold blue]Source Code Full-Text Indexing[/bold blue]")
-            console.print(f"  Index: {index_name}")
-            console.print(f"  Path: {source_dir}")
-            console.print(f"  Files found: {len(source_files)}")
-            console.print(f"  Batch size: {batch_size}")
-            if force:
-                console.print(f"  [yellow]Force: Reindexing all files[/yellow]")
-            console.print()
-
-        # Index files with progress tracking
-        documents = []
-
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            TextColumn("({task.completed}/{task.total})"),
-            TimeElapsedColumn(),
-            transient=False,
-        ) as progress:
-            task = progress.add_task(
-                "[cyan]Indexing source code to MeiliSearch",
-                total=len(source_files)
+            # Fall back to simple file-based indexing
+            _index_code_simple(
+                path, from_file, index_name, meili_client, recursive,
+                batch_size, force, verbose, output_json
             )
-
-            for file_path in source_files:
-                try:
-                    file_hash = _compute_file_hash(file_path)
-
-                    # Check if already indexed
-                    if not force and _is_already_indexed(meili_client, index_name, file_path, file_hash):
-                        stats['skipped_files'] += 1
-                        if verbose:
-                            progress.console.print(f"  [dim]Skipped:[/dim] {file_path.name}")
-                        progress.update(task, advance=1)
-                        continue
-
-                    # Read file content
-                    try:
-                        content = file_path.read_text(encoding='utf-8', errors='replace')
-                    except Exception as e:
-                        raise ValueError(f"Failed to read file: {e}")
-
-                    # Detect language from extension
-                    ext_to_lang = {
-                        '.py': 'python', '.js': 'javascript', '.ts': 'typescript',
-                        '.jsx': 'javascript', '.tsx': 'typescript', '.java': 'java',
-                        '.go': 'go', '.rs': 'rust', '.c': 'c', '.cpp': 'cpp',
-                        '.h': 'c', '.hpp': 'cpp', '.cs': 'csharp', '.rb': 'ruby',
-                        '.php': 'php', '.swift': 'swift', '.kt': 'kotlin',
-                        '.scala': 'scala', '.sh': 'shell', '.bash': 'shell',
-                    }
-                    language = ext_to_lang.get(file_path.suffix.lower(), 'unknown')
-
-                    # Generate unique ID
-                    path_hash = hashlib.md5(str(file_path.absolute()).encode()).hexdigest()[:8]
-                    sanitized_name = re.sub(r'[^a-zA-Z0-9_-]', '_', file_path.stem)[:200]
-                    doc_id = f"{sanitized_name}_{path_hash}"
-
-                    # Build document
-                    doc = {
-                        'id': doc_id,
-                        'content': content,
-                        'filename': file_path.name,
-                        'file_path': str(file_path.absolute()),
-                        'file_hash': file_hash,
-                        'file_extension': file_path.suffix,
-                        'language': language,
-                        'document_type': 'source_code',
-                    }
-
-                    documents.append(doc)
-                    stats['indexed_files'] += 1
-
-                    if verbose:
-                        progress.console.print(f"  [green]Indexed:[/green] {file_path.name}")
-
-                    # Upload in batches
-                    if len(documents) >= batch_size:
-                        meili_client.add_documents(index_name, documents)
-                        stats['total_documents'] += len(documents)
-                        documents = []
-
-                except Exception as e:
-                    stats['failed_files'] += 1
-                    stats['errors'].append({'file': str(file_path), 'error': str(e)})
-                    if verbose:
-                        progress.console.print(f"  [red]Failed:[/red] {file_path.name}: {e}")
-
-                progress.update(task, advance=1)
-
-        # Upload remaining documents
-        if documents:
-            meili_client.add_documents(index_name, documents)
-            stats['total_documents'] += len(documents)
-
-        # Output results
-        if output_json:
-            result = {"success": True, "index": index_name, "stats": stats}
-            if stats['errors']:
-                result["errors"] = stats['errors']
-            print(json.dumps(result, indent=2))
-        else:
-            console.print(f"\n[green]Indexed {stats['indexed_files']} files ({stats['total_documents']} documents)[/green]")
-            if stats['skipped_files'] > 0:
-                console.print(f"[dim]Skipped {stats['skipped_files']} unchanged files[/dim]")
-            if stats['failed_files'] > 0:
-                console.print(f"[yellow]Failed: {stats['failed_files']} files[/yellow]")
-
-        # Log successful operation (RDR-018)
-        interaction_logger.finish(
-            result_count=stats.get('indexed_files', 0),
-            documents=stats.get('total_documents', 0),
-            errors=stats.get('failed_files', 0),
-        )
 
     except KeyboardInterrupt:
         interaction_logger.finish(error="interrupted by user")
@@ -559,6 +405,332 @@ def index_text_code_command(
         else:
             console.print(f"[bold red]Error:[/bold red] {e}")
             sys.exit(1)
+
+
+def _index_code_git_aware(
+    path: str,
+    index_name: str,
+    meili_client,
+    batch_size: int,
+    workers: Optional[int],
+    force: bool,
+    verbose: bool,
+    output_json: bool,
+    depth: Optional[int] = None
+):
+    """Git-aware function-level source code indexing (RDR-011).
+
+    Discovers git repositories, extracts function/class definitions
+    with line ranges, and indexes to MeiliSearch with multi-branch support.
+    Supports parallel file processing for improved throughput.
+    """
+    from ..indexing.fulltext.code_indexer import SourceCodeFullTextIndexer
+    from ..fulltext.indexes import SOURCE_CODE_FULLTEXT_SETTINGS
+
+    source_dir = Path(path)
+    if not source_dir.exists():
+        raise ValueError(f"Path does not exist: {path}")
+
+    # Ensure index exists with function-level settings (RDR-011)
+    if not meili_client.index_exists(index_name):
+        if not output_json:
+            console.print(f"Creating index '{index_name}'...")
+        meili_client.create_index(
+            name=index_name,
+            primary_key='id',
+            settings=SOURCE_CODE_FULLTEXT_SETTINGS
+        )
+        if not output_json:
+            console.print(f"[green]Created index '{index_name}' with function-level settings[/green]")
+    else:
+        # Update settings for existing index to ensure correct attributes
+        current_settings = meili_client.get_index_settings(index_name)
+        required_filterable = {'git_project_identifier', 'git_commit_hash', 'code_type'}
+        current_filterable = set(current_settings.get('filterableAttributes', []))
+
+        if not required_filterable.issubset(current_filterable):
+            if not output_json:
+                console.print(
+                    f"[yellow]Updating index '{index_name}' with required "
+                    f"filterable attributes...[/yellow]"
+                )
+            meili_client.update_index_settings(index_name, SOURCE_CODE_FULLTEXT_SETTINGS)
+            if not output_json:
+                console.print(f"[green]Updated index settings[/green]")
+        else:
+            if not output_json:
+                console.print(f"[blue]Using existing index '{index_name}'[/blue]")
+
+    # Show configuration
+    if not output_json:
+        from multiprocessing import cpu_count
+        console.print(f"\n[bold blue]Git-Aware Source Code Full-Text Indexing (RDR-011)[/bold blue]")
+        console.print(f"  Index: {index_name}")
+        console.print(f"  Path: {source_dir}")
+        console.print(f"  Granularity: Function/class level with line ranges")
+        console.print(f"  Batch size: {batch_size}")
+        # Display worker count
+        if workers is None:
+            effective_workers = max(1, cpu_count() // 2)
+            console.print(f"  Workers: {effective_workers} (auto)")
+        elif workers <= 1:
+            console.print(f"  Workers: sequential")
+        else:
+            console.print(f"  Workers: {workers}")
+        if depth is not None:
+            console.print(f"  Git discovery depth: {depth}")
+        if force:
+            console.print(f"  [yellow]Force: Reindexing all projects[/yellow]")
+        console.print()
+
+    # Initialize indexer and run
+    indexer = SourceCodeFullTextIndexer(
+        meili_client=meili_client,
+        index_name=index_name,
+        batch_size=batch_size,
+        workers=workers
+    )
+
+    stats = indexer.index_directory(
+        input_path=str(source_dir),
+        depth=depth,
+        force=force,
+        verbose=verbose
+    )
+
+    # Output results
+    if output_json:
+        result = {
+            "success": True,
+            "index": index_name,
+            "mode": "git-aware",
+            "stats": {
+                "total_projects": stats['total_projects'],
+                "indexed_projects": stats['indexed_projects'],
+                "skipped_projects": stats['skipped_projects'],
+                "failed_projects": stats['failed_projects'],
+                "total_files": stats['total_files'],
+                "indexed_files": stats['indexed_files'],
+                "total_definitions": stats['total_definitions'],
+            }
+        }
+        if stats.get('errors'):
+            result["errors"] = stats['errors']
+        print(json.dumps(result, indent=2))
+    else:
+        console.print(
+            f"\n[green]Indexed {stats['indexed_projects']} project(s): "
+            f"{stats['indexed_files']} files, {stats['total_definitions']} definitions[/green]"
+        )
+        if stats['skipped_projects'] > 0:
+            console.print(f"[dim]Skipped {stats['skipped_projects']} unchanged project(s)[/dim]")
+        if stats['failed_projects'] > 0:
+            console.print(f"[yellow]Failed: {stats['failed_projects']} project(s)[/yellow]")
+
+    # Log successful operation (RDR-018)
+    interaction_logger.finish(
+        result_count=stats.get('indexed_files', 0),
+        definitions=stats.get('total_definitions', 0),
+        projects=stats.get('indexed_projects', 0),
+        errors=stats.get('failed_projects', 0),
+    )
+
+
+def _index_code_simple(
+    path: str,
+    from_file: str,
+    index_name: str,
+    meili_client,
+    recursive: bool,
+    batch_size: int,
+    force: bool,
+    verbose: bool,
+    output_json: bool
+):
+    """Simple file-based source code indexing (original behavior).
+
+    Indexes source code files without git awareness or function extraction.
+    Each file becomes a single document.
+    """
+    from ..fulltext.indexes import SOURCE_CODE_SETTINGS
+
+    # Handle file list if provided
+    file_list = None
+    source_dir = None
+
+    if from_file:
+        from .utils import read_file_list
+        file_list = read_file_list(from_file, allowed_extensions=None)
+        if not file_list:
+            raise ValueError("No valid files found in the provided list")
+        source_dir = file_list[0].parent
+    else:
+        source_dir = Path(path)
+        if not source_dir.exists():
+            raise ValueError(f"Path does not exist: {path}")
+
+    # Ensure index exists with correct settings
+    if not meili_client.index_exists(index_name):
+        if not output_json:
+            console.print(f"Creating index '{index_name}'...")
+        meili_client.create_index(
+            name=index_name,
+            primary_key='id',
+            settings=SOURCE_CODE_SETTINGS
+        )
+        if not output_json:
+            console.print(f"[green]Created index '{index_name}' with source-code settings[/green]")
+    else:
+        if not output_json:
+            console.print(f"[blue]Using existing index '{index_name}'[/blue]")
+
+    # Discover source files
+    code_extensions = {'.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.go', '.rs', '.c', '.cpp',
+                      '.h', '.hpp', '.cs', '.rb', '.php', '.swift', '.kt', '.scala', '.sh', '.bash'}
+
+    if file_list:
+        source_files = [f for f in file_list if f.suffix.lower() in code_extensions]
+    else:
+        source_files = []
+        pattern = '**/*' if recursive else '*'
+        for ext in code_extensions:
+            source_files.extend(source_dir.glob(f'{pattern}{ext}'))
+
+    stats = {
+        'total_files': len(source_files),
+        'indexed_files': 0,
+        'skipped_files': 0,
+        'failed_files': 0,
+        'total_documents': 0,
+        'errors': [],
+    }
+
+    if not source_files:
+        if output_json:
+            print(json.dumps({"success": True, "stats": stats}))
+        else:
+            console.print("[yellow]No source code files found to index[/yellow]")
+        interaction_logger.finish(result_count=0)
+        return
+
+    # Show configuration
+    if not output_json:
+        console.print(f"\n[bold blue]Source Code Full-Text Indexing (Simple Mode)[/bold blue]")
+        console.print(f"  Index: {index_name}")
+        console.print(f"  Path: {source_dir}")
+        console.print(f"  Files found: {len(source_files)}")
+        console.print(f"  Batch size: {batch_size}")
+        if force:
+            console.print(f"  [yellow]Force: Reindexing all files[/yellow]")
+        console.print()
+
+    # Index files with progress tracking
+    documents = []
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TextColumn("({task.completed}/{task.total})"),
+        TimeElapsedColumn(),
+        transient=False,
+    ) as progress:
+        task = progress.add_task(
+            "[cyan]Indexing source code to MeiliSearch",
+            total=len(source_files)
+        )
+
+        for file_path in source_files:
+            try:
+                file_hash = _compute_file_hash(file_path)
+
+                # Check if already indexed
+                if not force and _is_already_indexed(meili_client, index_name, file_path, file_hash):
+                    stats['skipped_files'] += 1
+                    if verbose:
+                        progress.console.print(f"  [dim]Skipped:[/dim] {file_path.name}")
+                    progress.update(task, advance=1)
+                    continue
+
+                # Read file content
+                try:
+                    content = file_path.read_text(encoding='utf-8', errors='replace')
+                except Exception as e:
+                    raise ValueError(f"Failed to read file: {e}")
+
+                # Detect language from extension
+                ext_to_lang = {
+                    '.py': 'python', '.js': 'javascript', '.ts': 'typescript',
+                    '.jsx': 'javascript', '.tsx': 'typescript', '.java': 'java',
+                    '.go': 'go', '.rs': 'rust', '.c': 'c', '.cpp': 'cpp',
+                    '.h': 'c', '.hpp': 'cpp', '.cs': 'csharp', '.rb': 'ruby',
+                    '.php': 'php', '.swift': 'swift', '.kt': 'kotlin',
+                    '.scala': 'scala', '.sh': 'shell', '.bash': 'shell',
+                }
+                language = ext_to_lang.get(file_path.suffix.lower(), 'unknown')
+
+                # Generate unique ID
+                path_hash = hashlib.md5(str(file_path.absolute()).encode()).hexdigest()[:8]
+                sanitized_name = re.sub(r'[^a-zA-Z0-9_-]', '_', file_path.stem)[:200]
+                doc_id = f"{sanitized_name}_{path_hash}"
+
+                # Build document
+                doc = {
+                    'id': doc_id,
+                    'content': content,
+                    'filename': file_path.name,
+                    'file_path': str(file_path.absolute()),
+                    'file_hash': file_hash,
+                    'file_extension': file_path.suffix,
+                    'language': language,
+                    'document_type': 'source_code',
+                }
+
+                documents.append(doc)
+                stats['indexed_files'] += 1
+
+                if verbose:
+                    progress.console.print(f"  [green]Indexed:[/green] {file_path.name}")
+
+                # Upload in batches
+                if len(documents) >= batch_size:
+                    meili_client.add_documents(index_name, documents)
+                    stats['total_documents'] += len(documents)
+                    documents = []
+
+            except Exception as e:
+                stats['failed_files'] += 1
+                stats['errors'].append({'file': str(file_path), 'error': str(e)})
+                if verbose:
+                    progress.console.print(f"  [red]Failed:[/red] {file_path.name}: {e}")
+
+            progress.update(task, advance=1)
+
+    # Upload remaining documents
+    if documents:
+        meili_client.add_documents(index_name, documents)
+        stats['total_documents'] += len(documents)
+
+    # Output results
+    if output_json:
+        result = {"success": True, "index": index_name, "mode": "simple", "stats": stats}
+        if stats['errors']:
+            result["errors"] = stats['errors']
+        print(json.dumps(result, indent=2))
+    else:
+        console.print(f"\n[green]Indexed {stats['indexed_files']} files ({stats['total_documents']} documents)[/green]")
+        if stats['skipped_files'] > 0:
+            console.print(f"[dim]Skipped {stats['skipped_files']} unchanged files[/dim]")
+        if stats['failed_files'] > 0:
+            console.print(f"[yellow]Failed: {stats['failed_files']} files[/yellow]")
+
+    # Log successful operation (RDR-018)
+    interaction_logger.finish(
+        result_count=stats.get('indexed_files', 0),
+        documents=stats.get('total_documents', 0),
+        errors=stats.get('failed_files', 0),
+    )
 
 
 def index_text_markdown_command(

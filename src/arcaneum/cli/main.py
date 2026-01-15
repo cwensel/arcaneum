@@ -359,20 +359,28 @@ def index_text():
 @click.argument('path', type=click.Path(exists=True), required=False)
 @click.option('--from-file', help='Read file paths from list (one per line, or "-" for stdin)')
 @click.option('--index', 'index_name', required=True, help='MeiliSearch index name')
-@click.option('--recursive/--no-recursive', default=True, help='Search subdirectories recursively')
+@click.option('--recursive/--no-recursive', default=True, help='Search subdirectories recursively (simple mode only)')
+@click.option('--depth', type=int, help='Git discovery depth (git-aware mode only)')
 @click.option('--batch-size', type=int, default=1000, help='Documents per batch upload (default: 1000)')
-@click.option('--force', is_flag=True, help='Force reindex all files')
+@click.option('--workers', type=int, default=None, help='Parallel workers for AST extraction (default: auto=cpu/2, 0=sequential)')
+@click.option('--force', is_flag=True, help='Force reindex all files/projects')
+@click.option('--no-git', 'no_git', is_flag=True, help='Disable git-aware mode (use simple file-based indexing)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_text_code(path, from_file, index_name, recursive, batch_size, force, verbose, output_json):
-    """Index source code to MeiliSearch for full-text search.
+def index_text_code(path, from_file, index_name, recursive, depth, batch_size, workers, force, no_git, verbose, output_json):
+    """Index source code to MeiliSearch for full-text search (RDR-011).
 
-    Indexes source code files for exact keyword and phrase search.
-    Complements semantic search via Qdrant (arc index code).
+    By default uses git-aware mode: discovers git repositories, extracts
+    function/class definitions with line ranges, supports multi-branch.
+
+    Use --no-git for simple file-based indexing without git awareness.
+    Use --workers to control parallel processing (default: auto=cpu/2, 0=sequential).
 
     Examples:
-        arc index text code ./src --index code-index
-        arc index text code ./repos --index code-index --force
+        arc index text code ./repos --index code-index
+        arc index text code ./src --index code-index --no-git
+        arc index text code ./repos --index code-index --depth 2 --force
+        arc index text code ./repos --index code-index --workers 8
     """
     from arcaneum.cli.index_text import index_text_code_command
     # Validate that exactly one of path or from_file is provided
@@ -383,7 +391,8 @@ def index_text_code(path, from_file, index_name, recursive, batch_size, force, v
         click.echo("Error: Cannot use both PATH and --from-file", err=True)
         raise click.Abort()
 
-    index_text_code_command(path, from_file, index_name, recursive, batch_size, force, verbose, output_json)
+    git_aware = not no_git
+    index_text_code_command(path, from_file, index_name, recursive, batch_size, workers, force, verbose, output_json, depth, git_aware)
 
 
 @index_text.command('markdown')
@@ -558,20 +567,27 @@ def create_corpus(name, corpus_type, models, output_json):
 @click.option('--file-types', help='File extensions to index (e.g., .py,.md)')
 @click.option('--force', is_flag=True, help='Force reindex all files (bypass change detection)')
 @click.option('--verify', is_flag=True, help='Verify collection integrity after indexing')
+@click.option('--text-workers', type=int, default=None,
+              help='Parallel workers for code AST chunking (default: auto=cpu/2, 0=sequential)')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed progress (files, chunks, indexing)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def sync_directory(directory, corpus, models, file_types, force, verify, verbose, output_json):
-    """Index to both vector and full-text"""
+def sync_directory(directory, corpus, models, file_types, force, verify, text_workers, verbose, output_json):
+    """Index to both vector and full-text.
+
+    Use --text-workers to parallelize AST chunking for code corpora.
+    """
     from arcaneum.cli.sync import sync_directory_command
-    sync_directory_command(directory, corpus, models, file_types, force, verify, verbose, output_json)
+    sync_directory_command(directory, corpus, models, file_types, force, verify, text_workers, verbose, output_json)
 
 
 @corpus.command('parity')
 @click.argument('name')
 @click.option('--dry-run', is_flag=True, help='Show what would be backfilled without making changes')
+@click.option('--text-workers', type=int, default=None,
+              help='Parallel workers for fetching/chunking (default: auto=cpu/2, 0=sequential)')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed progress for each file')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def corpus_parity(name, dry_run, verbose, output_json):
+def corpus_parity(name, dry_run, text_workers, verbose, output_json):
     """Check and restore parity between Qdrant and MeiliSearch.
 
     Compares indexed files in both systems and backfills missing entries:
@@ -579,9 +595,11 @@ def corpus_parity(name, dry_run, verbose, output_json):
     - MeiliSearch -> Qdrant: Re-chunks and embeds files (requires file access)
 
     Files that don't exist on disk are skipped with a warning.
+
+    Use --text-workers to control parallelism for fetching and chunking.
     """
     from arcaneum.cli.sync import parity_command
-    parity_command(name, dry_run, verbose, output_json)
+    parity_command(name, dry_run, text_workers, verbose, output_json)
 
 
 @corpus.command('info')

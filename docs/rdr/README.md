@@ -13,7 +13,7 @@ This directory contains Recommendation Data Records (RDRs) - detailed technical 
 | 005 | [Git-Aware Source Code Indexing with AST Chunking](RDR-005-source-code-indexing.md)                     | Implemented    | High     |
 | 006 | [Claude Code Marketplace Plugin and CLI Integration](RDR-006-claude-code-integration.md)                | Implemented    | High     |
 | 007 | [Semantic Search CLI for Qdrant Collections](RDR-007-semantic-search.md)                                | Implemented    | High     |
-| 008 | [Full-Text Search Server Setup (MeiliSearch)](RDR-008-fulltext-search-server-setup.md)                  | Recommendation | High     |
+| 008 | [Full-Text Search Server Setup (MeiliSearch)](RDR-008-fulltext-search-server-setup.md)                  | Implemented    | High     |
 | 009 | [Minimal-Command Dual Indexing Workflow](RDR-009-dual-indexing-strategy.md)                             | Recommendation | High     |
 | 010 | [Bulk PDF Indexing to Full-Text Search (MeiliSearch)](RDR-010-pdf-fulltext-indexing.md)                 | Recommendation | High     |
 | 011 | [Git-Aware Source Code Full-Text Indexing to MeiliSearch](RDR-011-source-code-fulltext-indexing.md)     | Recommendation | High     |

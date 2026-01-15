@@ -56,20 +56,34 @@ def get_compose_file():
     return None
 
 
-def run_compose_command(args, check=True, capture_output=False):
-    """Run a docker compose command."""
+def run_compose_command(args, check=True, capture_output=False, env=None):
+    """Run a docker compose command.
+
+    Args:
+        args: Command arguments to pass to docker compose
+        check: Whether to raise on non-zero exit code
+        capture_output: Whether to capture stdout/stderr
+        env: Optional environment variables to add (merged with current env)
+    """
     compose_file = get_compose_file()
     if not compose_file:
         return None
 
     cmd = ["docker", "compose", "-f", compose_file, "-p", "arcaneum"] + args
 
+    # Merge environment variables
+    import os
+    run_env = os.environ.copy()
+    if env:
+        run_env.update(env)
+
     try:
         result = subprocess.run(
             cmd,
             check=check,
             capture_output=capture_output,
-            text=True
+            text=True,
+            env=run_env
         )
         return result
     except subprocess.CalledProcessError as e:
@@ -77,6 +91,19 @@ def run_compose_command(args, check=True, capture_output=False):
         if e.stderr:
             print(e.stderr)
         return None
+
+
+def get_container_env():
+    """Get environment variables for container startup.
+
+    Returns dict with MEILISEARCH_API_KEY set to auto-generated key.
+    """
+    from arcaneum.paths import get_meilisearch_api_key
+
+    return {
+        "MEILISEARCH_API_KEY": get_meilisearch_api_key(),
+        "MEILI_ENV": "production",
+    }
 
 
 def check_qdrant_health():
@@ -102,14 +129,26 @@ def container_group():
     pass
 
 
+def check_meilisearch_health():
+    """Check if MeiliSearch is healthy."""
+    try:
+        response = requests.get("http://localhost:7700/health", timeout=2)
+        return response.status_code == 200
+    except requests.RequestException:
+        return False
+
+
 @container_group.command('start')
 def start_command():
     """Start container services"""
     if not check_docker_available():
         return
 
+    # Get container environment (auto-generates MeiliSearch key if needed)
+    container_env = get_container_env()
+
     print_info("Starting container services...")
-    result = run_compose_command(["up", "-d"])
+    result = run_compose_command(["up", "-d"], env=container_env)
 
     if result is None:
         return
@@ -117,13 +156,23 @@ def start_command():
     # Wait for services to start
     time.sleep(3)
 
+    # Check Qdrant
     if check_qdrant_health():
         print_success("Qdrant started successfully")
         print(f"  REST API: http://localhost:6333")
         print(f"  Dashboard: http://localhost:6333/dashboard")
-        print(f"  Data: {get_data_dir()}")
     else:
         print_warning("Qdrant may not be ready yet. Check logs with: arc container logs")
+
+    # Check MeiliSearch
+    if check_meilisearch_health():
+        print_success("MeiliSearch started successfully")
+        print(f"  HTTP API: http://localhost:7700")
+    else:
+        print_warning("MeiliSearch may not be ready yet. Check logs with: arc container logs")
+
+    print()
+    print_info(f"Data directory: {get_data_dir()}")
 
 
 @container_group.command('stop')
@@ -174,6 +223,11 @@ def status_command():
         print_success("Qdrant: Healthy")
     else:
         print_error("Qdrant: Unhealthy or not running")
+
+    if check_meilisearch_health():
+        print_success("MeiliSearch: Healthy")
+    else:
+        print_error("MeiliSearch: Unhealthy or not running")
 
     # Show Docker volume information
     print()

@@ -55,6 +55,8 @@ dependencies = [
     # Collection export/import (RDR-017)
     "msgpack>=1.1.0",
     "numpy>=1.26.0",
+    # Full-text search (RDR-008)
+    "meilisearch>=0.31.0",
 ]
 
 [project.optional-dependencies]

@@ -52,7 +52,7 @@ Let's index some code and perform your first search.
 
 ### 1. Start Services
 
-Start Qdrant (the vector database):
+Start the search services (Qdrant for semantic search, MeiliSearch for full-text):
 
 ```bash
 arc container start
@@ -65,8 +65,13 @@ You should see:
 Qdrant started successfully
   REST API: http://localhost:6333
   Dashboard: http://localhost:6333/dashboard
-  Data: /Users/you/.arcaneum/data
+MeiliSearch started successfully
+  HTTP API: http://localhost:7700
+
+[INFO] Data directory: /Users/you/.local/share/arcaneum
 ```
+
+Note: MeiliSearch API key is auto-generated and stored in `~/.config/arcaneum/meilisearch.key`.
 
 ### 2. Create a Collection
 

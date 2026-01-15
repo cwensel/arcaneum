@@ -43,8 +43,18 @@ arc index code <path> --collection <name>   # Index source code
 ### Search Commands
 
 ```bash
-arc search <query> --collection <name>        # Semantic search
-arc search text <query> --index <name>        # Full-text search
+arc search semantic <query> --collection <name>  # Semantic search (Qdrant)
+arc search text <query> --index <name>           # Full-text search (MeiliSearch)
+```
+
+### Full-Text Index Management
+
+```bash
+arc fulltext create-index <name> --type <type>   # Create MeiliSearch index
+arc fulltext list-indexes                        # List all indexes
+arc fulltext info <name>                         # Show index details
+arc fulltext delete-index <name>                 # Delete index
+arc fulltext update-settings <name> --type <type>  # Update index settings
 ```
 
 ### Dual Indexing (Qdrant + MeiliSearch)
@@ -513,8 +523,12 @@ Configure via environment or `.env` file:
 ```bash
 QDRANT_URL=http://localhost:6333
 MEILISEARCH_URL=http://localhost:7700
-MEILISEARCH_API_KEY=your-api-key
+MEILISEARCH_API_KEY=your-api-key  # Optional: auto-generated if not set
 ```
+
+Note: `MEILISEARCH_API_KEY` is auto-generated on first `arc container start` and stored
+in `~/.config/arcaneum/meilisearch.key`. You only need to set it manually if you want
+to use a custom key or share the same key across machines.
 
 ## For Claude Code Agents
 
@@ -528,6 +542,82 @@ The `arc` CLI is the entrypoint for all Claude Code plugins and slash commands:
 ```
 
 See individual slash command files in `/commands/` directory for detailed usage.
+
+## Full-Text Search (MeiliSearch)
+
+Full-text search provides exact phrase matching, typo-tolerant keyword search, and filtered queries.
+
+### Create Index
+
+```bash
+# Create index with type-specific settings
+arc fulltext create-index source-code --type source-code
+arc fulltext create-index pdf-docs --type pdf
+arc fulltext create-index my-docs --type markdown
+
+# List all indexes
+arc fulltext list-indexes
+
+# Show index details
+arc fulltext info source-code
+
+# Delete index
+arc fulltext delete-index source-code --confirm
+```
+
+**Index Types:**
+
+| Type | Aliases | Optimized For |
+|------|---------|---------------|
+| `source-code` | `code` | Code with higher typo thresholds |
+| `pdf-docs` | `pdf` | PDF documents with stop words |
+| `markdown-docs` | `markdown` | Markdown with headings search |
+
+### Search
+
+```bash
+# Basic search
+arc search text "authentication" --index source-code
+
+# Exact phrase search (use quotes)
+arc search text '"def authenticate"' --index source-code
+
+# With filter
+arc search text "authentication" --index source-code --filter "language = python"
+
+# With pagination
+arc search text "query" --index source-code --limit 20 --offset 10
+
+# JSON output
+arc search text "query" --index source-code --json
+```
+
+**Filter Syntax:**
+
+```bash
+# Single filter
+--filter "language = python"
+
+# Multiple conditions
+--filter "language = python AND project = myapp"
+
+# Numeric comparison
+--filter "page_number > 10"
+```
+
+### Configuration
+
+MeiliSearch API key is auto-generated on first `arc container start` and stored in:
+
+```text
+~/.config/arcaneum/meilisearch.key
+```
+
+To override, set the environment variable:
+
+```bash
+export MEILISEARCH_API_KEY=your-custom-key
+```
 
 ## Service Management
 

@@ -471,6 +471,10 @@ cli.add_command(config_group, name='config')
 from arcaneum.cli.docker import container_group
 cli.add_command(container_group, name='container')
 
+# Full-text index management commands (RDR-008)
+from arcaneum.cli.fulltext import fulltext as fulltext_group
+cli.add_command(fulltext_group, name='fulltext')
+
 
 def main():
     """Main CLI entry point with structured error handling (RDR-006)."""

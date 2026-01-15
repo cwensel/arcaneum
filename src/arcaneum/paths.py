@@ -83,6 +83,57 @@ def get_meilisearch_data_dir() -> Path:
     return meilisearch_dir
 
 
+def get_config_dir() -> Path:
+    """Get the config directory (XDG-compliant: ~/.config/arcaneum).
+
+    Configuration files and secrets belong in ~/.config per XDG spec.
+    Creates the directory if it doesn't exist.
+
+    Returns:
+        Path to ~/.config/arcaneum directory
+    """
+    config_home = os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))
+    config_dir = Path(config_home) / "arcaneum"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    return config_dir
+
+
+def get_meilisearch_api_key() -> str:
+    """Get or generate the MeiliSearch API key.
+
+    The key is stored in ~/.config/arcaneum/meilisearch.key and is
+    auto-generated on first access. This ensures MeiliSearch runs in
+    production mode (secure) without manual configuration.
+
+    Returns:
+        The MeiliSearch API key (32 characters, URL-safe base64)
+    """
+    import secrets
+    import base64
+
+    key_file = get_config_dir() / "meilisearch.key"
+
+    # Check environment variable first (allows override)
+    env_key = os.environ.get("MEILISEARCH_API_KEY")
+    if env_key and len(env_key) >= 16:
+        return env_key
+
+    # Read existing key or generate new one
+    if key_file.exists():
+        key = key_file.read_text().strip()
+        if len(key) >= 16:
+            return key
+
+    # Generate a new secure key (32 bytes = 43 chars base64, URL-safe)
+    key = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode('ascii').rstrip('=')
+
+    # Save with restricted permissions (readable only by owner)
+    key_file.write_text(key)
+    key_file.chmod(0o600)
+
+    return key
+
+
 def configure_model_cache_env():
     """Configure environment variables for model caching (XDG-compliant).
 

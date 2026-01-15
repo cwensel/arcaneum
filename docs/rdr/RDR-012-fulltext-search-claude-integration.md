@@ -3,10 +3,12 @@
 ## Metadata
 
 - **Date**: 2025-10-27
-- **Status**: Recommendation
+- **Updated**: 2026-01-15
+- **Status**: Partially Implemented
 - **Type**: Feature
 - **Priority**: High
-- **Related Issues**: arcaneum-71
+- **Related Issues**: arcaneum-71, arcaneum-3l8l, arcaneum-4t78, arcaneum-72j3,
+  arcaneum-jo4x, arcaneum-9vrc, arcaneum-yfge
 - **Related Tests**: Full-text search CLI tests, slash command tests, result
   formatting tests
 
@@ -60,7 +62,7 @@ search.
 
 ### Technical Environment
 
-- **MeiliSearch**: v1.24.0 (Docker from RDR-008)
+- **MeiliSearch**: v1.12 (Docker from RDR-008)
 - **Python**: >= 3.12
 - **meilisearch-python**: >= 0.31.0
 - **CLI Framework**: Click (from RDR-003)
@@ -101,7 +103,7 @@ Research based on prior RDRs:
 - Handles soft separators: `-`, `_`, `|`
 - Tokenization: whitespace, quotes, separators
 
-**Filter Expressions**:
+**Filter Expressions** (MeiliSearch native syntax):
 
 ```bash
 # Simple equality
@@ -113,9 +115,15 @@ language = python AND git_branch = main
 # Numeric ranges
 page_number > 5 AND page_number < 20
 
+# Array membership
+programming_language IN [python, javascript, typescript]
+
 # Text contains
 file_path CONTAINS /src/auth/
 ```
+
+**Note**: Filter syntax uses MeiliSearch native format, which differs from
+Qdrant filter syntax in RDR-007.
 
 **Highlighting**:
 
@@ -148,7 +156,7 @@ file_path CONTAINS /src/auth/
 **Key Differences from RDR-007 Semantic Search**:
 
 | Aspect | Semantic (RDR-007) | Full-Text (this RDR) |
-|--------|-------------------|---------------------|
+| ------ | ------------------ | -------------------- |
 | **Location** | file.py (no lines) | file.py:42-67 (precise) |
 | **Score** | Similarity 0.0-1.0 | Relevance (internal) |
 | **Query** | Natural language | Exact phrases, patterns |
@@ -156,67 +164,65 @@ file_path CONTAINS /src/auth/
 
 #### 3. CLI Command Design (mirrors RDR-007)
 
-**Parallel Command Structure**:
+**Unified Search Group Structure**:
 
 ```bash
 # Semantic search (RDR-007)
-arc find MyCode "authentication patterns"
+arc search semantic "authentication patterns" --collection MyCode
 
 # Full-text search (this RDR)
-arc match MyCode-fulltext '"def authenticate"'
+arc search text "def authenticate" --index MyCode-fulltext
 ```
 
-**Why `search-text` instead of `fulltext search`**:
+**Why unified `search` group with subcommands**:
 
-- Shorter, more intuitive
-- Parallel to `search` (semantic)
-- Avoids subcommand nesting
+- Consistent grouping of related search functionality
+- Clear distinction via subcommand name (`semantic` vs `text`)
+- Parallel option patterns (`--collection` for Qdrant, `--index` for MeiliSearch)
 
 **Command Options**:
 
 ```bash
-arc match <query>" \
+arc search text "<query>" \
   --index <name> \            # Required: MeiliSearch index name
-  --filter <filter> \         # Optional: Metadata filters
+  --filter <filter> \         # Optional: MeiliSearch filter expression
   --limit <n> \               # Optional: Max results (default: 10)
-  --attributes <attrs> \      # Optional: Fields to highlight
+  --offset <n> \              # Optional: Pagination offset (default: 0)
   --json                      # Optional: JSON output format
+  --verbose                   # Optional: Detailed output
 ```
 
 #### 4. Slash Command Integration (from RDR-006)
 
-**Slash Command** (`commands/search-text.md`):
+**Slash Command** (`commands/search.md`) - unified search command:
 
 ```markdown
 ---
-description: Search MeiliSearch index with exact phrases
-argument-hint: "<query>" --index <name> [options]
+description: Search across collections
+argument-hint: semantic "query" --collection NAME
 ---
 
-Perform full-text search for exact phrases and keywords.
+Search your indexed content using semantic search (most common) or full-text search.
 
-**Arguments:**
-- "<query>": Search query (use quotes for exact phrases)
-- --index <name>: MeiliSearch index to search (required)
-- --filter <filter>: Metadata filter (e.g., language=python)
-- --limit <n>: Number of results (default: 10)
-- --json: Output JSON format
+**Subcommands (required):**
+- `semantic`: Vector-based semantic search (Qdrant) - use `--collection`
+- `text`: Keyword-based full-text search (MeiliSearch) - use `--index`
 
 **Examples:**
-/arc:match '"def authenticate"' --index MyCode-fulltext
-/arc:match 'calculate_total' --index MyCode-fulltext --filter 'language=python'
-/arc:match '"neural network"' --index PDFs --filter 'page_number > 5'
+# Semantic search (most common)
+/arc:search semantic "identity proofing" --collection Standards
+
+# Full-text keyword search
+/arc:search text "def authenticate" --index MyCode-fulltext
 
 **Execution:**
-cd ${CLAUDE_PLUGIN_ROOT}
-python -m arcaneum.cli.main search-text $ARGUMENTS
+arc search $ARGUMENTS
 ```
 
 **Integration with RDR-006**:
 
 - Follows CLI-first pattern (no MCP)
-- Uses `${CLAUDE_PLUGIN_ROOT}` for portability
-- Simple markdown file structure
+- Unified search command with subcommands
 - Discoverable via `/help`
 
 #### 5. When to Use Semantic vs Full-Text (User Guidance)
@@ -226,19 +232,19 @@ python -m arcaneum.cli.main search-text $ARGUMENTS
 ```text
 User Query Analysis:
 ├─ Contains quotes? ("exact phrase")
-│  └─> USE FULL-TEXT (/search-text)
+│  └─> USE FULL-TEXT (arc search text)
 │
 ├─ Asks for "exact", "literal", "string"?
-│  └─> USE FULL-TEXT (/search-text)
+│  └─> USE FULL-TEXT (arc search text)
 │
 ├─ Needs line numbers or precise location?
-│  └─> USE FULL-TEXT (/search-text)
+│  └─> USE FULL-TEXT (arc search text)
 │
 ├─ Natural language concept ("patterns", "approaches")?
-│  └─> USE SEMANTIC (/search)
+│  └─> USE SEMANTIC (arc search semantic)
 │
 ├─ Wants similar code/docs?
-│  └─> USE SEMANTIC (/search)
+│  └─> USE SEMANTIC (arc search semantic)
 │
 └─ Unsure or exploratory?
    └─> USE SEMANTIC first, then FULL-TEXT to verify
@@ -247,7 +253,7 @@ User Query Analysis:
 **Example Queries**:
 
 | Query | Search Type | Reasoning |
-|-------|-------------|-----------|
+| ----- | ----------- | --------- |
 | "Find authentication code" | Semantic | Conceptual |
 | "Find 'def authenticate'" | Full-text | Exact string |
 | "Find similar functions" | Semantic | Similarity |
@@ -255,26 +261,99 @@ User Query Analysis:
 | "Find error handling patterns" | Semantic | Pattern discovery |
 | "Find 'raise ValueError'" | Full-text | Exact exception |
 
-#### 6. Filter DSL (reuse from RDR-007)
+#### 6. Filter Syntax (MeiliSearch Native)
 
-**Simple DSL** (80% use case):
+**Note**: MeiliSearch uses its own SQL-like filter syntax. This is **NOT Lucene
+query syntax**. Key differences:
+
+| Aspect | MeiliSearch | Lucene |
+| ------ | ----------- | ------ |
+| Format | `field = value` | `field:value` |
+| Purpose | Post-search filtering | Combined query |
+| Default | Explicit operators required | OR between terms |
+| Wildcards | `STARTS WITH`, `CONTAINS` | `te?t`, `test*` |
+
+Filters are passed directly to MeiliSearch without transformation. The full
+MeiliSearch filter syntax is supported.
+
+**Comparison Operators**:
+
+| Operator | Example |
+| -------- | ------- |
+| `=` | `language = python` |
+| `!=` | `language != java` |
+| `>` | `page_number > 5` |
+| `>=` | `start_line >= 100` |
+| `<` | `page_number < 20` |
+| `<=` | `end_line <= 500` |
+| `TO` | `page_number 5 TO 20` (inclusive range) |
+
+**Logical Operators** (precedence: NOT > AND > OR):
+
+| Operator | Example |
+| -------- | ------- |
+| `AND` | `language = python AND git_branch = main` |
+| `OR` | `language = python OR language = javascript` |
+| `NOT` | `NOT language = java` |
+
+Use parentheses for explicit grouping:
 
 ```bash
-arc match MyIndex "query" --filter language=python,git_branch=main
+--filter "(language = python OR language = javascript) AND git_branch = main"
 ```
 
-**JSON DSL** (20% advanced):
+**Collection Operators**:
+
+| Operator | Example |
+| -------- | ------- |
+| `IN` | `language IN [python, javascript, typescript]` |
+| `NOT IN` | `language NOT IN [java, c++]` |
+
+**Existence Operators**:
+
+| Operator | Example |
+| -------- | ------- |
+| `EXISTS` | `function_name EXISTS` |
+| `NOT EXISTS` | `NOT class_name EXISTS` |
+| `IS EMPTY` | `tags IS EMPTY` |
+| `IS NOT EMPTY` | `tags IS NOT EMPTY` |
+| `IS NULL` | `optional_field IS NULL` |
+| `IS NOT NULL` | `optional_field IS NOT NULL` |
+
+**String Pattern Operators** (experimental):
+
+| Operator | Example |
+| -------- | ------- |
+| `CONTAINS` | `file_path CONTAINS "/src/auth/"` |
+| `NOT CONTAINS` | `file_path NOT CONTAINS "/test/"` |
+| `STARTS WITH` | `filename STARTS WITH "test_"` |
+| `NOT STARTS WITH` | `filename NOT STARTS WITH "_"` |
+
+**CLI Examples**:
 
 ```bash
-arc match MyIndex "query" --filter '{
-  "must": [
-    {"key": "language", "match": {"value": "python"}},
-    {"key": "git_branch", "match": {"value": "main"}}
-  ]
-}'
+# Simple equality
+arc search text "query" --index MyIndex --filter "language = python"
+
+# Multiple conditions with AND
+arc search text "query" --index MyIndex --filter "language = python AND git_branch = main"
+
+# Array membership
+arc search text "query" --index MyIndex --filter "programming_language IN [python, javascript]"
+
+# Numeric range
+arc search text "query" --index MyIndex --filter "page_number 5 TO 20"
+
+# Complex filter with grouping
+arc search text "query" --index MyIndex \
+  --filter "(language = python OR language = javascript) AND NOT file_path CONTAINS /test/"
+
+# Check field existence
+arc search text "query" --index MyIndex --filter "function_name EXISTS"
 ```
 
-**Reuse RDR-007's filter parser** - Same logic, different backend (MeiliSearch vs Qdrant)
+**MeiliSearch filter syntax reference**:
+<https://www.meilisearch.com/docs/learn/filtering_and_sorting/filter_expression_reference>
 
 ## Proposed Solution
 
@@ -284,16 +363,19 @@ arc match MyIndex "query" --filter '{
 
 ```bash
 # Basic full-text search
-arc match MyCode-fulltext '"def authenticate"'
+arc search text "def authenticate" --index MyCode-fulltext
 
 # With filters
-arc match MyCode-fulltext 'calculate' --filter language=python
+arc search text "calculate" --index MyCode-fulltext --filter "language = python"
 
-# With limit
-arc match PDFs '"neural network"' --limit 20
+# With limit and offset
+arc search text "neural network" --index PDFs --limit 20 --offset 10
 
 # JSON output
-arc match MyCode-fulltext '"async def"' --json
+arc search text "async def" --index MyCode-fulltext --json
+
+# Verbose output
+arc search text "authenticate" --index MyCode-fulltext --verbose
 ```
 
 **Architecture** (parallel to RDR-007):
@@ -301,20 +383,20 @@ arc match MyCode-fulltext '"async def"' --json
 ```text
 ┌─────────────────────────────────────────────────┐
 │     Layer 1: CLI Entry Point                    │
-│     python -m arcaneum.cli.main search-text     │
+│     arc search text <query> --index <name>      │
 └──────────────────┬──────────────────────────────┘
                    │
                    ▼
 ┌─────────────────────────────────────────────────┐
-│     Layer 2: Search Orchestrator                │
+│     Layer 2: fulltext.py                        │
+│     - search_text_command()                     │
 │     - Parse query and filters                   │
-│     - Execute MeiliSearch search                │
-│     - Format results with locations             │
+│     - Format results with Rich console          │
 └──────────────────┬──────────────────────────────┘
                    │
                    ▼
 ┌─────────────────────────────────────────────────┐
-│     Layer 3: MeiliSearch Client                 │
+│     Layer 3: FullTextClient                     │
 │     - Execute search with filters               │
 │     - Return hits with highlighting             │
 └──────────────────┬──────────────────────────────┘
@@ -325,395 +407,135 @@ arc match MyCode-fulltext '"async def"' --json
 
 ### Technical Design
 
-#### Component 1: Filter Parser (reuse from RDR-007)
+#### Component 1: CLI Search Command (Implemented)
 
-**Reuse RDR-007's filter parsing logic**:
+**Location**: `src/arcaneum/cli/fulltext.py:33-187`
 
-```python
-# src/arcaneum/search/filters.py (from RDR-007)
-# Already supports both Qdrant and MeiliSearch filter formats
-
-def parse_filter(filter_arg: str) -> models.Filter:
-    """Parse filter from CLI argument."""
-    if not filter_arg:
-        return None
-
-    # Detect format
-    if filter_arg.startswith('{'):
-        return parse_json_filter(filter_arg)
-    elif ':' in filter_arg:
-        return parse_extended_filter(filter_arg)
-    else:
-        return parse_simple_filter(filter_arg)
-```
-
-**No modifications needed** - Works for both Qdrant and MeiliSearch
-
-#### Component 2: MeiliSearch Searcher
+The search command is implemented inline in fulltext.py rather than as separate
+modules. This simpler approach works well for the current scope.
 
 ```python
-# src/arcaneum/search/fulltext_searcher.py
+# src/arcaneum/cli/fulltext.py
 
-from typing import List, Dict, Any, Optional
-from dataclasses import dataclass
-from ..fulltext.client import FullTextClient
-
-@dataclass
-class FullTextSearchResult:
-    """Full-text search result with precise location."""
-    score: float
-    index: str
-    location: str  # file.py:42-67 or file.pdf:page7
-    content: str
-    metadata: Dict[str, Any]
-    highlights: Optional[Dict[str, str]] = None
-
-def search_fulltext(
-    client: FullTextClient,
+def search_text_command(
     query: str,
     index_name: str,
-    filter_expr: Optional[str] = None,
-    limit: int = 10,
-    attributes_to_highlight: List[str] = None
-) -> List[FullTextSearchResult]:
+    filter_arg: Optional[str],
+    limit: int,
+    offset: int,
+    output_json: bool,
+    verbose: bool
+):
     """
-    Search MeiliSearch index with exact phrases.
-
-    Args:
-        client: FullTextClient instance
-        query: Search query (use quotes for exact phrases)
-        index_name: MeiliSearch index name
-        filter_expr: Filter expression (simple or JSON)
-        limit: Maximum results
-        attributes_to_highlight: Fields to highlight
-
-    Returns:
-        List of FullTextSearchResult objects
+    Implementation for 'arc search text' command.
+    Called from main.py search group.
     """
-    # Default highlighting
-    if attributes_to_highlight is None:
-        attributes_to_highlight = ['content', 'function_name', 'class_name']
+    client = get_client()
 
-    # Execute MeiliSearch search
+    # Verify server and index exist
+    if not client.health_check():
+        raise ResourceNotFoundError("MeiliSearch server not available")
+    if not client.index_exists(index_name):
+        raise ResourceNotFoundError(f"Index '{index_name}' not found")
+
+    # Execute search with interaction logging (RDR-018)
+    interaction_logger.start("search", "text", index=index_name, query=query)
     results = client.search(
-        index_name=index_name,
-        query=query,
-        filter=filter_expr,
+        index_name, query,
+        filter=filter_arg,
         limit=limit,
-        attributes_to_highlight=attributes_to_highlight
+        offset=offset,
+        attributes_to_highlight=['content']
     )
 
-    # Convert to FullTextSearchResult format
-    search_results = []
-    for hit in results['hits']:
-        location = format_location(hit)
+    # Format output (JSON or Rich console)
+    if output_json:
+        # Structured JSON output
+        print(json.dumps({...}))
+    else:
+        # Rich console formatting with highlighting
+        for hit in results['hits']:
+            # Display location, metadata, highlighted content
+```
 
-        result = FullTextSearchResult(
-            score=hit.get('_rankingScore', 1.0),  # MeiliSearch internal score
-            index=index_name,
-            location=location,
-            content=hit.get('content', ''),
-            metadata=hit,
-            highlights=hit.get('_formatted', {})
-        )
-        search_results.append(result)
+**CLI Registration** (`src/arcaneum/cli/main.py:528-539`):
 
-    return search_results
+```python
+@search.command('text')
+@click.argument('query')
+@click.option('--index', required=True, help='MeiliSearch index to search')
+@click.option('--filter', 'filter_arg', help='Metadata filter expression')
+@click.option('--limit', type=int, default=10)
+@click.option('--offset', type=int, default=0)
+@click.option('--json', 'output_json', is_flag=True)
+@click.option('--verbose', '-v', is_flag=True)
+def search_text(query, index_name, filter_arg, limit, offset, output_json, verbose):
+    """Keyword-based full-text search"""
+    from arcaneum.cli.fulltext import search_text_command
+    search_text_command(query, index_name, filter_arg, limit, offset, output_json, verbose)
+```
 
+#### Component 2: Location Formatting (Gap - Needs Enhancement)
+
+**Current Implementation** (`fulltext.py:146-148`):
+
+```python
+location = hit.get('filename', hit.get('file_path', 'Unknown'))
+if 'line_number' in hit:
+    location += f":{hit['line_number']}"
+```
+
+**Required Enhancement** (see arcaneum-jo4x):
+
+The current implementation only shows a single line number. RDR-011 provides
+richer metadata that should be displayed:
+
+```python
 def format_location(hit: Dict[str, Any]) -> str:
-    """
-    Format location for display.
-
-    Returns:
-        - Code: file.py:42-67 (function_name)
-        - PDF: file.pdf:page7
-    """
-    file_path = hit.get('file_path', '')
+    """Format location with full context from RDR-011 metadata."""
+    file_path = hit.get('file_path') or hit.get('filename', 'Unknown')
 
     # Source code: Include line range and function/class name
     if 'start_line' in hit:
         start = hit['start_line']
         end = hit.get('end_line', start)
-        name_info = ''
+        location = f"{file_path}:{start}-{end}"
 
         if hit.get('function_name'):
-            name_info = f" ({hit['function_name']} function)"
+            location += f" ({hit['function_name']} function)"
         elif hit.get('class_name'):
-            name_info = f" ({hit['class_name']} class)"
-
-        return f"{file_path}:{start}-{end}{name_info}"
+            location += f" ({hit['class_name']} class)"
+        return location
 
     # PDF: Include page number
     if 'page_number' in hit:
         return f"{file_path}:page{hit['page_number']}"
 
-    # Fallback: Just file path
     return file_path
 ```
 
-#### Component 3: Result Formatter
+#### Component 3: Slash Command (Implemented)
 
-```python
-# src/arcaneum/search/fulltext_formatter.py
+**Location**: `commands/search.md`
 
-def format_text_results(
-    query: str,
-    results: List[FullTextSearchResult],
-    verbose: bool = False
-) -> str:
-    """Format full-text search results for terminal display."""
-    lines = []
-    lines.append(f'Full-text search: "{query}"')
-    lines.append(f"Found {len(results)} results\n")
-
-    for i, result in enumerate(results, 1):
-        # Header with metadata
-        metadata_str = format_metadata(result.metadata)
-        lines.append(f"[{i}] {metadata_str}")
-
-        # Location (with precise line/page numbers)
-        lines.append(f"    {result.location}")
-        lines.append("")
-
-        # Content snippet (use highlighted if available)
-        if result.highlights and 'content' in result.highlights:
-            snippet = result.highlights['content']
-        else:
-            snippet = result.content
-
-        # Show first 200 chars or 5 lines
-        snippet_lines = snippet.split('\n')[:5]
-        for line in snippet_lines:
-            lines.append(f"    {line[:200]}")
-        lines.append("")
-
-    return "\n".join(lines)
-
-def format_json_results(
-    query: str,
-    index: str,
-    results: List[FullTextSearchResult]
-) -> str:
-    """Format results as JSON."""
-    import json
-    return json.dumps({
-        "query": query,
-        "index": index,
-        "search_type": "fulltext",
-        "total_results": len(results),
-        "results": [
-            {
-                "score": r.score,
-                "index": r.index,
-                "location": r.location,
-                "content": r.content[:500],  # Truncate for JSON
-                "metadata": r.metadata
-            }
-            for r in results
-        ]
-    }, indent=2)
-
-def format_metadata(metadata: Dict[str, Any]) -> str:
-    """Format metadata for compact display."""
-    parts = []
-
-    # Language for code
-    if 'programming_language' in metadata:
-        parts.append(f"Language: {metadata['programming_language']}")
-
-    # Git info for code
-    if 'git_project_name' in metadata:
-        parts.append(f"Project: {metadata['git_project_name']}")
-    if 'git_branch' in metadata and metadata['git_branch'] != 'main':
-        parts.append(f"Branch: {metadata['git_branch']}")
-
-    # Page for PDFs
-    if 'page_number' in metadata:
-        parts.append(f"Page: {metadata['page_number']}")
-
-    return " | ".join(parts) if parts else f"Index: {metadata.get('index', '?')}"
-```
-
-#### Component 4: CLI Implementation
-
-```python
-# src/arcaneum/cli/search_text.py
-
-import click
-from pathlib import Path
-from ..fulltext.client import FullTextClient
-from ..search.fulltext_searcher import search_fulltext
-from ..search.fulltext_formatter import format_text_results, format_json_results
-from ..search.filters import parse_filter
-
-@click.command('search-text')
-@click.argument('query')
-@click.option('--index', required=True, help='MeiliSearch index to search')
-@click.option('--filter', 'filter_arg', help='Metadata filter (key=value or JSON)')
-@click.option('--limit', type=int, default=10, help='Number of results')
-@click.option('--attributes', help='Comma-separated fields to highlight')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-@click.option('--meili-url', default='http://localhost:7700', help='MeiliSearch server URL')
-@click.option('--meili-key', envvar='MEILI_MASTER_KEY', help='MeiliSearch master key')
-@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-def search_text_command(
-    query: str,
-    index: str,
-    filter_arg: str,
-    limit: int,
-    attributes: str,
-    output_json: bool,
-    meili_url: str,
-    meili_key: str,
-    verbose: bool
-):
-    """
-    Search MeiliSearch index with exact phrases and keywords.
-
-    Examples:
-
-    \b
-    # Exact phrase search
-    arc match MyCode-fulltext '"def authenticate"'
-
-    \b
-    # Keyword search with filters
-    arc match MyCode-fulltext 'calculate_total' --filter 'language=python'
-
-    \b
-    # PDF search with page filter
-    arc match PDFs '"neural network"' --filter 'page_number > 5'
-    """
-
-    # Initialize MeiliSearch client
-    try:
-        client = FullTextClient(meili_url, meili_key)
-
-        # Check if index exists
-        if not client.index_exists(index):
-            click.echo(f"[ERROR] Index '{index}' not found in MeiliSearch", err=True)
-            return 1
-
-    except Exception as e:
-        click.echo(f"[ERROR] Failed to connect to MeiliSearch: {e}", err=True)
-        if verbose:
-            import traceback
-            traceback.print_exc()
-        return 1
-
-    try:
-        # Parse attributes to highlight
-        highlight_attrs = None
-        if attributes:
-            highlight_attrs = [a.strip() for a in attributes.split(',')]
-
-        # Execute search
-        results = search_fulltext(
-            client=client,
-            query=query,
-            index_name=index,
-            filter_expr=filter_arg,
-            limit=limit,
-            attributes_to_highlight=highlight_attrs
-        )
-
-        # Format output
-        if output_json:
-            output = format_json_results(query, index, results)
-        else:
-            output = format_text_results(query, results, verbose)
-
-        click.echo(output)
-        return 0
-
-    except Exception as e:
-        click.echo(f"[ERROR] Search failed: {e}", err=True)
-        if verbose:
-            import traceback
-            traceback.print_exc()
-        return 1
-```
-
-**Integration with centralized CLI** (from RDR-001):
-
-```python
-# src/arcaneum/cli/main.py
-
-from .search_text import search_text_command
-
-@cli.command('search-text')
-@click.pass_context
-def search_text(ctx, **kwargs):
-    """Full-text search via MeiliSearch (from RDR-012)."""
-    ctx.forward(search_text_command)
-```
-
-#### Component 5: Slash Command
-
-**`commands/search-text.md`**:
+Unified search command supporting both semantic and text subcommands:
 
 ```markdown
 ---
-description: Search MeiliSearch index with exact phrases
-argument-hint: "<query>" --index <name> [options]
+description: Search across collections
+argument-hint: semantic "query" --collection NAME
 ---
 
-Perform full-text search for exact phrases and keywords across MeiliSearch indexes.
-
-**Arguments:**
-
-- "<query>": Search query (required, use quotes for exact phrases)
-- --index <name>: MeiliSearch index to search (required)
-- --filter <filter>: Metadata filter (key=value or JSON)
-- --limit <n>: Number of results (default: 10)
-- --attributes <attrs>: Comma-separated fields to highlight
-- --json: Output JSON format
+**Subcommands:**
+- `semantic`: Vector-based semantic search (Qdrant)
+- `text`: Keyword-based full-text search (MeiliSearch)
 
 **Examples:**
-
-```bash
-# Exact phrase in source code
-/arc:match '"def authenticate"' --index MyCode-fulltext
-
-# Keyword with language filter
-/arc:match 'calculate_total' --index MyCode-fulltext --filter 'language=python'
-
-# Search specific branch
-/arc:match 'UserAuth' --index MyCode-fulltext --filter 'git_branch=main'
-
-# PDF search with page filter
-/arc:match '"neural network"' --index PDFs --filter 'page_number > 5'
-
-# JSON output for processing
-/arc:match '"async def"' --index MyCode-fulltext --json
-```
-
-**When to Use Full-Text vs Semantic Search:**
-
-- **Use /search-text** (full-text) for:
-  - Exact phrase matching ("def authenticate")
-  - Specific identifiers (class names, function names)
-  - Precise line/page number locations
-  - Regex patterns and wildcards
-
-- **Use /search** (semantic) for:
-  - Conceptual queries ("authentication patterns")
-  - Finding similar code/documents
-  - Exploratory discovery
-  - Natural language queries
+/arc:search semantic "identity proofing" --collection Standards
+/arc:search text "def authenticate" --index MyCode-fulltext
 
 **Execution:**
-
-```bash
-cd ${CLAUDE_PLUGIN_ROOT}
-python -m arcaneum.cli.main search-text $ARGUMENTS
-```
-
-**Note:** Requires MeiliSearch server running and indexes created via
-RDR-010/011.
-
-```text
-Example output continued below
+arc search $ARGUMENTS
 ```
 
 ### Implementation Example
@@ -722,33 +544,29 @@ Example output continued below
 
 ```bash
 # 1. Ensure MeiliSearch running (from RDR-008)
-docker compose up -d meilisearch
+docker compose -f deploy/docker-compose.yml up -d meilisearch
 
 # 2. Index content (from RDR-010/011)
-# Already done: PDFs and source code indexed to MeiliSearch
+arc index text code ./my-project --index MyCode-fulltext
 
 # 3. Full-text search (this RDR)
-arc match MyCode-fulltext '"def authenticate"'
+arc search text "def authenticate" --index MyCode-fulltext
 
 # Output:
-# Full-text search: "def authenticate"
-# Found 3 results
+# Search Results (12ms)
+# Found 3 matches in 'MyCode-fulltext'
 #
-# [1] Language: python | Project: arcaneum | Branch: main
-#     /path/to/src/auth/verify.py:42-67 (authenticate function)
-#
-#     def authenticate(username, password):
-#         """Verify user credentials using bcrypt."""
-#         user = db.get_user(username)
-#         ...
+# 1. /path/to/src/auth/verify.py:42
+#    def authenticate(username, password):
+#        """Verify user credentials...
 
 # 4. Cooperative workflow (semantic → exact)
 # Step 1: Semantic discovery
-arc find MyCode "authentication code"
+arc search semantic "authentication code" --collection MyCode
 
 # Step 2: Exact verification on discovered file
-arc match MyCode-fulltext '"def authenticate"' \
-  --filter 'file_path=/path/to/src/auth/verify.py'
+arc search text "def authenticate" --index MyCode-fulltext \
+  --filter "file_path CONTAINS /auth/"
 ```
 
 **Via Claude Code**:
@@ -758,9 +576,9 @@ User: "Find the exact function definition for authenticate"
 
 Claude: I'll search for the exact string "def authenticate" in the code.
 
-[Uses /arc:match '"def authenticate"' --index MyCode-fulltext]
+[Uses /arc:search text "def authenticate" --index MyCode-fulltext]
 
-Claude: I found the authenticate function at src/auth/verify.py:42-67.
+Claude: I found the authenticate function at src/auth/verify.py:42.
 The function signature is:
 
 def authenticate(username, password):
@@ -770,96 +588,43 @@ def authenticate(username, password):
 
 ## Alternatives Considered
 
-### Alternative 1: Merge with Semantic Search (Single `/search` Command)
+### Alternative 1: Separate Top-Level Commands (Original Design)
 
-**Description**: Use single `/search` command, auto-detect semantic vs full-text
+**Description**: Use separate `arc match` and `arc find` top-level commands
 
 ```bash
-arc find MyCorpus "query"  # Auto-detects quotes → full-text, else semantic
+arc find MyCode "authentication patterns"   # Semantic
+arc match MyCode-fulltext "def authenticate" # Full-text
 ```
 
-**Pros**:
-
-- ✅ Single command (simpler UX)
-- ✅ No user decision needed
-
-**Cons**:
-
-- ❌ **Ambiguous**: When to use which?
-- ❌ **Hidden complexity**: Auto-detection logic fragile
-- ❌ **Against arcaneum-71**: User explicitly wants separate commands
-- ❌ **Poor UX**: Users can't explicitly choose search type
-
-**Reason for rejection**: User explicitly requested separation. Clear distinction is better than magic auto-detection.
+**Outcome**: Rejected in favor of unified `arc search` group with subcommands.
+The implemented approach (`arc search semantic` / `arc search text`) provides
+better organization and clearer parallel structure.
 
 ### Alternative 2: MCP Server Wrapper
 
 **Description**: Implement MCP server with structured full-text search tool
 
-```python
-@mcp.tool()
-async def search_fulltext(
-    query: str,
-    index_name: str,
-    filters: dict = None,
-    limit: int = 10
-) -> dict:
-    """MCP tool for full-text search"""
-    # Call CLI internally
-```
-
-**Pros**:
-
-- ✅ Structured tool interface
-- ✅ Type hints for parameters
-- ✅ Appears in Claude UI automatically
-
-**Cons**:
-
-- ❌ **Against user preference**: "strong want to not use MCP" (RDR-006)
-- ❌ **Complexity**: Server lifecycle management
-- ❌ **Startup overhead**: MCP layer adds latency
-- ❌ **Inconsistent**: Semantic search (RDR-007) uses CLI-first
-
-**Reason for rejection**: User preference from RDR-006 applies here. CLI-first is consistent with RDR-007.
+**Outcome**: Rejected per RDR-006. CLI-first approach maintained for consistency.
 
 ### Alternative 3: Subcommand under `fulltext`
 
-**Description**: Use `fulltext search` instead of `search-text`
+**Description**: Use `fulltext search` instead of unified search group
 
 ```bash
 arc fulltext search "query" --index MyCode-fulltext
 ```
 
-**Pros**:
+**Outcome**: Rejected. The `arc indexes` group handles index management, while
+`arc search text` handles searching. This separation follows the Qdrant pattern
+(`arc collection` for management, `arc search semantic` for searching).
 
-- ✅ Namespacing clarity
-- ✅ Consistent with `fulltext create-index`, `fulltext list-indexes`
+### Alternative 4: Separate Modules (Original Design)
 
-**Cons**:
+**Description**: Create separate `fulltext_searcher.py` and `fulltext_formatter.py`
 
-- ❌ **Longer command**: More typing
-- ❌ **Not parallel to RDR-007**: Semantic is `search`, not `semantic search`
-- ❌ **Less intuitive**: Users think "search text" not "fulltext subcommand"
-
-**Reason for rejection**: `search-text` is shorter and parallel to `search` (semantic).
-
-### Alternative 4: No Slash Command (CLI Only)
-
-**Description**: Provide only CLI command, no `/search-text` slash command
-
-**Pros**:
-
-- ✅ Simpler (fewer files)
-- ✅ Users can still use via Bash
-
-**Cons**:
-
-- ❌ **Poor discoverability**: Not in `/help`
-- ❌ **Inconsistent**: Semantic search has slash command (RDR-007)
-- ❌ **Against RDR-006 pattern**: Claude Code plugins should have slash commands
-
-**Reason for rejection**: Slash commands are core to Claude Code integration (RDR-006).
+**Outcome**: Implemented inline in `fulltext.py` instead. The simpler approach
+works well for current scope. Can be refactored if complexity grows.
 
 ## Trade-offs and Consequences
 
@@ -932,135 +697,83 @@ arc fulltext search "query" --index MyCode-fulltext
 - [x] RDR-008: MeiliSearch server setup (completed)
 - [x] RDR-010: PDF full-text indexing (completed, provides indexed content)
 - [x] RDR-011: Source code full-text indexing (completed, provides indexed content)
-- [ ] Python >= 3.12
-- [ ] meilisearch-python >= 0.31.0 installed
+- [x] Python >= 3.12
+- [x] meilisearch >= 0.31.0 installed
 
-### Step-by-Step Implementation
+### Completed Implementation
 
-#### Step 1: Create Full-Text Searcher Module
+#### CLI Search Command (Done)
 
-Create `src/arcaneum/search/fulltext_searcher.py`:
+- [x] `arc search text` command - `src/arcaneum/cli/fulltext.py:33-187`
+- [x] Filter support (MeiliSearch native syntax)
+- [x] JSON and Rich console output modes
+- [x] Highlighting via `_formatted` field
+- [x] Pagination (limit/offset)
+- [x] Interaction logging (RDR-018)
+- [x] Health checks and error handling
 
-- `FullTextSearchResult` dataclass
-- `search_fulltext()` function (executes MeiliSearch search)
-- `format_location()` function (file:line or file:page formatting)
-- Error handling for missing indexes
+#### CLI Registration (Done)
 
-**Estimated effort**: 3 hours
+- [x] Unified search group in `main.py:502-539`
+- [x] `arc search semantic` for Qdrant
+- [x] `arc search text` for MeiliSearch
 
-#### Step 2: Create Result Formatter Module
+#### Slash Command (Done)
 
-Create `src/arcaneum/search/fulltext_formatter.py`:
+- [x] `commands/search.md` - unified search command
+- [x] Documents both semantic and text subcommands
+- [x] Usage examples and guidance
 
-- `format_text_results()` for terminal display
-- `format_json_results()` for JSON output
-- `format_metadata()` helper
-- Highlighting support (use `_formatted` from MeiliSearch)
+#### Index Management Commands (Done)
+
+- [x] `arc indexes list` - list indexes
+- [x] `arc indexes create` - create with type settings
+- [x] `arc indexes info` - index details
+- [x] `arc indexes delete` - delete index
+- [x] `arc indexes verify` - health verification
+- [x] `arc indexes items` - list indexed documents
+- [x] `arc indexes export/import` - backup/restore
+- [x] `arc indexes list-projects` - git project listing
+- [x] `arc indexes delete-project` - project deletion
+
+### Remaining Work
+
+#### Step 1: Location Formatting Enhancement (arcaneum-jo4x)
+
+Update `fulltext.py:144-176` to use RDR-011 metadata fully:
+
+- [ ] Show `start_line-end_line` range instead of single line
+- [ ] Include function/class name in location display
+- [ ] Format PDF locations as `file.pdf:pageN`
 
 **Estimated effort**: 2 hours
 
-#### Step 3: Create CLI Command
+#### Step 2: Integration Tests
 
-Create `src/arcaneum/cli/search_text.py`:
+Create comprehensive test suite:
 
-- `search-text` Click command
-- Argument parsing and validation
-- MeiliSearch client initialization
-- Index existence check
-- Error handling with verbose mode
-- Update `src/arcaneum/cli/main.py` to register command
-
-**Estimated effort**: 3 hours
-
-#### Step 4: Create Slash Command
-
-Create `commands/search-text.md`:
-
-- Frontmatter with description and argument hint
-- Full documentation with examples
-- Decision tree for semantic vs full-text
-- Bash execution block with `${CLAUDE_PLUGIN_ROOT}`
-
-**Estimated effort**: 1 hour
-
-#### Step 5: Integration Testing
-
-Test complete workflow:
-
-- Search indexed code (from RDR-011)
-- Search indexed PDFs (from RDR-010)
-- Filter applications (language, branch, page number)
-- JSON output format
-- Error scenarios (missing index, server down)
-- Cooperative workflow (semantic → exact)
-
-**Files**:
-
-- `tests/search/test_fulltext_searcher.py`
-- `tests/search/test_fulltext_formatter.py`
-- `tests/cli/test_search_text.py`
-- `tests/integration/test_fulltext_search_workflow.py`
+- [ ] `tests/cli/test_search_text.py` - CLI command tests
+- [ ] `tests/integration/test_fulltext_search_workflow.py` - End-to-end tests
 
 **Estimated effort**: 4 hours
 
-#### Step 6: Documentation
+### Files Modified (Completed)
 
-Update documentation:
+- `src/arcaneum/cli/fulltext.py` - Search command implementation
+- `src/arcaneum/cli/main.py` - CLI registration
+- `commands/search.md` - Slash command definition
 
-- README with full-text search examples
-- CLI reference for `search-text` command
-- Decision guide: when to use semantic vs exact
-- Troubleshooting guide (MeiliSearch not running, index missing)
-- Update `.claude-plugin/plugin.json` to include slash command
+### Files to Modify (Remaining)
 
-**Estimated effort**: 2 hours
-
-### Total Estimated Effort
-
-**15 hours** (~2 days of focused work)
-
-**Effort Breakdown**:
-
-- Step 1: Full-text searcher (3h)
-- Step 2: Result formatter (2h)
-- Step 3: CLI command (3h)
-- Step 4: Slash command (1h)
-- Step 5: Integration tests (4h)
-- Step 6: Documentation (2h)
-
-### Files to Create
-
-**New Modules**:
-
-- `src/arcaneum/search/fulltext_searcher.py` - MeiliSearch search execution
-- `src/arcaneum/search/fulltext_formatter.py` - Result formatting
-- `src/arcaneum/cli/search_text.py` - CLI command implementation
-- `commands/search-text.md` - Slash command definition
-
-**Tests**:
-
-- `tests/search/test_fulltext_searcher.py` - Searcher unit tests
-- `tests/search/test_fulltext_formatter.py` - Formatter unit tests
-- `tests/cli/test_search_text.py` - CLI command tests
-- `tests/integration/test_fulltext_search_workflow.py` - End-to-end tests
-
-### Files to Modify
-
-**Existing Modules**:
-
-- `src/arcaneum/cli/main.py` - Register `search-text` command
-- `.claude-plugin/plugin.json` - Add `commands/search-text.md`
-- `README.md` - Add full-text search examples
-- `docs/rdr/README.md` - Add RDR-012 reference
+- `src/arcaneum/cli/fulltext.py:144-176` - Location formatting enhancement
 
 ### Dependencies
 
-Already satisfied by RDR-007 and RDR-008:
+Already satisfied:
 
-- meilisearch-python >= 0.31.0
-- click >= 8.1.0
-- rich >= 13.0.0
-- pydantic >= 2.0.0
+- meilisearch >= 0.31.0
+- click >= 8.3.0
+- rich >= 14.2.0
 
 ## Validation
 
@@ -1077,7 +790,7 @@ Already satisfied by RDR-007 and RDR-008:
 #### Scenario 1: Exact Phrase Search in Code
 
 - **Setup**: Code indexed via RDR-011 with function `authenticate`
-- **Action**: `arc match MyCode-fulltext '"def authenticate"'`
+- **Action**: `arc search text "def authenticate" --index MyCode-fulltext`
 - **Expected**:
   - Returns document with exact match
   - Shows file:line location (e.g., verify.py:42-67)
@@ -1087,7 +800,7 @@ Already satisfied by RDR-007 and RDR-008:
 #### Scenario 2: Keyword Search with Filters
 
 - **Setup**: Multi-language code indexed
-- **Action**: `arc match MyCode-fulltext 'calculate' --filter 'language=python'`
+- **Action**: `arc search text "calculate" --index MyCode-fulltext --filter "language = python"`
 - **Expected**:
   - Returns only Python files
   - All results contain "calculate"
@@ -1096,7 +809,7 @@ Already satisfied by RDR-007 and RDR-008:
 #### Scenario 3: PDF Search with Page Filter
 
 - **Setup**: PDFs indexed via RDR-010
-- **Action**: `arc match PDFs '"neural network"' --filter 'page_number > 5'`
+- **Action**: `arc search text "neural network" --index PDFs --filter "page_number > 5"`
 - **Expected**:
   - Returns only pages 6+
   - Shows file:pageN location
@@ -1106,9 +819,9 @@ Already satisfied by RDR-007 and RDR-008:
 
 - **Setup**: Code indexed in both Qdrant (RDR-007) and MeiliSearch (RDR-011)
 - **Action**:
-  1. `arc find MyCode "authentication"` (semantic)
+  1. `arc search semantic "authentication" --collection MyCode`
   2. Note file path from results
-  3. `arc match MyCode-fulltext '"def authenticate"' --filter 'file_path=<noted_path>'`
+  3. `arc search text "def authenticate" --index MyCode-fulltext --filter "file_path CONTAINS /auth/"`
 - **Expected**:
   - Semantic search finds relevant files
   - Exact search verifies specific implementation
@@ -1117,20 +830,19 @@ Already satisfied by RDR-007 and RDR-008:
 #### Scenario 5: Error Handling (Missing Index)
 
 - **Setup**: MeiliSearch running but index doesn't exist
-- **Action**: `arc match NonExistent "query"`
+- **Action**: `arc search text "query" --index NonExistent`
 - **Expected**:
-  - Clear error: "Index 'NonExistent' not found in MeiliSearch"
-  - Suggests: "Create index with: arc index create NonExistent --type code"
+  - Clear error: "Index 'NonExistent' not found"
   - Exit code 1
 
 #### Scenario 6: JSON Output for Programmatic Use
 
 - **Setup**: Any indexed content
-- **Action**: `arc match MyCode-fulltext '"test"' --json`
+- **Action**: `arc search text "test" --index MyCode-fulltext --json`
 - **Expected**:
   - Valid JSON output
-  - Contains: query, index, search_type, total_results, results array
-  - Each result has: score, location, content, metadata
+  - Contains: query, index, hits, estimatedTotalHits, processingTimeMs
+  - Each hit has: file_path, content, `_formatted` (highlights)
 
 ### Performance Validation
 
@@ -1171,29 +883,40 @@ Already satisfied by RDR-007 and RDR-008:
 
 ### Key Design Decisions
 
-1. **Separate Command**: `search-text` vs `search` for clear distinction (per arcaneum-71)
+1. **Unified Search Group**: `arc search text` and `arc search semantic` under
+   single `search` command group
 2. **CLI-First**: Direct MeiliSearch execution, no MCP (consistent with RDR-006)
 3. **Parallel to RDR-007**: Same structure as semantic search for familiarity
 4. **Precise Locations**: file:line for code, file:page for PDFs (key differentiator)
-5. **Reuse Components**: Filter parser from RDR-007, client from RDR-008
+5. **MeiliSearch Native Filters**: Pass filters directly to MeiliSearch (not
+   using RDR-007 parser)
 6. **Decision Tree**: Clear guidance on semantic vs full-text use cases
 
-### Implementation Priority
+### Implementation Status
 
-1. Core search functionality (searcher + formatter)
-2. CLI command (entry point)
-3. Slash command (Claude Code integration)
-4. Testing (validation)
-5. Documentation (user onboarding)
+**Completed**:
+
+1. ✅ CLI search command (`arc search text`)
+2. ✅ CLI registration in unified search group
+3. ✅ Slash command (`/arc:search text`)
+4. ✅ Index management commands (`arc indexes`)
+5. ✅ JSON and Rich console output modes
+6. ✅ Highlighting support
+7. ✅ Interaction logging (RDR-018)
+
+**Remaining**:
+
+1. ⬜ Location formatting enhancement (start_line-end_line, function names)
+2. ⬜ Integration tests
 
 ### Success Criteria
 
-- ✅ Separate `search-text` command (distinct from semantic `search`)
-- ✅ Precise locations (file:line for code, file:page for PDFs)
+- ✅ Unified search group (`arc search text` / `arc search semantic`)
+- ✅ Precise locations (file:line for code, file:page for PDFs) - partial
 - ✅ CLI-first with slash command (no MCP)
-- ✅ Filter support (reuse RDR-007 parser)
+- ✅ Filter support (MeiliSearch native syntax)
 - ✅ Highlighting support (show matched context)
-- ✅ JSON output mode (future MCP compatibility)
+- ✅ JSON output mode
 - ✅ Clear error messages (index missing, server down)
 - ✅ Decision guidance (when to use semantic vs exact)
 - ✅ Implementation < 20 hours
@@ -1201,11 +924,46 @@ Already satisfied by RDR-007 and RDR-008:
 
 ### Future Enhancements
 
-**Hybrid Search** (Future RDR):
+**Hybrid Search** (see arcaneum-yfge):
 
-- Combine semantic (Qdrant) + exact (MeiliSearch) results
-- Reciprocal Rank Fusion (RRF) for result merging
-- `arc find MyCode "query" --hybrid`
+MeiliSearch now provides native hybrid search (v1.6+) combining keyword (BM25)
+and semantic (vector) search:
+
+```python
+# MeiliSearch native hybrid search
+results = index.search('query', {
+    'hybrid': {
+        'semanticRatio': 0.5,  # 0=keyword only, 1=semantic only
+        'embedder': 'default'
+    }
+})
+```
+
+Two approaches for Arcaneum:
+
+1. **Cross-Backend Hybrid** (current architecture):
+   - Keep Qdrant for semantic + MeiliSearch for full-text
+   - Implement Reciprocal Rank Fusion (RRF) at application layer
+   - `arc search hybrid "query" --collection MyCode --index MyCode-fulltext`
+
+2. **MeiliSearch-Only Hybrid** (alternative):
+   - Configure MeiliSearch embedders (OpenAI, HuggingFace, REST, Ollama)
+   - Use native `semanticRatio` parameter
+   - Simpler operations but less embedding model flexibility
+
+**Federated Search** (MeiliSearch v1.10+):
+
+Search across multiple indexes with merged results:
+
+```python
+results = client.multi_search(
+    queries=[
+        {'indexUid': 'source_code', 'q': 'auth'},
+        {'indexUid': 'documentation', 'q': 'auth'}
+    ],
+    federation={'limit': 50}  # Merges into single result list
+)
+```
 
 **MCP Wrapper** (Optional):
 
@@ -1215,14 +973,8 @@ Already satisfied by RDR-007 and RDR-008:
 
 **Advanced Filters**:
 
-- Regex support in query: `search-text 'function\s+\w+'`
-- Fuzzy matching: `search-text 'authenticate' --fuzzy`
 - Date range filters for git commits
-
-**Result Caching**:
-
-- Cache frequent queries for faster response
-- Invalidate on index updates
+- Complex boolean expressions
 
 This RDR provides the complete specification for exposing full-text search
 (MeiliSearch) to Claude Code users through CLI commands and slash commands,

@@ -504,6 +504,24 @@ def sync_directory(directory, corpus, models, file_types, force, verify, verbose
     sync_directory_command(directory, corpus, models, file_types, force, verify, verbose, output_json)
 
 
+@corpus.command('parity')
+@click.argument('name')
+@click.option('--dry-run', is_flag=True, help='Show what would be backfilled without making changes')
+@click.option('--verbose', '-v', is_flag=True, help='Show detailed progress for each file')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def corpus_parity(name, dry_run, verbose, output_json):
+    """Check and restore parity between Qdrant and MeiliSearch.
+
+    Compares indexed files in both systems and backfills missing entries:
+    - Qdrant -> MeiliSearch: Copies metadata (no file access needed)
+    - MeiliSearch -> Qdrant: Re-chunks and embeds files (requires file access)
+
+    Files that don't exist on disk are skipped with a warning.
+    """
+    from arcaneum.cli.sync import parity_command
+    parity_command(name, dry_run, verbose, output_json)
+
+
 # Diagnostics command (RDR-006 enhancement)
 @cli.command('doctor')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed diagnostic information')

@@ -52,12 +52,12 @@ arc search text <query> --index <name>           # Full-text search (MeiliSearch
 
 MeiliSearch index commands mirror Qdrant collection commands:
 
-| Qdrant (arc collection) | MeiliSearch (arc indexes) |
-|-------------------------|----------------------------|
-| `arc collection create` | `arc indexes create` |
-| `arc collection list` | `arc indexes list` |
-| `arc collection info` | `arc indexes info` |
-| `arc collection delete` | `arc indexes delete` |
+| Qdrant (arc collection)   | MeiliSearch (arc indexes) |
+| ------------------------- | ------------------------- |
+| `arc collection create`   | `arc indexes create`      |
+| `arc collection list`     | `arc indexes list`        |
+| `arc collection info`     | `arc indexes info`        |
+| `arc collection delete`   | `arc indexes delete`      |
 
 ```bash
 arc indexes create <name> --type <type>   # Create MeiliSearch index
@@ -74,10 +74,66 @@ A "corpus" is a paired Qdrant collection and MeiliSearch index with the same nam
 ```bash
 arc corpus create <name> --type <type> --models <model>  # Create both
 arc corpus sync <path> --corpus <name>                   # Index to both
+arc corpus parity <name>                                 # Restore parity between indexes
 ```
 
 **Note:** If you already have a collection and index with the same name, you can
 use `corpus sync` directly - no need to run `corpus create` first.
+
+### Corpus Parity
+
+Check and restore parity between Qdrant and MeiliSearch indexes without scanning
+a directory. This is useful when one index gets out of sync with the other.
+
+```bash
+# Check parity status (dry-run, no changes)
+arc corpus parity MyCorpus --dry-run
+
+# Restore parity with verbose output
+arc corpus parity MyCorpus --verbose
+
+# JSON output for scripting
+arc corpus parity MyCorpus --json
+```
+
+**How it works:**
+
+- Compares indexed file paths in both Qdrant and MeiliSearch
+- Backfills missing entries in each direction:
+  - **Qdrant -> MeiliSearch**: Copies metadata from Qdrant (no file access needed)
+  - **MeiliSearch -> Qdrant**: Re-chunks and embeds files (requires file access)
+- Files that don't exist on disk are skipped with a warning
+
+**Options:**
+
+- `--dry-run`: Show what would be backfilled without making changes
+- `--verbose`: Show detailed progress for each file
+- `--json`: Output JSON format for scripting
+
+**Example output:**
+
+```text
+Checking parity for corpus 'Papers'...
+Corpus type: pdf, Models: stella
+
+Index Status:
+  Files in both systems:     150
+  Files in Qdrant only:      5
+  Files in MeiliSearch only: 3
+
+Backfilling 5 files to MeiliSearch...
+  ✓ document1.pdf: 12 chunks
+  ✓ document2.pdf: 8 chunks
+
+Backfilling 3 files to Qdrant...
+  ⚠ report.pdf: File not found, skipping
+  ✓ notes.pdf: 15 chunks
+
+✅ Parity restored for corpus 'Papers'
+   Backfilled to MeiliSearch: 5 files (47 chunks)
+   Backfilled to Qdrant: 2 files (23 chunks)
+   Skipped (not found): 1 file
+```
 
 ## Collection Management Examples
 
@@ -169,19 +225,19 @@ arc collection items MyCode --json
 
 Shows repositories with git metadata:
 
-| Project | Branch | Commit | Chunks |
-|---------|--------|--------|--------|
-| my-app | main | a1b2c3d4e5f6 | 1,532 |
-| my-lib | develop | f6e5d4c3b2a1 | 847 |
+| Project | Branch  | Commit       | Chunks |
+| ------- | ------- | ------------ | ------ |
+| my-app  | main    | a1b2c3d4e5f6 | 1,532  |
+| my-lib  | develop | f6e5d4c3b2a1 | 847    |
 
 **PDF/Markdown Collections Output:**
 
 Shows files with size information:
 
-| File | Size | Chunks |
-|------|------|--------|
-| research-paper.pdf | 2.3MB | 42 |
-| documentation.md | 15.2KB | 8 |
+| File               | Size   | Chunks |
+| ------------------ | ------ | ------ |
+| research-paper.pdf | 2.3MB  | 42     |
+| documentation.md   | 15.2KB | 8      |
 
 **JSON Output Format:**
 
@@ -249,20 +305,20 @@ arc collection export MyPDFs -o backup.arcexp --json
 
 **Filter Options:**
 
-| Option | Description | Example |
-|--------|-------------|---------|
-| `--include` | Include files matching glob (multiple = OR) | `--include "*.pdf"` |
-| `--exclude` | Exclude files matching glob (multiple = AND) | `--exclude "*/temp/*"` |
-| `--repo` | Filter by repo name (code collections) | `--repo arcaneum` |
-| `--repo name#branch` | Filter by repo and branch | `--repo arcaneum#main` |
-| `--detach` | Strip root prefix, store relative paths | `--detach` |
+| Option               | Description                                  | Example                |
+| -------------------- | -------------------------------------------- | ---------------------- |
+| `--include`          | Include files matching glob (multiple = OR)  | `--include "*.pdf"`    |
+| `--exclude`          | Exclude files matching glob (multiple = AND) | `--exclude "*/temp/*"` |
+| `--repo`             | Filter by repo name (code collections)       | `--repo arcaneum`      |
+| `--repo name#branch` | Filter by repo and branch                    | `--repo arcaneum#main` |
+| `--detach`           | Strip root prefix, store relative paths      | `--detach`             |
 
 **Export Formats:**
 
-| Format | Extension | Size | Use Case |
-|--------|-----------|------|----------|
+| Format | Extension | Size         | Use Case                    |
+| ------ | --------- | ------------ | --------------------------- |
 | Binary | `.arcexp` | ~10x smaller | Migration, backup (default) |
-| JSONL | `.jsonl` | Larger | Debugging, inspection |
+| JSONL  | `.jsonl`  | Larger       | Debugging, inspection       |
 
 ### Import Collection
 
@@ -292,11 +348,11 @@ arc collection import backup.arcexp --json
 
 **Path Handling Options:**
 
-| Option | Description | Use Case |
-|--------|-------------|----------|
-| `--into` | Target collection name | Import to different name |
-| `--attach` | Prepend root to relative paths | For detached exports |
-| `--remap old:new` | Substitute path prefixes | Cross-machine migration |
+| Option            | Description                    | Use Case                 |
+| ----------------- | ------------------------------ | ------------------------ |
+| `--into`          | Target collection name         | Import to different name |
+| `--attach`        | Prepend root to relative paths | For detached exports     |
+| `--remap old:new` | Substitute path prefixes       | Cross-machine migration  |
 
 **Format Auto-Detection:**
 
@@ -461,12 +517,12 @@ arc search text '"neural network"' --index pdf-docs
 
 ### General Purpose Models
 
-| Model | Dimensions | Best For | Late Chunking |
-|-------|------------|----------|---------------|
-| `stella` | 1024D | Long documents, general purpose | ✅ |
-| `bge` | 1024D | Precision, short documents | ❌ |
-| `modernbert` | 768D | Long context, recent content | ✅ |
-| `jina` | 768D | Code + text, multilingual | ✅ |
+| Model        | Dimensions | Best For                        | Late Chunking |
+| ------------ | ---------- | ------------------------------- | ------------- |
+| `stella`     | 1024D      | Long documents, general purpose | Yes           |
+| `bge`        | 1024D      | Precision, short documents      | No            |
+| `modernbert` | 768D       | Long context, recent content    | Yes           |
+| `jina`       | 768D       | Code + text, multilingual       | Yes           |
 
 ### Code-Specific Models
 
@@ -474,13 +530,13 @@ arc search text '"neural network"' --index pdf-docs
 
 For source code indexing, use specialized code models optimized for programming languages:
 
-| Model | Dimensions | Context | Best For | Notes |
-|-------|------------|---------|----------|-------|
-| `jina-code-0.5b` | 896D | 32K | **Fastest, balanced** | ⚡ SOTA Sept 2025, optimal speed/quality |
-| `jina-code-1.5b` | 1536D | 32K | Highest quality | SOTA Sept 2025, slower but best accuracy |
-| `jina-code` | 768D | 8K | Legacy | v2 model, superseded by above |
-| `codesage-large` | 1024D | - | 9 languages | CodeSage V2, Dec 2024 |
-| `nomic-code` | 3584D | - | 6 languages | 7B params, highest quality, slowest |
+| Model            | Dimensions | Context | Best For              | Notes                                    |
+| ---------------- | ---------- | ------- | --------------------- | ---------------------------------------- |
+| `jina-code-0.5b` | 896D       | 32K     | **Fastest, balanced** | SOTA Sept 2025, optimal speed/quality    |
+| `jina-code-1.5b` | 1536D      | 32K     | Highest quality       | SOTA Sept 2025, slower but best accuracy |
+| `jina-code`      | 768D       | 8K      | Legacy                | v2 model, superseded by above            |
+| `codesage-large` | 1024D      | -       | 9 languages           | CodeSage V2, Dec 2024                    |
+| `nomic-code`     | 3584D      | -       | 6 languages           | 7B params, highest quality, slowest      |
 
 **Recommendation:** Use `jina-code-0.5b` for code collections. It provides the best balance of speed and quality
 with 32K context window support.
@@ -654,11 +710,11 @@ arc indexes delete source-code --confirm
 
 **Index Types:**
 
-| Type | Aliases | Optimized For |
-|------|---------|---------------|
-| `source-code` | `code` | Code with higher typo thresholds |
-| `pdf-docs` | `pdf` | PDF documents with stop words |
-| `markdown-docs` | `markdown` | Markdown with headings search |
+| Type            | Aliases    | Optimized For                    |
+| --------------- | ---------- | -------------------------------- |
+| `source-code`   | `code`     | Code with higher typo thresholds |
+| `pdf-docs`      | `pdf`      | PDF documents with stop words    |
+| `markdown-docs` | `markdown` | Markdown with headings search    |
 
 ### Search
 

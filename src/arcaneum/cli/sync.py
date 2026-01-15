@@ -845,3 +845,508 @@ def sync_directory_command(
         interaction_logger.finish(error=str(e))
         print_error(f"Failed to sync directory: {e}", output_json)
         sys.exit(1)
+
+
+def _backfill_qdrant_to_meili(
+    qdrant,
+    meili: FullTextClient,
+    corpus: str,
+    file_paths: List[str],
+    verbose: bool,
+    output_json: bool,
+    progress,
+    backfill_task
+) -> tuple:
+    """Backfill files from Qdrant to MeiliSearch.
+
+    Copies chunk data from Qdrant to MeiliSearch without needing file access.
+
+    Args:
+        qdrant: Qdrant client
+        meili: MeiliSearch client
+        corpus: Corpus name
+        file_paths: List of file paths to backfill
+        verbose: Show verbose output
+        output_json: JSON output mode
+        progress: Rich progress instance
+        backfill_task: Progress task ID
+
+    Returns:
+        Tuple of (files_success, chunks_success, files_failed)
+    """
+    from qdrant_client.models import Filter, FieldCondition, MatchValue
+
+    files_success = 0
+    chunks_success = 0
+    files_failed = 0
+
+    for file_path_str in file_paths:
+        progress.update(backfill_task, description=f"Backfilling {Path(file_path_str).name}...")
+
+        try:
+            # Fetch all chunks for this file from Qdrant
+            points, _ = qdrant.scroll(
+                collection_name=corpus,
+                scroll_filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="file_path",
+                            match=MatchValue(value=file_path_str)
+                        )
+                    ]
+                ),
+                limit=1000,
+                with_payload=True,
+                with_vectors=False
+            )
+
+            if not points:
+                progress.advance(backfill_task)
+                continue
+
+            # Convert Qdrant points to MeiliSearch documents
+            meili_docs = []
+            for point in points:
+                payload = point.payload
+                meili_doc = {
+                    "id": str(point.id),
+                    "content": payload.get("text", ""),
+                    "file_path": payload.get("file_path", ""),
+                    "filename": payload.get("filename", ""),
+                    "file_extension": payload.get("file_extension", ""),
+                    "chunk_index": payload.get("chunk_index", 0),
+                }
+
+                # Add optional fields
+                if payload.get("page_number"):
+                    meili_doc["page_number"] = payload["page_number"]
+                if payload.get("programming_language"):
+                    meili_doc["language"] = payload["programming_language"]
+                if payload.get("document_type"):
+                    meili_doc["document_type"] = payload["document_type"]
+
+                meili_docs.append(meili_doc)
+
+            # Index to MeiliSearch with longer timeout (2 minutes)
+            if meili_docs:
+                meili.add_documents_sync(corpus, meili_docs, timeout_ms=120000)
+                chunks_success += len(meili_docs)
+
+                if verbose and not output_json:
+                    progress.console.print(f"[green]  ✓ {Path(file_path_str).name}: {len(meili_docs)} chunks → MeiliSearch[/green]")
+
+            files_success += 1
+
+        except Exception as e:
+            files_failed += 1
+            logger.error(f"Failed to backfill {file_path_str}: {e}")
+            if not output_json:
+                progress.console.print(f"[yellow]Warning: Failed to backfill {Path(file_path_str).name}: {e}[/yellow]")
+
+        progress.advance(backfill_task)
+
+    return files_success, chunks_success, files_failed
+
+
+def _backfill_meili_to_qdrant(
+    qdrant,
+    embedding_client: EmbeddingClient,
+    corpus: str,
+    corpus_type: str,
+    model_list: List[str],
+    model_config: Dict[str, Any],
+    file_paths: List[str],
+    verbose: bool,
+    output_json: bool,
+    progress,
+    backfill_task
+) -> tuple:
+    """Backfill files from MeiliSearch to Qdrant.
+
+    Re-chunks files and generates embeddings. Requires file access.
+    Files that don't exist on disk are skipped with a warning.
+
+    Args:
+        qdrant: Qdrant client
+        embedding_client: Embedding client
+        corpus: Corpus name
+        corpus_type: Type of corpus (pdf, code, markdown)
+        model_list: List of embedding model names
+        model_config: Chunking configuration
+        file_paths: List of file paths to backfill
+        verbose: Show verbose output
+        output_json: JSON output mode
+        progress: Rich progress instance
+        backfill_task: Progress task ID
+
+    Returns:
+        Tuple of (files_success, chunks_success, files_failed, skipped_paths)
+    """
+    from qdrant_client.models import PointStruct
+
+    files_success = 0
+    chunks_success = 0
+    files_failed = 0
+    skipped_paths = []
+
+    for file_path_str in file_paths:
+        file_path = Path(file_path_str)
+        progress.update(backfill_task, description=f"Backfilling {file_path.name}...")
+
+        # Check if file exists on disk
+        if not file_path.exists():
+            skipped_paths.append(file_path_str)
+            if not output_json:
+                progress.console.print(f"[yellow]  ⚠ {file_path.name}: File not found, skipping[/yellow]")
+            progress.advance(backfill_task)
+            continue
+
+        try:
+            # Chunk file based on corpus type
+            if corpus_type == 'pdf':
+                chunks = chunk_pdf_file(file_path, model_config)
+            elif corpus_type == 'markdown':
+                chunks = chunk_markdown_file(
+                    file_path,
+                    model_config.get('chunk_size', 512),
+                    model_config.get('chunk_overlap', 50)
+                )
+            elif corpus_type == 'code':
+                chunks = chunk_code_file(
+                    file_path,
+                    model_config.get('chunk_size', 400),
+                    model_config.get('chunk_overlap', 20)
+                )
+            else:
+                progress.advance(backfill_task)
+                continue
+
+            if not chunks:
+                progress.advance(backfill_task)
+                continue
+
+            # Build Qdrant documents with embeddings
+            points = []
+            file_hash = compute_file_hash(file_path)
+            quick_hash = compute_quick_hash(file_path)
+
+            for i, chunk in enumerate(chunks):
+                # Generate embeddings for all models
+                vectors = {}
+                for model in model_list:
+                    embeddings = embedding_client.embed([chunk['text']], model)
+                    if hasattr(embeddings, 'tolist'):
+                        vectors[model] = embeddings[0].tolist()
+                    else:
+                        vectors[model] = list(embeddings[0])
+
+                # Build payload
+                payload = {
+                    "text": chunk['text'],
+                    "file_path": str(file_path.absolute()),
+                    "filename": file_path.name,
+                    "file_extension": file_path.suffix,
+                    "chunk_index": i,
+                    "chunk_count": len(chunks),
+                    "file_hash": file_hash,
+                    "file_size": file_path.stat().st_size,
+                    "quick_hash": quick_hash,
+                }
+
+                # Add type-specific metadata
+                chunk_meta = chunk.get('metadata', {})
+                if corpus_type == 'pdf':
+                    if chunk_meta.get('page_number'):
+                        payload["page_number"] = chunk_meta["page_number"]
+                    payload["document_type"] = "pdf"
+
+                points.append(PointStruct(
+                    id=str(uuid4()),
+                    vector=vectors,
+                    payload=payload
+                ))
+
+            # Upload to Qdrant
+            if points:
+                qdrant.upsert(collection_name=corpus, points=points, wait=True)
+                chunks_success += len(points)
+
+                if verbose and not output_json:
+                    progress.console.print(f"[green]  ✓ {file_path.name}: {len(points)} chunks → Qdrant[/green]")
+
+            files_success += 1
+
+        except Exception as e:
+            files_failed += 1
+            logger.error(f"Failed to backfill {file_path_str} to Qdrant: {e}")
+            if not output_json:
+                progress.console.print(f"[yellow]Warning: Failed to backfill {file_path.name}: {e}[/yellow]")
+
+        progress.advance(backfill_task)
+
+    return files_success, chunks_success, files_failed, skipped_paths
+
+
+def parity_command(
+    corpus: str,
+    dry_run: bool,
+    verbose: bool,
+    output_json: bool
+):
+    """Check and restore parity between Qdrant and MeiliSearch.
+
+    Compares indexed files in both systems and backfills missing entries:
+    - Qdrant -> MeiliSearch: Copies metadata (no file access needed)
+    - MeiliSearch -> Qdrant: Re-chunks and embeds files (requires file access)
+
+    Files that don't exist on disk are skipped with a warning.
+
+    Args:
+        corpus: Corpus name
+        dry_run: If True, show what would be backfilled without making changes
+        verbose: If True, show detailed progress
+        output_json: If True, output JSON format
+    """
+    interaction_logger.start(
+        "corpus", "parity",
+        corpus=corpus,
+        dry_run=dry_run,
+    )
+
+    try:
+        if not output_json:
+            print_info(f"Checking parity for corpus '{corpus}'...")
+
+        # Initialize clients
+        qdrant = create_qdrant_client()
+        meili = get_meili_client()
+
+        # Verify corpus exists in both systems
+        try:
+            qdrant.get_collection(corpus)
+        except Exception:
+            raise ResourceNotFoundError(
+                f"Qdrant collection '{corpus}' not found. "
+                f"Create it first with: arc corpus create {corpus} --type <type>"
+            )
+
+        if not meili.health_check():
+            raise ResourceNotFoundError(
+                "MeiliSearch server not available. "
+                "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
+            )
+
+        if not meili.index_exists(corpus):
+            raise ResourceNotFoundError(
+                f"MeiliSearch index '{corpus}' not found. "
+                f"Create it first with: arc corpus create {corpus} --type <type>"
+            )
+
+        # Get corpus metadata
+        corpus_type = get_collection_type(qdrant, corpus)
+        metadata = get_collection_metadata(qdrant, corpus)
+        configured_models = metadata.get('model', 'stella')
+        model_list = [m.strip() for m in configured_models.split(',')]
+
+        if not corpus_type:
+            corpus_type = 'pdf'
+            logger.warning(f"Collection type not set, defaulting to {corpus_type}")
+
+        if not output_json:
+            print_info(f"Corpus type: {corpus_type}, Models: {configured_models}")
+
+        # Get file paths from both systems
+        sync_manager = MetadataBasedSync(qdrant)
+        qdrant_file_paths = sync_manager._get_indexed_file_paths_set(corpus)
+        meili_file_paths = meili.get_all_file_paths(corpus)
+
+        # Calculate set operations
+        in_both = qdrant_file_paths & meili_file_paths
+        missing_from_meili = qdrant_file_paths - meili_file_paths
+        missing_from_qdrant = meili_file_paths - qdrant_file_paths
+
+        # Report status
+        if not output_json:
+            console.print(f"\n[bold]Index Status:[/bold]")
+            console.print(f"  Files in both systems:     {len(in_both)}")
+            console.print(f"  Files in Qdrant only:      {len(missing_from_meili)}")
+            console.print(f"  Files in MeiliSearch only: {len(missing_from_qdrant)}")
+
+        # Check which files missing from Qdrant exist on disk
+        qdrant_backfill_paths = []
+        qdrant_skip_paths = []
+        for path in missing_from_qdrant:
+            if Path(path).exists():
+                qdrant_backfill_paths.append(path)
+            else:
+                qdrant_skip_paths.append(path)
+
+        meili_backfill_paths = list(missing_from_meili)
+
+        # Dry-run mode: report and exit
+        if dry_run:
+            if not output_json:
+                console.print(f"\n[bold yellow]DRY RUN - No changes will be made[/bold yellow]")
+
+                if meili_backfill_paths:
+                    console.print(f"\nWould backfill to MeiliSearch: {len(meili_backfill_paths)} files")
+                    if verbose:
+                        for p in meili_backfill_paths[:10]:
+                            console.print(f"  {Path(p).name}")
+                        if len(meili_backfill_paths) > 10:
+                            console.print(f"  ... and {len(meili_backfill_paths) - 10} more")
+
+                if qdrant_backfill_paths:
+                    console.print(f"\nWould backfill to Qdrant: {len(qdrant_backfill_paths)} files")
+                    if verbose:
+                        for p in qdrant_backfill_paths[:10]:
+                            console.print(f"  {Path(p).name}")
+                        if len(qdrant_backfill_paths) > 10:
+                            console.print(f"  ... and {len(qdrant_backfill_paths) - 10} more")
+
+                if qdrant_skip_paths:
+                    console.print(f"\n[yellow]Would skip (file not found): {len(qdrant_skip_paths)} files[/yellow]")
+                    if verbose:
+                        for p in qdrant_skip_paths[:10]:
+                            console.print(f"  [yellow]{Path(p).name}[/yellow]")
+                        if len(qdrant_skip_paths) > 10:
+                            console.print(f"  ... and {len(qdrant_skip_paths) - 10} more")
+
+                if not meili_backfill_paths and not qdrant_backfill_paths:
+                    console.print(f"\n[green]✓ Indexes are already in parity[/green]")
+            else:
+                data = {
+                    "corpus": corpus,
+                    "dry_run": True,
+                    "files_in_both": len(in_both),
+                    "would_backfill_to_meili": len(meili_backfill_paths),
+                    "would_backfill_to_qdrant": len(qdrant_backfill_paths),
+                    "would_skip_not_found": len(qdrant_skip_paths),
+                    "skipped_files": qdrant_skip_paths,
+                }
+                print_json("success", "Dry run complete", data=data)
+
+            interaction_logger.finish(result_count=0)
+            return
+
+        # Nothing to do
+        if not meili_backfill_paths and not qdrant_backfill_paths:
+            if output_json:
+                data = {
+                    "corpus": corpus,
+                    "files_in_both": len(in_both),
+                    "meili_backfilled": 0,
+                    "qdrant_backfilled": 0,
+                }
+                print_json("success", "Indexes are already in parity", data=data)
+            else:
+                console.print(f"\n[green]✓ Indexes are already in parity[/green]")
+            interaction_logger.finish(result_count=0)
+            return
+
+        # Backfill MeiliSearch from Qdrant
+        meili_backfilled = 0
+        meili_backfill_chunks = 0
+        meili_backfill_failed = 0
+
+        if meili_backfill_paths:
+            if not output_json:
+                console.print(f"\n[blue]Backfilling {len(meili_backfill_paths)} files to MeiliSearch...[/blue]")
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console,
+                disable=output_json,
+            ) as progress:
+                backfill_task = progress.add_task("Backfilling...", total=len(meili_backfill_paths))
+                meili_backfilled, meili_backfill_chunks, meili_backfill_failed = _backfill_qdrant_to_meili(
+                    qdrant, meili, corpus, meili_backfill_paths,
+                    verbose, output_json, progress, backfill_task
+                )
+
+        # Backfill Qdrant from MeiliSearch
+        qdrant_backfilled = 0
+        qdrant_backfill_chunks = 0
+        qdrant_backfill_failed = 0
+
+        if qdrant_backfill_paths:
+            if not output_json:
+                console.print(f"\n[blue]Backfilling {len(qdrant_backfill_paths)} files to Qdrant (requires embedding)...[/blue]")
+
+            # Initialize embedding client
+            use_gpu = not os.environ.get('ARC_NO_GPU', '').lower() in ('1', 'true')
+            embedding_client = EmbeddingClient(use_gpu=use_gpu)
+
+            # Get model config for chunking
+            first_model = model_list[0]
+            if first_model in DEFAULT_MODELS:
+                model_config = DEFAULT_MODELS[first_model].__dict__
+            else:
+                model_config = {
+                    'chunk_size': 512,
+                    'chunk_overlap': 50,
+                    'char_to_token_ratio': 3.3,
+                }
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console,
+                disable=output_json,
+            ) as progress:
+                backfill_task = progress.add_task("Backfilling Qdrant...", total=len(qdrant_backfill_paths))
+                qdrant_backfilled, qdrant_backfill_chunks, qdrant_backfill_failed, _ = _backfill_meili_to_qdrant(
+                    qdrant, embedding_client, corpus, corpus_type, model_list, model_config,
+                    qdrant_backfill_paths, verbose, output_json, progress, backfill_task
+                )
+
+        # Output results
+        data = {
+            "corpus": corpus,
+            "files_in_both": len(in_both),
+            "meili_backfilled": meili_backfilled,
+            "meili_backfill_chunks": meili_backfill_chunks,
+            "meili_backfill_failed": meili_backfill_failed,
+            "qdrant_backfilled": qdrant_backfilled,
+            "qdrant_backfill_chunks": qdrant_backfill_chunks,
+            "qdrant_backfill_failed": qdrant_backfill_failed,
+            "qdrant_skipped_not_found": len(qdrant_skip_paths),
+            "skipped_files": qdrant_skip_paths,
+        }
+
+        if output_json:
+            print_json("success", f"Parity restored for corpus '{corpus}'", data=data)
+        else:
+            console.print(f"\n[green]✅ Parity restored for corpus '{corpus}'[/green]")
+
+            if meili_backfilled > 0 or meili_backfill_failed > 0:
+                status = f"{meili_backfilled} files ({meili_backfill_chunks} chunks)"
+                if meili_backfill_failed > 0:
+                    status += f" [yellow]({meili_backfill_failed} failed)[/yellow]"
+                console.print(f"   Backfilled to MeiliSearch: {status}")
+
+            if qdrant_backfilled > 0 or qdrant_backfill_failed > 0:
+                status = f"{qdrant_backfilled} files ({qdrant_backfill_chunks} chunks)"
+                if qdrant_backfill_failed > 0:
+                    status += f" [yellow]({qdrant_backfill_failed} failed)[/yellow]"
+                console.print(f"   Backfilled to Qdrant:      {status}")
+
+            if qdrant_skip_paths:
+                console.print(f"   [yellow]Skipped (not found):      {len(qdrant_skip_paths)} files[/yellow]")
+
+        interaction_logger.finish(
+            result_count=meili_backfilled + qdrant_backfilled,
+        )
+
+    except (InvalidArgumentError, ResourceNotFoundError):
+        interaction_logger.finish(error="invalid argument or resource not found")
+        raise
+    except Exception as e:
+        interaction_logger.finish(error=str(e))
+        print_error(f"Failed to check parity: {e}", output_json)
+        sys.exit(1)

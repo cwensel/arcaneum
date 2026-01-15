@@ -1,6 +1,7 @@
 # Claude Code Plugin Marketplace: Local Testing Guide
 
-This guide explains how to safely test the Arcaneum plugin marketplace in a local Claude Code installation before publishing to GitHub.
+This guide explains how to safely test the Arcaneum plugin marketplace in a local
+Claude Code installation before publishing to GitHub.
 
 ## Prerequisites
 
@@ -84,11 +85,12 @@ This is the safest method for active development and testing.
 
 From within Claude Code:
 
-```
+```text
 /plugin marketplace add /Users/chris.wensel/sandbox/arcaneum
 ```
 
 **What This Does:**
+
 - Registers the local directory as a marketplace
 - Reads `.claude-plugin/marketplace.json`
 - Makes plugins discoverable via `/plugin` menu
@@ -96,11 +98,12 @@ From within Claude Code:
 
 #### Step 2: Install the Plugin
 
-```
+```text
 /plugin install arc@arcaneum-marketplace
 ```
 
 **Verification:**
+
 - Commands appear in `/help` or `/commands`
 - Test a simple command: `/list-collections`
 
@@ -108,7 +111,7 @@ From within Claude Code:
 
 Test each command systematically:
 
-```
+```bash
 # Collection management
 /create-collection test-local --model stella --type code
 /list-collections --verbose
@@ -132,7 +135,7 @@ Test each command systematically:
 
 Verify error codes and messages:
 
-```
+```bash
 # Invalid model (should show error with available models)
 /create-collection test --model invalid-model
 
@@ -147,7 +150,7 @@ Verify error codes and messages:
 
 Verify arguments are passed correctly:
 
-```
+```bash
 # Multiple flags
 /index-source ~/code --collection MyCode --depth 1 --workers 8 --verbose
 
@@ -171,7 +174,7 @@ git remote add local-test file:///Users/chris.wensel/sandbox/arcaneum
 
 #### Step 2: Add as Git Marketplace
 
-```
+```text
 /plugin marketplace add file:///Users/chris.wensel/sandbox/arcaneum
 ```
 
@@ -207,6 +210,7 @@ Before each test session, verify:
 - [ ] Version follows semantic versioning (e.g., `0.1.0`)
 
 **Validation Command:**
+
 ```bash
 # Validate JSON syntax
 python -m json.tool .claude-plugin/plugin.json > /dev/null && echo "✓ Valid JSON"
@@ -223,6 +227,7 @@ python -c "import json; d=json.load(open('.claude-plugin/plugin.json')); assert 
 - [ ] Plugin `source` set to `"./"` (current directory)
 
 **Validation Command:**
+
 ```bash
 python -m json.tool .claude-plugin/marketplace.json > /dev/null && echo "✓ Valid JSON"
 ```
@@ -260,6 +265,7 @@ fi
 - [ ] Test collection creation works locally
 
 **Validation Command:**
+
 ```bash
 # Test CLI loads
 python -m arcaneum.cli.main --help > /dev/null && echo "✓ CLI loads successfully"
@@ -275,6 +281,7 @@ python -m arcaneum.cli.main --version && echo "✓ Version command works"
 **Goal:** Verify a new user can install and use the plugin.
 
 **Steps:**
+
 1. Remove any existing marketplace: `/plugin marketplace remove arcaneum-marketplace`
 2. Remove plugin if installed: `/plugin uninstall arc`
 3. Add local marketplace: `/plugin marketplace add /path/to/arcaneum`
@@ -282,6 +289,7 @@ python -m arcaneum.cli.main --version && echo "✓ Version command works"
 5. Verify: `/help` shows arcaneum commands
 
 **Expected Result:**
+
 - All 8 slash commands appear
 - Commands execute without errors
 - Help text is clear and accurate
@@ -291,12 +299,14 @@ python -m arcaneum.cli.main --version && echo "✓ Version command works"
 **Goal:** Verify plugin updates work correctly.
 
 **Steps:**
+
 1. Make a change to a command (e.g., add example to `search.md`)
 2. In Claude Code: `/plugin marketplace update arcaneum-marketplace`
 3. Test the updated command
 4. Verify changes are reflected
 
 **Expected Result:**
+
 - Command updates appear without reinstall
 - No stale cache issues
 
@@ -305,7 +315,8 @@ python -m arcaneum.cli.main --version && echo "✓ Version command works"
 **Goal:** Verify all commands support `--json` flag correctly.
 
 **Test Commands:**
-```
+
+```bash
 /list-collections --json
 /list-models --json
 /create-collection test-json --model stella --type code --json
@@ -314,6 +325,7 @@ python -m arcaneum.cli.main --version && echo "✓ Version command works"
 ```
 
 **Expected Result:**
+
 - All output is valid JSON
 - JSON follows standard format: `{status, message, data, errors}`
 - Exit codes are correct (0 for success, 2 for invalid args, etc.)
@@ -323,7 +335,8 @@ python -m arcaneum.cli.main --version && echo "✓ Version command works"
 **Goal:** Verify errors are user-friendly and actionable.
 
 **Test Commands:**
-```
+
+```bash
 # Invalid model
 /create-collection test --model bad-model
 
@@ -335,6 +348,7 @@ python -m arcaneum.cli.main --version && echo "✓ Version command works"
 ```
 
 **Expected Result:**
+
 - All errors have `[ERROR]` prefix
 - Error messages are descriptive
 - Suggested fixes are provided where applicable
@@ -345,12 +359,14 @@ python -m arcaneum.cli.main --version && echo "✓ Version command works"
 **Goal:** Verify multiple indexing operations can run simultaneously.
 
 **Steps:**
+
 1. Open two Claude Code sessions
 2. In session 1: `/index-source /path/one --collection code`
 3. In session 2: `/index-pdfs /path/two --collection docs`
 4. Monitor both complete successfully
 
 **Expected Result:**
+
 - No resource conflicts
 - Both operations complete successfully
 - Progress tracking works in both sessions
@@ -360,10 +376,12 @@ python -m arcaneum.cli.main --version && echo "✓ Version command works"
 **Goal:** Verify progress tracking for indexing operations.
 
 **Steps:**
+
 1. Index a moderately large directory: `/index-source ~/sandbox/thirdparty --collection test`
 2. Monitor Claude Code output
 
 **Expected Result:**
+
 - Progress messages use `[INFO]` prefix
 - Percentage updates: `[INFO] Processing X/Y (Z%)`
 - Final summary: `[INFO] Complete: X projects, Y files, Z chunks`
@@ -374,16 +392,19 @@ python -m arcaneum.cli.main --version && echo "✓ Version command works"
 ### Issue: Plugin Not Loading
 
 **Symptoms:**
+
 - Plugin doesn't appear in `/plugin` menu
 - Commands don't show in `/help`
 
 **Debug Steps:**
+
 1. Check JSON syntax: `python -m json.tool .claude-plugin/plugin.json`
 2. Verify marketplace path is correct
 3. Check Claude Code logs (if available)
 4. Try removing and re-adding marketplace
 
 **Common Causes:**
+
 - Invalid JSON syntax (trailing commas, unquoted keys)
 - Wrong directory path
 - Missing required fields in plugin.json
@@ -391,16 +412,19 @@ python -m arcaneum.cli.main --version && echo "✓ Version command works"
 ### Issue: Commands Not Found
 
 **Symptoms:**
+
 - `/help` doesn't show arcaneum commands
 - Executing `/search` gives "command not found"
 
 **Debug Steps:**
+
 1. Verify `commands/` directory exists at plugin root
 2. Check all .md files have proper frontmatter
 3. Verify plugin is installed: `/plugin` and check enabled plugins
 4. Try reinstalling: `/plugin uninstall arc` then `/plugin install arc@arcaneum-marketplace`
 
 **Common Causes:**
+
 - `commands/` in wrong location (must be at root)
 - Missing frontmatter in .md files
 - Plugin not actually installed (just marketplace added)
@@ -408,16 +432,19 @@ python -m arcaneum.cli.main --version && echo "✓ Version command works"
 ### Issue: Python Import Errors
 
 **Symptoms:**
+
 - Commands fail with `ModuleNotFoundError`
 - "No module named 'arcaneum'" errors
 
 **Debug Steps:**
+
 1. Verify Python can find arcaneum: `python -c "import arcaneum; print(arcaneum.__version__)"`
 2. Check you're in correct directory when testing
 3. Verify dependencies installed: `pip list | grep arcaneum`
 4. Test CLI directly: `python -m arcaneum.cli.main --help`
 
 **Common Causes:**
+
 - Not running from plugin root directory
 - Virtual environment not activated
 - Dependencies not installed
@@ -426,15 +453,18 @@ python -m arcaneum.cli.main --version && echo "✓ Version command works"
 ### Issue: $ARGUMENTS Not Expanding
 
 **Symptoms:**
+
 - Literal `$ARGUMENTS` appears in error messages
 - Arguments not passed to CLI
 
 **Debug Steps:**
+
 1. Check command markdown has proper execution block
 2. Verify `$ARGUMENTS` is not escaped or quoted
 3. Test command with simple args first
 
 **Common Causes:**
+
 - Incorrect execution block format
 - Shell quoting issues in .md file
 - Missing execution block entirely
@@ -554,6 +584,7 @@ echo "  /plugin install arc@arcaneum-marketplace"
 ```
 
 Make it executable:
+
 ```bash
 chmod +x scripts/validate-plugin.sh
 ./scripts/validate-plugin.sh
@@ -612,6 +643,7 @@ chmod +x scripts/test-claude-integration.sh
 ```
 
 This script validates:
+
 - JSON output is valid for all commands
 - `$ARGUMENTS` expansion works correctly
 - Progress messages follow `[INFO]` format
@@ -622,6 +654,7 @@ This script validates:
 - Output encoding (UTF-8 compliance)
 
 **When to run:**
+
 - Before committing changes
 - After modifying command files
 - Before creating a release
@@ -629,19 +662,19 @@ This script validates:
 
 ## Integration Testing Matrix
 
-| Test Case | Command | Expected Result | Exit Code |
-|-----------|---------|----------------|-----------|
-| **Setup verification** | `/doctor --json` | Valid JSON with all checks | 0 or 1 |
-| **Setup verbose** | `/doctor --verbose` | Table with detailed diagnostics | 0 or 1 |
-| **Valid collection creation** | `/create-collection test --model stella --type code` | Collection created, JSON if --json | 0 |
-| **Invalid model** | `/create-collection test --model bad` | Error with available models list | 2 |
-| **List collections** | `/list-collections --json` | Valid JSON output | 0 |
-| **Collection info** | `/collection-info nonexistent` | Collection not found error | 1 or 3 |
-| **Delete with confirm** | `/delete-collection test --confirm --json` | Success JSON response | 0 |
-| **List models** | `/list-models --json` | Valid JSON with all models | 0 |
-| **Search valid** | `/search "test" --collection code --limit 5` | Results or empty results | 0 |
-| **Search invalid collection** | `/search "test" --collection bad` | Collection not found | 3 |
-| **Index source (small)** | `/index-source . --collection test --depth 0` | Progress messages with [INFO] | 0 |
+| Test Case                     | Command                                              | Expected Result                      | Exit Code |
+| ----------------------------- | ---------------------------------------------------- | ------------------------------------ | --------- |
+| **Setup verification**        | `/doctor --json`                                     | Valid JSON with all checks           | 0 or 1    |
+| **Setup verbose**             | `/doctor --verbose`                                  | Table with detailed diagnostics      | 0 or 1    |
+| **Valid collection creation** | `/create-collection test --model stella --type code` | Collection created, JSON if --json   | 0         |
+| **Invalid model**             | `/create-collection test --model bad`                | Error with available models list     | 2         |
+| **List collections**          | `/list-collections --json`                           | Valid JSON output                    | 0         |
+| **Collection info**           | `/collection-info nonexistent`                       | Collection not found error           | 1 or 3    |
+| **Delete with confirm**       | `/delete-collection test --confirm --json`           | Success JSON response                | 0         |
+| **List models**               | `/list-models --json`                                | Valid JSON with all models           | 0         |
+| **Search valid**              | `/search "test" --collection code --limit 5`         | Results or empty results             | 0         |
+| **Search invalid collection** | `/search "test" --collection bad`                    | Collection not found                 | 3         |
+| **Index source (small)**      | `/index-source . --collection test --depth 0`        | Progress messages with [INFO]        | 0         |
 
 ## Common Testing Mistakes to Avoid
 
@@ -656,6 +689,7 @@ This script validates:
 **Problem:** Claude Code may cache old version.
 
 **Solution:**
+
 - Update version in both files when making changes
 - Use `/plugin marketplace update arcaneum-marketplace` to refresh
 
@@ -664,6 +698,7 @@ This script validates:
 **Problem:** Your environment has cached state that new users won't have.
 
 **Solution:**
+
 1. Uninstall plugin completely
 2. Remove marketplace
 3. Clear any test collections
@@ -684,6 +719,7 @@ This script validates:
 **Problem:** Edge cases fail in production.
 
 **Solution:**
+
 - Test with no optional flags
 - Test with all optional flags
 - Test with conflicting flags
@@ -694,6 +730,7 @@ This script validates:
 Before publishing to GitHub:
 
 ### Code Quality
+
 - [ ] All validation scripts pass
 - [ ] Manual testing complete for all commands
 - [ ] Error messages are clear and actionable
@@ -701,18 +738,21 @@ Before publishing to GitHub:
 - [ ] Exit codes are correct
 
 ### Documentation
+
 - [ ] README.md has installation instructions
 - [ ] All commands documented with examples
 - [ ] Troubleshooting guide is comprehensive
 - [ ] CHANGELOG.md updated with changes
 
 ### Compliance
+
 - [ ] plugin.json has correct version
 - [ ] marketplace.json matches plugin version
 - [ ] LICENSE file present
 - [ ] No sensitive data in repository (API keys, credentials)
 
 ### Testing
+
 - [ ] Tested fresh install workflow
 - [ ] Tested update workflow
 - [ ] Tested uninstall workflow
@@ -720,6 +760,7 @@ Before publishing to GitHub:
 - [ ] Tested on clean Claude Code instance
 
 ### Performance
+
 - [ ] Commands respond in < 1 second (except long-running indexing)
 - [ ] Progress updates appear regularly during indexing
 - [ ] No memory leaks in long-running operations
@@ -778,6 +819,7 @@ git commit -m "Improve search command documentation"
 ### 2. Test Incrementally
 
 Don't batch all changes:
+
 - Change one command → test → commit
 - Add one feature → test → commit
 - Fix one bug → test → commit
@@ -805,14 +847,14 @@ bd create "Search filter syntax unclear in help text" \
 
 ## References
 
-- **Claude Code Plugins**: https://docs.claude.com/en/docs/claude-code/plugins
-- **Plugin Marketplaces**: https://docs.claude.com/en/docs/claude-code/plugin-marketplaces
-- **Plugins Reference**: https://docs.claude.com/en/docs/claude-code/plugins-reference
-- **Slash Commands**: https://docs.claude.com/en/docs/claude-code/slash-commands
+- **Claude Code Plugins**: <https://docs.claude.com/en/docs/claude-code/plugins>
+- **Plugin Marketplaces**: <https://docs.claude.com/en/docs/claude-code/plugin-marketplaces>
+- **Plugins Reference**: <https://docs.claude.com/en/docs/claude-code/plugins-reference>
+- **Slash Commands**: <https://docs.claude.com/en/docs/claude-code/slash-commands>
 - **RDR-006**: `docs/rdr/RDR-006-claude-code-integration.md`
 - **Output Format**: `docs/reference/cli-output-format.md`
 - **Compliance Report**: `docs/reference/plugin-compliance.md`
-- **Beads Plugin**: https://github.com/steveyegge/beads (reference implementation)
+- **Beads Plugin**: <https://github.com/steveyegge/beads> (reference implementation)
 
 ## Quick Reference
 

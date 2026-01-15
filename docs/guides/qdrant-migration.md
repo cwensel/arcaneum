@@ -7,10 +7,10 @@ This guide walks through migrating Qdrant from macOS bind mounts to Docker named
 
 There are two approaches for migrating Qdrant collections:
 
-| Method | Best For | Features |
-|--------|----------|----------|
-| **Snapshots** (this guide) | Same Qdrant version, full backup | Native format, fastest |
-| **Export/Import** | Cross-machine, selective export | Portable, path remapping |
+| Method                     | Best For                         | Features                 |
+| -------------------------- | -------------------------------- | ------------------------ |
+| **Snapshots** (this guide) | Same Qdrant version, full backup | Native format, fastest   |
+| **Export/Import**          | Cross-machine, selective export  | Portable, path remapping |
 
 For cross-machine migration with path adjustments, see the **Export/Import Alternative** section below.
 
@@ -389,14 +389,14 @@ arc collection import backup.arcexp \
 
 ### Export vs Snapshots Comparison
 
-| Feature | Snapshots | Export/Import |
-|---------|-----------|---------------|
-| Format | Native binary | Portable `.arcexp` |
-| Speed | Fastest | Slightly slower |
-| Selective export | No | Yes (filters) |
-| Path remapping | No | Yes |
-| Cross-version | Limited | Yes |
-| Docker required | Yes | No |
+| Feature          | Snapshots     | Export/Import      |
+| ---------------- | ------------- | ------------------ |
+| Format           | Native binary | Portable `.arcexp` |
+| Speed            | Fastest       | Slightly slower    |
+| Selective export | No            | Yes (filters)      |
+| Path remapping   | No            | Yes                |
+| Cross-version    | Limited       | Yes                |
+| Docker required  | Yes           | No                 |
 
 See [CLI Reference](cli-reference.md#export-collection) for full export/import documentation.
 

@@ -246,12 +246,12 @@ arc index pdf ./pdfs --collection docs --model stella --no-gpu
 
 Choose the embedding model based on your use case:
 
-| Model | Best For | Chunk Size | Late Chunking | GPU Support |
-|-------|----------|------------|---------------|-------------|
-| **stella** | Long documents, general purpose | 768 tokens | ✅ Yes | ✅ MPS |
-| **bge** | Precision, short documents | 460 tokens | ❌ No | ⚠️ CoreML |
-| **modernbert** | Long context, recent content | 1536 tokens | ✅ Yes | ✅ MPS |
-| **jina** | Code + text, multilingual | 1536 tokens | ✅ Yes | ✅ MPS |
+| Model          | Best For                        | Chunk Size  | Late Chunking | GPU Support |
+| -------------- | ------------------------------- | ----------- | ------------- | ----------- |
+| **stella**     | Long documents, general purpose | 768 tokens  | Yes           | MPS         |
+| **bge**        | Precision, short documents      | 460 tokens  | No            | CoreML      |
+| **modernbert** | Long context, recent content    | 1536 tokens | Yes           | MPS         |
+| **jina**       | Code + text, multilingual       | 1536 tokens | Yes           | MPS         |
 
 ## OCR Configuration
 
@@ -369,14 +369,14 @@ The system uses adaptive batch sizes based on model size, but if you still hit m
 
 **Model memory requirements (approximate on MPS):**
 
-| Model | Size | Memory Usage |
-|-------|------|--------------|
-| `stella` | 1.5B params | ~12-15 GB |
-| `jina-code-1.5b` | 1.5B params | ~12-15 GB |
-| `nomic-code` | 7B params | ~20+ GB |
-| `jina-code-0.5b` | 500M params | ~4-6 GB |
-| `jina-code` | 137M params | ~2-3 GB |
-| `minilm` | 22M params | <1 GB |
+| Model            | Size        | Memory Usage |
+| ---------------- | ----------- | ------------ |
+| `stella`         | 1.5B params | ~12-15 GB    |
+| `jina-code-1.5b` | 1.5B params | ~12-15 GB    |
+| `nomic-code`     | 7B params   | ~20+ GB      |
+| `jina-code-0.5b` | 500M params | ~4-6 GB      |
+| `jina-code`      | 137M params | ~2-3 GB      |
+| `minilm`         | 22M params  | <1 GB        |
 
 ### Slow OCR
 
@@ -563,16 +563,16 @@ To bypass change detection and reindex everything, use `--force`.
 
 Each page is indexed as a separate document with the following fields:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Unique document ID (filename + path hash + page) |
-| `content` | string | Page text content (searchable) |
-| `filename` | string | PDF filename (searchable) |
-| `file_path` | string | Absolute file path (filterable) |
-| `page_number` | int | Page number (filterable, sortable) |
-| `file_hash` | string | SHA-256 hash for change detection (filterable) |
-| `extraction_method` | string | How text was extracted (filterable) |
-| `is_image_pdf` | bool | Whether OCR was used (filterable) |
+| Field               | Type   | Description                                      |
+| ------------------- | ------ | ------------------------------------------------ |
+| `id`                | string | Unique document ID (filename + path hash + page) |
+| `content`           | string | Page text content (searchable)                   |
+| `filename`          | string | PDF filename (searchable)                        |
+| `file_path`         | string | Absolute file path (filterable)                  |
+| `page_number`       | int    | Page number (filterable, sortable)               |
+| `file_hash`         | string | SHA-256 hash for change detection (filterable)   |
+| `extraction_method` | string | How text was extracted (filterable)              |
+| `is_image_pdf`      | bool   | Whether OCR was used (filterable)                |
 
 ### Filtering Examples
 

@@ -4,7 +4,7 @@
 
 - **Date**: 2025-10-27
 - **Updated**: 2026-01-15
-- **Status**: Partially Implemented
+- **Status**: Implemented
 - **Type**: Feature
 - **Priority**: High
 - **Related Issues**: arcaneum-71, arcaneum-3l8l, arcaneum-4t78, arcaneum-72j3,

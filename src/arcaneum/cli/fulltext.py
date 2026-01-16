@@ -20,6 +20,48 @@ console = Console()
 logger = logging.getLogger(__name__)
 
 
+def format_location(hit: dict) -> str:
+    """Format location with full context from RDR-011 metadata.
+
+    Handles three cases:
+    1. Source code with line ranges and function/class context
+    2. PDF documents with page numbers
+    3. Simple file paths (fallback)
+
+    Args:
+        hit: Search result hit containing metadata
+
+    Returns:
+        Formatted location string (e.g., "file.py:42-67 (my_func function)")
+    """
+    file_path = hit.get('file_path') or hit.get('filename', 'Unknown')
+
+    # Source code: Include line range and function/class name
+    if 'start_line' in hit:
+        start = hit['start_line']
+        end = hit.get('end_line', start)
+        if start == end:
+            location = f"{file_path}:{start}"
+        else:
+            location = f"{file_path}:{start}-{end}"
+
+        if hit.get('function_name'):
+            location += f" ({hit['function_name']} function)"
+        elif hit.get('class_name'):
+            location += f" ({hit['class_name']} class)"
+        return location
+
+    # PDF: Include page number
+    if 'page_number' in hit:
+        return f"{file_path}:page{hit['page_number']}"
+
+    # Legacy support: single line_number field
+    if 'line_number' in hit:
+        return f"{file_path}:{hit['line_number']}"
+
+    return file_path
+
+
 def get_client() -> FullTextClient:
     """Get MeiliSearch client from environment or auto-generated key."""
     from ..paths import get_meilisearch_api_key
@@ -142,10 +184,8 @@ def search_text_command(
                 console.print("[dim]No results found[/dim]")
             else:
                 for i, hit in enumerate(hits, 1):
-                    # Get file location
-                    location = hit.get('filename', hit.get('file_path', 'Unknown'))
-                    if 'line_number' in hit:
-                        location += f":{hit['line_number']}"
+                    # Get file location with full context (RDR-012 enhancement)
+                    location = format_location(hit)
 
                     console.print(f"[cyan]{i}. {location}[/cyan]")
 
@@ -155,8 +195,6 @@ def search_text_command(
                             console.print(f"   Language: {hit['language']}")
                         if 'project' in hit:
                             console.print(f"   Project: {hit['project']}")
-                        if 'page_number' in hit:
-                            console.print(f"   Page: {hit['page_number']}")
 
                     # Show highlighted content
                     if '_formatted' in hit and 'content' in hit['_formatted']:

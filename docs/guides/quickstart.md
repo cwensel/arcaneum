@@ -184,7 +184,7 @@ arc container logs
 
 ### Cache Management
 
-Arcaneum stores embedding models in `~/.arcaneum/models/`:
+Arcaneum stores embedding models in XDG-compliant locations:
 
 ```bash
 # View cache location and size
@@ -196,21 +196,29 @@ arc config clear-cache --confirm
 
 ### Data Location
 
-All data is stored in `~/.arcaneum/`:
+Arcaneum stores data in XDG-compliant locations:
 
 ```text
-~/.arcaneum/
-├── models/              # Embedding models (auto-downloaded)
-├── data/
-│   ├── qdrant/         # Vector database storage
-│   └── qdrant_snapshots/  # Backups
+~/.cache/arcaneum/models/        # Embedding models (~1-2GB per model)
+~/.local/share/arcaneum/         # Local databases and indexed content
+~/.config/arcaneum/              # Configuration files (e.g., MeiliSearch key)
+```
+
+**Vector Database (Docker):**
+
+Qdrant and MeiliSearch use Docker named volumes for data persistence:
+
+```text
+qdrant-arcaneum-storage    # Qdrant vector database storage
+qdrant-arcaneum-snapshots  # Qdrant backup snapshots
+meilisearch-arcaneum-data  # MeiliSearch full-text index
 ```
 
 **Benefits:**
 
-- Easy to backup (just backup `~/.arcaneum/`)
-- Easy to find and manage
-- Survives container restarts
+- XDG-compliant paths (follows Linux/macOS standards)
+- Reliable data persistence across container restarts
+- Easy backup via Qdrant snapshots
 
 ## Troubleshooting
 

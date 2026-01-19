@@ -1,22 +1,28 @@
 # Arcaneum
 
-CLI tools and Claude Code plugins for semantic search across Qdrant vector databases.
+CLI tools and Claude Code plugins for semantic and full-text search.
 
 ## Overview
 
-Arcaneum provides semantic search for documents using Qdrant vector embeddings. The system supports PDF
-documents and source code with git-aware, AST-based chunking.
+Arcaneum helps you discover and understand project dependencies, documentation, and reference implementations.
+By indexing libraries, frameworks, and technical papers, you can semantically search for patterns, APIs,
+and concepts when building new projects. Works especially well with the
+[RDR (Recommendation Data Record)](https://github.com/cwensel/rdr) model for AI-assisted development planning.
 
-**Currently Available:** Semantic search with Qdrant
+The system supports PDF documents and source code with git-aware, AST-based chunking.
 
-**Planned:** MeiliSearch integration for full-text search (RDR-008 through RDR-012)
+**Currently Available:**
+
+- Semantic search with Qdrant (vector embeddings)
+- Full-text search with MeiliSearch (exact phrase matching)
+- Dual indexing workflow for comprehensive search
 
 ## Features
 
 ### Search Capabilities
 
 - **Semantic Search (Qdrant)**: Find conceptually similar content using vector embeddings
-- **Full-Text Search**: Planned - MeiliSearch integration for exact phrase matching (RDR-008 through RDR-012)
+- **Full-Text Search (MeiliSearch)**: Exact phrase matching, keyword search, and typo-tolerant queries
 
 ### Indexing
 
@@ -80,48 +86,105 @@ pip install -e .
 arc doctor
 arc container start
 
-# 4. Index and search your code
-arc collection create MyCode --type code
-arc index code ~/my-project --collection MyCode
-arc search semantic "authentication logic" --collection MyCode
+# 4. Index dependencies and search for patterns
+arc collection create Frameworks --type code
+arc index code ~/libs/fastapi --collection Frameworks
+arc search semantic "dependency injection pattern" --collection Frameworks
 ```
 
 **First time?** Run `arc doctor` to check prerequisites and get setup guidance.
 
 👉 **[Full Quick Start Guide](docs/guides/quickstart.md)** - Detailed walkthrough with troubleshooting
 
+## Quick Reference
+
+```bash
+# Service Management
+arc container start          # Start Qdrant and MeiliSearch
+arc container status         # Check service health
+arc doctor                   # Verify setup
+
+# Collections (Qdrant - Semantic Search)
+arc collection create NAME --type TYPE   # pdf, code, or markdown
+arc collection list
+arc collection items NAME
+arc index pdf PATH --collection NAME
+arc index code PATH --collection NAME
+arc search semantic "query" --collection NAME
+
+# Indexes (MeiliSearch - Full-Text Search)
+arc indexes create NAME --type TYPE
+arc indexes list
+arc index text pdf PATH --index NAME
+arc index text code PATH --index NAME
+arc search text "query" --index NAME
+
+# Dual Indexing (Both Systems)
+arc corpus create NAME --type TYPE
+arc corpus sync PATH --corpus NAME
+```
+
 ## Common Workflows
 
-### Search Your Code
+### Search Dependencies and Libraries
 
 ```bash
 # Create a code collection (model inferred from type)
-arc collection create MyCode --type code
+arc collection create Frameworks --type code
 
-# Index your project (git-aware, multi-branch)
-arc index code ~/projects/my-app --collection MyCode
+# Index framework source code (git-aware, multi-branch)
+arc index code ~/libs/fastapi --collection Frameworks
+arc index code ~/libs/sqlalchemy --collection Frameworks
 
 # List what's indexed
-arc collection items MyCode
+arc collection items Frameworks
 
-# Search semantically
-arc search semantic "authentication middleware" --collection MyCode --limit 10
+# Search for patterns and APIs
+arc search semantic "dependency injection pattern" --collection Frameworks --limit 10
+arc search semantic "database connection pooling" --collection Frameworks --limit 10
 ```
 
-### Search PDFs
+### Search Technical Documentation
 
 ```bash
 # Create a PDF collection (model inferred from type)
-arc collection create MyDocs --type pdf
+arc collection create Papers --type pdf
 
-# Index PDFs (with OCR for scanned documents)
-arc index pdf ~/Documents/papers --collection MyDocs
+# Index research papers and documentation
+arc index pdf ~/Documents/papers --collection Papers
 
-# Index with maximum performance (uses all CPU cores)
-arc index pdf ~/Documents/papers --collection MyDocs
+# Search for concepts when planning new features
+arc search semantic "distributed consensus algorithms" --collection Papers
+arc search semantic "rate limiting strategies" --collection Papers
+```
 
-# Search for concepts
-arc search semantic "neural network architectures" --collection MyDocs
+### Full-Text Search (MeiliSearch)
+
+```bash
+# Create MeiliSearch index
+arc indexes create my-docs --type pdf
+
+# Index for full-text search
+arc index text pdf ~/Documents/papers --index my-docs
+
+# Search for exact phrases
+arc search text '"neural network architecture"' --index my-docs
+```
+
+### Dual Indexing (Semantic + Full-Text)
+
+```bash
+# Create paired collection and index
+arc corpus create MyDocs --type pdf
+
+# Index to both Qdrant and MeiliSearch
+arc corpus sync ~/Documents --corpus MyDocs
+
+# Semantic search (conceptual)
+arc search semantic "machine learning concepts" --collection MyDocs
+
+# Full-text search (exact phrases)
+arc search text '"specific phrase"' --index MyDocs
 ```
 
 ### Index Markdown Files
@@ -174,7 +237,7 @@ information with rich metadata. Content is automatically persisted for durabilit
 ### Manage Services
 
 ```bash
-arc container start    # Start Qdrant
+arc container start    # Start Qdrant and MeiliSearch
 arc container status   # Check health
 arc container logs     # View logs
 arc container stop     # Stop services
@@ -285,14 +348,18 @@ Then restart Claude Code to activate the plugin.
 
 All commands use the `arc:` namespace prefix:
 
-- `/arc:collection` - Manage Qdrant collections (create, list, info, delete)
-- `/arc:config` - Manage configuration and cache
-- `/arc:container` - Manage Docker containers (start, stop, status, logs)
-- `/arc:corpus` - Manage dual-index corpora (vector + full-text)
-- `/arc:doctor` - Verify setup and prerequisites
-- `/arc:index` - Index PDF, code, or markdown into collections
-- `/arc:models` - List available embedding models
-- `/arc:search` - Semantic or full-text search
+| Command | Description |
+| ------- | ----------- |
+| `/arc:collection` | Manage Qdrant collections (create, list, info, delete) |
+| `/arc:indexes` | Manage MeiliSearch indexes (mirrors collection commands) |
+| `/arc:corpus` | Manage dual-index corpora (Qdrant + MeiliSearch) |
+| `/arc:index` | Index PDF, code, or markdown content |
+| `/arc:search` | Semantic or full-text search |
+| `/arc:container` | Manage Docker services (start, stop, status) |
+| `/arc:doctor` | Verify setup and prerequisites |
+| `/arc:models` | List available embedding models |
+| `/arc:config` | Manage configuration and cache |
+| `/arc:store` | Store agent-generated content for memory |
 
 **Usage Examples:**
 
@@ -326,11 +393,11 @@ Use `/help` in Claude Code to see all available commands or `/arc:doctor` to che
 - ✅ **RDR-005**: Source code indexing (COMPLETED)
 - ✅ **RDR-006**: Claude Code integration (COMPLETED)
 - ✅ **RDR-007**: Semantic search (COMPLETED)
-- ⏱️ **RDR-008**: MeiliSearch setup (PENDING)
-- ⏱️ **RDR-009**: Dual indexing strategy (PENDING)
-- ⏱️ **RDR-010**: PDF full-text indexing (PENDING)
-- ⏱️ **RDR-011**: Source code full-text indexing (PENDING)
-- ⏱️ **RDR-012**: Full-text search integration (PENDING)
+- ✅ **RDR-008**: MeiliSearch setup (COMPLETED)
+- ✅ **RDR-009**: Dual indexing strategy (COMPLETED)
+- ✅ **RDR-010**: PDF full-text indexing (COMPLETED)
+- ✅ **RDR-011**: Source code full-text indexing (COMPLETED)
+- ✅ **RDR-012**: Full-text search integration (COMPLETED)
 - ✅ **RDR-014**: Markdown indexing (COMPLETED)
 
 ### Testing
@@ -387,5 +454,4 @@ MIT - See LICENSE file for details
 
 ## Acknowledgments
 
-- Inspired by [Beads](https://github.com/steveyegge/beads) for Claude Code plugin patterns
-- Built on [Qdrant](https://qdrant.tech/) (MeiliSearch integration planned)
+- Built on [Qdrant](https://qdrant.tech/) and [MeiliSearch](https://www.meilisearch.com/)

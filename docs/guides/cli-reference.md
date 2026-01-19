@@ -815,9 +815,9 @@ arc container reset --confirm
 
 **Data Location:**
 
-- All data stored in `~/.arcaneum/data/qdrant/`
+- Qdrant and MeiliSearch use Docker named volumes for persistence
 - Survives container restarts
-- Easy to backup
+- Easy backup via Qdrant snapshots
 
 ## Configuration & Cache Management
 
@@ -840,9 +840,9 @@ arc config clear-cache --confirm
 arc config show-cache-dir
 # Output:
 #   Arcaneum directories:
-#     Root:   /Users/you/.arcaneum
-#     Models: /Users/you/.arcaneum/models
-#     Data:   /Users/you/.arcaneum/data
+#     Cache:  /Users/you/.cache/arcaneum
+#     Data:   /Users/you/.local/share/arcaneum
+#     Config: /Users/you/.config/arcaneum
 #     Models size: 2.5 GB
 #     Data size: 266.8 MB
 
@@ -852,7 +852,7 @@ arc config clear-cache --confirm
 
 **Cache Location:**
 
-- Models stored in `~/.arcaneum/models/`
+- Models stored in `~/.cache/arcaneum/models/`
 - Auto-downloaded on first use
 - Shared across all arc commands
 - ~1-2GB per model

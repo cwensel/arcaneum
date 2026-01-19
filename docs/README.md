@@ -6,7 +6,7 @@
 
 ## User Guides
 
-- **[Arc CLI Reference](guides/arc-cli-reference.md)** - Complete CLI command reference
+- **[Arc CLI Reference](guides/cli-reference.md)** - Complete CLI command reference
 - **[PDF Indexing Guide](guides/pdf-indexing.md)** - Detailed PDF indexing with OCR
 
 ## Testing
@@ -26,17 +26,20 @@
 
 ## Directory Structure
 
-```
+```text
 docs/
 ├── README.md              # This file
 ├── guides/                # User-facing documentation
 │   ├── quickstart.md
-│   ├── arc-cli-reference.md
-│   └── pdf-indexing.md
+│   ├── cli-reference.md
+│   ├── pdf-indexing.md
+│   ├── claude-code-plugin.md
+│   └── qdrant-migration.md
 ├── testing/               # Testing documentation
 │   ├── test-commands.md
 │   ├── testing.md
-│   └── corporate-proxy.md
+│   ├── corporate-proxy.md
+│   └── offline-mode.md
 └── rdr/                   # Technical specifications
     ├── README.md
     ├── TEMPLATE.md

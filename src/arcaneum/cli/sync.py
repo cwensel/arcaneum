@@ -1011,6 +1011,67 @@ def _fetch_qdrant_chunks_for_file(
         return (file_path_str, [], str(e))
 
 
+def _fetch_git_metadata_for_files(
+    qdrant,
+    corpus: str,
+    file_paths_needed: Set[str],
+    console,
+    output_json: bool,
+) -> Dict[str, Dict[str, Any]]:
+    """Fetch git metadata by scrolling Qdrant once, bounded to needed files.
+
+    Instead of making one request per file, this scrolls through all Qdrant
+    points once and only stores metadata for files in the needed set.
+    This is O(total_points) but with far fewer requests than O(files_needed).
+
+    Args:
+        qdrant: Qdrant client
+        corpus: Corpus/collection name
+        file_paths_needed: Set of file paths that need git metadata
+        console: Rich console for output
+        output_json: JSON output mode (suppresses progress)
+
+    Returns:
+        Dict mapping file_path -> git metadata dict
+    """
+    git_metadata_by_file: Dict[str, Dict[str, Any]] = {}
+    offset = None
+    points_scanned = 0
+
+    while True:
+        points, offset = qdrant.scroll(
+            collection_name=corpus,
+            limit=1000,
+            offset=offset,
+            with_payload=["file_path", "git_project_identifier",
+                         "git_project_name", "git_branch", "git_commit_hash"],
+            with_vectors=False
+        )
+        if not points:
+            break
+
+        for point in points:
+            file_path = point.payload.get("file_path")
+            # Only store if file is in our needed set and has git metadata
+            if file_path in file_paths_needed and point.payload.get("git_project_identifier"):
+                if file_path not in git_metadata_by_file:
+                    git_metadata_by_file[file_path] = {
+                        "git_project_identifier": point.payload.get("git_project_identifier"),
+                        "git_project_name": point.payload.get("git_project_name"),
+                        "git_branch": point.payload.get("git_branch"),
+                        "git_commit_hash": point.payload.get("git_commit_hash"),
+                    }
+
+        points_scanned += len(points)
+        if not output_json and points_scanned % 10000 == 0:
+            console.print(f"[dim]  Scanned {points_scanned} Qdrant points...[/dim]")
+
+        if offset is None:
+            break
+
+    return git_metadata_by_file
+
+
 def _repair_meili_metadata(
     qdrant,
     meili: FullTextClient,
@@ -1035,8 +1096,6 @@ def _repair_meili_metadata(
     Returns:
         Tuple of (documents_updated, documents_failed)
     """
-    from qdrant_client.models import Filter, FieldCondition, MatchValue
-
     # Step 1: Find MeiliSearch documents missing git_project_identifier
     # Use get_documents API (not search) to iterate through ALL documents
     docs_to_repair = []
@@ -1098,56 +1157,15 @@ def _repair_meili_metadata(
 
     # Step 2: Build a map of file_path -> git metadata from Qdrant
     # Get unique file paths that need repair
-    file_paths_to_check = list(set(d['file_path'] for d in docs_to_repair if d['file_path']))
+    file_paths_needed = set(d['file_path'] for d in docs_to_repair if d['file_path'])
 
     if not output_json:
-        console.print(f"[dim]Fetching git metadata from Qdrant for {len(file_paths_to_check)} files...[/dim]")
+        console.print(f"[dim]Scanning Qdrant for git metadata ({len(file_paths_needed)} files needed)...[/dim]")
 
-    # Fetch git metadata using parallel threads for speed
-    git_metadata_by_file: Dict[str, Dict[str, Any]] = {}
-
-    def fetch_git_metadata(file_path: str) -> Tuple[str, Optional[Dict[str, Any]]]:
-        """Fetch git metadata for a single file from Qdrant."""
-        try:
-            points, _ = qdrant.scroll(
-                collection_name=corpus,
-                scroll_filter=Filter(
-                    must=[
-                        FieldCondition(
-                            key="file_path",
-                            match=MatchValue(value=file_path)
-                        )
-                    ]
-                ),
-                limit=1,
-                with_payload=["git_project_identifier", "git_project_name", "git_branch", "git_commit_hash"],
-                with_vectors=False
-            )
-
-            if points and points[0].payload:
-                payload = points[0].payload
-                if payload.get("git_project_identifier"):
-                    return file_path, {
-                        "git_project_identifier": payload.get("git_project_identifier"),
-                        "git_project_name": payload.get("git_project_name"),
-                        "git_branch": payload.get("git_branch"),
-                        "git_commit_hash": payload.get("git_commit_hash"),
-                    }
-        except Exception as e:
-            logger.warning(f"Failed to fetch git metadata for {file_path}: {e}")
-        return file_path, None
-
-    # Use thread pool for parallel fetching
-    with ThreadPoolExecutor(max_workers=16) as executor:
-        futures = {executor.submit(fetch_git_metadata, fp): fp for fp in file_paths_to_check}
-        completed = 0
-        for future in as_completed(futures):
-            file_path, metadata = future.result()
-            if metadata:
-                git_metadata_by_file[file_path] = metadata
-            completed += 1
-            if not output_json and completed % 1000 == 0:
-                console.print(f"[dim]  Fetched {completed}/{len(file_paths_to_check)} files...[/dim]")
+    # Single scroll through Qdrant, bounded to needed files
+    git_metadata_by_file = _fetch_git_metadata_for_files(
+        qdrant, corpus, file_paths_needed, console, output_json
+    )
 
     if not git_metadata_by_file:
         if not output_json:

@@ -46,10 +46,12 @@ Manage corpora that combine both vector search (Qdrant) and full-text search (Me
 
 **Parity Options:**
 
-- name: Corpus name (required)
+- name: Corpus name (optional - if omitted, processes all corpora)
 - --dry-run: Preview what would be backfilled without making changes
 - --verify: Verify chunk counts match between systems
 - --repair-metadata: Update MeiliSearch docs with missing git metadata (code corpora)
+- --create-missing: Create missing MeiliSearch indexes for qdrant_only corpora
+- --confirm: Skip confirmation prompt when processing all corpora
 - --verbose: Show detailed progress
 - --json: Output in JSON format
 
@@ -65,6 +67,8 @@ Manage corpora that combine both vector search (Qdrant) and full-text search (Me
 /corpus items CodeBase
 /corpus parity CodeBase --verify
 /corpus parity CodeBase --repair-metadata
+/corpus parity --create-missing --dry-run
+/corpus parity --create-missing --confirm
 /corpus delete OldCorpus
 /corpus delete OldCorpus --confirm
 ```

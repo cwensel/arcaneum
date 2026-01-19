@@ -113,6 +113,8 @@ arc corpus parity MyCorpus --json
 - `--dry-run`: Show what would be backfilled without making changes
 - `--verify`: Verify chunk counts match between systems (detects partial uploads)
 - `--repair-metadata`: Update MeiliSearch docs with missing git metadata from Qdrant (code corpora only)
+- `--create-missing`: Create missing MeiliSearch indexes for qdrant_only corpora
+- `--confirm`: Skip confirmation prompt when processing all corpora
 - `--verbose`: Show detailed progress for each file
 - `--json`: Output JSON format for scripting
 
@@ -140,6 +142,44 @@ Backfilling 3 files to Qdrant...
    Backfilled to Qdrant: 2 files (23 chunks)
    Skipped (not found): 1 file
 ```
+
+**All-Corpora Mode:**
+
+When run without a corpus name, parity discovers all corpora and processes them:
+
+```bash
+# Discover and process all corpora
+arc corpus parity
+
+# Preview all corpora status
+arc corpus parity --dry-run
+
+# Process all without confirmation prompt
+arc corpus parity --confirm
+```
+
+**Creating Missing Indexes:**
+
+The `--create-missing` flag promotes single-sided Qdrant collections into full corpora
+by automatically creating missing MeiliSearch indexes:
+
+```bash
+# Preview what indexes would be created
+arc corpus parity --create-missing --dry-run
+
+# Create missing indexes and sync
+arc corpus parity --create-missing
+
+# Single corpus: create missing index if needed
+arc corpus parity MyCorpus --create-missing
+```
+
+This is useful when you have Qdrant collections that were indexed before MeiliSearch
+was set up, or when migrating to dual-index workflows.
+
+**Note:** `meili_only` corpora cannot be auto-created because creating a Qdrant
+collection requires specifying `--type` and `--model`. These must be created manually
+with `arc corpus create`.
 
 ### Corpus Items
 

@@ -968,27 +968,41 @@ def _fetch_qdrant_chunks_for_file(
     from qdrant_client.models import Filter, FieldCondition, MatchValue
 
     try:
-        points, _ = qdrant.scroll(
-            collection_name=corpus,
-            scroll_filter=Filter(
-                must=[
-                    FieldCondition(
-                        key="file_path",
-                        match=MatchValue(value=file_path_str)
-                    )
-                ]
-            ),
-            limit=1000,
-            with_payload=True,
-            with_vectors=False
-        )
+        # Paginate through all points for this file
+        all_points = []
+        offset = None
 
-        if not points:
+        while True:
+            points, next_offset = qdrant.scroll(
+                collection_name=corpus,
+                scroll_filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="file_path",
+                            match=MatchValue(value=file_path_str)
+                        )
+                    ]
+                ),
+                limit=1000,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False
+            )
+
+            if points:
+                all_points.extend(points)
+
+            # Check if there are more results
+            if next_offset is None or not points:
+                break
+            offset = next_offset
+
+        if not all_points:
             return (file_path_str, [], None)
 
         # Convert Qdrant points to MeiliSearch documents
         meili_docs = []
-        for point in points:
+        for point in all_points:
             payload = point.payload
             meili_doc = {
                 "id": str(point.id),
@@ -1692,45 +1706,400 @@ def _backfill_meili_to_qdrant(
     return files_success, chunks_success, files_failed, skipped_paths
 
 
-def parity_command(
-    corpus: str,
+def _create_missing_meili_index(
+    corpus_name: str,
+    output_json: bool = False
+) -> bool:
+    """Create MeiliSearch index for a qdrant_only corpus.
+
+    Reads corpus type from Qdrant metadata and creates index with appropriate settings.
+
+    Args:
+        corpus_name: Name of the corpus to create index for
+        output_json: If True, suppress console output
+
+    Returns:
+        True if created successfully, False otherwise
+    """
+    from ..fulltext.indexes import get_index_settings
+
+    try:
+        # Get Qdrant client and read metadata
+        qdrant = create_qdrant_client()
+        corpus_type = get_collection_type(qdrant, corpus_name)
+
+        if not corpus_type:
+            logger.warning(f"Cannot determine corpus type for '{corpus_name}'")
+            if not output_json:
+                console.print(f"[yellow]Warning: Cannot determine corpus type for '{corpus_name}'[/yellow]")
+            return False
+
+        # Map corpus type to index settings
+        # corpus_type is 'pdf', 'code', or 'markdown'
+        # get_index_settings accepts these as aliases
+        settings = get_index_settings(corpus_type)
+
+        # Create MeiliSearch index
+        meili = get_meili_client()
+
+        if not meili.health_check():
+            logger.error("MeiliSearch server not available")
+            if not output_json:
+                console.print("[red]Error: MeiliSearch server not available[/red]")
+            return False
+
+        meili.create_index(corpus_name, primary_key='id', settings=settings)
+
+        if not output_json:
+            console.print(f"[green]Created MeiliSearch index '{corpus_name}' (type: {corpus_type})[/green]")
+
+        logger.info(f"Created MeiliSearch index '{corpus_name}' with type '{corpus_type}'")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to create MeiliSearch index for '{corpus_name}': {e}")
+        if not output_json:
+            console.print(f"[red]Error creating MeiliSearch index for '{corpus_name}': {e}[/red]")
+        return False
+
+
+def _discover_corpora_for_parity() -> List[Dict[str, Any]]:
+    """Discover all corpora and their parity status.
+
+    Returns a list of corpus info dicts with keys:
+        - name: Corpus name
+        - status: 'synced', 'qdrant_only', 'meili_only', or 'chunk_mismatch'
+        - qdrant_chunks: Number of chunks in Qdrant
+        - meili_chunks: Number of chunks in MeiliSearch
+        - to_meili: Number of files to backfill to MeiliSearch
+        - to_qdrant: Number of files to backfill to Qdrant
+    """
+    from ..fulltext.client import FullTextClient
+
+    # Gather Qdrant collections
+    qdrant_collections = {}
+    try:
+        qdrant = create_qdrant_client()
+        collections = qdrant.get_collections()
+        for col in collections.collections:
+            metadata = get_collection_metadata(qdrant, col.name)
+            col_info = qdrant.get_collection(col.name)
+            # Subtract 1 for the metadata point
+            chunk_count = col_info.points_count - 1 if col_info.points_count > 0 else 0
+            qdrant_collections[col.name] = {
+                "type": metadata.get("collection_type"),
+                "model": metadata.get("model"),
+                "chunks": chunk_count,
+            }
+    except Exception as e:
+        logger.warning(f"Could not connect to Qdrant: {e}")
+
+    # Gather MeiliSearch indexes
+    meili_indexes = {}
+    try:
+        meili = get_meili_client()
+        if meili.health_check():
+            indexes = meili.list_indexes()
+            for idx in indexes:
+                name = idx['uid']
+                try:
+                    stats = meili.get_index_stats(name)
+                    meili_indexes[name] = {
+                        "chunks": stats.get('numberOfDocuments', 0),
+                    }
+                except Exception:
+                    meili_indexes[name] = {"chunks": 0}
+    except Exception as e:
+        logger.warning(f"Could not connect to MeiliSearch: {e}")
+
+    # Build unified corpus list
+    all_names = set(qdrant_collections.keys()) | set(meili_indexes.keys())
+    corpora = []
+
+    for name in sorted(all_names):
+        q_info = qdrant_collections.get(name)
+        m_info = meili_indexes.get(name)
+
+        # Determine parity status
+        if q_info and m_info:
+            # Both exist - check if chunks match
+            q_chunks = q_info.get("chunks", 0)
+            m_chunks = m_info.get("chunks", 0)
+            if q_chunks == m_chunks:
+                status = "synced"
+            else:
+                status = "chunk_mismatch"
+        elif q_info:
+            status = "qdrant_only"
+        else:
+            status = "meili_only"
+
+        q_chunks = q_info.get("chunks", 0) if q_info else 0
+        m_chunks = m_info.get("chunks", 0) if m_info else 0
+
+        # Calculate files to backfill
+        to_meili = max(0, q_chunks - m_chunks) if status == "chunk_mismatch" else (q_chunks if status == "qdrant_only" else 0)
+        to_qdrant = max(0, m_chunks - q_chunks) if status == "chunk_mismatch" else (m_chunks if status == "meili_only" else 0)
+
+        corpora.append({
+            "name": name,
+            "status": status,
+            "qdrant_chunks": q_chunks,
+            "meili_chunks": m_chunks,
+            "to_meili": to_meili,
+            "to_qdrant": to_qdrant,
+        })
+
+    return corpora
+
+
+def _parity_all_corpora(
     dry_run: bool,
     verify: bool,
     repair_metadata: bool,
     text_workers: Optional[int],
+    create_missing: bool,
+    confirm: bool,
     verbose: bool,
-    output_json: bool
+    output_json: bool,
+    effective_text_workers: int,
 ):
-    """Check and restore parity between Qdrant and MeiliSearch.
+    """Process parity for all discovered corpora.
 
-    Compares indexed files in both systems and backfills missing entries:
-    - Qdrant -> MeiliSearch: Copies metadata (no file access needed)
-    - MeiliSearch -> Qdrant: Re-chunks and embeds files (requires file access)
+    Shows a summary table and asks for confirmation before proceeding.
+    If create_missing is True, creates MeiliSearch indexes for qdrant_only corpora.
+    """
+    import click
+    from rich.table import Table
 
-    Files that don't exist on disk are skipped with a warning.
+    interaction_logger.start("corpus", "parity_all", dry_run=dry_run)
+
+    try:
+        if not output_json:
+            print_info("Discovering corpora...")
+
+        corpora = _discover_corpora_for_parity()
+
+        if not corpora:
+            if output_json:
+                print_json("success", "No corpora found", data={"corpora": []})
+            else:
+                print_info("No corpora found.")
+            interaction_logger.finish(result_count=0)
+            return
+
+        # Separate corpora into categories:
+        # - can_process: chunk_mismatch (both sides exist, just need sync)
+        # - incomplete: qdrant_only or meili_only (need manual creation first)
+        # - synced: already in parity
+        can_process = [c for c in corpora if c["status"] == "chunk_mismatch"]
+        incomplete = [c for c in corpora if c["status"] in ("qdrant_only", "meili_only")]
+
+        # Handle --create-missing: create MeiliSearch indexes for qdrant_only corpora
+        indexes_created = []
+        if create_missing:
+            qdrant_only = [c for c in incomplete if c["status"] == "qdrant_only"]
+            meili_only = [c for c in incomplete if c["status"] == "meili_only"]
+
+            if qdrant_only:
+                if not output_json:
+                    console.print(f"\n[blue]Creating missing MeiliSearch indexes for {len(qdrant_only)} qdrant_only corpora...[/blue]")
+
+                for c in qdrant_only:
+                    if dry_run:
+                        if not output_json:
+                            console.print(f"  [dim]Would create MeiliSearch index for '{c['name']}'[/dim]")
+                        indexes_created.append(c['name'])
+                    else:
+                        if _create_missing_meili_index(c['name'], output_json):
+                            indexes_created.append(c['name'])
+                            # Update corpus status and move to can_process
+                            c['status'] = 'chunk_mismatch'
+                            can_process.append(c)
+
+                # Remove successfully created from incomplete
+                incomplete = [c for c in incomplete if c['name'] not in indexes_created]
+
+            if meili_only and not output_json:
+                console.print(f"\n[yellow]Warning: {len(meili_only)} meili_only corpora cannot be auto-created (require --type and --model)[/yellow]")
+                for c in meili_only:
+                    console.print(f"  [yellow]Skipping '{c['name']}' - create Qdrant collection first with: arc corpus create {c['name']} --type <type>[/yellow]")
+
+        # Build summary table
+        if not output_json:
+            table = Table(title="Parity Summary")
+            table.add_column("Corpus", style="cyan")
+            table.add_column("Status", style="green")
+            table.add_column("To MeiliSearch", style="yellow")
+            table.add_column("To Qdrant", style="yellow")
+
+            for c in corpora:
+                status = c["status"]
+                name = c["name"]
+                # Check if index was created first (for dry-run display)
+                if name in indexes_created:
+                    if dry_run:
+                        status_str = "[blue]would_create_index[/blue]"
+                    else:
+                        status_str = "[blue]index_created[/blue]"
+                elif status == "synced":
+                    status_str = "[green]synced[/green]"
+                elif status == "qdrant_only":
+                    status_str = "[dim yellow]qdrant_only (skipped)[/dim yellow]"
+                elif status == "meili_only":
+                    status_str = "[dim yellow]meili_only (skipped)[/dim yellow]"
+                else:
+                    status_str = "[yellow]chunk_mismatch[/yellow]"
+
+                to_meili = f"{c['to_meili']} chunks" if c['to_meili'] > 0 else "0"
+                to_qdrant = f"{c['to_qdrant']} chunks" if c['to_qdrant'] > 0 else "0"
+
+                table.add_row(name, status_str, to_meili, to_qdrant)
+
+            console.print()
+            console.print(table)
+
+            # Note about incomplete corpora
+            if incomplete:
+                console.print(f"\n[dim]Note: {len(incomplete)} corpora exist only on one side and will be skipped.[/dim]")
+                console.print(f"[dim]Create the missing index/collection first with: arc corpus create <name> --type <type>[/dim]")
+
+        # Dry-run mode: show summary and exit
+        if dry_run:
+            if output_json:
+                data = {
+                    "dry_run": True,
+                    "corpora": corpora,
+                    "can_process": len(can_process),
+                    "incomplete_skipped": len(incomplete),
+                    "indexes_would_create": indexes_created,
+                }
+                print_json("success", "Dry run complete", data=data)
+            else:
+                console.print(f"\n[bold yellow]DRY RUN - No changes will be made[/bold yellow]")
+                if indexes_created:
+                    console.print(f"\nWould create {len(indexes_created)} MeiliSearch indexes")
+                # Total to process = existing can_process + newly created indexes
+                total_would_process = len(can_process) + len(indexes_created)
+                if total_would_process > 0:
+                    console.print(f"\nWould process parity for {total_would_process} corpora")
+                elif not indexes_created:
+                    console.print(f"\n[green]✓ All complete corpora are already in parity[/green]")
+            interaction_logger.finish(result_count=0)
+            return
+
+        # If nothing to process, we're done
+        if not can_process:
+            if output_json:
+                data = {
+                    "corpora": corpora,
+                    "incomplete_skipped": len(incomplete),
+                }
+                print_json("success", "All complete corpora are already in parity", data=data)
+            else:
+                console.print(f"\n[green]✓ All complete corpora are already in parity[/green]")
+            interaction_logger.finish(result_count=0)
+            return
+
+        # Confirmation prompt (unless --confirm or --json)
+        if not confirm:
+            if output_json:
+                raise InvalidArgumentError(
+                    "--confirm flag required when processing all corpora with --json output"
+                )
+            console.print()
+            if not click.confirm(f"Proceed with parity for {len(can_process)} corpora?"):
+                print_info("Cancelled.")
+                interaction_logger.finish(result_count=0)
+                return
+
+        # Process each corpus
+        results = []
+        for i, c in enumerate(can_process, 1):
+            if not output_json:
+                console.print(f"\n[bold]Processing {i}/{len(can_process)}: {c['name']}[/bold]")
+
+            try:
+                _parity_single_corpus(
+                    corpus=c["name"],
+                    dry_run=False,  # Already handled dry_run above
+                    verify=verify,
+                    repair_metadata=repair_metadata,
+                    effective_text_workers=effective_text_workers,
+                    create_missing=False,  # Already handled create_missing above
+                    verbose=verbose,
+                    output_json=output_json,
+                    all_corpora_mode=True,  # Suppress per-corpus logging
+                )
+                results.append({"corpus": c["name"], "status": "success"})
+            except Exception as e:
+                logger.error(f"Failed to process corpus {c['name']}: {e}")
+                results.append({"corpus": c["name"], "status": "failed", "error": str(e)})
+                if not output_json:
+                    console.print(f"[red]Failed to process {c['name']}: {e}[/red]")
+
+        # Final summary
+        successes = sum(1 for r in results if r["status"] == "success")
+        failures = sum(1 for r in results if r["status"] == "failed")
+
+        if output_json:
+            print_json("success", f"Parity completed for {successes} corpora", data={
+                "processed": len(can_process),
+                "successes": successes,
+                "failures": failures,
+                "incomplete_skipped": len(incomplete),
+                "indexes_created": indexes_created,
+                "results": results,
+            })
+        else:
+            summary = f"\n[green]✅ Parity completed: {successes} successful, {failures} failed[/green]"
+            if indexes_created:
+                summary += f"\n[blue]   ({len(indexes_created)} MeiliSearch indexes created)[/blue]"
+            if incomplete:
+                summary += f"\n[dim]   ({len(incomplete)} incomplete corpora skipped)[/dim]"
+            console.print(summary)
+
+        interaction_logger.finish(result_count=successes)
+
+    except InvalidArgumentError:
+        interaction_logger.finish(error="invalid argument")
+        raise
+    except Exception as e:
+        interaction_logger.finish(error=str(e))
+        print_error(f"Failed to process all corpora: {e}", output_json)
+        sys.exit(1)
+
+
+def _parity_single_corpus(
+    corpus: str,
+    dry_run: bool,
+    verify: bool,
+    repair_metadata: bool,
+    effective_text_workers: int,
+    create_missing: bool,
+    verbose: bool,
+    output_json: bool,
+    all_corpora_mode: bool = False,
+):
+    """Check and restore parity for a single corpus.
 
     Args:
         corpus: Corpus name
         dry_run: If True, show what would be backfilled without making changes
         verify: If True, verify chunk counts match for files in both systems
         repair_metadata: If True, update MeiliSearch docs with missing git metadata from Qdrant
-        text_workers: Number of parallel workers for code chunking (None=auto, 0/1=sequential)
+        effective_text_workers: Number of parallel workers for code chunking
+        create_missing: If True, create missing MeiliSearch index for qdrant_only corpus
         verbose: If True, show detailed progress
         output_json: If True, output JSON format
+        all_corpora_mode: If True, suppress interaction logging (called from _parity_all_corpora)
     """
-    # Calculate effective workers
-    if text_workers is None:
-        effective_text_workers = max(1, cpu_count() // 2)
-    elif text_workers <= 1:
-        effective_text_workers = 1  # Sequential
-    else:
-        effective_text_workers = text_workers
-
-    interaction_logger.start(
-        "corpus", "parity",
-        corpus=corpus,
-        dry_run=dry_run,
-    )
+    if not all_corpora_mode:
+        interaction_logger.start(
+            "corpus", "parity",
+            corpus=corpus,
+            dry_run=dry_run,
+        )
 
     try:
         if not output_json:
@@ -1755,11 +2124,47 @@ def parity_command(
                 "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
             )
 
-        if not meili.index_exists(corpus):
-            raise ResourceNotFoundError(
-                f"MeiliSearch index '{corpus}' not found. "
-                f"Create it first with: arc corpus create {corpus} --type <type>"
-            )
+        index_created = False
+        meili_index_exists = meili.index_exists(corpus)
+        if not meili_index_exists:
+            if create_missing:
+                # Attempt to create missing index
+                if dry_run:
+                    if not output_json:
+                        console.print(f"[dim]Would create MeiliSearch index for '{corpus}'[/dim]")
+                    index_created = True
+                    # In dry-run mode with missing index, show what would happen and exit
+                    corpus_type = get_collection_type(qdrant, corpus)
+                    sync_manager = MetadataBasedSync(qdrant)
+                    qdrant_file_paths = sync_manager._get_indexed_file_paths_set(corpus)
+                    if output_json:
+                        print_json("success", "Dry run complete", data={
+                            "corpus": corpus,
+                            "dry_run": True,
+                            "would_create_index": True,
+                            "corpus_type": corpus_type,
+                            "would_backfill_to_meili": len(qdrant_file_paths),
+                        })
+                    else:
+                        console.print(f"\n[bold yellow]DRY RUN - No changes will be made[/bold yellow]")
+                        console.print(f"\nWould create MeiliSearch index and backfill {len(qdrant_file_paths)} files")
+                    if not all_corpora_mode:
+                        interaction_logger.finish(result_count=0)
+                    return
+                else:
+                    if _create_missing_meili_index(corpus, output_json):
+                        index_created = True
+                    else:
+                        raise ResourceNotFoundError(
+                            f"Failed to create MeiliSearch index '{corpus}'. "
+                            f"Create it manually with: arc corpus create {corpus} --type <type>"
+                        )
+            else:
+                raise ResourceNotFoundError(
+                    f"MeiliSearch index '{corpus}' not found. "
+                    f"Create it first with: arc corpus create {corpus} --type <type> "
+                    f"or use --create-missing to auto-create"
+                )
 
         # Get corpus metadata
         corpus_type = get_collection_type(qdrant, corpus)
@@ -1903,7 +2308,8 @@ def parity_command(
                 }
                 print_json("success", "Dry run complete", data=data)
 
-            interaction_logger.finish(result_count=0)
+            if not all_corpora_mode:
+                interaction_logger.finish(result_count=0)
             return
 
         # Nothing to do (unless repair_metadata is requested)
@@ -1918,7 +2324,8 @@ def parity_command(
                 print_json("success", "Indexes are already in parity", data=data)
             else:
                 console.print(f"\n[green]✓ Indexes are already in parity[/green]")
-            interaction_logger.finish(result_count=0)
+            if not all_corpora_mode:
+                interaction_logger.finish(result_count=0)
             return
 
         # Delete mismatched files from MeiliSearch before re-syncing
@@ -2009,6 +2416,7 @@ def parity_command(
         # Output results
         data = {
             "corpus": corpus,
+            "index_created": index_created,
             "files_in_both": len(in_both),
             "meili_backfilled": meili_backfilled,
             "meili_backfill_chunks": meili_backfill_chunks,
@@ -2026,6 +2434,8 @@ def parity_command(
             print_json("success", f"Parity restored for corpus '{corpus}'", data=data)
         else:
             console.print(f"\n[green]✅ Parity restored for corpus '{corpus}'[/green]")
+            if index_created:
+                console.print(f"   [blue]MeiliSearch index created[/blue]")
 
             if meili_backfilled > 0 or meili_backfill_failed > 0:
                 status = f"{meili_backfilled} files ({meili_backfill_chunks} chunks)"
@@ -2048,14 +2458,85 @@ def parity_command(
                     status += f" [yellow]({metadata_repair_failed} failed)[/yellow]"
                 console.print(f"   Metadata repaired:         {status}")
 
-        interaction_logger.finish(
-            result_count=meili_backfilled + qdrant_backfilled,
-        )
+        if not all_corpora_mode:
+            interaction_logger.finish(
+                result_count=meili_backfilled + qdrant_backfilled,
+            )
 
     except (InvalidArgumentError, ResourceNotFoundError):
-        interaction_logger.finish(error="invalid argument or resource not found")
+        if not all_corpora_mode:
+            interaction_logger.finish(error="invalid argument or resource not found")
         raise
     except Exception as e:
-        interaction_logger.finish(error=str(e))
-        print_error(f"Failed to check parity: {e}", output_json)
-        sys.exit(1)
+        if not all_corpora_mode:
+            interaction_logger.finish(error=str(e))
+        raise
+
+
+def parity_command(
+    corpus: Optional[str],
+    dry_run: bool,
+    verify: bool,
+    repair_metadata: bool,
+    text_workers: Optional[int],
+    create_missing: bool,
+    confirm: bool,
+    verbose: bool,
+    output_json: bool
+):
+    """Check and restore parity between Qdrant and MeiliSearch.
+
+    When corpus is provided, operates on a single corpus.
+    When corpus is None, discovers all corpora and processes them with confirmation.
+
+    Compares indexed files in both systems and backfills missing entries:
+    - Qdrant -> MeiliSearch: Copies metadata (no file access needed)
+    - MeiliSearch -> Qdrant: Re-chunks and embeds files (requires file access)
+
+    Files that don't exist on disk are skipped with a warning.
+
+    Args:
+        corpus: Corpus name (optional - if None, process all corpora)
+        dry_run: If True, show what would be backfilled without making changes
+        verify: If True, verify chunk counts match for files in both systems
+        repair_metadata: If True, update MeiliSearch docs with missing git metadata from Qdrant
+        text_workers: Number of parallel workers for code chunking (None=auto, 0/1=sequential)
+        create_missing: If True, create missing MeiliSearch indexes for qdrant_only corpora
+        confirm: If True, skip confirmation prompt when processing all corpora
+        verbose: If True, show detailed progress
+        output_json: If True, output JSON format
+    """
+    # Calculate effective workers
+    if text_workers is None:
+        effective_text_workers = max(1, cpu_count() // 2)
+    elif text_workers <= 1:
+        effective_text_workers = 1  # Sequential
+    else:
+        effective_text_workers = text_workers
+
+    if corpus:
+        # Single corpus mode
+        _parity_single_corpus(
+            corpus=corpus,
+            dry_run=dry_run,
+            verify=verify,
+            repair_metadata=repair_metadata,
+            effective_text_workers=effective_text_workers,
+            create_missing=create_missing,
+            verbose=verbose,
+            output_json=output_json,
+            all_corpora_mode=False,
+        )
+    else:
+        # All corpora mode
+        _parity_all_corpora(
+            dry_run=dry_run,
+            verify=verify,
+            repair_metadata=repair_metadata,
+            text_workers=text_workers,
+            create_missing=create_missing,
+            confirm=confirm,
+            verbose=verbose,
+            output_json=output_json,
+            effective_text_workers=effective_text_workers,
+        )

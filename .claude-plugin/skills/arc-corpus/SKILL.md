@@ -36,11 +36,20 @@ arc corpus items MyCorpus               # Table output with Q/M chunk counts
 arc corpus items MyCorpus --json        # JSON output for automation
 
 # Check and restore parity between systems
-arc corpus parity MyCorpus              # Check and backfill
+arc corpus parity MyCorpus              # Check and backfill single corpus
 arc corpus parity MyCorpus --dry-run    # Preview only
 arc corpus parity MyCorpus --verify     # Verify chunk counts match
 arc corpus parity MyCorpus --repair-metadata  # Fix missing git metadata (code corpora)
 arc corpus parity MyCorpus --verbose    # Detailed progress
+
+# All-corpora mode (no corpus name)
+arc corpus parity                       # Process all corpora
+arc corpus parity --dry-run             # Preview all
+arc corpus parity --confirm             # Skip confirmation prompt
+
+# Create missing MeiliSearch indexes for qdrant_only corpora
+arc corpus parity --create-missing --dry-run   # Preview what would be created
+arc corpus parity --create-missing --confirm   # Create and sync all
 ```
 
 ## When to Use Corpus vs Collection/Index
@@ -55,3 +64,14 @@ The `parity` command ensures both systems have the same content:
 
 - **Qdrant -> MeiliSearch**: Copies metadata (fast, no file access needed)
 - **MeiliSearch -> Qdrant**: Re-chunks and embeds files (requires file access)
+
+**Creating Missing Indexes:**
+
+Use `--create-missing` to promote single-sided Qdrant collections into full corpora:
+
+- Creates MeiliSearch indexes for `qdrant_only` collections
+- Reads corpus type from Qdrant metadata
+- Applies appropriate index settings automatically
+- Then proceeds with normal parity sync
+
+Note: `meili_only` corpora cannot be auto-created (require `--type` and `--model`).

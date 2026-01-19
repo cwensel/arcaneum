@@ -606,16 +606,21 @@ def sync_directory(corpus, directories, models, file_types, force, verify, text_
 
 
 @corpus.command('parity')
-@click.argument('name')
+@click.argument('name', required=False)
 @click.option('--dry-run', is_flag=True, help='Show what would be backfilled without making changes')
 @click.option('--verify', is_flag=True, help='Verify chunk counts match between systems (detects partial uploads)')
 @click.option('--repair-metadata', is_flag=True, help='Update MeiliSearch docs with missing git metadata from Qdrant')
 @click.option('--text-workers', type=int, default=None,
               help='Parallel workers for fetching/chunking (default: auto=cpu/2, 0=sequential)')
+@click.option('--create-missing', is_flag=True, help='Create missing MeiliSearch indexes for qdrant_only corpora')
+@click.option('--confirm', is_flag=True, help='Skip confirmation prompt when processing all corpora')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed progress for each file')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def corpus_parity(name, dry_run, verify, repair_metadata, text_workers, verbose, output_json):
+def corpus_parity(name, dry_run, verify, repair_metadata, text_workers, create_missing, confirm, verbose, output_json):
     """Check and restore parity between Qdrant and MeiliSearch.
+
+    When NAME is provided, operates on a single corpus. When NAME is omitted,
+    discovers all corpora and shows a summary before proceeding.
 
     Compares indexed files in both systems and backfills missing entries:
     - Qdrant -> MeiliSearch: Copies metadata (no file access needed)
@@ -630,9 +635,14 @@ def corpus_parity(name, dry_run, verify, repair_metadata, text_workers, verbose,
     missing git metadata (git_project_identifier, etc.) by copying from Qdrant.
 
     Use --text-workers to control parallelism for fetching and chunking.
+
+    Use --confirm to skip the confirmation prompt when processing all corpora.
+
+    Use --create-missing to create MeiliSearch indexes for corpora that only
+    exist in Qdrant. This promotes single-sided collections into full corpora.
     """
     from arcaneum.cli.sync import parity_command
-    parity_command(name, dry_run, verify, repair_metadata, text_workers, verbose, output_json)
+    parity_command(name, dry_run, verify, repair_metadata, text_workers, create_missing, confirm, verbose, output_json)
 
 
 @corpus.command('info')

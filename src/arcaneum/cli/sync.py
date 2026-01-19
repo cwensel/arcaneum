@@ -8,6 +8,10 @@ import gc
 import logging
 import multiprocessing as mp
 import os
+
+# Suppress tokenizers fork warning - must be set before any tokenizers import
+os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
+
 import sys
 import hashlib
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed

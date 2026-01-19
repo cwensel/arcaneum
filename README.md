@@ -122,6 +122,8 @@ arc search text "query" --index NAME
 # Dual Indexing (Both Systems)
 arc corpus create NAME --type TYPE
 arc corpus sync PATH --corpus NAME
+arc corpus items NAME                    # List items with parity status
+arc corpus parity NAME                   # Check/restore parity
 ```
 
 ## Common Workflows

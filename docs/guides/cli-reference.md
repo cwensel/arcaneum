@@ -74,6 +74,8 @@ A "corpus" is a paired Qdrant collection and MeiliSearch index with the same nam
 ```bash
 arc corpus create <name> --type <type> --models <model>  # Create both
 arc corpus sync <path> --corpus <name>                   # Index to both
+arc corpus info <name>                                   # Show corpus details
+arc corpus items <name>                                  # List indexed items with parity status
 arc corpus parity <name>                                 # Restore parity between indexes
 ```
 
@@ -107,6 +109,8 @@ arc corpus parity MyCorpus --json
 **Options:**
 
 - `--dry-run`: Show what would be backfilled without making changes
+- `--verify`: Verify chunk counts match between systems (detects partial uploads)
+- `--repair-metadata`: Update MeiliSearch docs with missing git metadata from Qdrant (code corpora only)
 - `--verbose`: Show detailed progress for each file
 - `--json`: Output JSON format for scripting
 
@@ -134,6 +138,46 @@ Backfilling 3 files to Qdrant...
    Backfilled to Qdrant: 2 files (23 chunks)
    Skipped (not found): 1 file
 ```
+
+### Corpus Items
+
+List all indexed items in a corpus with parity status between Qdrant and MeiliSearch:
+
+```bash
+# Human-readable table output
+arc corpus items MyCorpus
+
+# JSON output for automation
+arc corpus items MyCorpus --json
+```
+
+**Features:**
+
+- **Type-aware output**: Different displays for code vs PDF/markdown corpora
+- **Parity status**: Shows sync status for each item (synced, mismatch, qdrant_only, meili_only)
+- **Chunk counts**: Shows chunks in each system (Q and M columns)
+- **Deduplication**: Groups chunks by file/repository
+
+**Code Corpus Output:**
+
+| Project | Branch  | Commit       | Q     | M     | Status   |
+| ------- | ------- | ------------ | ----- | ----- | -------- |
+| my-app  | main    | a1b2c3d4e5f6 | 1,532 | 1,532 | synced   |
+| my-lib  | develop | f6e5d4c3b2a1 | 847   | 800   | mismatch |
+
+**PDF/Markdown Corpus Output:**
+
+| File               | Size  | Q  | M  | Status      |
+| ------------------ | ----- | -- | -- | ----------- |
+| research-paper.pdf | 2.3MB | 42 | 42 | synced      |
+| documentation.md   | 15KB  | 8  | 0  | qdrant_only |
+
+**Status Values:**
+
+- `synced`: Same chunk count in both systems
+- `mismatch`: Different chunk counts (may indicate partial upload)
+- `qdrant_only`: Item exists only in Qdrant
+- `meili_only`: Item exists only in MeiliSearch
 
 ## Collection Management Examples
 

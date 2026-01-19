@@ -25,9 +25,15 @@ arc corpus sync /path/to/files --corpus MyCorpus --verbose  # Show progress
 arc corpus info MyCorpus
 arc corpus info MyCorpus --json
 
+# List indexed items with parity status
+arc corpus items MyCorpus               # Table output with Q/M chunk counts
+arc corpus items MyCorpus --json        # JSON output for automation
+
 # Check and restore parity between systems
 arc corpus parity MyCorpus              # Check and backfill
 arc corpus parity MyCorpus --dry-run    # Preview only
+arc corpus parity MyCorpus --verify     # Verify chunk counts match
+arc corpus parity MyCorpus --repair-metadata  # Fix missing git metadata (code corpora)
 arc corpus parity MyCorpus --verbose    # Detailed progress
 ```
 
@@ -40,5 +46,6 @@ arc corpus parity MyCorpus --verbose    # Detailed progress
 ## Parity Behavior
 
 The `parity` command ensures both systems have the same content:
+
 - **Qdrant -> MeiliSearch**: Copies metadata (fast, no file access needed)
 - **MeiliSearch -> Qdrant**: Re-chunks and embeds files (requires file access)

@@ -1,16 +1,19 @@
 ---
 description: Manage dual-index corpora
-argument-hint: <create|sync> <name|directory> [options]
+argument-hint: <create|sync|info|items|parity> <name|directory> [options]
 ---
 
 Manage corpora that combine both vector search (Qdrant) and full-text search (MeiliSearch) for the same content.
 
-**IMPORTANT:** You must specify a subcommand (`create` or `sync`).
+**IMPORTANT:** You must specify a subcommand.
 
-**Subcommands (required):**
+**Subcommands:**
 
 - `create`: Create both Qdrant collection and MeiliSearch index
 - `sync`: Index directory to both systems simultaneously
+- `info`: Show corpus details (both systems)
+- `items`: List indexed items with parity status
+- `parity`: Check and restore parity between systems
 
 **Common Options:**
 
@@ -29,6 +32,20 @@ Manage corpora that combine both vector search (Qdrant) and full-text search (Me
 - --models: Embedding models (default: stella,jina)
 - --file-types: File extensions to index (e.g., .py,.md)
 
+**Info/Items Options:**
+
+- name: Corpus name (required)
+- --json: Output in JSON format
+
+**Parity Options:**
+
+- name: Corpus name (required)
+- --dry-run: Preview what would be backfilled without making changes
+- --verify: Verify chunk counts match between systems
+- --repair-metadata: Update MeiliSearch docs with missing git metadata (code corpora)
+- --verbose: Show detailed progress
+- --json: Output in JSON format
+
 **Examples:**
 
 ```text
@@ -36,6 +53,10 @@ Manage corpora that combine both vector search (Qdrant) and full-text search (Me
 /corpus sync ~/Documents --corpus MyDocs
 /corpus create CodeBase --type code
 /corpus sync ~/projects --corpus CodeBase --file-types .py,.js,.md
+/corpus info MyDocs
+/corpus items CodeBase
+/corpus parity CodeBase --verify
+/corpus parity CodeBase --repair-metadata
 ```
 
 **Execution:**

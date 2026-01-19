@@ -543,6 +543,7 @@ def search_text(query, index_name, filter_arg, limit, offset, output_json, verbo
 @cli.group(cls=HelpfulGroup, usage_examples=[
     'arc corpus create MyCorpus --type code',
     'arc corpus sync /path/to/files --corpus MyCorpus',
+    'arc corpus items MyCorpus',
 ])
 def corpus():
     """Manage dual-index corpora (Qdrant + MeiliSearch)"""
@@ -593,11 +594,12 @@ def sync_directory(directory, corpus, models, file_types, force, verify, text_wo
 @click.argument('name')
 @click.option('--dry-run', is_flag=True, help='Show what would be backfilled without making changes')
 @click.option('--verify', is_flag=True, help='Verify chunk counts match between systems (detects partial uploads)')
+@click.option('--repair-metadata', is_flag=True, help='Update MeiliSearch docs with missing git metadata from Qdrant')
 @click.option('--text-workers', type=int, default=None,
               help='Parallel workers for fetching/chunking (default: auto=cpu/2, 0=sequential)')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed progress for each file')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def corpus_parity(name, dry_run, verify, text_workers, verbose, output_json):
+def corpus_parity(name, dry_run, verify, repair_metadata, text_workers, verbose, output_json):
     """Check and restore parity between Qdrant and MeiliSearch.
 
     Compares indexed files in both systems and backfills missing entries:
@@ -609,10 +611,13 @@ def corpus_parity(name, dry_run, verify, text_workers, verbose, output_json):
     Use --verify to check that chunk counts match for files in both systems.
     This detects partial uploads from previous failed syncs.
 
+    Use --repair-metadata to update existing MeiliSearch documents that are
+    missing git metadata (git_project_identifier, etc.) by copying from Qdrant.
+
     Use --text-workers to control parallelism for fetching and chunking.
     """
     from arcaneum.cli.sync import parity_command
-    parity_command(name, dry_run, verify, text_workers, verbose, output_json)
+    parity_command(name, dry_run, verify, repair_metadata, text_workers, verbose, output_json)
 
 
 @corpus.command('info')
@@ -622,6 +627,23 @@ def corpus_info(name, output_json):
     """Show combined corpus information (collection + index)."""
     from arcaneum.cli.corpus import corpus_info_command
     corpus_info_command(name, output_json)
+
+
+@corpus.command('items')
+@click.argument('name')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def corpus_items(name, output_json):
+    """List all indexed items with parity status.
+
+    Shows items from both Qdrant collection and MeiliSearch index,
+    with chunk counts from each system (Q and M columns).
+
+    Examples:
+        arc corpus items MyCorpus
+        arc corpus items MyCorpus --json
+    """
+    from arcaneum.cli.corpus import corpus_items_command
+    corpus_items_command(name, output_json)
 
 
 # Diagnostics command (RDR-006 enhancement)

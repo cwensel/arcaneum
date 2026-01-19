@@ -594,3 +594,333 @@ def corpus_info_command(name: str, output_json: bool):
         interaction_logger.finish(error=str(e))
         print_error(f"Failed to get corpus info: {e}", output_json)
         sys.exit(1)
+
+
+def corpus_items_command(name: str, output_json: bool):
+    """List all indexed items in a corpus with parity status.
+
+    Shows items from both Qdrant collection and MeiliSearch index,
+    with chunk counts from each system for comparison.
+
+    Args:
+        name: Corpus name (used for both collection and index)
+        output_json: If True, output JSON format
+    """
+    from rich.table import Table
+    from ..indexing.collection_metadata import get_collection_metadata
+
+    # Start interaction logging (RDR-018)
+    interaction_logger.start("corpus", "items", corpus=name)
+
+    qdrant_items = {}
+    meili_items = {}
+    collection_type = None
+    errors = []
+
+    try:
+        # Gather Qdrant collection items
+        try:
+            qdrant = create_qdrant_client()
+            metadata = get_collection_metadata(qdrant, name)
+            collection_type = metadata.get("collection_type")
+
+            # Determine which field to use based on collection type
+            if collection_type == "code":
+                id_field = "git_project_identifier"
+                payload_fields = ["git_project_name", "git_project_identifier", "git_branch",
+                                  "git_commit_hash", "git_remote_url"]
+            else:
+                id_field = "file_path"
+                payload_fields = ["file_path", "file_hash", "file_size", "filename"]
+
+            # Scroll through collection
+            offset = None
+            while True:
+                points, offset = qdrant.scroll(
+                    collection_name=name,
+                    limit=1000,
+                    offset=offset,
+                    with_payload=payload_fields,
+                    with_vectors=False
+                )
+
+                if not points:
+                    break
+
+                for point in points:
+                    if not point.payload:
+                        continue
+
+                    item_id = point.payload.get(id_field)
+                    if item_id and item_id not in qdrant_items:
+                        qdrant_items[item_id] = {
+                            **{k: point.payload.get(k) for k in payload_fields},
+                            "qdrant_chunks": 1
+                        }
+                    elif item_id:
+                        qdrant_items[item_id]["qdrant_chunks"] += 1
+
+                if offset is None:
+                    break
+
+        except Exception as e:
+            errors.append(f"Qdrant: {e}")
+
+        # Gather MeiliSearch index items
+        try:
+            meili = get_meili_client()
+            if not meili.health_check():
+                errors.append("MeiliSearch: Server not available")
+            elif not meili.index_exists(name):
+                errors.append(f"MeiliSearch: Index '{name}' not found")
+            else:
+                # Fetch all documents and group appropriately
+                batch_offset = 0
+                batch_size = 1000
+
+                while True:
+                    results = meili.search(
+                        name,
+                        "",
+                        limit=batch_size,
+                        offset=batch_offset,
+                    )
+
+                    hits = results.get('hits', [])
+                    if not hits:
+                        break
+
+                    for hit in hits:
+                        # For code collections, group by git_project_identifier
+                        # For other types, group by file_path
+                        if collection_type == "code":
+                            item_id = hit.get('git_project_identifier')
+                        else:
+                            item_id = hit.get('file_path') or hit.get('filename')
+
+                        if item_id and item_id not in meili_items:
+                            meili_items[item_id] = {
+                                'file_path': hit.get('file_path'),
+                                'filename': hit.get('filename'),
+                                'language': hit.get('language') or hit.get('programming_language'),
+                                'git_project_identifier': hit.get('git_project_identifier'),
+                                'git_project_name': hit.get('git_project_name'),
+                                'git_branch': hit.get('git_branch'),
+                                'meili_chunks': 1,
+                            }
+                        elif item_id:
+                            meili_items[item_id]['meili_chunks'] += 1
+
+                    batch_offset += len(hits)
+                    if len(hits) < batch_size:
+                        break
+
+        except Exception as e:
+            if "not available" not in str(e).lower():
+                errors.append(f"MeiliSearch: {e}")
+
+        # If neither system has the corpus, check if it's a data issue or missing corpus
+        if not qdrant_items and not meili_items:
+            # Check if corpus exists but has data quality issues
+            corpus_exists = False
+            try:
+                qdrant = create_qdrant_client()
+                col_info = qdrant.get_collection(name)
+                if col_info.points_count > 0:
+                    corpus_exists = True
+            except Exception:
+                pass
+
+            if not corpus_exists:
+                try:
+                    meili = get_meili_client()
+                    if meili.index_exists(name):
+                        stats = meili.get_index_stats(name)
+                        if stats.get('numberOfDocuments', 0) > 0:
+                            corpus_exists = True
+                except Exception:
+                    pass
+
+            if corpus_exists:
+                # Corpus exists but items couldn't be grouped
+                if collection_type == "code":
+                    errors.append("Code chunks missing git_project_identifier field for grouping")
+                else:
+                    errors.append("Chunks missing file_path field for grouping")
+            else:
+                raise ResourceNotFoundError(
+                    f"Corpus '{name}' not found. "
+                    f"Create with: arc corpus create {name} --type <pdf|code|markdown>"
+                )
+
+        # Merge items from both systems
+        all_item_ids = set(qdrant_items.keys()) | set(meili_items.keys())
+        merged_items = []
+
+        for item_id in all_item_ids:
+            q_item = qdrant_items.get(item_id, {})
+            m_item = meili_items.get(item_id, {})
+
+            # Determine parity status for this item
+            q_chunks = q_item.get("qdrant_chunks", 0)
+            m_chunks = m_item.get("meili_chunks", 0)
+
+            if q_chunks > 0 and m_chunks > 0:
+                status = "synced" if q_chunks == m_chunks else "mismatch"
+            elif q_chunks > 0:
+                status = "qdrant_only"
+            else:
+                status = "meili_only"
+
+            # Merge metadata from both sources
+            merged = {
+                "id": item_id,
+                "qdrant_chunks": q_chunks,
+                "meili_chunks": m_chunks,
+                "status": status,
+            }
+
+            # Add type-specific fields (prefer Qdrant, fall back to MeiliSearch)
+            if collection_type == "code":
+                merged["git_project_name"] = q_item.get("git_project_name") or m_item.get("git_project_name")
+                merged["git_branch"] = q_item.get("git_branch") or m_item.get("git_branch")
+                merged["git_commit_hash"] = q_item.get("git_commit_hash")
+            else:
+                merged["filename"] = q_item.get("filename") or m_item.get("filename")
+                merged["file_size"] = q_item.get("file_size")
+
+            merged_items.append(merged)
+
+        # Sort items
+        if collection_type == "code":
+            merged_items.sort(key=lambda x: x.get("git_project_name") or x["id"])
+        else:
+            merged_items.sort(key=lambda x: x.get("filename") or x["id"])
+
+        # Calculate summary stats
+        synced_count = sum(1 for i in merged_items if i["status"] == "synced")
+        mismatch_count = sum(1 for i in merged_items if i["status"] == "mismatch")
+        qdrant_only_count = sum(1 for i in merged_items if i["status"] == "qdrant_only")
+        meili_only_count = sum(1 for i in merged_items if i["status"] == "meili_only")
+
+        # Output
+        if output_json:
+            data = {
+                "corpus": name,
+                "type": collection_type,
+                "item_count": len(merged_items),
+                "summary": {
+                    "synced": synced_count,
+                    "mismatch": mismatch_count,
+                    "qdrant_only": qdrant_only_count,
+                    "meili_only": meili_only_count,
+                },
+                "items": merged_items,
+                "errors": errors if errors else None,
+            }
+            print_json("success", f"Found {len(merged_items)} items in corpus '{name}'", data)
+        else:
+            # Header
+            console.print(f"\n[bold cyan]Corpus: {name}[/bold cyan]")
+            type_str = f"[bold]{collection_type}[/bold]" if collection_type else "[yellow]unknown[/yellow]"
+            console.print(f"Type: {type_str}")
+            console.print(f"Items: {len(merged_items)}")
+
+            # Summary
+            summary_parts = []
+            if synced_count > 0:
+                summary_parts.append(f"[green]{synced_count} synced[/green]")
+            if mismatch_count > 0:
+                summary_parts.append(f"[red]{mismatch_count} mismatch[/red]")
+            if qdrant_only_count > 0:
+                summary_parts.append(f"[yellow]{qdrant_only_count} qdrant_only[/yellow]")
+            if meili_only_count > 0:
+                summary_parts.append(f"[yellow]{meili_only_count} meili_only[/yellow]")
+            if summary_parts:
+                console.print(f"Parity: {', '.join(summary_parts)}\n")
+
+            if not merged_items:
+                print_info("No items found")
+            else:
+                if collection_type == "code":
+                    table = Table(title="Indexed Repositories")
+                    table.add_column("Project", style="cyan")
+                    table.add_column("Branch", style="green")
+                    table.add_column("Commit", style="dim")
+                    table.add_column("Q", style="yellow", justify="right")
+                    table.add_column("M", style="yellow", justify="right")
+                    table.add_column("Status", style="magenta")
+
+                    for item in merged_items:
+                        # Format status with color
+                        status = item["status"]
+                        if status == "synced":
+                            status_str = "[green]synced[/green]"
+                        elif status == "mismatch":
+                            status_str = "[red]mismatch[/red]"
+                        else:
+                            status_str = f"[yellow]{status}[/yellow]"
+
+                        table.add_row(
+                            item.get("git_project_name") or item["id"],
+                            item.get("git_branch") or "-",
+                            item["git_commit_hash"][:12] if item.get("git_commit_hash") else "-",
+                            str(item["qdrant_chunks"]),
+                            str(item["meili_chunks"]),
+                            status_str,
+                        )
+                    console.print(table)
+                else:
+                    table = Table(title="Indexed Files")
+                    table.add_column("File", style="cyan", no_wrap=False)
+                    table.add_column("Size", style="dim")
+                    table.add_column("Q", style="yellow", justify="right")
+                    table.add_column("M", style="yellow", justify="right")
+                    table.add_column("Status", style="magenta")
+
+                    for item in merged_items:
+                        # Format file size
+                        size = item.get("file_size", 0)
+                        if size:
+                            if size > 1024 * 1024:
+                                size_str = f"{size / (1024 * 1024):.1f}MB"
+                            elif size > 1024:
+                                size_str = f"{size / 1024:.1f}KB"
+                            else:
+                                size_str = f"{size}B"
+                        else:
+                            size_str = "-"
+
+                        # Format status with color
+                        status = item["status"]
+                        if status == "synced":
+                            status_str = "[green]synced[/green]"
+                        elif status == "mismatch":
+                            status_str = "[red]mismatch[/red]"
+                        else:
+                            status_str = f"[yellow]{status}[/yellow]"
+
+                        display_name = item.get("filename") or item["id"]
+                        table.add_row(
+                            display_name,
+                            size_str,
+                            str(item["qdrant_chunks"]),
+                            str(item["meili_chunks"]),
+                            status_str,
+                        )
+                    console.print(table)
+
+            # Errors/warnings
+            if errors:
+                console.print(f"\n[dim]Warnings: {', '.join(errors)}[/dim]")
+
+        # Log successful operation (RDR-018)
+        interaction_logger.finish(result_count=len(merged_items))
+
+    except ResourceNotFoundError:
+        interaction_logger.finish(error="corpus not found")
+        raise
+    except Exception as e:
+        interaction_logger.finish(error=str(e))
+        print_error(f"Failed to list corpus items: {e}", output_json)
+        sys.exit(1)

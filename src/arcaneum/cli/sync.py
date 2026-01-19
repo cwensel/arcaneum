@@ -29,6 +29,7 @@ from ..schema.document import DualIndexDocument
 from ..indexing.dual_indexer import DualIndexer
 from ..indexing.collection_metadata import get_collection_type, get_collection_metadata
 from ..indexing.common.sync import MetadataBasedSync, compute_quick_hash
+from ..indexing.git_operations import GitProjectDiscovery
 from ..config import DEFAULT_MODELS
 
 console = Console()
@@ -480,6 +481,10 @@ def sync_directory_command(
             use_gpu = not os.environ.get('ARC_NO_GPU', '').lower() in ('1', 'true')
             embedding_client = EmbeddingClient(use_gpu=use_gpu)
 
+            # Initialize git discovery for code corpora
+            git_discovery = GitProjectDiscovery() if corpus_type == 'code' else None
+            git_metadata_cache: Dict[str, Any] = {}  # Cache by git root path
+
             # Create dual indexer
             dual_indexer = DualIndexer(
                 qdrant_client=qdrant,
@@ -614,6 +619,29 @@ def sync_directory_command(
                             elif corpus_type == 'code':
                                 doc.language = chunk_meta.get('language', 'unknown')
                                 doc.line_number = chunk_meta.get('line_number')
+
+                                # Extract git metadata for code files
+                                if git_discovery:
+                                    # Find git root for this file
+                                    file_abs = str(file_path.absolute())
+                                    git_root = None
+                                    for parent in [file_path.absolute()] + list(file_path.absolute().parents):
+                                        if (parent / '.git').exists():
+                                            git_root = str(parent)
+                                            break
+
+                                    if git_root:
+                                        # Get cached metadata or extract it
+                                        if git_root not in git_metadata_cache:
+                                            git_meta = git_discovery.extract_metadata(git_root)
+                                            git_metadata_cache[git_root] = git_meta
+                                        else:
+                                            git_meta = git_metadata_cache[git_root]
+
+                                        if git_meta:
+                                            doc.project = git_meta.project_name
+                                            doc.branch = git_meta.branch
+                                            doc.git_project_identifier = git_meta.identifier
 
                             documents.append(doc)
 
@@ -965,12 +993,222 @@ def _fetch_qdrant_chunks_for_file(
             if payload.get("document_type"):
                 meili_doc["document_type"] = payload["document_type"]
 
+            # Add git metadata fields for code corpora
+            if payload.get("git_project_identifier"):
+                meili_doc["git_project_identifier"] = payload["git_project_identifier"]
+            if payload.get("git_project_name"):
+                meili_doc["git_project_name"] = payload["git_project_name"]
+            if payload.get("git_branch"):
+                meili_doc["git_branch"] = payload["git_branch"]
+            if payload.get("git_commit_hash"):
+                meili_doc["git_commit_hash"] = payload["git_commit_hash"]
+
             meili_docs.append(meili_doc)
 
         return (file_path_str, meili_docs, None)
 
     except Exception as e:
         return (file_path_str, [], str(e))
+
+
+def _repair_meili_metadata(
+    qdrant,
+    meili: FullTextClient,
+    corpus: str,
+    verbose: bool,
+    output_json: bool,
+    console,
+) -> Tuple[int, int]:
+    """Repair MeiliSearch documents with missing git metadata from Qdrant.
+
+    For code corpora, finds MeiliSearch documents missing git_project_identifier
+    and updates them with metadata from corresponding Qdrant points.
+
+    Args:
+        qdrant: Qdrant client
+        meili: MeiliSearch client
+        corpus: Corpus name
+        verbose: Show verbose output
+        output_json: JSON output mode
+        console: Rich console for output
+
+    Returns:
+        Tuple of (documents_updated, documents_failed)
+    """
+    from qdrant_client.models import Filter, FieldCondition, MatchValue
+
+    # Step 1: Find MeiliSearch documents missing git_project_identifier
+    # Use get_documents API (not search) to iterate through ALL documents
+    docs_to_repair = []
+    batch_offset = 0
+    batch_size = 1000
+
+    if not output_json:
+        console.print(f"[dim]Scanning MeiliSearch for documents missing git metadata...[/dim]")
+
+    index = meili.get_index(corpus)
+    while True:
+        result = index.get_documents({
+            'offset': batch_offset,
+            'limit': batch_size,
+            'fields': ['id', 'file_path', 'chunk_index', 'git_project_identifier']
+        })
+
+        # Handle both dict and object results
+        if hasattr(result, 'results'):
+            docs = result.results
+        else:
+            docs = result.get('results', [])
+
+        if not docs:
+            break
+
+        for doc in docs:
+            # Get field values handling both dict and object
+            if isinstance(doc, dict):
+                has_git_id = bool(doc.get('git_project_identifier'))
+                doc_id = doc.get('id')
+                file_path = doc.get('file_path')
+                chunk_index = doc.get('chunk_index', 0)
+            else:
+                has_git_id = bool(getattr(doc, 'git_project_identifier', None))
+                doc_id = getattr(doc, 'id', None)
+                file_path = getattr(doc, 'file_path', None)
+                chunk_index = getattr(doc, 'chunk_index', 0)
+
+            # Check if git_project_identifier is missing
+            if not has_git_id:
+                docs_to_repair.append({
+                    'id': doc_id,
+                    'file_path': file_path,
+                    'chunk_index': chunk_index,
+                })
+
+        batch_offset += len(docs)
+        if len(docs) < batch_size:
+            break
+
+    if not docs_to_repair:
+        if not output_json:
+            console.print(f"[green]✓ No documents need metadata repair[/green]")
+        return 0, 0
+
+    if not output_json:
+        console.print(f"[blue]Found {len(docs_to_repair)} documents to repair[/blue]")
+
+    # Step 2: Build a map of file_path -> git metadata from Qdrant
+    # Get unique file paths that need repair
+    file_paths_to_check = list(set(d['file_path'] for d in docs_to_repair if d['file_path']))
+
+    if not output_json:
+        console.print(f"[dim]Fetching git metadata from Qdrant for {len(file_paths_to_check)} files...[/dim]")
+
+    # Fetch git metadata using parallel threads for speed
+    git_metadata_by_file: Dict[str, Dict[str, Any]] = {}
+
+    def fetch_git_metadata(file_path: str) -> Tuple[str, Optional[Dict[str, Any]]]:
+        """Fetch git metadata for a single file from Qdrant."""
+        try:
+            points, _ = qdrant.scroll(
+                collection_name=corpus,
+                scroll_filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="file_path",
+                            match=MatchValue(value=file_path)
+                        )
+                    ]
+                ),
+                limit=1,
+                with_payload=["git_project_identifier", "git_project_name", "git_branch", "git_commit_hash"],
+                with_vectors=False
+            )
+
+            if points and points[0].payload:
+                payload = points[0].payload
+                if payload.get("git_project_identifier"):
+                    return file_path, {
+                        "git_project_identifier": payload.get("git_project_identifier"),
+                        "git_project_name": payload.get("git_project_name"),
+                        "git_branch": payload.get("git_branch"),
+                        "git_commit_hash": payload.get("git_commit_hash"),
+                    }
+        except Exception as e:
+            logger.warning(f"Failed to fetch git metadata for {file_path}: {e}")
+        return file_path, None
+
+    # Use thread pool for parallel fetching
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        futures = {executor.submit(fetch_git_metadata, fp): fp for fp in file_paths_to_check}
+        completed = 0
+        for future in as_completed(futures):
+            file_path, metadata = future.result()
+            if metadata:
+                git_metadata_by_file[file_path] = metadata
+            completed += 1
+            if not output_json and completed % 1000 == 0:
+                console.print(f"[dim]  Fetched {completed}/{len(file_paths_to_check)} files...[/dim]")
+
+    if not git_metadata_by_file:
+        if not output_json:
+            console.print(f"[yellow]No git metadata found in Qdrant to use for repair[/yellow]")
+        return 0, 0
+
+    if not output_json:
+        console.print(f"[dim]Found git metadata for {len(git_metadata_by_file)} files[/dim]")
+
+    # Step 3: Build update documents
+    updates = []
+    for doc in docs_to_repair:
+        file_path = doc.get('file_path')
+        if file_path and file_path in git_metadata_by_file:
+            git_meta = git_metadata_by_file[file_path]
+            update_doc = {
+                'id': doc['id'],
+                **git_meta
+            }
+            updates.append(update_doc)
+
+    if not updates:
+        if not output_json:
+            console.print(f"[yellow]No documents matched for update[/yellow]")
+        return 0, 0
+
+    # Step 4: Update MeiliSearch documents in batches
+    if not output_json:
+        console.print(f"[blue]Updating {len(updates)} documents in MeiliSearch...[/blue]")
+
+    docs_updated = 0
+    docs_failed = 0
+    update_batch_size = 1000
+
+    try:
+        index = meili.get_index(corpus)
+
+        for i in range(0, len(updates), update_batch_size):
+            batch = updates[i:i + update_batch_size]
+            try:
+                # Use update_documents which will update existing docs by id
+                task = index.update_documents(batch)
+                # Wait for task to complete using meilisearch client
+                meili.client.wait_for_task(task.task_uid)
+                docs_updated += len(batch)
+            except Exception as e:
+                logger.error(f"Failed to update batch: {e}")
+                docs_failed += len(batch)
+
+        if not output_json:
+            console.print(f"[green]✓ Updated {docs_updated} documents with git metadata[/green]")
+            if docs_failed > 0:
+                console.print(f"[yellow]  {docs_failed} documents failed to update[/yellow]")
+
+    except Exception as e:
+        logger.error(f"Failed to repair metadata: {e}")
+        if not output_json:
+            console.print(f"[red]Failed to repair metadata: {e}[/red]")
+        return docs_updated, len(updates) - docs_updated
+
+    return docs_updated, docs_failed
 
 
 def _backfill_qdrant_to_meili(
@@ -1426,6 +1664,7 @@ def parity_command(
     corpus: str,
     dry_run: bool,
     verify: bool,
+    repair_metadata: bool,
     text_workers: Optional[int],
     verbose: bool,
     output_json: bool
@@ -1442,6 +1681,7 @@ def parity_command(
         corpus: Corpus name
         dry_run: If True, show what would be backfilled without making changes
         verify: If True, verify chunk counts match for files in both systems
+        repair_metadata: If True, update MeiliSearch docs with missing git metadata from Qdrant
         text_workers: Number of parallel workers for code chunking (None=auto, 0/1=sequential)
         verbose: If True, show detailed progress
         output_json: If True, output JSON format
@@ -1634,8 +1874,8 @@ def parity_command(
             interaction_logger.finish(result_count=0)
             return
 
-        # Nothing to do
-        if not meili_backfill_paths and not qdrant_backfill_paths:
+        # Nothing to do (unless repair_metadata is requested)
+        if not meili_backfill_paths and not qdrant_backfill_paths and not repair_metadata:
             if output_json:
                 data = {
                     "corpus": corpus,
@@ -1724,6 +1964,16 @@ def parity_command(
                     text_workers=effective_text_workers,
                 )
 
+        # Repair metadata if requested (for code corpora)
+        metadata_repaired = 0
+        metadata_repair_failed = 0
+        if repair_metadata and corpus_type == 'code':
+            if not output_json:
+                console.print(f"\n[blue]Repairing git metadata in MeiliSearch...[/blue]")
+            metadata_repaired, metadata_repair_failed = _repair_meili_metadata(
+                qdrant, meili, corpus, verbose, output_json, console
+            )
+
         # Output results
         data = {
             "corpus": corpus,
@@ -1736,6 +1986,8 @@ def parity_command(
             "qdrant_backfill_failed": qdrant_backfill_failed,
             "qdrant_skipped_not_found": len(qdrant_skip_paths),
             "skipped_files": qdrant_skip_paths,
+            "metadata_repaired": metadata_repaired,
+            "metadata_repair_failed": metadata_repair_failed,
         }
 
         if output_json:
@@ -1757,6 +2009,12 @@ def parity_command(
 
             if qdrant_skip_paths:
                 console.print(f"   [yellow]Skipped (not found):      {len(qdrant_skip_paths)} files[/yellow]")
+
+            if metadata_repaired > 0 or metadata_repair_failed > 0:
+                status = f"{metadata_repaired} documents"
+                if metadata_repair_failed > 0:
+                    status += f" [yellow]({metadata_repair_failed} failed)[/yellow]"
+                console.print(f"   Metadata repaired:         {status}")
 
         interaction_logger.finish(
             result_count=meili_backfilled + qdrant_backfilled,

@@ -8,6 +8,7 @@ from pathlib import Path
 import requests
 from arcaneum.cli.output import print_info, print_success, print_error, print_warning
 from arcaneum.paths import get_data_dir
+from arcaneum.utils.formatting import format_size
 
 
 def check_docker_available():
@@ -347,12 +348,3 @@ def get_dir_size(path: Path) -> int:
     except (PermissionError, OSError):
         pass
     return total
-
-
-def format_size(bytes: int) -> str:
-    """Format bytes as human-readable size."""
-    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-        if bytes < 1024.0:
-            return f"{bytes:.1f} {unit}"
-        bytes /= 1024.0
-    return f"{bytes:.1f} PB"

@@ -9,10 +9,10 @@ from typing import Dict, Any
 
 import click
 from rich.console import Console
-from qdrant_client.models import VectorParams, Distance, HnswConfigDiff
+from qdrant_client.models import HnswConfigDiff
 
 from ..cli.output import print_json, print_error, print_info, print_success
-from ..cli.utils import create_qdrant_client
+from ..cli.utils import create_qdrant_client, create_meili_client, get_model_dimensions, build_vectors_config
 from ..cli.interaction_logger import interaction_logger
 from ..cli.errors import InvalidArgumentError, ResourceNotFoundError
 from ..embeddings.client import EMBEDDING_MODELS
@@ -20,37 +20,6 @@ from ..fulltext.indexes import get_index_settings
 from ..indexing.collection_metadata import set_collection_metadata, get_collection_metadata, CollectionType
 
 console = Console()
-
-
-def get_meili_client():
-    """Get MeiliSearch client from environment or auto-generated key."""
-    import os
-    from ..paths import get_meilisearch_api_key
-    from ..fulltext.client import FullTextClient
-
-    url = os.environ.get('MEILISEARCH_URL', 'http://localhost:7700')
-    api_key = get_meilisearch_api_key()
-    return FullTextClient(url, api_key)
-
-
-def get_model_dimensions(model_name: str) -> int:
-    """Get vector dimensions for an embedding model.
-
-    Args:
-        model_name: Model identifier
-
-    Returns:
-        Number of dimensions
-
-    Raises:
-        ValueError: If model is unknown
-    """
-    if model_name not in EMBEDDING_MODELS:
-        raise ValueError(
-            f"Unknown model: {model_name}. "
-            f"Available models: {list(EMBEDDING_MODELS.keys())}"
-        )
-    return EMBEDDING_MODELS[model_name]["dimensions"]
 
 
 def map_corpus_type_to_canonical(corpus_type: str) -> str:
@@ -107,7 +76,7 @@ def list_corpora_command(verbose: bool, output_json: bool):
         # Gather MeiliSearch indexes
         meili_indexes = {}
         try:
-            meili = get_meili_client()
+            meili = create_meili_client()
             if meili.health_check():
                 indexes = meili.list_indexes()
                 for idx in indexes:
@@ -233,7 +202,7 @@ def delete_corpus_command(name: str, confirm: bool, output_json: bool):
             pass
 
         try:
-            meili = get_meili_client()
+            meili = create_meili_client()
             if meili.health_check() and meili.index_exists(name):
                 meili_exists = True
         except Exception:
@@ -273,7 +242,7 @@ def delete_corpus_command(name: str, confirm: bool, output_json: bool):
         # Delete MeiliSearch index
         if meili_exists:
             try:
-                meili = get_meili_client()
+                meili = create_meili_client()
                 meili.delete_index(name)
                 meili_deleted = True
                 if not output_json:
@@ -347,20 +316,12 @@ def create_corpus_command(
             print_info(f"Creating corpus '{name}'")
             print_info(f"Type: {corpus_type}, Models: {models}")
 
-        # Parse and validate models
+        # Parse and validate models, build vectors config
         model_list = [m.strip() for m in models.split(',')]
-        for model in model_list:
-            if model not in EMBEDDING_MODELS:
-                error_msg = f"Unknown model: {model}. Available: {list(EMBEDDING_MODELS.keys())}"
-                raise InvalidArgumentError(error_msg)
-
-        # Build vectors config for Qdrant
-        vectors_config = {}
-        for model in model_list:
-            vectors_config[model] = VectorParams(
-                size=get_model_dimensions(model),
-                distance=Distance.COSINE,
-            )
+        try:
+            vectors_config = build_vectors_config(model_list)
+        except ValueError as e:
+            raise InvalidArgumentError(str(e))
 
         # Step 1: Create Qdrant collection
         if not output_json:
@@ -397,7 +358,7 @@ def create_corpus_command(
         if not output_json:
             print_info("Step 2/2: Creating MeiliSearch index...")
 
-        meili = get_meili_client()
+        meili = create_meili_client()
 
         try:
             # Verify MeiliSearch is available
@@ -588,7 +549,7 @@ def corpus_info_command(name: str, output_json: bool):
             errors.append(f"Qdrant: {e}")
 
         # Gather MeiliSearch index info
-        meili = get_meili_client()
+        meili = create_meili_client()
         try:
             if not meili.health_check():
                 errors.append("MeiliSearch: Server not available")
@@ -781,7 +742,7 @@ def corpus_items_command(name: str, output_json: bool):
 
         # Gather MeiliSearch index items
         try:
-            meili = get_meili_client()
+            meili = create_meili_client()
             if not meili.health_check():
                 errors.append("MeiliSearch: Server not available")
             elif not meili.index_exists(name):
@@ -846,7 +807,7 @@ def corpus_items_command(name: str, output_json: bool):
 
             if not corpus_exists:
                 try:
-                    meili = get_meili_client()
+                    meili = create_meili_client()
                     if meili.index_exists(name):
                         stats = meili.get_index_stats(name)
                         if stats.get('numberOfDocuments', 0) > 0:
@@ -1036,4 +997,245 @@ def corpus_items_command(name: str, output_json: bool):
     except Exception as e:
         interaction_logger.finish(error=str(e))
         print_error(f"Failed to list corpus items: {e}", output_json)
+        sys.exit(1)
+
+
+def corpus_verify_command(
+    name: str,
+    project: str | None,
+    verbose: bool,
+    output_json: bool,
+):
+    """Verify corpus health across both Qdrant and MeiliSearch.
+
+    Performs fsck-like integrity checks on both systems and reports:
+    - Qdrant collection health (chunk completeness)
+    - MeiliSearch index health (document accessibility)
+    - Parity status between the two systems
+
+    Args:
+        name: Corpus name (used for both collection and index)
+        project: Optional project identifier filter (code collections only)
+        verbose: Show detailed file-level results
+        output_json: If True, output JSON format
+    """
+    from rich.table import Table
+    from arcaneum.indexing.verify import CollectionVerifier
+
+    # Start interaction logging (RDR-018)
+    interaction_logger.start("corpus", "verify", corpus=name, project=project)
+
+    qdrant_result = None
+    meili_result = None
+    errors = []
+
+    try:
+        # Step 1: Verify Qdrant collection
+        if not output_json:
+            console.print(f"[dim]Verifying Qdrant collection '{name}'...[/dim]")
+
+        try:
+            qdrant = create_qdrant_client()
+            verifier = CollectionVerifier(qdrant)
+            qdrant_result = verifier.verify_collection(name, project_filter=project, verbose=verbose)
+        except Exception as e:
+            errors.append(f"Qdrant: {e}")
+
+        # Step 2: Verify MeiliSearch index
+        if not output_json:
+            console.print(f"[dim]Verifying MeiliSearch index '{name}'...[/dim]")
+
+        try:
+            meili = create_meili_client()
+
+            if not meili.health_check():
+                errors.append("MeiliSearch: Server not available")
+            elif not meili.index_exists(name):
+                errors.append(f"MeiliSearch: Index '{name}' not found")
+            else:
+                # Perform health checks on MeiliSearch
+                stats = meili.get_index_stats(name)
+                settings = meili.get_index_settings(name)
+
+                meili_issues = []
+                meili_warnings = []
+
+                doc_count = stats.get('numberOfDocuments', 0)
+                is_indexing = stats.get('isIndexing', False)
+
+                if is_indexing:
+                    meili_warnings.append("Index is currently processing documents")
+
+                # Check searchable/filterable attributes
+                searchable = settings.get('searchableAttributes', [])
+                if not searchable or searchable == ['*']:
+                    meili_warnings.append("Searchable attributes not explicitly defined")
+
+                filterable = settings.get('filterableAttributes', [])
+                if not filterable:
+                    meili_warnings.append("No filterable attributes defined")
+
+                # Try sample retrieval
+                sample_accessible = False
+                try:
+                    sample_results = meili.search(name, "", limit=1)
+                    if sample_results.get('hits'):
+                        sample_accessible = True
+                except Exception as e:
+                    meili_issues.append(f"Failed to retrieve sample document: {e}")
+
+                meili_result = {
+                    "is_healthy": len(meili_issues) == 0,
+                    "document_count": doc_count,
+                    "is_indexing": is_indexing,
+                    "sample_accessible": sample_accessible,
+                    "issues": meili_issues,
+                    "warnings": meili_warnings,
+                }
+        except Exception as e:
+            if "not available" not in str(e).lower():
+                errors.append(f"MeiliSearch: {e}")
+
+        # If neither system has the corpus, it's an error
+        if qdrant_result is None and meili_result is None:
+            raise ResourceNotFoundError(
+                f"Corpus '{name}' not found. "
+                f"Create with: arc corpus create {name} --type <pdf|code|markdown>"
+            )
+
+        # Compute overall health and parity
+        overall_healthy = True
+        parity_status = "unknown"
+
+        if qdrant_result and meili_result:
+            qdrant_healthy = qdrant_result.is_healthy
+            meili_healthy = meili_result["is_healthy"]
+            overall_healthy = qdrant_healthy and meili_healthy
+
+            # Check parity (item counts match)
+            qdrant_items = qdrant_result.total_items
+            meili_items = meili_result["document_count"]
+            # Note: MeiliSearch doc_count is chunks, not unique items
+            # For detailed parity, we'd need to compare unique file counts
+            # For now, just report both counts
+            parity_status = "needs_review"
+        elif qdrant_result:
+            overall_healthy = qdrant_result.is_healthy
+            parity_status = "qdrant_only"
+        elif meili_result:
+            overall_healthy = meili_result["is_healthy"]
+            parity_status = "meili_only"
+
+        # Output results
+        if output_json:
+            data = {
+                "corpus": name,
+                "overall_healthy": overall_healthy,
+                "parity_status": parity_status,
+                "qdrant": None,
+                "meilisearch": None,
+                "errors": errors if errors else None,
+            }
+
+            if qdrant_result:
+                data["qdrant"] = {
+                    "collection": qdrant_result.collection_name,
+                    "type": qdrant_result.collection_type,
+                    "is_healthy": qdrant_result.is_healthy,
+                    "total_points": qdrant_result.total_points,
+                    "total_items": qdrant_result.total_items,
+                    "complete_items": qdrant_result.complete_items,
+                    "incomplete_items": qdrant_result.incomplete_items,
+                }
+
+            if meili_result:
+                data["meilisearch"] = meili_result
+
+            status = "success" if overall_healthy else "warning"
+            msg = (
+                f"Corpus '{name}' is healthy"
+                if overall_healthy
+                else f"Corpus '{name}' has issues"
+            )
+            print_json(status, msg, data)
+        else:
+            # Human-readable output
+            console.print(f"\n[bold cyan]Corpus: {name}[/bold cyan]")
+
+            # Overall status
+            if overall_healthy:
+                console.print(f"[green]Overall Status: Healthy[/green]")
+            else:
+                console.print(f"[yellow]Overall Status: Issues detected[/yellow]")
+
+            # Qdrant section
+            console.print(f"\n[bold]Qdrant Collection:[/bold]")
+            if qdrant_result:
+                if qdrant_result.is_healthy:
+                    console.print(f"  [green]Status: Healthy[/green]")
+                    console.print(f"  Items: {qdrant_result.total_items} ({qdrant_result.complete_items} complete)")
+                else:
+                    console.print(f"  [yellow]Status: {qdrant_result.incomplete_items} incomplete items[/yellow]")
+                    console.print(f"  Items: {qdrant_result.total_items} ({qdrant_result.complete_items} complete, {qdrant_result.incomplete_items} incomplete)")
+
+                    # Show incomplete items summary
+                    if verbose and qdrant_result.collection_type == "code":
+                        for proj in qdrant_result.projects:
+                            if not proj.is_complete:
+                                console.print(f"  [dim]• {proj.project_name}: {proj.completion_percentage:.1f}% complete[/dim]")
+                    elif verbose:
+                        for file in qdrant_result.files[:5]:
+                            if not file.is_complete:
+                                console.print(f"  [dim]• {file.file_path}: {file.completion_percentage:.1f}% complete[/dim]")
+                        if qdrant_result.incomplete_items > 5:
+                            console.print(f"  [dim]... and {qdrant_result.incomplete_items - 5} more[/dim]")
+            else:
+                console.print(f"  [yellow]Not found or not accessible[/yellow]")
+
+            # MeiliSearch section
+            console.print(f"\n[bold]MeiliSearch Index:[/bold]")
+            if meili_result:
+                if meili_result["is_healthy"]:
+                    console.print(f"  [green]Status: Healthy[/green]")
+                else:
+                    console.print(f"  [yellow]Status: Issues detected[/yellow]")
+                    for issue in meili_result["issues"]:
+                        console.print(f"    [red]• {issue}[/red]")
+
+                console.print(f"  Documents: {meili_result['document_count']:,}")
+                if meili_result["is_indexing"]:
+                    console.print(f"  [yellow]Currently indexing...[/yellow]")
+                if meili_result["sample_accessible"]:
+                    console.print(f"  [green]Sample retrieval: OK[/green]")
+
+                if meili_result["warnings"]:
+                    console.print(f"  Warnings:")
+                    for warning in meili_result["warnings"]:
+                        console.print(f"    [dim]• {warning}[/dim]")
+            else:
+                console.print(f"  [yellow]Not found or not accessible[/yellow]")
+
+            # Errors
+            if errors:
+                console.print(f"\n[red]Errors:[/red]")
+                for error in errors:
+                    console.print(f"  [red]• {error}[/red]")
+
+            # Summary
+            if overall_healthy and not errors:
+                console.print(f"\n[green]All checks passed[/green]")
+
+        # Log successful operation (RDR-018)
+        interaction_logger.finish(
+            overall_healthy=overall_healthy,
+            qdrant_healthy=qdrant_result.is_healthy if qdrant_result else None,
+            meili_healthy=meili_result["is_healthy"] if meili_result else None,
+        )
+
+    except ResourceNotFoundError:
+        interaction_logger.finish(error="corpus not found")
+        raise
+    except Exception as e:
+        interaction_logger.finish(error=str(e))
+        print_error(f"Failed to verify corpus: {e}", output_json)
         sys.exit(1)

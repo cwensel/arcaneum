@@ -77,6 +77,7 @@ arc corpus delete <name>                                 # Delete both
 arc corpus sync <name> <path> [<path>...]                # Index to both (multiple paths supported)
 arc corpus info <name>                                   # Show corpus details
 arc corpus items <name>                                  # List indexed items with parity status
+arc corpus verify <name>                                 # Verify corpus health across both systems
 arc corpus parity <name>                                 # Restore parity between indexes
 ```
 
@@ -179,6 +180,89 @@ arc corpus items MyCorpus --json
 - `mismatch`: Different chunk counts (may indicate partial upload)
 - `qdrant_only`: Item exists only in Qdrant
 - `meili_only`: Item exists only in MeiliSearch
+
+### Corpus Verify
+
+Verify corpus health across both Qdrant and MeiliSearch systems:
+
+```bash
+# Basic health check
+arc corpus verify MyCorpus
+
+# Detailed output with file-level results
+arc corpus verify MyCorpus --verbose
+
+# Filter by project (code corpora only)
+arc corpus verify MyCode --project my-app
+
+# JSON output for automation
+arc corpus verify MyCorpus --json
+```
+
+**Features:**
+
+- **Qdrant health check**: Verifies chunk completeness for all indexed items
+- **MeiliSearch health check**: Verifies index accessibility and document retrieval
+- **Parity status**: Reports whether both systems have the corpus
+- **Detailed diagnostics**: Shows warnings for configuration issues
+
+**Example Output:**
+
+```text
+Verifying Qdrant collection 'MyCorpus'...
+Verifying MeiliSearch index 'MyCorpus'...
+
+Corpus: MyCorpus
+Overall Status: Healthy
+
+Qdrant Collection:
+  Status: Healthy
+  Items: 150 (150 complete)
+
+MeiliSearch Index:
+  Status: Healthy
+  Documents: 2,847
+  Sample retrieval: OK
+
+All checks passed
+```
+
+**Options:**
+
+- `--verbose` / `-v`: Show detailed file-level verification results
+- `--project`: Filter by project identifier (code corpora only)
+- `--json`: Output JSON format for scripting
+
+**JSON Output Format:**
+
+```json
+{
+  "status": "success",
+  "message": "Corpus 'MyCorpus' is healthy",
+  "data": {
+    "corpus": "MyCorpus",
+    "overall_healthy": true,
+    "parity_status": "needs_review",
+    "qdrant": {
+      "collection": "MyCorpus",
+      "type": "pdf",
+      "is_healthy": true,
+      "total_points": 2847,
+      "total_items": 150,
+      "complete_items": 150,
+      "incomplete_items": 0
+    },
+    "meilisearch": {
+      "is_healthy": true,
+      "document_count": 2847,
+      "is_indexing": false,
+      "sample_accessible": true,
+      "issues": [],
+      "warnings": []
+    }
+  }
+}
+```
 
 ### Corpus Delete
 

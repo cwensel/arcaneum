@@ -6,8 +6,10 @@ import logging
 from typing import Optional, List, Set
 from pathlib import Path
 from qdrant_client import QdrantClient
+from qdrant_client.models import VectorParams, Distance
 
 from ..config import load_config, ArcaneumConfig, QdrantConfig
+from ..embeddings.client import EMBEDDING_MODELS
 
 logger = logging.getLogger(__name__)
 
@@ -217,3 +219,107 @@ def create_qdrant_client(
     logger.debug(f"Creating QdrantClient: url={final_url}, timeout={final_timeout}s")
 
     return QdrantClient(url=final_url, timeout=final_timeout)
+
+
+def create_meili_client(
+    url: Optional[str] = None,
+    api_key: Optional[str] = None,
+):
+    """Create MeiliSearch FullTextClient with proper configuration.
+
+    This helper ensures consistent client creation across all CLI commands,
+    similar to create_qdrant_client.
+
+    Args:
+        url: MeiliSearch server URL (defaults to env or localhost:7700)
+        api_key: API key (defaults to auto-generated key from paths module)
+
+    Returns:
+        Configured FullTextClient instance
+
+    Environment Variables:
+        MEILISEARCH_URL: Override MeiliSearch URL
+    """
+    from ..paths import get_meilisearch_api_key
+    from ..fulltext.client import FullTextClient
+
+    # Determine URL (priority: param > env > default)
+    final_url = url
+    if not final_url:
+        final_url = os.environ.get('MEILISEARCH_URL', 'http://localhost:7700')
+
+    # Determine API key (priority: param > auto-generated)
+    final_api_key = api_key
+    if not final_api_key:
+        final_api_key = get_meilisearch_api_key()
+
+    logger.debug(f"Creating MeiliSearch client: url={final_url}")
+
+    return FullTextClient(final_url, final_api_key)
+
+
+def get_model_dimensions(model_name: str) -> int:
+    """Get vector dimensions for an embedding model.
+
+    Args:
+        model_name: Model identifier (e.g., 'stella', 'jina-code-0.5b')
+
+    Returns:
+        Number of dimensions for the model's vectors
+
+    Raises:
+        ValueError: If model is unknown
+    """
+    if model_name not in EMBEDDING_MODELS:
+        raise ValueError(
+            f"Unknown model: {model_name}. "
+            f"Available models: {list(EMBEDDING_MODELS.keys())}"
+        )
+    return EMBEDDING_MODELS[model_name]["dimensions"]
+
+
+def validate_models(model_list: List[str]) -> None:
+    """Validate a list of embedding model names.
+
+    Args:
+        model_list: List of model identifiers to validate
+
+    Raises:
+        ValueError: If any model is unknown
+    """
+    for model in model_list:
+        if model not in EMBEDDING_MODELS:
+            raise ValueError(
+                f"Unknown model: {model}. "
+                f"Available models: {list(EMBEDDING_MODELS.keys())}"
+            )
+
+
+def build_vectors_config(model_list: List[str]) -> dict:
+    """Build Qdrant vectors configuration from a list of models.
+
+    Creates a dictionary mapping model names to VectorParams
+    for multi-vector collection creation.
+
+    Args:
+        model_list: List of model identifiers
+
+    Returns:
+        Dictionary of {model_name: VectorParams} for Qdrant collection creation
+
+    Raises:
+        ValueError: If any model is unknown
+
+    Example:
+        >>> config = build_vectors_config(['stella', 'jina-code-0.5b'])
+        >>> # Returns {'stella': VectorParams(size=1024, ...), ...}
+    """
+    validate_models(model_list)
+
+    vectors_config = {}
+    for model in model_list:
+        vectors_config[model] = VectorParams(
+            size=get_model_dimensions(model),
+            distance=Distance.COSINE,
+        )
+    return vectors_config

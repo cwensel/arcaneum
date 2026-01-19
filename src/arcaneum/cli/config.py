@@ -5,6 +5,7 @@ import click
 from pathlib import Path
 from arcaneum.paths import get_models_dir, get_data_dir, get_legacy_arcaneum_dir
 from arcaneum.cli.output import print_info, print_success, print_error
+from arcaneum.utils.formatting import format_size
 
 
 def show_cache_dir():
@@ -70,15 +71,6 @@ def get_dir_size(path: Path) -> int:
     except (PermissionError, OSError):
         pass
     return total
-
-
-def format_size(bytes: int) -> str:
-    """Format bytes as human-readable size."""
-    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-        if bytes < 1024.0:
-            return f"{bytes:.1f} {unit}"
-        bytes /= 1024.0
-    return f"{bytes:.1f} PB"
 
 
 from arcaneum.cli.errors import HelpfulGroup

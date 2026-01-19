@@ -6,7 +6,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 from qdrant_client import QdrantClient
-from qdrant_client.models import VectorParams, Distance, HnswConfigDiff
+from qdrant_client.models import HnswConfigDiff
 
 from arcaneum.config import load_config, ArcaneumConfig, DEFAULT_MODELS
 from arcaneum.embeddings.client import EMBEDDING_MODELS
@@ -19,26 +19,9 @@ from arcaneum.indexing.collection_metadata import (
 from arcaneum.cli.errors import InvalidArgumentError, ResourceNotFoundError
 from arcaneum.cli.interaction_logger import interaction_logger
 from arcaneum.cli.output import print_json, print_error, print_success
-from arcaneum.cli.utils import create_qdrant_client
+from arcaneum.cli.utils import create_qdrant_client, build_vectors_config, get_model_dimensions
 
 console = Console()
-
-
-def get_distance(distance_str: str) -> Distance:
-    """Convert distance string to Qdrant Distance enum.
-
-    Args:
-        distance_str: Distance metric name (cosine, euclid, dot)
-
-    Returns:
-        Distance enum value
-    """
-    distance_map = {
-        "cosine": Distance.COSINE,
-        "euclid": Distance.EUCLID,
-        "dot": Distance.DOT,
-    }
-    return distance_map.get(distance_str.lower(), Distance.COSINE)
 
 
 def create_collection_command(
@@ -88,23 +71,12 @@ def create_collection_command(
             if model is None:
                 raise InvalidArgumentError(f"Unknown collection type: {collection_type}")
 
-        # Parse models (support comma-separated list)
+        # Parse models (support comma-separated list) and build vectors config
         model_list = [m.strip() for m in model.split(',')]
-
-        # Validate models
-        for m in model_list:
-            if m not in EMBEDDING_MODELS:
-                error_msg = f"Unknown model: {m}. Available: {list(EMBEDDING_MODELS.keys())}"
-                raise InvalidArgumentError(error_msg)
-
-        # Build vectors config
-        vectors_config = {}
-        for m in model_list:
-            model_info = EMBEDDING_MODELS[m]
-            vectors_config[m] = VectorParams(
-                size=model_info["dimensions"],
-                distance=Distance.COSINE,
-            )
+        try:
+            vectors_config = build_vectors_config(model_list)
+        except ValueError as e:
+            raise InvalidArgumentError(str(e))
 
         # Connect to Qdrant
         client = create_qdrant_client()
@@ -249,8 +221,8 @@ def delete_collection_command(name: str, confirm: bool, output_json: bool):
             if output_json:
                 raise InvalidArgumentError("--confirm flag required for non-interactive deletion")
 
-            response = console.input(f"[yellow]Delete collection '{name}'? This cannot be undone. (yes/no): [/yellow]")
-            if response.lower() != 'yes':
+            import click
+            if not click.confirm(f"Delete collection '{name}'? This cannot be undone."):
                 console.print("Cancelled.")
                 return
 

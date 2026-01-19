@@ -15,6 +15,7 @@ from ..fulltext.indexes import get_index_settings, get_available_index_types
 from .output import print_json, print_error, print_info, print_success
 from .interaction_logger import interaction_logger
 from .errors import InvalidArgumentError, ResourceNotFoundError
+from .utils import create_meili_client
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -62,16 +63,6 @@ def format_location(hit: dict) -> str:
     return file_path
 
 
-def get_client() -> FullTextClient:
-    """Get MeiliSearch client from environment or auto-generated key."""
-    from ..paths import get_meilisearch_api_key
-
-    url = os.environ.get('MEILISEARCH_URL', 'http://localhost:7700')
-    # Use auto-generated key if not set in environment
-    api_key = get_meilisearch_api_key()
-    return FullTextClient(url, api_key)
-
-
 def search_text_command(
     query: str,
     index_name: str,
@@ -101,7 +92,7 @@ def search_text_command(
         logging.basicConfig(level=logging.WARNING, format='[%(levelname)s] %(message)s')
 
     try:
-        client = get_client()
+        client = create_meili_client()
 
         # Verify server is available
         if not client.health_check():
@@ -278,7 +269,7 @@ def fulltext():
 def create_index(name, index_type, output_json):
     """Create a new MeiliSearch index."""
     try:
-        client = get_client()
+        client = create_meili_client()
 
         # Verify server is available
         if not client.health_check():
@@ -323,7 +314,7 @@ def create_index(name, index_type, output_json):
 def list_indexes(output_json):
     """List all MeiliSearch indexes."""
     try:
-        client = get_client()
+        client = create_meili_client()
 
         # Verify server is available
         if not client.health_check():
@@ -390,7 +381,7 @@ def list_indexes(output_json):
 def index_info(name, output_json):
     """Show detailed information about an index."""
     try:
-        client = get_client()
+        client = create_meili_client()
 
         # Verify server is available
         if not client.health_check():
@@ -466,7 +457,7 @@ def index_info(name, output_json):
 def delete_index(name, confirm, output_json):
     """Delete a MeiliSearch index."""
     try:
-        client = get_client()
+        client = create_meili_client()
 
         # Verify server is available
         if not client.health_check():
@@ -505,7 +496,7 @@ def delete_index(name, confirm, output_json):
 def update_settings(name, index_type, output_json):
     """Update index settings from a preset type."""
     try:
-        client = get_client()
+        client = create_meili_client()
 
         # Verify server is available
         if not client.health_check():
@@ -554,7 +545,7 @@ def verify_index(name, output_json):
     interaction_logger.start("indexes", "verify", index=name)
 
     try:
-        client = get_client()
+        client = create_meili_client()
 
         # Verify server is available
         if not client.health_check():
@@ -698,7 +689,7 @@ def list_items(name, limit, offset, output_json):
     interaction_logger.start("indexes", "items", index=name, limit=limit, offset=offset)
 
     try:
-        client = get_client()
+        client = create_meili_client()
 
         # Verify server is available
         if not client.health_check():
@@ -827,7 +818,7 @@ def export_index(name, output, output_json):
     interaction_logger.start("indexes", "export", index=name, output=output)
 
     try:
-        client = get_client()
+        client = create_meili_client()
 
         # Verify server is available
         if not client.health_check():
@@ -928,7 +919,7 @@ def list_projects(name, output_json):
     interaction_logger.start("indexes", "list-projects", index=name)
 
     try:
-        client = get_client()
+        client = create_meili_client()
 
         # Verify server is available
         if not client.health_check():
@@ -1004,7 +995,7 @@ def delete_project(identifier, index_name, confirm, output_json):
     interaction_logger.start("indexes", "delete-project", index=index_name, identifier=identifier)
 
     try:
-        client = get_client()
+        client = create_meili_client()
 
         # Verify server is available
         if not client.health_check():
@@ -1089,7 +1080,7 @@ def import_index(file, target_name, output_json):
     interaction_logger.start("indexes", "import", source_file=file, target_name=target_name)
 
     try:
-        client = get_client()
+        client = create_meili_client()
 
         # Verify server is available
         if not client.health_check():

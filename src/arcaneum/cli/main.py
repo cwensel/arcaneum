@@ -661,6 +661,26 @@ def corpus_items(name, output_json):
     corpus_items_command(name, output_json)
 
 
+@corpus.command('verify')
+@click.argument('name')
+@click.option('--project', help='Filter by project identifier (code corpora only)')
+@click.option('--verbose', '-v', is_flag=True, help='Show detailed file-level results')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def corpus_verify(name, project, verbose, output_json):
+    """Verify corpus health across both Qdrant and MeiliSearch.
+
+    Performs fsck-like integrity checks on both systems and reports
+    collection/index health and parity status.
+
+    Examples:
+        arc corpus verify MyCorpus
+        arc corpus verify MyCorpus --verbose
+        arc corpus verify MyCorpus --json
+    """
+    from arcaneum.cli.corpus import corpus_verify_command
+    corpus_verify_command(name, project, verbose, output_json)
+
+
 # Diagnostics command (RDR-006 enhancement)
 @cli.command('doctor')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed diagnostic information')

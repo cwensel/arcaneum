@@ -55,7 +55,7 @@ class TestSearchTextBasicExecution:
         """Test that basic search returns and displays results."""
         mock_client.search.return_value = sample_search_results
 
-        with patch('arcaneum.cli.fulltext.get_client', return_value=mock_client):
+        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
             with patch('arcaneum.cli.fulltext.interaction_logger'):
                 # The command calls sys.exit(0) on success, so we need to catch it
                 with pytest.raises(SystemExit) as exc_info:
@@ -85,7 +85,7 @@ class TestSearchTextBasicExecution:
         """Test JSON output mode returns valid JSON."""
         mock_client.search.return_value = sample_search_results
 
-        with patch('arcaneum.cli.fulltext.get_client', return_value=mock_client):
+        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
             with patch('arcaneum.cli.fulltext.interaction_logger'):
                 with pytest.raises(SystemExit) as exc_info:
                     search_text_command(
@@ -159,7 +159,7 @@ class TestExactPhraseSearchInCode:
             'offset': 0,
         }
 
-        with patch('arcaneum.cli.fulltext.get_client', return_value=mock_client):
+        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
             with patch('arcaneum.cli.fulltext.interaction_logger'):
                 with pytest.raises(SystemExit) as exc_info:
                     search_text_command(
@@ -237,7 +237,7 @@ class TestKeywordSearchWithFilters:
             'offset': 0,
         }
 
-        with patch('arcaneum.cli.fulltext.get_client', return_value=mock_client):
+        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
             with patch('arcaneum.cli.fulltext.interaction_logger'):
                 with pytest.raises(SystemExit) as exc_info:
                     search_text_command(
@@ -317,7 +317,7 @@ class TestPDFSearchWithPageFilter:
             'offset': 0,
         }
 
-        with patch('arcaneum.cli.fulltext.get_client', return_value=mock_client):
+        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
             with patch('arcaneum.cli.fulltext.interaction_logger'):
                 with pytest.raises(SystemExit) as exc_info:
                     search_text_command(
@@ -366,7 +366,7 @@ class TestErrorHandlingMissingIndex:
 
     def test_missing_index_raises_resource_not_found_error(self, mock_client):
         """Test that searching a non-existent index raises ResourceNotFoundError."""
-        with patch('arcaneum.cli.fulltext.get_client', return_value=mock_client):
+        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
             with patch('arcaneum.cli.fulltext.interaction_logger'):
                 with pytest.raises(ResourceNotFoundError) as exc_info:
                     search_text_command(
@@ -384,7 +384,7 @@ class TestErrorHandlingMissingIndex:
 
     def test_missing_index_with_json_raises_resource_not_found(self, mock_client):
         """Test that missing index in JSON mode also raises ResourceNotFoundError."""
-        with patch('arcaneum.cli.fulltext.get_client', return_value=mock_client):
+        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
             with patch('arcaneum.cli.fulltext.interaction_logger'):
                 with pytest.raises(ResourceNotFoundError) as exc_info:
                     search_text_command(
@@ -412,7 +412,7 @@ class TestErrorHandlingServerUnavailable:
 
     def test_server_unavailable_raises_resource_not_found_error(self, mock_client_unhealthy):
         """Test that unavailable server raises ResourceNotFoundError with helpful message."""
-        with patch('arcaneum.cli.fulltext.get_client', return_value=mock_client_unhealthy):
+        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client_unhealthy):
             with patch('arcaneum.cli.fulltext.interaction_logger'):
                 with pytest.raises(ResourceNotFoundError) as exc_info:
                     search_text_command(
@@ -460,7 +460,7 @@ class TestJSONOutputForProgrammaticUse:
             'offset': 0,
         }
 
-        with patch('arcaneum.cli.fulltext.get_client', return_value=mock_client):
+        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
             with patch('arcaneum.cli.fulltext.interaction_logger'):
                 with pytest.raises(SystemExit) as exc_info:
                     search_text_command(
@@ -514,7 +514,7 @@ class TestJSONOutputForProgrammaticUse:
             'offset': 0,
         }
 
-        with patch('arcaneum.cli.fulltext.get_client', return_value=mock_client):
+        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
             with patch('arcaneum.cli.fulltext.interaction_logger'):
                 with pytest.raises(SystemExit) as exc_info:
                     search_text_command(
@@ -554,7 +554,7 @@ class TestPaginationOptions:
             'processingTimeMs': 2,
         }
 
-        with patch('arcaneum.cli.fulltext.get_client', return_value=mock_client):
+        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
             with patch('arcaneum.cli.fulltext.interaction_logger'):
                 with pytest.raises(SystemExit):
                     search_text_command(
@@ -584,7 +584,7 @@ class TestPaginationOptions:
             'processingTimeMs': 3,
         }
 
-        with patch('arcaneum.cli.fulltext.get_client', return_value=mock_client):
+        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
             with patch('arcaneum.cli.fulltext.interaction_logger'):
                 with pytest.raises(SystemExit):
                     search_text_command(
@@ -638,7 +638,7 @@ class TestVerboseOutput:
             'processingTimeMs': 5,
         }
 
-        with patch('arcaneum.cli.fulltext.get_client', return_value=mock_client):
+        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
             with patch('arcaneum.cli.fulltext.interaction_logger'):
                 with pytest.raises(SystemExit) as exc_info:
                     search_text_command(
@@ -678,7 +678,7 @@ class TestNoResultsHandling:
             'processingTimeMs': 2,
         }
 
-        with patch('arcaneum.cli.fulltext.get_client', return_value=mock_client):
+        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
             with patch('arcaneum.cli.fulltext.interaction_logger'):
                 with pytest.raises(SystemExit) as exc_info:
                     search_text_command(
@@ -720,7 +720,7 @@ class TestInteractionLogging:
         """Test that interaction logger is called with correct parameters on success."""
         mock_logger = MagicMock()
 
-        with patch('arcaneum.cli.fulltext.get_client', return_value=mock_client):
+        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
             with patch('arcaneum.cli.fulltext.interaction_logger', mock_logger):
                 with pytest.raises(SystemExit):
                     search_text_command(
@@ -752,7 +752,7 @@ class TestInteractionLogging:
         mock_client.search.side_effect = Exception("Search failed")
         mock_logger = MagicMock()
 
-        with patch('arcaneum.cli.fulltext.get_client', return_value=mock_client):
+        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
             with patch('arcaneum.cli.fulltext.interaction_logger', mock_logger):
                 with pytest.raises(SystemExit):
                     search_text_command(
@@ -790,7 +790,7 @@ class TestComplexFilterExpressions:
 
     def test_and_filter_expression(self, mock_client):
         """Test filter with AND operator."""
-        with patch('arcaneum.cli.fulltext.get_client', return_value=mock_client):
+        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
             with patch('arcaneum.cli.fulltext.interaction_logger'):
                 with pytest.raises(SystemExit):
                     search_text_command(
@@ -809,7 +809,7 @@ class TestComplexFilterExpressions:
 
     def test_in_operator_filter(self, mock_client):
         """Test filter with IN operator for array membership."""
-        with patch('arcaneum.cli.fulltext.get_client', return_value=mock_client):
+        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
             with patch('arcaneum.cli.fulltext.interaction_logger'):
                 with pytest.raises(SystemExit):
                     search_text_command(
@@ -827,7 +827,7 @@ class TestComplexFilterExpressions:
 
     def test_numeric_range_filter(self, mock_client):
         """Test filter with numeric range."""
-        with patch('arcaneum.cli.fulltext.get_client', return_value=mock_client):
+        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
             with patch('arcaneum.cli.fulltext.interaction_logger'):
                 with pytest.raises(SystemExit):
                     search_text_command(
@@ -845,7 +845,7 @@ class TestComplexFilterExpressions:
 
     def test_contains_filter_for_file_path(self, mock_client):
         """Test filter with CONTAINS for file path matching."""
-        with patch('arcaneum.cli.fulltext.get_client', return_value=mock_client):
+        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
             with patch('arcaneum.cli.fulltext.interaction_logger'):
                 with pytest.raises(SystemExit):
                     search_text_command(
@@ -881,7 +881,7 @@ class TestHighlightingFormatting:
             'processingTimeMs': 2,
         }
 
-        with patch('arcaneum.cli.fulltext.get_client', return_value=mock_client):
+        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
             with patch('arcaneum.cli.fulltext.interaction_logger'):
                 with pytest.raises(SystemExit):
                     search_text_command(
@@ -914,7 +914,7 @@ class TestHighlightingFormatting:
             'processingTimeMs': 5,
         }
 
-        with patch('arcaneum.cli.fulltext.get_client', return_value=mock_client):
+        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
             with patch('arcaneum.cli.fulltext.interaction_logger'):
                 with pytest.raises(SystemExit):
                     search_text_command(

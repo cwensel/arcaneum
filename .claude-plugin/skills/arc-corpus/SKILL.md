@@ -1,6 +1,6 @@
 ---
 name: arc-corpus
-description: Dual-index corpus management for combined semantic and full-text search. Use when user mentions corpus, dual indexing, syncing content to both Qdrant and MeiliSearch, checking parity between systems, or managing content that needs both search types.
+description: Dual-index corpus management for combined semantic and full-text search. Use when user mentions corpus, dual indexing, syncing content to both Qdrant and MeiliSearch, checking parity between systems, deleting corpora, or managing content that needs both search types.
 allowed-tools: Bash(arc:*), Read
 ---
 
@@ -14,6 +14,11 @@ arc corpus create MyCorpus --type pdf
 arc corpus create MyCorpus --type code
 arc corpus create MyCorpus --type markdown
 arc corpus create MyCorpus --type pdf --models stella,jina  # Multiple models
+
+# Delete corpus (deletes both collection and index)
+arc corpus delete MyCorpus              # With confirmation prompt
+arc corpus delete MyCorpus --confirm    # Skip confirmation
+arc corpus delete MyCorpus --confirm --json  # JSON output
 
 # Sync files to both systems
 arc corpus sync /path/to/files --corpus MyCorpus

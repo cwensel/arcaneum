@@ -1,6 +1,6 @@
 ---
 description: Manage dual-index corpora
-argument-hint: <create|sync|info|items|parity> <name|directory> [options]
+argument-hint: <create|delete|sync|info|items|parity> <name|directory> [options]
 ---
 
 Manage corpora that combine both vector search (Qdrant) and full-text search (MeiliSearch) for the same content.
@@ -10,6 +10,7 @@ Manage corpora that combine both vector search (Qdrant) and full-text search (Me
 **Subcommands:**
 
 - `create`: Create both Qdrant collection and MeiliSearch index
+- `delete`: Delete both Qdrant collection and MeiliSearch index
 - `sync`: Index directory to both systems simultaneously
 - `info`: Show corpus details (both systems)
 - `items`: List indexed items with parity status
@@ -24,6 +25,12 @@ Manage corpora that combine both vector search (Qdrant) and full-text search (Me
 - name: Corpus name (required)
 - --type: Corpus type - code or pdf (required)
 - --models: Embedding models, comma-separated (default: stella,jina)
+
+**Delete Options:**
+
+- name: Corpus name (required)
+- --confirm: Skip confirmation prompt
+- --json: Output in JSON format
 
 **Sync Options:**
 
@@ -57,6 +64,8 @@ Manage corpora that combine both vector search (Qdrant) and full-text search (Me
 /corpus items CodeBase
 /corpus parity CodeBase --verify
 /corpus parity CodeBase --repair-metadata
+/corpus delete OldCorpus
+/corpus delete OldCorpus --confirm
 ```
 
 **Execution:**

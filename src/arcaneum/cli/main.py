@@ -570,6 +570,16 @@ def create_corpus(name, corpus_type, models, output_json):
     create_corpus_command(name, corpus_type, models, output_json)
 
 
+@corpus.command('delete')
+@click.argument('name')
+@click.option('--confirm', is_flag=True, help='Skip confirmation prompt')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def delete_corpus(name, confirm, output_json):
+    """Delete both collection and index for a corpus."""
+    from arcaneum.cli.corpus import delete_corpus_command
+    delete_corpus_command(name, confirm, output_json)
+
+
 @corpus.command('sync')
 @click.argument('directory', type=click.Path(exists=True))
 @click.option('--corpus', required=True, help='Corpus name')

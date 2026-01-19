@@ -203,6 +203,119 @@ def list_corpora_command(verbose: bool, output_json: bool):
         sys.exit(1)
 
 
+def delete_corpus_command(name: str, confirm: bool, output_json: bool):
+    """Delete both Qdrant collection and MeiliSearch index for a corpus.
+
+    Args:
+        name: Corpus name (used for both collection and index)
+        confirm: Skip confirmation prompt
+        output_json: If True, output JSON format
+    """
+    import click
+
+    # Start interaction logging (RDR-018)
+    interaction_logger.start("corpus", "delete", corpus=name)
+
+    qdrant_deleted = False
+    meili_deleted = False
+    errors = []
+
+    try:
+        # Check what exists before asking for confirmation
+        qdrant_exists = False
+        meili_exists = False
+
+        try:
+            qdrant = create_qdrant_client()
+            qdrant.get_collection(name)
+            qdrant_exists = True
+        except Exception:
+            pass
+
+        try:
+            meili = get_meili_client()
+            if meili.health_check() and meili.index_exists(name):
+                meili_exists = True
+        except Exception:
+            pass
+
+        if not qdrant_exists and not meili_exists:
+            raise ResourceNotFoundError(f"Corpus '{name}' not found")
+
+        # Confirmation prompt
+        if not confirm:
+            if output_json:
+                raise InvalidArgumentError("--confirm flag required for non-interactive deletion")
+
+            parts = []
+            if qdrant_exists:
+                parts.append("Qdrant collection")
+            if meili_exists:
+                parts.append("MeiliSearch index")
+
+            if not click.confirm(f"Delete {' and '.join(parts)} for corpus '{name}'? This cannot be undone."):
+                print_info("Cancelled.")
+                return
+
+        # Delete Qdrant collection
+        if qdrant_exists:
+            try:
+                qdrant = create_qdrant_client()
+                qdrant.delete_collection(name)
+                qdrant_deleted = True
+                if not output_json:
+                    console.print(f"[green]✅ Deleted Qdrant collection '{name}'[/green]")
+            except Exception as e:
+                errors.append(f"Qdrant: {e}")
+                if not output_json:
+                    print_error(f"Failed to delete Qdrant collection: {e}")
+
+        # Delete MeiliSearch index
+        if meili_exists:
+            try:
+                meili = get_meili_client()
+                meili.delete_index(name)
+                meili_deleted = True
+                if not output_json:
+                    console.print(f"[green]✅ Deleted MeiliSearch index '{name}'[/green]")
+            except Exception as e:
+                errors.append(f"MeiliSearch: {e}")
+                if not output_json:
+                    print_error(f"Failed to delete MeiliSearch index: {e}")
+
+        # Output results
+        if output_json:
+            data = {
+                "corpus": name,
+                "qdrant_deleted": qdrant_deleted,
+                "meili_deleted": meili_deleted,
+                "errors": errors if errors else None,
+            }
+            if errors:
+                print_json("partial", f"Partially deleted corpus '{name}'", data)
+            else:
+                print_json("success", f"Deleted corpus '{name}'", data)
+        else:
+            if errors:
+                print_error(f"Corpus '{name}' partially deleted. Errors: {', '.join(errors)}")
+            else:
+                console.print(f"\n[green]✅ Corpus '{name}' deleted[/green]")
+
+        # Log operation (RDR-018)
+        if errors:
+            interaction_logger.finish(error="; ".join(errors))
+        else:
+            interaction_logger.finish()
+
+    except (InvalidArgumentError, ResourceNotFoundError):
+        interaction_logger.finish(error="invalid argument or resource not found")
+        raise
+    except Exception as e:
+        interaction_logger.finish(error=str(e))
+        print_error(f"Failed to delete corpus: {e}", output_json)
+        sys.exit(1)
+
+
 def create_corpus_command(
     name: str,
     corpus_type: str,

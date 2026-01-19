@@ -73,6 +73,7 @@ A "corpus" is a paired Qdrant collection and MeiliSearch index with the same nam
 
 ```bash
 arc corpus create <name> --type <type> --models <model>  # Create both
+arc corpus delete <name>                                 # Delete both
 arc corpus sync <path> --corpus <name>                   # Index to both
 arc corpus info <name>                                   # Show corpus details
 arc corpus items <name>                                  # List indexed items with parity status
@@ -178,6 +179,28 @@ arc corpus items MyCorpus --json
 - `mismatch`: Different chunk counts (may indicate partial upload)
 - `qdrant_only`: Item exists only in Qdrant
 - `meili_only`: Item exists only in MeiliSearch
+
+### Corpus Delete
+
+Delete both the Qdrant collection and MeiliSearch index for a corpus:
+
+```bash
+# With confirmation prompt
+arc corpus delete MyCorpus
+
+# Skip confirmation (for scripts)
+arc corpus delete MyCorpus --confirm
+
+# JSON output
+arc corpus delete MyCorpus --confirm --json
+```
+
+**Behavior:**
+
+- Checks if either Qdrant collection or MeiliSearch index exists
+- Prompts for confirmation before deleting (unless `--confirm` is passed)
+- Deletes both systems; if one fails, continues with the other
+- Reports partial deletion if only one system was deleted
 
 ## Collection Management Examples
 

@@ -21,10 +21,11 @@ arc corpus delete MyCorpus --confirm    # Skip confirmation
 arc corpus delete MyCorpus --confirm --json  # JSON output
 
 # Sync files to both systems
-arc corpus sync /path/to/files --corpus MyCorpus
-arc corpus sync /path/to/files --corpus MyCorpus --force    # Force reindex
-arc corpus sync /path/to/files --corpus MyCorpus --verify   # Verify after sync
-arc corpus sync /path/to/files --corpus MyCorpus --verbose  # Show progress
+arc corpus sync MyCorpus /path/to/files
+arc corpus sync MyCorpus /path/one /path/two /path/three    # Multiple directories
+arc corpus sync MyCorpus /path/to/files --force             # Force reindex
+arc corpus sync MyCorpus /path/to/files --verify            # Verify after sync
+arc corpus sync MyCorpus /path/to/files --verbose           # Show progress
 
 # View corpus info (both systems)
 arc corpus info MyCorpus

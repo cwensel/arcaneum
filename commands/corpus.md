@@ -1,6 +1,6 @@
 ---
 description: Manage dual-index corpora
-argument-hint: <create|delete|sync|info|items|parity> <name|directory> [options]
+argument-hint: <create|delete|sync|info|items|parity> <name> [paths...] [options]
 ---
 
 Manage corpora that combine both vector search (Qdrant) and full-text search (MeiliSearch) for the same content.
@@ -34,8 +34,8 @@ Manage corpora that combine both vector search (Qdrant) and full-text search (Me
 
 **Sync Options:**
 
-- directory: Directory path to index (required)
-- --corpus: Corpus name (required)
+- name: Corpus name (required, first positional argument)
+- directories: One or more directory paths to index (required)
 - --models: Embedding models (default: stella,jina)
 - --file-types: File extensions to index (e.g., .py,.md)
 
@@ -57,9 +57,10 @@ Manage corpora that combine both vector search (Qdrant) and full-text search (Me
 
 ```text
 /corpus create MyDocs --type pdf --models stella
-/corpus sync ~/Documents --corpus MyDocs
+/corpus sync MyDocs ~/Documents
 /corpus create CodeBase --type code
-/corpus sync ~/projects --corpus CodeBase --file-types .py,.js,.md
+/corpus sync CodeBase ~/projects --file-types .py,.js,.md
+/corpus sync CodeBase ~/project1 ~/project2 ~/project3
 /corpus info MyDocs
 /corpus items CodeBase
 /corpus parity CodeBase --verify

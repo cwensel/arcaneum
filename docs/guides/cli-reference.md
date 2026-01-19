@@ -74,7 +74,7 @@ A "corpus" is a paired Qdrant collection and MeiliSearch index with the same nam
 ```bash
 arc corpus create <name> --type <type> --models <model>  # Create both
 arc corpus delete <name>                                 # Delete both
-arc corpus sync <path> --corpus <name>                   # Index to both
+arc corpus sync <name> <path> [<path>...]                # Index to both (multiple paths supported)
 arc corpus info <name>                                   # Show corpus details
 arc corpus items <name>                                  # List indexed items with parity status
 arc corpus parity <name>                                 # Restore parity between indexes

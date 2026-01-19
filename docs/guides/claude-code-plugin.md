@@ -603,7 +603,7 @@ echo ""
 # Test each command with --help
 for cmd in create-collection list-collections collection-info delete-collection \
            list-models index-pdfs index-source search search-text \
-           create-corpus sync-directory; do
+           create-corpus; do
     echo "Testing: arc $cmd --help"
     python -m arcaneum.cli.main "$cmd" --help > /dev/null 2>&1
     if [ $? -eq 0 ]; then

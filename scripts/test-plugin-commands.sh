@@ -16,7 +16,7 @@ NC='\033[0m' # No Color
 echo "1. Testing command --help flags..."
 for cmd in create-collection list-collections collection-info delete-collection \
            list-models index-pdfs index-source search search-text \
-           create-corpus sync-directory; do
+           create-corpus; do
     if python -m arcaneum.cli.main "$cmd" --help > /dev/null 2>&1; then
         echo -e "  ${GREEN}✓${NC} $cmd --help"
     else

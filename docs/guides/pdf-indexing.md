@@ -507,7 +507,10 @@ The `corpus` commands provide a unified workflow for dual indexing:
 arc corpus create my-papers --type pdf --models stella
 
 # Index to both systems in one command
-arc corpus sync /path/to/pdfs --corpus my-papers
+arc corpus sync my-papers /path/to/pdfs
+
+# Sync multiple directories at once
+arc corpus sync my-papers /path/to/pdfs /path/to/more/pdfs
 
 # Search both systems
 arc search semantic "machine learning" --collection my-papers  # Qdrant
@@ -521,7 +524,7 @@ you can use `corpus sync` directly without running `corpus create`:
 
 ```bash
 # If 'Papers' collection and 'Papers' index already exist:
-arc corpus sync /path/to/pdfs --corpus Papers
+arc corpus sync Papers /path/to/pdfs
 ```
 
 The only requirement is that both the collection and index exist with the same name.

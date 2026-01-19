@@ -168,7 +168,10 @@ arc search "authentication" --collection code
 arc corpus create code --type code
 
 # Sync directory (indexes to both)
-arc corpus sync ~/projects --corpus code
+arc corpus sync code ~/projects
+
+# Sync multiple directories
+arc corpus sync code ~/projects ~/libs ~/third-party
 
 # Semantic search (Qdrant)
 arc search "authentication" --collection code

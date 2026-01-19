@@ -542,7 +542,8 @@ def search_text(query, index_name, filter_arg, limit, offset, output_json, verbo
 # Dual indexing commands (RDR-009)
 @cli.group(cls=HelpfulGroup, usage_examples=[
     'arc corpus create MyCorpus --type code',
-    'arc corpus sync /path/to/files --corpus MyCorpus',
+    'arc corpus sync MyCorpus /path/to/files',
+    'arc corpus sync MyCorpus /path/one /path/two',
     'arc corpus items MyCorpus',
 ])
 def corpus():
@@ -581,8 +582,8 @@ def delete_corpus(name, confirm, output_json):
 
 
 @corpus.command('sync')
-@click.argument('directory', type=click.Path(exists=True))
-@click.option('--corpus', required=True, help='Corpus name')
+@click.argument('corpus')
+@click.argument('directories', nargs=-1, type=click.Path(exists=True), required=True)
 @click.option('--models', default='stella,jina', help='Embedding models (comma-separated)')
 @click.option('--file-types', help='File extensions to index (e.g., .py,.md)')
 @click.option('--force', is_flag=True, help='Force reindex all files (bypass change detection)')
@@ -591,13 +592,17 @@ def delete_corpus(name, confirm, output_json):
               help='Parallel workers for code AST chunking (default: auto=cpu/2, 0=sequential)')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed progress (files, chunks, indexing)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def sync_directory(directory, corpus, models, file_types, force, verify, text_workers, verbose, output_json):
+def sync_directory(corpus, directories, models, file_types, force, verify, text_workers, verbose, output_json):
     """Index to both vector and full-text.
+
+    Examples:
+        arc corpus sync MyCorpus /path/to/files
+        arc corpus sync MyCorpus /path/one /path/two /path/three
 
     Use --text-workers to parallelize AST chunking for code corpora.
     """
     from arcaneum.cli.sync import sync_directory_command
-    sync_directory_command(directory, corpus, models, file_types, force, verify, text_workers, verbose, output_json)
+    sync_directory_command(corpus, directories, models, file_types, force, verify, text_workers, verbose, output_json)
 
 
 @corpus.command('parity')

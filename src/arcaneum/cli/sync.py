@@ -291,8 +291,8 @@ def chunk_code_file(file_path: Path, chunk_size: int, chunk_overlap: int) -> Lis
 
 
 def sync_directory_command(
-    directory: str,
     corpus: str,
+    directories: tuple,
     models: str,
     file_types: Optional[str],
     force: bool,
@@ -301,15 +301,15 @@ def sync_directory_command(
     verbose: bool,
     output_json: bool
 ):
-    """Sync a directory to both Qdrant and MeiliSearch.
+    """Sync directories to both Qdrant and MeiliSearch.
 
     This implements the second command of the 2-command workflow:
     1. corpus create - creates both systems
     2. corpus sync (this command) - indexes documents to both systems
 
     Args:
-        directory: Directory to sync
         corpus: Corpus name (must exist)
+        directories: Tuple of directories to sync
         models: Comma-separated list of embedding models
         file_types: File extensions to index (e.g., ".py,.js")
         force: If True, reindex all files (bypass change detection)
@@ -329,21 +329,27 @@ def sync_directory_command(
     interaction_logger.start(
         "corpus", "sync",
         corpus=corpus,
-        directory=directory,
+        directories=list(directories),
         models=models,
         file_types=file_types,
     )
 
     try:
-        dir_path = Path(directory).resolve()
-
-        if not dir_path.exists():
-            raise InvalidArgumentError(f"Directory not found: {directory}")
-        if not dir_path.is_dir():
-            raise InvalidArgumentError(f"Not a directory: {directory}")
+        # Validate and resolve all directories
+        dir_paths = []
+        for directory in directories:
+            dir_path = Path(directory).resolve()
+            if not dir_path.exists():
+                raise InvalidArgumentError(f"Directory not found: {directory}")
+            if not dir_path.is_dir():
+                raise InvalidArgumentError(f"Not a directory: {directory}")
+            dir_paths.append(dir_path)
 
         if not output_json:
-            print_info(f"Syncing '{directory}' to corpus '{corpus}'")
+            if len(dir_paths) == 1:
+                print_info(f"Syncing '{directories[0]}' to corpus '{corpus}'")
+            else:
+                print_info(f"Syncing {len(dir_paths)} directories to corpus '{corpus}'")
 
         # Initialize clients
         qdrant = create_qdrant_client()
@@ -389,8 +395,11 @@ def sync_directory_command(
         # Parse models
         model_list = [m.strip() for m in configured_models.split(',')]
 
-        # Discover files
-        files = discover_files(dir_path, file_types, corpus_type)
+        # Discover files from all directories
+        files = []
+        for dir_path in dir_paths:
+            dir_files = discover_files(dir_path, file_types, corpus_type)
+            files.extend(dir_files)
 
         if not files:
             if output_json:
@@ -401,7 +410,8 @@ def sync_directory_command(
             return
 
         if not output_json:
-            print_info(f"Found {len(files)} files in directory")
+            dir_word = "directory" if len(dir_paths) == 1 else "directories"
+            print_info(f"Found {len(files)} files across {len(dir_paths)} {dir_word}")
 
         # Apply change detection (skip already indexed files) unless --force
         already_indexed_count = 0
@@ -840,7 +850,7 @@ def sync_directory_command(
         # Output results
         data = {
             "corpus": corpus,
-            "directory": str(dir_path),
+            "directories": [str(p) for p in dir_paths],
             "files_indexed": total_indexed,
             "files_skipped": already_indexed_count,
             "meili_backfilled": meili_backfilled,

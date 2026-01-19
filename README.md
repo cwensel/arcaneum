@@ -122,7 +122,7 @@ arc search text "query" --index NAME
 # Dual Indexing (Both Systems)
 arc corpus create NAME --type TYPE
 arc corpus delete NAME                   # Delete both collection and index
-arc corpus sync PATH --corpus NAME
+arc corpus sync NAME PATH [PATH...]      # Sync one or more directories
 arc corpus items NAME                    # List items with parity status
 arc corpus parity NAME                   # Check/restore parity
 ```
@@ -181,7 +181,10 @@ arc search text '"neural network architecture"' --index my-docs
 arc corpus create MyDocs --type pdf
 
 # Index to both Qdrant and MeiliSearch
-arc corpus sync ~/Documents --corpus MyDocs
+arc corpus sync MyDocs ~/Documents
+
+# Sync multiple directories at once
+arc corpus sync MyDocs ~/Documents ~/Papers ~/Reports
 
 # Semantic search (conceptual)
 arc search semantic "machine learning concepts" --collection MyDocs

@@ -317,6 +317,46 @@ class MetadataBasedSync:
             logger.warning(f"Error querying indexed paths: {e}")
             return set()
 
+    def get_chunk_counts_by_file(self, collection_name: str) -> Dict[str, int]:
+        """Get chunk counts per file_path from Qdrant collection.
+
+        Args:
+            collection_name: Qdrant collection name
+
+        Returns:
+            Dict mapping file_path to chunk count
+        """
+        chunk_counts: Dict[str, int] = {}
+        offset = None
+
+        try:
+            while True:
+                points, offset = self.qdrant.scroll(
+                    collection_name=collection_name,
+                    limit=100,
+                    offset=offset,
+                    with_payload=["file_path"],
+                    with_vectors=False
+                )
+
+                if not points:
+                    break
+
+                for point in points:
+                    if point.payload:
+                        path = point.payload.get("file_path")
+                        if path:
+                            chunk_counts[path] = chunk_counts.get(path, 0) + 1
+
+                if offset is None:
+                    break
+
+            return chunk_counts
+
+        except Exception as e:
+            logger.warning(f"Error querying chunk counts: {e}")
+            return {}
+
     def get_unindexed_files(self, collection_name: str,
                             file_list: List[Path],
                             hash_fn=None) -> Tuple[List[Path], List[Path]]:

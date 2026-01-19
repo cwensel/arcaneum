@@ -92,6 +92,63 @@ class FullTextClient:
         task = self.client.delete_index(name)
         self.client.wait_for_task(task.task_uid)
 
+    def delete_documents_by_file_paths(
+        self,
+        index_name: str,
+        file_paths: List[str],
+        timeout_ms: int = 180000
+    ) -> Dict[str, Any]:
+        """
+        Delete all documents with the given file_path values.
+
+        Uses filter-based deletion for efficiency. Requires file_path
+        to be a filterable attribute on the index.
+
+        Args:
+            index_name: Index to delete from
+            file_paths: List of file_path values to delete
+            timeout_ms: Timeout for waiting on deletion tasks (default: 3 min)
+
+        Returns:
+            Dict with 'deleted_count' (number of file paths processed) and 'task_uids'
+        """
+        if not file_paths:
+            return {'deleted_count': 0, 'task_uids': []}
+
+        index = self.get_index(index_name)
+        task_uids = []
+
+        # Delete in batches to avoid overly long filter expressions
+        batch_size = 100
+        for i in range(0, len(file_paths), batch_size):
+            batch = file_paths[i:i + batch_size]
+
+            # Build filter: file_path IN ["path1", "path2", ...]
+            # Escape quotes in file paths
+            escaped_paths = [fp.replace('"', '\\"') for fp in batch]
+            quoted_paths = [f'"{p}"' for p in escaped_paths]
+            filter_expr = f'file_path IN [{", ".join(quoted_paths)}]'
+
+            try:
+                task = index.delete_documents(filter=filter_expr)
+                task_uids.append(task.task_uid)
+            except Exception as e:
+                # Log but continue - some batches may succeed
+                import logging
+                logging.getLogger(__name__).error(
+                    f"Failed to queue deletion for batch starting at {i}: {e}"
+                )
+
+        # Wait for all deletion tasks
+        for task_uid in task_uids:
+            try:
+                self.client.wait_for_task(task_uid, timeout_in_ms=timeout_ms)
+            except Exception:
+                # Deletion failures are logged but not fatal
+                pass
+
+        return {'deleted_count': len(file_paths), 'task_uids': task_uids}
+
     def add_documents(
         self,
         index_name: str,
@@ -334,3 +391,52 @@ class FullTextClient:
                 break
 
         return file_paths
+
+    def get_chunk_counts_by_file(self, index_name: str) -> Dict[str, int]:
+        """Get chunk counts per file_path from an index.
+
+        Args:
+            index_name: Index to query
+
+        Returns:
+            Dict mapping file_path to chunk count
+        """
+        index = self.get_index(index_name)
+        chunk_counts: Dict[str, int] = {}
+
+        # Paginate through all documents, counting per file_path
+        offset = 0
+        limit = 1000
+
+        while True:
+            result = index.get_documents({
+                'offset': offset,
+                'limit': limit,
+                'fields': ['file_path']
+            })
+
+            # Handle both dict and object results
+            if hasattr(result, 'results'):
+                docs = result.results
+            else:
+                docs = result.get('results', [])
+
+            if not docs:
+                break
+
+            for doc in docs:
+                if hasattr(doc, 'file_path'):
+                    fp = doc.file_path
+                elif isinstance(doc, dict) and 'file_path' in doc:
+                    fp = doc['file_path']
+                else:
+                    continue
+
+                chunk_counts[fp] = chunk_counts.get(fp, 0) + 1
+
+            offset += limit
+
+            if len(docs) < limit:
+                break
+
+        return chunk_counts

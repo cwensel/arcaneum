@@ -592,11 +592,12 @@ def sync_directory(directory, corpus, models, file_types, force, verify, text_wo
 @corpus.command('parity')
 @click.argument('name')
 @click.option('--dry-run', is_flag=True, help='Show what would be backfilled without making changes')
+@click.option('--verify', is_flag=True, help='Verify chunk counts match between systems (detects partial uploads)')
 @click.option('--text-workers', type=int, default=None,
               help='Parallel workers for fetching/chunking (default: auto=cpu/2, 0=sequential)')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed progress for each file')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def corpus_parity(name, dry_run, text_workers, verbose, output_json):
+def corpus_parity(name, dry_run, verify, text_workers, verbose, output_json):
     """Check and restore parity between Qdrant and MeiliSearch.
 
     Compares indexed files in both systems and backfills missing entries:
@@ -605,10 +606,13 @@ def corpus_parity(name, dry_run, text_workers, verbose, output_json):
 
     Files that don't exist on disk are skipped with a warning.
 
+    Use --verify to check that chunk counts match for files in both systems.
+    This detects partial uploads from previous failed syncs.
+
     Use --text-workers to control parallelism for fetching and chunking.
     """
     from arcaneum.cli.sync import parity_command
-    parity_command(name, dry_run, text_workers, verbose, output_json)
+    parity_command(name, dry_run, verify, text_workers, verbose, output_json)
 
 
 @corpus.command('info')

@@ -1130,13 +1130,33 @@ def _backfill_qdrant_to_meili(
                     files_failed += 1
                     # We don't know exact chunk count that failed, but this is conservative
 
-        if files_with_failed_uploads and not output_json:
-            progress.console.print(f"[yellow]Warning: {len(files_with_failed_uploads)} files had upload failures[/yellow]")
-            if verbose:
-                for fp in files_with_failed_uploads[:5]:
-                    progress.console.print(f"[yellow]  - {Path(fp).name}[/yellow]")
-                if len(files_with_failed_uploads) > 5:
-                    progress.console.print(f"[yellow]  ... and {len(files_with_failed_uploads) - 5} more[/yellow]")
+        if files_with_failed_uploads:
+            if not output_json:
+                progress.console.print(f"[yellow]Warning: {len(files_with_failed_uploads)} files had upload failures[/yellow]")
+                if verbose:
+                    for fp in files_with_failed_uploads[:5]:
+                        progress.console.print(f"[yellow]  - {Path(fp).name}[/yellow]")
+                    if len(files_with_failed_uploads) > 5:
+                        progress.console.print(f"[yellow]  ... and {len(files_with_failed_uploads) - 5} more[/yellow]")
+
+            # Clean up partial uploads from MeiliSearch so they can be retried
+            # This ensures failed files aren't seen as "synced" on the next parity run
+            if not output_json:
+                progress.console.print(f"[dim]Cleaning up partial uploads for failed files...[/dim]")
+            try:
+                meili.delete_documents_by_file_paths(corpus, files_with_failed_uploads)
+                if not output_json:
+                    progress.console.print(f"[dim]  Cleaned up {len(files_with_failed_uploads)} partial file uploads[/dim]")
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to clean up partial uploads: {cleanup_error}")
+                if not output_json:
+                    progress.console.print(
+                        f"[yellow]Warning: Could not clean up partial uploads: {cleanup_error}[/yellow]"
+                    )
+                    progress.console.print(
+                        f"[yellow]These files may appear synced but have incomplete data. "
+                        f"Run parity again to retry.[/yellow]"
+                    )
 
     if verbose and not output_json:
         progress.console.print(f"[green]  ✓ Uploaded {chunks_success} chunks for {len(completed_files)} files to MeiliSearch[/green]")
@@ -1405,6 +1425,7 @@ def _backfill_meili_to_qdrant(
 def parity_command(
     corpus: str,
     dry_run: bool,
+    verify: bool,
     text_workers: Optional[int],
     verbose: bool,
     output_json: bool
@@ -1420,6 +1441,7 @@ def parity_command(
     Args:
         corpus: Corpus name
         dry_run: If True, show what would be backfilled without making changes
+        verify: If True, verify chunk counts match for files in both systems
         text_workers: Number of parallel workers for code chunking (None=auto, 0/1=sequential)
         verbose: If True, show detailed progress
         output_json: If True, output JSON format
@@ -1490,12 +1512,70 @@ def parity_command(
         missing_from_meili = qdrant_file_paths - meili_file_paths
         missing_from_qdrant = meili_file_paths - qdrant_file_paths
 
+        # Verify chunk counts if requested
+        chunk_mismatches = []
+        if verify and in_both:
+            if not output_json:
+                console.print(f"\n[dim]Verifying chunk counts for {len(in_both)} files...[/dim]")
+
+            # Get chunk counts from both systems
+            qdrant_chunk_counts = sync_manager.get_chunk_counts_by_file(corpus)
+            meili_chunk_counts = meili.get_chunk_counts_by_file(corpus)
+
+            # Show diagnostic info
+            total_qdrant_chunks = sum(qdrant_chunk_counts.values())
+            total_meili_chunks = sum(meili_chunk_counts.values())
+            if not output_json:
+                console.print(f"[dim]  Qdrant total chunks: {total_qdrant_chunks} across {len(qdrant_chunk_counts)} files[/dim]")
+                console.print(f"[dim]  MeiliSearch total chunks: {total_meili_chunks} across {len(meili_chunk_counts)} files[/dim]")
+
+            # Compare counts for files in both systems
+            for file_path in in_both:
+                qdrant_count = qdrant_chunk_counts.get(file_path, 0)
+                meili_count = meili_chunk_counts.get(file_path, 0)
+                if qdrant_count != meili_count:
+                    chunk_mismatches.append({
+                        'file_path': file_path,
+                        'qdrant_chunks': qdrant_count,
+                        'meili_chunks': meili_count,
+                    })
+
+            # Also check for files in the counts but not in file_paths (edge case)
+            qdrant_only_in_counts = set(qdrant_chunk_counts.keys()) - meili_file_paths
+            meili_only_in_counts = set(meili_chunk_counts.keys()) - qdrant_file_paths
+            if verbose and not output_json:
+                if qdrant_only_in_counts:
+                    console.print(f"[dim]  Files in Qdrant counts but not MeiliSearch file_paths: {len(qdrant_only_in_counts)}[/dim]")
+                if meili_only_in_counts:
+                    console.print(f"[dim]  Files in MeiliSearch counts but not Qdrant file_paths: {len(meili_only_in_counts)}[/dim]")
+
+            if chunk_mismatches:
+                # Move mismatched files from "in_both" to the appropriate backfill list
+                # Files with more chunks in Qdrant need MeiliSearch backfill
+                # Files with more chunks in MeiliSearch need Qdrant backfill (re-index)
+                for mismatch in chunk_mismatches:
+                    fp = mismatch['file_path']
+                    in_both.discard(fp)
+                    # Qdrant is source of truth - backfill to MeiliSearch
+                    missing_from_meili.add(fp)
+
         # Report status
         if not output_json:
             console.print(f"\n[bold]Index Status:[/bold]")
             console.print(f"  Files in both systems:     {len(in_both)}")
             console.print(f"  Files in Qdrant only:      {len(missing_from_meili)}")
             console.print(f"  Files in MeiliSearch only: {len(missing_from_qdrant)}")
+
+            if chunk_mismatches:
+                console.print(f"\n[yellow]Chunk count mismatches:      {len(chunk_mismatches)} files[/yellow]")
+                if verbose:
+                    for m in chunk_mismatches[:10]:
+                        console.print(
+                            f"  [yellow]{Path(m['file_path']).name}: "
+                            f"Qdrant={m['qdrant_chunks']}, MeiliSearch={m['meili_chunks']}[/yellow]"
+                        )
+                    if len(chunk_mismatches) > 10:
+                        console.print(f"  [yellow]... and {len(chunk_mismatches) - 10} more[/yellow]")
 
         # Check which files missing from Qdrant exist on disk
         qdrant_backfill_paths = []
@@ -1568,6 +1648,18 @@ def parity_command(
                 console.print(f"\n[green]✓ Indexes are already in parity[/green]")
             interaction_logger.finish(result_count=0)
             return
+
+        # Delete mismatched files from MeiliSearch before re-syncing
+        if chunk_mismatches:
+            mismatched_paths = [m['file_path'] for m in chunk_mismatches]
+            if not output_json:
+                console.print(f"\n[dim]Deleting {len(mismatched_paths)} mismatched files from MeiliSearch...[/dim]")
+            try:
+                meili.delete_documents_by_file_paths(corpus, mismatched_paths)
+            except Exception as e:
+                logger.warning(f"Failed to delete mismatched files: {e}")
+                if not output_json:
+                    console.print(f"[yellow]Warning: Could not delete mismatched files: {e}[/yellow]")
 
         # Backfill MeiliSearch from Qdrant
         meili_backfilled = 0

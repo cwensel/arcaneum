@@ -702,7 +702,6 @@ def sync_directory_command(
                 meili_backfilled, meili_backfill_chunks, meili_backfill_failed = _backfill_qdrant_to_meili(
                     qdrant, meili, corpus, meili_backfill_paths,
                     verbose, output_json, progress, backfill_task,
-                    fetch_workers=effective_text_workers,
                 )
 
             total_meili += meili_backfill_chunks
@@ -1039,6 +1038,116 @@ def _fetch_qdrant_chunks_for_file(
         return (file_path_str, [], str(e))
 
 
+def _fetch_chunks_for_files_bulk(
+    qdrant,
+    corpus: str,
+    file_paths_needed: Set[str],
+    verbose: bool,
+    output_json: bool,
+    console,
+) -> Tuple[Dict[str, List[Dict[str, Any]]], Optional[str]]:
+    """Fetch chunks for multiple files with a single scroll through Qdrant.
+
+    Instead of one filtered query per file (which causes O(files × total_chunks)
+    filtering operations in Qdrant), this scrolls through the collection once
+    and collects chunks for files in the needed set.
+
+    This is O(total_chunks) but with far fewer requests than the per-file approach,
+    dramatically reducing Qdrant CPU usage for large collections.
+
+    Args:
+        qdrant: Qdrant client
+        corpus: Collection name
+        file_paths_needed: Set of file paths that need chunks fetched
+        verbose: Show verbose output
+        output_json: JSON output mode (suppresses progress)
+        console: Rich console for output
+
+    Returns:
+        Tuple of (dict mapping file_path -> list of MeiliSearch docs, error or None)
+    """
+    from collections import defaultdict
+
+    chunks_by_file: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    offset = None
+    points_scanned = 0
+    files_found: Set[str] = set()
+
+    try:
+        while True:
+            points, offset = qdrant.scroll(
+                collection_name=corpus,
+                limit=1000,  # Large batches for efficiency
+                offset=offset,
+                with_payload=True,
+                with_vectors=False
+            )
+
+            if not points:
+                break
+
+            for point in points:
+                payload = point.payload
+                file_path = payload.get("file_path")
+
+                # Only collect for files we need
+                if file_path and file_path in file_paths_needed:
+                    files_found.add(file_path)
+
+                    meili_doc = {
+                        "id": str(point.id),
+                        "content": payload.get("text", ""),
+                        "file_path": file_path,
+                        "filename": payload.get("filename", ""),
+                        "file_extension": payload.get("file_extension", ""),
+                        "chunk_index": payload.get("chunk_index", 0),
+                    }
+
+                    # Add optional fields
+                    if payload.get("page_number"):
+                        meili_doc["page_number"] = payload["page_number"]
+                    if payload.get("programming_language"):
+                        meili_doc["language"] = payload["programming_language"]
+                    if payload.get("document_type"):
+                        meili_doc["document_type"] = payload["document_type"]
+
+                    # Add git metadata fields for code corpora
+                    if payload.get("git_project_identifier"):
+                        meili_doc["git_project_identifier"] = payload["git_project_identifier"]
+                    if payload.get("git_project_name"):
+                        meili_doc["git_project_name"] = payload["git_project_name"]
+                    if payload.get("git_branch"):
+                        meili_doc["git_branch"] = payload["git_branch"]
+                    if payload.get("git_commit_hash"):
+                        meili_doc["git_commit_hash"] = payload["git_commit_hash"]
+
+                    chunks_by_file[file_path].append(meili_doc)
+
+            points_scanned += len(points)
+
+            # Progress indicator for long scrolls
+            if verbose and not output_json and points_scanned % 50000 == 0:
+                console.print(
+                    f"[dim]  Scanned {points_scanned:,} Qdrant points, "
+                    f"found {len(files_found)}/{len(file_paths_needed)} files...[/dim]"
+                )
+
+            if offset is None:
+                break
+
+        if verbose and not output_json:
+            total_chunks = sum(len(docs) for docs in chunks_by_file.values())
+            console.print(
+                f"[dim]  Bulk fetch complete: scanned {points_scanned:,} points, "
+                f"collected {total_chunks:,} chunks for {len(files_found)} files[/dim]"
+            )
+
+        return dict(chunks_by_file), None
+
+    except Exception as e:
+        return {}, str(e)
+
+
 def _fetch_git_metadata_for_files(
     qdrant,
     corpus: str,
@@ -1267,12 +1376,12 @@ def _backfill_qdrant_to_meili(
     progress,
     backfill_task,
     batch_size: int = 1000,
-    fetch_workers: int = 8,
 ) -> tuple:
     """Backfill files from Qdrant to MeiliSearch.
 
     Copies chunk data from Qdrant to MeiliSearch without needing file access.
-    Uses parallel fetches from Qdrant and uploads to MeiliSearch.
+    Uses a single bulk scroll through Qdrant (much faster than per-file queries)
+    then uploads to MeiliSearch.
 
     ATOMICITY: Each file is uploaded as a complete unit. If the process is
     interrupted, files are either fully indexed or not at all - no partial
@@ -1288,13 +1397,10 @@ def _backfill_qdrant_to_meili(
         progress: Rich progress instance
         backfill_task: Progress task ID
         batch_size: Max documents per upload batch (default: 1000)
-        fetch_workers: Number of parallel threads for Qdrant fetches (default: 8)
 
     Returns:
         Tuple of (files_success, chunks_success, files_failed)
     """
-    import threading
-
     files_success = 0
     files_failed = 0
     chunks_success = 0
@@ -1302,7 +1408,6 @@ def _backfill_qdrant_to_meili(
     # Track completed file uploads (for atomicity)
     upload_tasks_by_file: Dict[str, List[int]] = {}  # file_path -> [task_uids]
     completed_files: Set[str] = set()
-    stats_lock = threading.Lock()
 
     def upload_file_chunks(file_path: str, docs: List[Dict[str, Any]]) -> bool:
         """Upload all chunks for a single file atomically.
@@ -1323,8 +1428,7 @@ def _backfill_qdrant_to_meili(
                 task_uids.append(task.task_uid)
 
             # Track tasks for this file
-            with stats_lock:
-                upload_tasks_by_file[file_path] = task_uids
+            upload_tasks_by_file[file_path] = task_uids
 
             if verbose and not output_json:
                 progress.console.print(
@@ -1337,46 +1441,43 @@ def _backfill_qdrant_to_meili(
             logger.error(f"Failed to queue upload for {file_path}: {e}")
             return False
 
-    # Parallel fetch from Qdrant and queue uploads
-    progress.update(backfill_task, description=f"Fetching & uploading ({fetch_workers} threads)...")
+    # Phase 1: Bulk fetch all needed chunks with single Qdrant scroll
+    # This is dramatically faster than per-file filtered queries
+    progress.update(backfill_task, description="Fetching chunks from Qdrant (bulk scroll)...")
 
-    with ThreadPoolExecutor(max_workers=fetch_workers) as executor:
-        # Submit all fetch tasks
-        futures = {
-            executor.submit(_fetch_qdrant_chunks_for_file, qdrant, corpus, fp): fp
-            for fp in file_paths
-        }
+    file_paths_set = set(file_paths)
+    chunks_by_file, fetch_error = _fetch_chunks_for_files_bulk(
+        qdrant, corpus, file_paths_set, verbose, output_json, progress.console
+    )
 
-        # Process results as they complete - upload each file atomically
-        for future in as_completed(futures):
-            file_path_str = futures[future]
-            try:
-                fp, docs, error = future.result()
-                if error:
-                    with stats_lock:
-                        files_failed += 1
-                    logger.error(f"Failed to fetch {fp} from Qdrant: {error}")
-                    if not output_json:
-                        progress.console.print(f"[yellow]Warning: Failed to fetch {Path(fp).name}: {error}[/yellow]")
-                elif docs:
-                    # Upload all chunks for this file as a unit
-                    if upload_file_chunks(fp, docs):
-                        with stats_lock:
-                            files_success += 1
-                            chunks_success += len(docs)
-                    else:
-                        with stats_lock:
-                            files_failed += 1
-                else:
-                    # No chunks found, still count as success
-                    with stats_lock:
-                        files_success += 1
-            except Exception as e:
-                with stats_lock:
-                    files_failed += 1
-                logger.error(f"Failed to process {file_path_str}: {e}")
+    if fetch_error:
+        logger.error(f"Bulk fetch from Qdrant failed: {fetch_error}")
+        if not output_json:
+            progress.console.print(f"[red]Error: Failed to fetch chunks from Qdrant: {fetch_error}[/red]")
+        return 0, 0, len(file_paths)
 
-            progress.advance(backfill_task)
+    # Phase 2: Upload chunks to MeiliSearch
+    progress.update(backfill_task, description="Uploading to MeiliSearch...")
+
+    for file_path in file_paths:
+        docs = chunks_by_file.get(file_path, [])
+        if docs:
+            # Upload all chunks for this file as a unit
+            if upload_file_chunks(file_path, docs):
+                files_success += 1
+                chunks_success += len(docs)
+            else:
+                files_failed += 1
+        else:
+            # No chunks found in Qdrant for this file
+            # This shouldn't happen if parity detected the file correctly
+            files_success += 1
+            if verbose and not output_json:
+                progress.console.print(
+                    f"[yellow]Warning: No chunks found for {Path(file_path).name}[/yellow]"
+                )
+
+        progress.advance(backfill_task)
 
     # Wait for all upload tasks to complete, tracking per-file success
     all_task_uids = []
@@ -1384,7 +1485,11 @@ def _backfill_qdrant_to_meili(
         all_task_uids.extend(task_uids)
 
     if all_task_uids:
-        progress.update(backfill_task, description=f"Waiting for {len(all_task_uids)} uploads to complete...")
+        # Create a new progress task for waiting on uploads
+        wait_task = progress.add_task(
+            "Waiting for uploads...",
+            total=len(all_task_uids)
+        )
 
         # Wait for all tasks
         task_results: Dict[int, bool] = {}  # task_uid -> success
@@ -1400,6 +1505,8 @@ def _backfill_qdrant_to_meili(
                 task_results[task_uid] = False
                 logger.error(f"Upload task {task_uid} error: {e}")
 
+            progress.advance(wait_task)
+
         # Check which files completed successfully (all their tasks succeeded)
         files_with_failed_uploads = []
         for file_path, task_uids in upload_tasks_by_file.items():
@@ -1409,10 +1516,8 @@ def _backfill_qdrant_to_meili(
             else:
                 files_with_failed_uploads.append(file_path)
                 # Adjust counts - file upload failed
-                with stats_lock:
-                    files_success -= 1
-                    files_failed += 1
-                    # We don't know exact chunk count that failed, but this is conservative
+                files_success -= 1
+                files_failed += 1
 
         if files_with_failed_uploads:
             if not output_json:
@@ -2365,7 +2470,6 @@ def _parity_single_corpus(
                 meili_backfilled, meili_backfill_chunks, meili_backfill_failed = _backfill_qdrant_to_meili(
                     qdrant, meili, corpus, meili_backfill_paths,
                     verbose, output_json, progress, backfill_task,
-                    fetch_workers=effective_text_workers,
                 )
 
         # Backfill Qdrant from MeiliSearch

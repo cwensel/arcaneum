@@ -1858,6 +1858,7 @@ def _parity_all_corpora(
     verify: bool,
     repair_metadata: bool,
     text_workers: Optional[int],
+    qdrant_timeout: int,
     create_missing: bool,
     confirm: bool,
     verbose: bool,
@@ -2026,6 +2027,7 @@ def _parity_all_corpora(
                     verify=verify,
                     repair_metadata=repair_metadata,
                     effective_text_workers=effective_text_workers,
+                    qdrant_timeout=qdrant_timeout,
                     create_missing=False,  # Already handled create_missing above
                     verbose=verbose,
                     output_json=output_json,
@@ -2076,6 +2078,7 @@ def _parity_single_corpus(
     verify: bool,
     repair_metadata: bool,
     effective_text_workers: int,
+    qdrant_timeout: int,
     create_missing: bool,
     verbose: bool,
     output_json: bool,
@@ -2089,6 +2092,7 @@ def _parity_single_corpus(
         verify: If True, verify chunk counts match for files in both systems
         repair_metadata: If True, update MeiliSearch docs with missing git metadata from Qdrant
         effective_text_workers: Number of parallel workers for code chunking
+        qdrant_timeout: Timeout in seconds for Qdrant operations
         create_missing: If True, create missing MeiliSearch index for qdrant_only corpus
         verbose: If True, show detailed progress
         output_json: If True, output JSON format
@@ -2105,8 +2109,8 @@ def _parity_single_corpus(
         if not output_json:
             print_info(f"Checking parity for corpus '{corpus}'...")
 
-        # Initialize clients
-        qdrant = create_qdrant_client()
+        # Initialize clients with extended timeout for batch operations
+        qdrant = create_qdrant_client(timeout=qdrant_timeout)
         meili = get_meili_client()
 
         # Verify corpus exists in both systems
@@ -2479,6 +2483,7 @@ def parity_command(
     verify: bool,
     repair_metadata: bool,
     text_workers: Optional[int],
+    qdrant_timeout: int,
     create_missing: bool,
     confirm: bool,
     verbose: bool,
@@ -2501,6 +2506,7 @@ def parity_command(
         verify: If True, verify chunk counts match for files in both systems
         repair_metadata: If True, update MeiliSearch docs with missing git metadata from Qdrant
         text_workers: Number of parallel workers for code chunking (None=auto, 0/1=sequential)
+        qdrant_timeout: Timeout in seconds for Qdrant operations
         create_missing: If True, create missing MeiliSearch indexes for qdrant_only corpora
         confirm: If True, skip confirmation prompt when processing all corpora
         verbose: If True, show detailed progress
@@ -2522,6 +2528,7 @@ def parity_command(
             verify=verify,
             repair_metadata=repair_metadata,
             effective_text_workers=effective_text_workers,
+            qdrant_timeout=qdrant_timeout,
             create_missing=create_missing,
             verbose=verbose,
             output_json=output_json,
@@ -2534,6 +2541,7 @@ def parity_command(
             verify=verify,
             repair_metadata=repair_metadata,
             text_workers=text_workers,
+            qdrant_timeout=qdrant_timeout,
             create_missing=create_missing,
             confirm=confirm,
             verbose=verbose,

@@ -612,11 +612,13 @@ def sync_directory(corpus, directories, models, file_types, force, verify, text_
 @click.option('--repair-metadata', is_flag=True, help='Update MeiliSearch docs with missing git metadata from Qdrant')
 @click.option('--text-workers', type=int, default=None,
               help='Parallel workers for fetching/chunking (default: auto=cpu/2, 0=sequential)')
+@click.option('--timeout', type=int, default=120,
+              help='Qdrant timeout in seconds for fetch operations (default: 120)')
 @click.option('--create-missing', is_flag=True, help='Create missing MeiliSearch indexes for qdrant_only corpora')
 @click.option('--confirm', is_flag=True, help='Skip confirmation prompt when processing all corpora')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed progress for each file')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def corpus_parity(name, dry_run, verify, repair_metadata, text_workers, create_missing, confirm, verbose, output_json):
+def corpus_parity(name, dry_run, verify, repair_metadata, text_workers, timeout, create_missing, confirm, verbose, output_json):
     """Check and restore parity between Qdrant and MeiliSearch.
 
     When NAME is provided, operates on a single corpus. When NAME is omitted,
@@ -642,7 +644,7 @@ def corpus_parity(name, dry_run, verify, repair_metadata, text_workers, create_m
     exist in Qdrant. This promotes single-sided collections into full corpora.
     """
     from arcaneum.cli.sync import parity_command
-    parity_command(name, dry_run, verify, repair_metadata, text_workers, create_missing, confirm, verbose, output_json)
+    parity_command(name, dry_run, verify, repair_metadata, text_workers, timeout, create_missing, confirm, verbose, output_json)
 
 
 @corpus.command('info')

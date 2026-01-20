@@ -83,3 +83,16 @@ target-version = ["py312"]
 line-length = 100
 target-version = "py312"
 select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+markers = [
+    "unit: Unit tests (no external dependencies)",
+    "integration: Integration tests (require services)",
+    "e2e: End-to-end tests",
+    "slow: Tests taking >5 seconds",
+]
+addopts = "-v --tb=short"

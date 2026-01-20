@@ -302,6 +302,7 @@ def sync_directory_command(
     force: bool,
     verify: bool,
     text_workers: Optional[int],
+    max_embedding_batch: Optional[int],
     verbose: bool,
     output_json: bool
 ):
@@ -319,6 +320,7 @@ def sync_directory_command(
         force: If True, reindex all files (bypass change detection)
         verify: If True, verify collection integrity after indexing
         text_workers: Number of parallel workers for code chunking (None=auto, 0/1=sequential)
+        max_embedding_batch: Cap for embedding batch size (None=auto, use 8-16 for OOM recovery)
         verbose: If True, show detailed progress
         output_json: If True, output JSON format
     """
@@ -595,7 +597,7 @@ def sync_directory_command(
                             # Generate embeddings for all models
                             vectors = {}
                             for model in model_list:
-                                embeddings = embedding_client.embed([chunk['text']], model)
+                                embeddings = embedding_client.embed([chunk['text']], model, max_internal_batch=max_embedding_batch)
                                 # Handle both list and numpy array returns
                                 if hasattr(embeddings, 'tolist'):
                                     vectors[model] = embeddings[0].tolist()
@@ -798,7 +800,7 @@ def sync_directory_command(
                             # Generate embeddings for all models
                             vectors = {}
                             for model in model_list:
-                                embeddings = embedding_client.embed([chunk['text']], model)
+                                embeddings = embedding_client.embed([chunk['text']], model, max_internal_batch=max_embedding_batch)
                                 if hasattr(embeddings, 'tolist'):
                                     vectors[model] = embeddings[0].tolist()
                                 else:

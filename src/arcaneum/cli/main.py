@@ -590,9 +590,11 @@ def delete_corpus(name, confirm, output_json):
 @click.option('--verify', is_flag=True, help='Verify collection integrity after indexing')
 @click.option('--text-workers', type=int, default=None,
               help='Parallel workers for code AST chunking (default: auto=cpu/2, 0=sequential)')
+@click.option('--max-embedding-batch', type=int, default=None,
+              help='Cap embedding batch size (default: auto from GPU memory, use 8-16 for OOM)')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed progress (files, chunks, indexing)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def sync_directory(corpus, directories, models, file_types, force, verify, text_workers, verbose, output_json):
+def sync_directory(corpus, directories, models, file_types, force, verify, text_workers, max_embedding_batch, verbose, output_json):
     """Index to both vector and full-text.
 
     Examples:
@@ -602,7 +604,7 @@ def sync_directory(corpus, directories, models, file_types, force, verify, text_
     Use --text-workers to parallelize AST chunking for code corpora.
     """
     from arcaneum.cli.sync import sync_directory_command
-    sync_directory_command(corpus, directories, models, file_types, force, verify, text_workers, verbose, output_json)
+    sync_directory_command(corpus, directories, models, file_types, force, verify, text_workers, max_embedding_batch, verbose, output_json)
 
 
 @corpus.command('parity')

@@ -95,6 +95,7 @@ EMBEDDING_MODELS = {
         "available": True,
         "recommended_for": "pdf",
         "params_billions": 1.5,  # 1.5B params
+        "mps_max_batch": 2,  # MPS needs tiny batches to avoid "not enough space" errors
         # Note: Model default max_seq_length=512, don't override
     },
 
@@ -504,12 +505,40 @@ class EmbeddingClient:
                 internal_batch_size = min(batch_size, 256)
 
             # Disable progress bar - pipeline handles progress display
-            embeddings = model.encode(
-                texts,
-                batch_size=internal_batch_size,
-                show_progress_bar=False,
-                convert_to_numpy=True
-            )
+            # Wrap in MPS error handling for graceful degradation
+            try:
+                embeddings = model.encode(
+                    texts,
+                    batch_size=internal_batch_size,
+                    show_progress_bar=False,
+                    convert_to_numpy=True
+                )
+            except Exception as e:
+                error_msg = str(e).lower()
+                # Detect MPS "not enough space" errors (macOS Metal shader graph allocation failures)
+                if self._device == "mps" and ("enough space" in error_msg or "mpsgraph" in error_msg):
+                    # Try with minimal batch size
+                    if internal_batch_size > 1:
+                        logger.warning(
+                            f"MPS memory error with batch_size={internal_batch_size}, retrying with batch_size=1. "
+                            f"Consider using ARC_NO_GPU=1 for CPU mode."
+                        )
+                        embeddings = model.encode(
+                            texts,
+                            batch_size=1,
+                            show_progress_bar=False,
+                            convert_to_numpy=True
+                        )
+                    else:
+                        # batch_size=1 still failing, suggest CPU fallback
+                        logger.error(
+                            f"MPS failed even with batch_size=1. Use ARC_NO_GPU=1 for CPU mode."
+                        )
+                        raise RuntimeError(
+                            f"MPS GPU memory exhausted. Run with ARC_NO_GPU=1 to use CPU instead."
+                        ) from e
+                else:
+                    raise
             # Return numpy arrays directly - Qdrant Python client accepts numpy.ndarray natively
             # Removing .tolist() conversion saves 5-15% overhead on embeddings (arcaneum-zfch)
             return embeddings

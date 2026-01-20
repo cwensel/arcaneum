@@ -191,6 +191,12 @@ def estimate_safe_batch_size_v2(
         model_config = EMBEDDING_MODELS.get(model_name, {})
         params_billions = model_config.get("params_billions")
 
+        # Check for MPS-specific batch size cap (some models need tiny batches on MPS)
+        mps_max_batch = model_config.get("mps_max_batch")
+        if mps_max_batch is not None:
+            logger.debug(f"MPS: Using model-specific mps_max_batch={mps_max_batch} for {model_name}")
+            return mps_max_batch
+
         # Derive optimal batch size from model parameter count
         # See get_batch_size_for_model_params() for the derivation logic
         optimal = get_batch_size_for_model_params(params_billions)

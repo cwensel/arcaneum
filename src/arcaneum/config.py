@@ -40,27 +40,12 @@ class CollectionTemplate(BaseModel):
     indexes: List[str] = Field(default_factory=list)
 
 
-class PDFProcessingConfig(BaseModel):
-    """PDF processing configuration (RDR-004)."""
-    ocr_enabled: bool = False
-    ocr_engine: str = "tesseract"
-    ocr_language: str = "eng"
-    ocr_threshold: int = 100
-    batch_size: int = 512  # GPU-optimal batch size (arcaneum-2m1i, arcaneum-i7oa)
-    parallel_workers: int = 4
-    # Timeout settings (seconds)
-    pdf_timeout: int = 600  # Total timeout per PDF file
-    ocr_page_timeout: int = 60  # Timeout per OCR page
-    embedding_timeout: int = 300  # Timeout for embedding generation
-
-
 class ArcaneumConfig(BaseModel):
     """Root configuration."""
     qdrant: QdrantConfig = Field(default_factory=QdrantConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
     models: Dict[str, ModelConfig]
     collections: Dict[str, CollectionTemplate] = Field(default_factory=dict)
-    pdf_processing: PDFProcessingConfig = Field(default_factory=PDFProcessingConfig)
 
 
 def load_config(config_path: Path) -> ArcaneumConfig:

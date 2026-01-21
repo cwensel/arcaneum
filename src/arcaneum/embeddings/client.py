@@ -95,7 +95,7 @@ EMBEDDING_MODELS = {
         "available": True,
         "recommended_for": "pdf",
         "params_billions": 1.5,  # 1.5B params
-        "mps_max_batch": 2,  # MPS needs tiny batches to avoid "not enough space" errors
+        "mps_max_batch": 2,  # MPS needs small batches to avoid system lockups on unified memory
         # Note: Model default max_seq_length=512, don't override
     },
 
@@ -242,6 +242,9 @@ class EmbeddingClient:
         Memory analysis shows 1024-text batches use <5MB (<0.1% of typical GPU memory),
         so we're not constrained by GPU memory - we can use larger batches for efficiency.
 
+        IMPORTANT: MPS (Apple Silicon) with large models needs much smaller batches
+        to avoid system lockups due to unified memory exhaustion.
+
         Args:
             model_name: Model identifier
 
@@ -251,9 +254,22 @@ class EmbeddingClient:
         if not self.use_gpu:
             return 256  # Conservative for CPU
 
+        # MPS with large models: use smaller batch sizes to avoid system lockups
+        # Unified memory architecture means GPU memory pressure affects entire system
+        # Note: outer batch size mainly affects RAM, inner batch (mps_max_batch) affects GPU
+        if self._device == "mps":
+            model_config = EMBEDDING_MODELS.get(model_name, {})
+            params_billions = model_config.get("params_billions", 0)
+            if params_billions >= 1.0:
+                return 128  # Large models (stella 1.5B)
+            elif params_billions >= 0.3:
+                return 256  # Medium models
+            else:
+                return 512  # Small models
+
         dimensions = self.get_dimensions(model_name)
 
-        # Adaptive sizing based on model dimensions (arcaneum-i7oa)
+        # CUDA: Adaptive sizing based on model dimensions (arcaneum-i7oa)
         # Larger batches = fewer kernel launches = better GPU utilization
         if dimensions <= 384:
             return 1024  # Small models (bge-small: 384D)

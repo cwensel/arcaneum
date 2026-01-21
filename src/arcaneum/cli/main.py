@@ -583,7 +583,7 @@ def delete_corpus(name, confirm, output_json):
 
 @corpus.command('sync')
 @click.argument('corpus')
-@click.argument('directories', nargs=-1, type=click.Path(exists=True), required=True)
+@click.argument('paths', nargs=-1, type=click.Path(exists=True), required=True)
 @click.option('--models', default='stella,jina', help='Embedding models (comma-separated)')
 @click.option('--file-types', help='File extensions to index (e.g., .py,.md)')
 @click.option('--force', is_flag=True, help='Force reindex all files (bypass change detection)')
@@ -594,17 +594,19 @@ def delete_corpus(name, confirm, output_json):
               help='Cap embedding batch size (default: auto from GPU memory, use 8-16 for OOM)')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed progress (files, chunks, indexing)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def sync_directory(corpus, directories, models, file_types, force, verify, text_workers, max_embedding_batch, verbose, output_json):
+def sync_directory(corpus, paths, models, file_types, force, verify, text_workers, max_embedding_batch, verbose, output_json):
     """Index to both vector and full-text.
 
     Examples:
         arc corpus sync MyCorpus /path/to/files
         arc corpus sync MyCorpus /path/one /path/two /path/three
+        arc corpus sync MyCorpus document.pdf
+        arc corpus sync MyCorpus notes.md /path/to/dir
 
     Use --text-workers to parallelize AST chunking for code corpora.
     """
     from arcaneum.cli.sync import sync_directory_command
-    sync_directory_command(corpus, directories, models, file_types, force, verify, text_workers, max_embedding_batch, verbose, output_json)
+    sync_directory_command(corpus, paths, models, file_types, force, verify, text_workers, max_embedding_batch, verbose, output_json)
 
 
 @corpus.command('parity')

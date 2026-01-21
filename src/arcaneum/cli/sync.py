@@ -296,7 +296,7 @@ def chunk_code_file(file_path: Path, chunk_size: int, chunk_overlap: int) -> Lis
 
 def sync_directory_command(
     corpus: str,
-    directories: tuple,
+    paths: tuple,
     models: str,
     file_types: Optional[str],
     force: bool,
@@ -306,7 +306,7 @@ def sync_directory_command(
     verbose: bool,
     output_json: bool
 ):
-    """Sync directories to both Qdrant and MeiliSearch.
+    """Sync directories or files to both Qdrant and MeiliSearch.
 
     This implements the second command of the 2-command workflow:
     1. corpus create - creates both systems
@@ -314,7 +314,7 @@ def sync_directory_command(
 
     Args:
         corpus: Corpus name (must exist)
-        directories: Tuple of directories to sync
+        paths: Tuple of directories or files to sync
         models: Comma-separated list of embedding models
         file_types: File extensions to index (e.g., ".py,.js")
         force: If True, reindex all files (bypass change detection)
@@ -335,27 +335,48 @@ def sync_directory_command(
     interaction_logger.start(
         "corpus", "sync",
         corpus=corpus,
-        directories=list(directories),
+        paths=list(paths),
         models=models,
         file_types=file_types,
     )
 
+    # Supported file extensions for single-file sync
+    SUPPORTED_FILE_EXTENSIONS = {'.pdf', '.md', '.markdown'}
+
     try:
-        # Validate and resolve all directories
+        # Validate and resolve all paths (directories or files)
         dir_paths = []
-        for directory in directories:
-            dir_path = Path(directory).resolve()
-            if not dir_path.exists():
-                raise InvalidArgumentError(f"Directory not found: {directory}")
-            if not dir_path.is_dir():
-                raise InvalidArgumentError(f"Not a directory: {directory}")
-            dir_paths.append(dir_path)
+        single_files = []
+        for path in paths:
+            resolved_path = Path(path).resolve()
+            if not resolved_path.exists():
+                raise InvalidArgumentError(f"Path not found: {path}")
+            if resolved_path.is_dir():
+                dir_paths.append(resolved_path)
+            elif resolved_path.is_file():
+                # Validate file extension
+                ext = resolved_path.suffix.lower()
+                if ext not in SUPPORTED_FILE_EXTENSIONS:
+                    raise InvalidArgumentError(
+                        f"Unsupported file type '{ext}' for: {path}. "
+                        f"Supported types: {', '.join(sorted(SUPPORTED_FILE_EXTENSIONS))}"
+                    )
+                single_files.append(resolved_path)
+            else:
+                raise InvalidArgumentError(f"Not a file or directory: {path}")
 
         if not output_json:
-            if len(dir_paths) == 1:
-                print_info(f"Syncing '{directories[0]}' to corpus '{corpus}'")
+            if len(single_files) == 1 and not dir_paths:
+                print_info(f"Syncing file '{paths[0]}' to corpus '{corpus}'")
+            elif len(dir_paths) == 1 and not single_files:
+                print_info(f"Syncing directory '{paths[0]}' to corpus '{corpus}'")
             else:
-                print_info(f"Syncing {len(dir_paths)} directories to corpus '{corpus}'")
+                parts = []
+                if dir_paths:
+                    parts.append(f"{len(dir_paths)} director{'y' if len(dir_paths) == 1 else 'ies'}")
+                if single_files:
+                    parts.append(f"{len(single_files)} file{'s' if len(single_files) > 1 else ''}")
+                print_info(f"Syncing {' and '.join(parts)} to corpus '{corpus}'")
 
         # Initialize clients
         qdrant = create_qdrant_client()
@@ -401,11 +422,13 @@ def sync_directory_command(
         # Parse models
         model_list = [m.strip() for m in configured_models.split(',')]
 
-        # Discover files from all directories
+        # Discover files from all directories and include single files
         files = []
         for dir_path in dir_paths:
             dir_files = discover_files(dir_path, file_types, corpus_type)
             files.extend(dir_files)
+        # Add single files directly (already validated for extension)
+        files.extend(single_files)
 
         if not files:
             if output_json:
@@ -416,8 +439,15 @@ def sync_directory_command(
             return
 
         if not output_json:
-            dir_word = "directory" if len(dir_paths) == 1 else "directories"
-            print_info(f"Found {len(files)} files across {len(dir_paths)} {dir_word}")
+            if single_files and not dir_paths:
+                print_info(f"Found {len(files)} file{'s' if len(files) > 1 else ''} to index")
+            elif dir_paths:
+                dir_word = "directory" if len(dir_paths) == 1 else "directories"
+                total_from_dirs = len(files) - len(single_files)
+                if single_files:
+                    print_info(f"Found {total_from_dirs} files across {len(dir_paths)} {dir_word}, plus {len(single_files)} individual file{'s' if len(single_files) > 1 else ''}")
+                else:
+                    print_info(f"Found {len(files)} files across {len(dir_paths)} {dir_word}")
 
         # Apply change detection (skip already indexed files) unless --force
         already_indexed_count = 0

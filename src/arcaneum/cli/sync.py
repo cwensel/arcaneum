@@ -303,6 +303,7 @@ def sync_directory_command(
     verify: bool,
     text_workers: Optional[int],
     max_embedding_batch: Optional[int],
+    no_gpu: bool,
     verbose: bool,
     output_json: bool
 ):
@@ -321,6 +322,7 @@ def sync_directory_command(
         verify: If True, verify collection integrity after indexing
         text_workers: Number of parallel workers for code chunking (None=auto, 0/1=sequential)
         max_embedding_batch: Cap for embedding batch size (None=auto, use 8-16 for OOM recovery)
+        no_gpu: If True, disable GPU acceleration (CPU only mode)
         verbose: If True, show detailed progress
         output_json: If True, output JSON format
     """
@@ -524,7 +526,7 @@ def sync_directory_command(
         # Only initialize embedding infrastructure if there are new files to process
         if files:
             # Initialize embedding client
-            use_gpu = not os.environ.get('ARC_NO_GPU', '').lower() in ('1', 'true')
+            use_gpu = not no_gpu and not os.environ.get('ARC_NO_GPU', '').lower() in ('1', 'true')
             embedding_client = EmbeddingClient(use_gpu=use_gpu)
 
             # Initialize git discovery for code corpora
@@ -759,7 +761,7 @@ def sync_directory_command(
                 console.print(f"\n[blue]Backfilling {len(qdrant_backfill_paths)} files to Qdrant (requires embedding)...[/blue]")
 
             # Need embedding client for Qdrant backfill
-            use_gpu = not os.environ.get('ARC_NO_GPU', '').lower() in ('1', 'true')
+            use_gpu = not no_gpu and not os.environ.get('ARC_NO_GPU', '').lower() in ('1', 'true')
             embedding_client = EmbeddingClient(use_gpu=use_gpu)
 
             # Get model config for chunking
@@ -2523,7 +2525,7 @@ def _parity_single_corpus(
             if not output_json:
                 console.print(f"\n[blue]Backfilling {len(qdrant_backfill_paths)} files to Qdrant (requires embedding)...[/blue]")
 
-            # Initialize embedding client
+            # Initialize embedding client (parity uses env var only, not CLI flag)
             use_gpu = not os.environ.get('ARC_NO_GPU', '').lower() in ('1', 'true')
             embedding_client = EmbeddingClient(use_gpu=use_gpu)
 

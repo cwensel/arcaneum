@@ -582,6 +582,16 @@ def sync_directory_command(
                     progress.update(task, description=f"Processing {file_path.name}...")
 
                     try:
+                        # Delete existing chunks when force=True to avoid duplicates
+                        if force:
+                            file_path_str = str(file_path.absolute())
+                            if verbose and not output_json:
+                                progress.console.print(f"[dim]Deleting existing chunks for {file_path.name}...[/dim]")
+                            # Delete from Qdrant
+                            dual_indexer.delete_by_file_path(file_path_str)
+                            # Delete from MeiliSearch
+                            meili.delete_documents_by_file_paths(corpus, [file_path_str])
+
                         # Chunk file based on corpus type
                         if verbose and not output_json:
                             progress.console.print(f"[dim]Extracting text from {file_path.name}...[/dim]")

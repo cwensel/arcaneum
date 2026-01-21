@@ -354,6 +354,21 @@ class EmbeddingClient:
                 from sentence_transformers import SentenceTransformer
                 import sys
 
+                # Warn about large models on MPS - risk of system lockup
+                params_billions = config.get("params_billions", 0)
+                if self._device == "mps" and params_billions >= 1.0:
+                    logger.warning(
+                        f"Loading {model_name} ({params_billions}B params) on MPS. "
+                        f"Large models may cause system lockups on Apple Silicon. "
+                        f"If unstable, use ARC_NO_GPU=1 for CPU mode or switch to a smaller model (e.g., bge)."
+                    )
+                    print(
+                        f"   ⚠ Warning: {model_name} is a large model ({params_billions}B params) that may cause "
+                        f"system instability on MPS.\n"
+                        f"     If you experience lockups, use: ARC_NO_GPU=1 arc corpus sync ...",
+                        flush=True, file=sys.stderr
+                    )
+
                 # Check if model is cached to avoid unnecessary network calls
                 is_cached = self.is_model_cached(model_name)
 

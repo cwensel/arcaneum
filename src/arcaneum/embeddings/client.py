@@ -185,8 +185,8 @@ class EmbeddingClient:
             verify_ssl: Whether to verify SSL certificates (set False for self-signed certs)
             use_gpu: Enable GPU acceleration (MPS for Apple Silicon, CUDA for NVIDIA)
                      Default: False (CPU only for backward compatibility)
-            cpu_workers: Number of CPU workers for parallel embedding in CPU mode
-                        Default: None (auto = cpu_count // 2)
+            cpu_workers: Number of batch workers for parallel embedding in CPU mode
+                        Default: 1 (conservative, prevents system crashes from thread over-subscription)
 
         Note: SSL configuration must be done before creating EmbeddingClient.
               Use ssl_config.check_and_configure_ssl() or disable_ssl_verification() first.
@@ -196,9 +196,10 @@ class EmbeddingClient:
             - FastEmbed models (bge-*): CoreML on Apple Silicon (partial support)
 
         CPU Mode Optimization:
-            When use_gpu=False, the client configures thread environment for optimal
-            CPU parallelism (OMP_NUM_THREADS, TOKENIZERS_PARALLELISM) and uses larger
-            batch sizes since memory isn't constrained by GPU.
+            When use_gpu=False, the client processes batches sequentially (cpu_workers=1)
+            but uses OMP/MKL threads for parallelism within each batch. This avoids
+            thread over-subscription that can cause system crashes with large models.
+            Use --cpu-workers to increase if your system can handle more parallelism.
         """
         self.cache_dir = cache_dir or str(get_models_dir())
         self.verify_ssl = verify_ssl
@@ -213,11 +214,14 @@ class EmbeddingClient:
         self._gpu_lock = None  # Deprecated: no longer needed with single-threaded embedding
 
         # CPU parallelization settings
-        # Calculate effective cpu_workers: explicit value, or auto (cpu_count // 2)
+        # Default to 1 worker (sequential batching) to avoid thread over-subscription.
+        # With cpu_workers=1, we let OMP/MKL handle parallelism within each batch.
+        # This is safer: 1 batch × N OMP threads vs N batches × M OMP threads competing.
+        # Use --cpu-workers to increase if your system can handle it.
         if cpu_workers is not None:
             self._cpu_workers = max(1, cpu_workers)
         else:
-            self._cpu_workers = max(1, os.cpu_count() // 2) if os.cpu_count() else 4
+            self._cpu_workers = 1  # Conservative default to prevent system crashes
         self._effective_cpu_workers = self._cpu_workers  # Store for embed_parallel
 
         # Configure thread environment for CPU mode
@@ -246,23 +250,37 @@ class EmbeddingClient:
         Sets environment variables for ONNX Runtime and PyTorch to use
         appropriate thread counts for CPU-only mode. This improves throughput
         when running with --no-gpu by allowing better CPU utilization.
+
+        Strategy: With default cpu_workers=1 (sequential batching), we let
+        OMP/MKL use most available cores for parallelism within each batch.
+        This avoids thread over-subscription that causes system crashes.
         """
-        cpu_threads = str(self._cpu_workers)
+        # Calculate OMP threads: use most cores for within-batch parallelism
+        # Leave 2 cores for system tasks to prevent complete system lockup
+        available_cores = os.cpu_count() or 4
+        omp_threads = max(1, available_cores - 2)
+
+        # If user specified multiple cpu_workers, reduce OMP threads proportionally
+        # to avoid over-subscription (workers × OMP threads should stay <= cores)
+        if self._cpu_workers > 1:
+            omp_threads = max(1, available_cores // self._cpu_workers)
+
+        cpu_threads = str(omp_threads)
 
         # OMP_NUM_THREADS controls OpenMP parallelism used by PyTorch/ONNX
-        # Setting this prevents over-subscription when using ThreadPoolExecutor
         if 'OMP_NUM_THREADS' not in os.environ:
             os.environ['OMP_NUM_THREADS'] = cpu_threads
-            logger.debug(f"Set OMP_NUM_THREADS={cpu_threads} for CPU parallelism")
+            logger.debug(f"Set OMP_NUM_THREADS={cpu_threads} for CPU parallelism (cores={available_cores}, workers={self._cpu_workers})")
 
         # MKL_NUM_THREADS for Intel MKL (used by NumPy/PyTorch on Intel CPUs)
         if 'MKL_NUM_THREADS' not in os.environ:
             os.environ['MKL_NUM_THREADS'] = cpu_threads
 
-        # Enable tokenizers parallelism for CPU mode (safe without GPU contention)
+        # Disable tokenizers parallelism by default - it adds another layer of threads
+        # that can cause over-subscription. Only enable if explicitly set.
         if 'TOKENIZERS_PARALLELISM' not in os.environ:
-            os.environ['TOKENIZERS_PARALLELISM'] = 'true'
-            logger.debug("Enabled TOKENIZERS_PARALLELISM for CPU mode")
+            os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+            logger.debug("Disabled TOKENIZERS_PARALLELISM to prevent over-subscription")
 
     def get_device_info(self) -> Dict[str, str]:
         """Get information about the device being used (RDR-013 Phase 2).

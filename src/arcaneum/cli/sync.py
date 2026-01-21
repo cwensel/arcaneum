@@ -324,7 +324,7 @@ def sync_directory_command(
         text_workers: Number of parallel workers for code chunking (None=auto, 0/1=sequential)
         max_embedding_batch: Cap for embedding batch size (None=auto, use 8-16 for OOM recovery)
         no_gpu: If True, disable GPU acceleration (CPU only mode)
-        cpu_workers: Number of parallel workers for CPU embedding (None=auto=cpu/2)
+        cpu_workers: Number of parallel workers for CPU embedding (None=1, conservative default)
         verbose: If True, show detailed progress
         output_json: If True, output JSON format
     """

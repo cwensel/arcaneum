@@ -177,7 +177,7 @@ EMBEDDING_MODELS = {
 class EmbeddingClient:
     """Manages embedding model instances with caching and GPU acceleration (RDR-013 Phase 2)."""
 
-    def __init__(self, cache_dir: str = None, verify_ssl: bool = True, use_gpu: bool = False):
+    def __init__(self, cache_dir: str = None, verify_ssl: bool = True, use_gpu: bool = False, cpu_workers: int = None):
         """Initialize embedding client.
 
         Args:
@@ -185,6 +185,8 @@ class EmbeddingClient:
             verify_ssl: Whether to verify SSL certificates (set False for self-signed certs)
             use_gpu: Enable GPU acceleration (MPS for Apple Silicon, CUDA for NVIDIA)
                      Default: False (CPU only for backward compatibility)
+            cpu_workers: Number of CPU workers for parallel embedding in CPU mode
+                        Default: None (auto = cpu_count // 2)
 
         Note: SSL configuration must be done before creating EmbeddingClient.
               Use ssl_config.check_and_configure_ssl() or disable_ssl_verification() first.
@@ -192,6 +194,11 @@ class EmbeddingClient:
         GPU Support (RDR-013):
             - SentenceTransformers models (stella, jina-code): MPS on Apple Silicon, CUDA on NVIDIA
             - FastEmbed models (bge-*): CoreML on Apple Silicon (partial support)
+
+        CPU Mode Optimization:
+            When use_gpu=False, the client configures thread environment for optimal
+            CPU parallelism (OMP_NUM_THREADS, TOKENIZERS_PARALLELISM) and uses larger
+            batch sizes since memory isn't constrained by GPU.
         """
         self.cache_dir = cache_dir or str(get_models_dir())
         self.verify_ssl = verify_ssl
@@ -204,6 +211,18 @@ class EmbeddingClient:
         # GPU models have built-in parallelism; ThreadPoolExecutor + locks cause serialization
         # See: RDR-013 Phase 2, arcaneum-m7hg
         self._gpu_lock = None  # Deprecated: no longer needed with single-threaded embedding
+
+        # CPU parallelization settings
+        # Calculate effective cpu_workers: explicit value, or auto (cpu_count // 2)
+        if cpu_workers is not None:
+            self._cpu_workers = max(1, cpu_workers)
+        else:
+            self._cpu_workers = max(1, os.cpu_count() // 2) if os.cpu_count() else 4
+        self._effective_cpu_workers = self._cpu_workers  # Store for embed_parallel
+
+        # Configure thread environment for CPU mode
+        if not use_gpu:
+            self._configure_cpu_threading()
 
     def _detect_device(self) -> str:
         """Detect best available GPU device (RDR-013 Phase 2).
@@ -220,6 +239,30 @@ class EmbeddingClient:
         except ImportError:
             pass
         return "cpu"
+
+    def _configure_cpu_threading(self):
+        """Configure thread environment for optimal CPU parallelism.
+
+        Sets environment variables for ONNX Runtime and PyTorch to use
+        appropriate thread counts for CPU-only mode. This improves throughput
+        when running with --no-gpu by allowing better CPU utilization.
+        """
+        cpu_threads = str(self._cpu_workers)
+
+        # OMP_NUM_THREADS controls OpenMP parallelism used by PyTorch/ONNX
+        # Setting this prevents over-subscription when using ThreadPoolExecutor
+        if 'OMP_NUM_THREADS' not in os.environ:
+            os.environ['OMP_NUM_THREADS'] = cpu_threads
+            logger.debug(f"Set OMP_NUM_THREADS={cpu_threads} for CPU parallelism")
+
+        # MKL_NUM_THREADS for Intel MKL (used by NumPy/PyTorch on Intel CPUs)
+        if 'MKL_NUM_THREADS' not in os.environ:
+            os.environ['MKL_NUM_THREADS'] = cpu_threads
+
+        # Enable tokenizers parallelism for CPU mode (safe without GPU contention)
+        if 'TOKENIZERS_PARALLELISM' not in os.environ:
+            os.environ['TOKENIZERS_PARALLELISM'] = 'true'
+            logger.debug("Enabled TOKENIZERS_PARALLELISM for CPU mode")
 
     def get_device_info(self) -> Dict[str, str]:
         """Get information about the device being used (RDR-013 Phase 2).
@@ -245,6 +288,9 @@ class EmbeddingClient:
         IMPORTANT: MPS (Apple Silicon) with large models needs much smaller batches
         to avoid system lockups due to unified memory exhaustion.
 
+        CPU Mode: Uses larger batches (512) since memory isn't constrained by GPU.
+        This reduces Python overhead from batch processing loops.
+
         Args:
             model_name: Model identifier
 
@@ -252,7 +298,7 @@ class EmbeddingClient:
             Optimal batch size for this model
         """
         if not self.use_gpu:
-            return 256  # Conservative for CPU
+            return 512  # Larger batches for CPU (no GPU memory constraints)
 
         # MPS with large models: use smaller batch sizes to avoid system lockups
         # Unified memory architecture means GPU memory pressure affects entire system
@@ -615,7 +661,7 @@ class EmbeddingClient:
         self,
         texts: List[str],
         model_name: str,
-        max_workers: int = 4,
+        max_workers: int = None,
         batch_size: int = None,
         timeout: int = 300,
         progress_callback: callable = None,
@@ -631,7 +677,8 @@ class EmbeddingClient:
         - GPU models: Sequential batching (one batch at a time) with adaptive sizing (512-1024)
           GPU hardware parallelism processes N chunks within each batch simultaneously
           ThreadPoolExecutor adds overhead without benefit for GPU
-        - CPU models: Optional ThreadPoolExecutor across batches (rarely used)
+        - CPU models: ThreadPoolExecutor across batches using cpu_workers (default: cpu_count // 2)
+          Larger batch sizes (512) reduce Python overhead
 
         Current implementation: Sequential batch processing for GPU.
         Large batch sizes (512-1024) maximize GPU utilization (arcaneum-i7oa).
@@ -644,7 +691,8 @@ class EmbeddingClient:
         Args:
             texts: List of text strings to embed
             model_name: Model identifier (stella, jina, modernbert, bge)
-            max_workers: Number of concurrent workers (ignored for GPU, kept for API compatibility)
+            max_workers: Number of concurrent workers for CPU mode (default: None = use cpu_workers
+                        from __init__, ignored for GPU mode)
             batch_size: Chunk size for batches (default: None = auto-optimal, can override with explicit value)
             timeout: Timeout in seconds (ignored in single-threaded mode)
             progress_callback: Optional callback(batch_idx, total_batches) called after each batch completes
@@ -665,6 +713,7 @@ class EmbeddingClient:
             After profiling (arcaneum-c128), single-threaded approach is faster for GPU models
             due to GPU's internal parallelism within batch. See arcaneum-m7hg for details.
             Adaptive batch sizing (arcaneum-i7oa) uses 512-1024 for GPU models to maximize throughput.
+            CPU mode uses ThreadPoolExecutor with cpu_workers (configurable via --cpu-workers flag).
 
         Example:
             >>> client = EmbeddingClient()
@@ -897,8 +946,8 @@ class EmbeddingClient:
 
             return all_embeddings
 
-        # For CPU models: ThreadPoolExecutor can provide speedup
-        # This is experimental - benchmark results will determine if kept
+        # For CPU models: ThreadPoolExecutor provides speedup via multi-batch parallelism
+        # CPU workers configurable via --cpu-workers flag (default: cpu_count // 2)
         else:
             # Pre-allocate result list to maintain order (only if accumulating)
             if accumulate:
@@ -914,9 +963,12 @@ class EmbeddingClient:
                 batches.append((start_idx, end_idx, batch_texts))
 
             # Process batches in parallel for CPU models
+            # Use explicit max_workers if provided, otherwise use configured cpu_workers
+            effective_workers = max_workers if max_workers is not None else self._effective_cpu_workers
             total_batches = len(batches)
             completed_batches = 0
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            logger.debug(f"CPU mode: processing {total_batches} batches with {effective_workers} workers")
+            with ThreadPoolExecutor(max_workers=effective_workers) as executor:
                 # Submit all batch jobs
                 future_to_batch = {}
                 for batch_idx, (start_idx, end_idx, batch_texts) in enumerate(batches):

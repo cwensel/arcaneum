@@ -593,9 +593,11 @@ def delete_corpus(name, confirm, output_json):
 @click.option('--max-embedding-batch', type=int, default=None,
               help='Cap embedding batch size (default: auto from GPU memory, use 8-16 for OOM)')
 @click.option('--no-gpu', is_flag=True, help='Disable GPU acceleration (use CPU only, slower but stable)')
+@click.option('--cpu-workers', type=int, default=None,
+              help='CPU parallelization workers for --no-gpu mode (default: auto=cpu/2)')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed progress (files, chunks, indexing)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def sync_directory(corpus, paths, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, verbose, output_json):
+def sync_directory(corpus, paths, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json):
     """Index to both vector and full-text.
 
     Examples:
@@ -608,7 +610,7 @@ def sync_directory(corpus, paths, models, file_types, force, verify, text_worker
     Use --no-gpu for CPU-only mode (avoids MPS instability with large models).
     """
     from arcaneum.cli.sync import sync_directory_command
-    sync_directory_command(corpus, paths, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, verbose, output_json)
+    sync_directory_command(corpus, paths, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json)
 
 
 @corpus.command('parity')

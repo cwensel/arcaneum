@@ -304,6 +304,7 @@ def sync_directory_command(
     text_workers: Optional[int],
     max_embedding_batch: Optional[int],
     no_gpu: bool,
+    cpu_workers: Optional[int],
     verbose: bool,
     output_json: bool
 ):
@@ -323,6 +324,7 @@ def sync_directory_command(
         text_workers: Number of parallel workers for code chunking (None=auto, 0/1=sequential)
         max_embedding_batch: Cap for embedding batch size (None=auto, use 8-16 for OOM recovery)
         no_gpu: If True, disable GPU acceleration (CPU only mode)
+        cpu_workers: Number of parallel workers for CPU embedding (None=auto=cpu/2)
         verbose: If True, show detailed progress
         output_json: If True, output JSON format
     """
@@ -527,7 +529,7 @@ def sync_directory_command(
         if files:
             # Initialize embedding client
             use_gpu = not no_gpu and not os.environ.get('ARC_NO_GPU', '').lower() in ('1', 'true')
-            embedding_client = EmbeddingClient(use_gpu=use_gpu)
+            embedding_client = EmbeddingClient(use_gpu=use_gpu, cpu_workers=cpu_workers)
 
             # Initialize git discovery for code corpora
             git_discovery = GitProjectDiscovery() if corpus_type == 'code' else None
@@ -635,16 +637,30 @@ def sync_directory_command(
                         file_hash = compute_file_hash(file_path)
                         quick_hash = compute_quick_hash(file_path)
 
+                        # Batch embedding: collect all chunk texts and embed together
+                        # This is much more efficient than embedding one chunk at a time,
+                        # especially for CPU mode where batching reduces Python overhead
+                        chunk_texts = [chunk['text'] for chunk in chunks]
+
+                        # Generate embeddings for all chunks at once, per model
+                        model_embeddings = {}
+                        for model in model_list:
+                            all_embeddings = embedding_client.embed(
+                                chunk_texts, model, max_internal_batch=max_embedding_batch
+                            )
+                            model_embeddings[model] = all_embeddings
+
+                        # Now create documents with pre-computed embeddings
                         for i, chunk in enumerate(chunks):
-                            # Generate embeddings for all models
+                            # Get pre-computed embeddings for this chunk
                             vectors = {}
                             for model in model_list:
-                                embeddings = embedding_client.embed([chunk['text']], model, max_internal_batch=max_embedding_batch)
+                                embedding = model_embeddings[model][i]
                                 # Handle both list and numpy array returns
-                                if hasattr(embeddings, 'tolist'):
-                                    vectors[model] = embeddings[0].tolist()
+                                if hasattr(embedding, 'tolist'):
+                                    vectors[model] = embedding.tolist()
                                 else:
-                                    vectors[model] = list(embeddings[0])
+                                    vectors[model] = list(embedding)
 
                             # Create document with shared metadata
                             doc = DualIndexDocument(

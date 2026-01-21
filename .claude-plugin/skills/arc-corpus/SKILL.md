@@ -26,6 +26,7 @@ arc corpus sync MyCorpus /path/one /path/two /path/three    # Multiple directori
 arc corpus sync MyCorpus /path/to/files --force             # Force reindex
 arc corpus sync MyCorpus /path/to/files --verify            # Verify after sync
 arc corpus sync MyCorpus /path/to/files --verbose           # Show progress
+arc corpus sync MyCorpus /path/to/files --no-gpu            # CPU-only mode (stable on Apple Silicon)
 
 # View corpus info (both systems)
 arc corpus info MyCorpus
@@ -75,3 +76,27 @@ Use `--create-missing` to promote single-sided Qdrant collections into full corp
 - Then proceeds with normal parity sync
 
 Note: `meili_only` corpora cannot be auto-created (require `--type` and `--model`).
+
+## GPU Acceleration and Apple Silicon
+
+By default, corpus sync uses GPU acceleration (MPS on Apple Silicon, CUDA on NVIDIA).
+
+**Large models on Apple Silicon:** Models like `stella` (1.5B params) may cause system
+instability on Macs with limited memory. If you experience lockups:
+
+```bash
+# Use CPU-only mode (slower but stable)
+arc corpus sync MyCorpus /path --no-gpu
+
+# Or use the environment variable
+ARC_NO_GPU=1 arc corpus sync MyCorpus /path
+
+# Or use a smaller model (bge is 0.3B params)
+arc corpus sync MyCorpus /path --models bge
+```
+
+**Model sizes:**
+
+- `bge`, `bge-base`, `bge-small`: Safe for all systems
+- `stella` (1.5B): May cause issues on Macs with <16GB RAM
+- `nomic-code` (7B): Requires dedicated GPU with significant VRAM

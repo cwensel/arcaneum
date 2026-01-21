@@ -84,6 +84,36 @@ arc corpus parity <name>                                 # Restore parity betwee
 **Note:** If you already have a collection and index with the same name, you can
 use `corpus sync` directly - no need to run `corpus create` first.
 
+### Corpus Sync Options
+
+```bash
+arc corpus sync MyCorpus /path/to/files                    # Basic sync
+arc corpus sync MyCorpus /path/one /path/two               # Multiple paths
+arc corpus sync MyCorpus /path --force                     # Force reindex all
+arc corpus sync MyCorpus /path --verify                    # Verify after sync
+arc corpus sync MyCorpus /path --no-gpu                    # CPU-only mode
+arc corpus sync MyCorpus /path --models bge                # Use specific model
+arc corpus sync MyCorpus /path --max-embedding-batch 8     # Limit batch size (OOM recovery)
+arc corpus sync MyCorpus /path --verbose                   # Detailed progress
+```
+
+**Options:**
+
+- `--force`: Force reindex all files (deletes existing chunks first)
+- `--verify`: Verify collection integrity after indexing
+- `--no-gpu`: Disable GPU acceleration (use CPU only, slower but stable)
+- `--models`: Embedding models to use (comma-separated, default: stella,jina)
+- `--max-embedding-batch`: Cap embedding batch size (use 8-16 for OOM recovery)
+- `--text-workers`: Parallel workers for code AST chunking (default: auto)
+- `--verbose`: Show detailed progress (files, chunks, indexing)
+- `--json`: Output JSON format for scripting
+
+**GPU and Apple Silicon:**
+
+Large models like `stella` (1.5B params) may cause system instability on Macs with
+limited unified memory. If you experience lockups, use `--no-gpu` or switch to a
+smaller model like `bge` (0.3B params).
+
 ### Corpus Parity
 
 Check and restore parity between Qdrant and MeiliSearch indexes without scanning

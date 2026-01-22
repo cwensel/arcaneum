@@ -911,6 +911,21 @@ See individual slash command files in `/commands/` directory for detailed usage.
 
 Full-text search provides exact phrase matching, typo-tolerant keyword search, and filtered queries.
 
+### Index Management Commands
+
+MeiliSearch index commands mirror Qdrant collection commands:
+
+| Qdrant (arc collection)   | MeiliSearch (arc indexes) |
+| ------------------------- | ------------------------- |
+| `arc collection create`   | `arc indexes create`      |
+| `arc collection list`     | `arc indexes list`        |
+| `arc collection info`     | `arc indexes info`        |
+| `arc collection items`    | `arc indexes items`       |
+| `arc collection verify`   | `arc indexes verify`      |
+| `arc collection export`   | `arc indexes export`      |
+| `arc collection import`   | `arc indexes import`      |
+| `arc collection delete`   | `arc indexes delete`      |
+
 ### Create Index
 
 ```bash
@@ -919,14 +934,8 @@ arc indexes create source-code --type source-code
 arc indexes create pdf-docs --type pdf
 arc indexes create my-docs --type markdown
 
-# List all indexes
-arc indexes list
-
-# Show index details
-arc indexes info source-code
-
-# Delete index
-arc indexes delete source-code --confirm
+# JSON output
+arc indexes create my-docs --type pdf --json
 ```
 
 **Index Types:**
@@ -936,6 +945,206 @@ arc indexes delete source-code --confirm
 | `source-code`   | `code`     | Code with higher typo thresholds |
 | `pdf-docs`      | `pdf`      | PDF documents with stop words    |
 | `markdown-docs` | `markdown` | Markdown with headings search    |
+
+### List Indexes
+
+```bash
+# List all indexes with document counts
+arc indexes list
+
+# JSON output for scripting
+arc indexes list --json
+```
+
+**Output includes:**
+
+- **Name**: Index name (uid)
+- **Primary Key**: Document primary key field
+- **Documents**: Number of indexed documents
+- **Created**: Creation date
+
+### Index Info
+
+```bash
+# Show detailed index information
+arc indexes info source-code
+
+# JSON output
+arc indexes info source-code --json
+```
+
+Shows detailed information including:
+
+- Document count and indexing status
+- Searchable attributes configuration
+- Filterable attributes for query filters
+- Sortable attributes
+- Typo tolerance settings
+
+### Index Items
+
+List all indexed files/documents in an index with chunk counts:
+
+```bash
+# Human-readable table output
+arc indexes items MyIndex
+
+# Limit number of items shown
+arc indexes items MyIndex --limit 50
+
+# Paginate through results
+arc indexes items MyIndex --limit 50 --offset 100
+
+# JSON output for automation
+arc indexes items MyIndex --json
+```
+
+**Output includes:**
+
+| File         | Language | Project | Chunks |
+| ------------ | -------- | ------- | ------ |
+| auth.py      | python   | myapp   | 12     |
+| handlers.go  | go       | myapp   | 8      |
+| document.pdf | -        | -       | 45     |
+
+### Verify Index
+
+Verify index health and integrity:
+
+```bash
+# Basic health check
+arc indexes verify MyIndex
+
+# JSON output for automation
+arc indexes verify MyIndex --json
+```
+
+**Checks performed:**
+
+- Index accessibility and document retrieval
+- Searchable attributes configuration
+- Filterable attributes availability
+- Current indexing status
+
+**Example output:**
+
+```text
+Index: MyIndex
+
+Status: Healthy
+Documents: 2,847
+Searchable: 5 attributes
+Filterable: 8 attributes
+Sample retrieval: OK
+
+All checks passed
+```
+
+### Export Index
+
+Export index documents to JSONL file for backup or migration:
+
+```bash
+# Export to JSONL file
+arc indexes export MyIndex -o backup.jsonl
+
+# JSON output showing export stats
+arc indexes export MyIndex -o backup.jsonl --json
+```
+
+**Export file format:**
+
+- First line: Index metadata (name, primary key, settings)
+- Subsequent lines: One document per line as JSON
+
+### Import Index
+
+Import documents from a previously exported JSONL file:
+
+```bash
+# Import to original index name
+arc indexes import backup.jsonl
+
+# Import to different index name
+arc indexes import backup.jsonl --into MyIndex-restored
+
+# JSON output
+arc indexes import backup.jsonl --json
+```
+
+**Behavior:**
+
+- Creates the index if it doesn't exist (using exported settings)
+- Adds documents in batches for efficiency
+- Preserves original index configuration
+
+### Update Settings
+
+Update index settings from a preset type:
+
+```bash
+# Apply source-code settings to existing index
+arc indexes update-settings MyIndex --type source-code
+
+# Apply PDF settings
+arc indexes update-settings MyIndex --type pdf
+
+# JSON output
+arc indexes update-settings MyIndex --type code --json
+```
+
+Use this to reconfigure an existing index with optimized settings for a different content type.
+
+### Delete Index
+
+```bash
+# With confirmation prompt
+arc indexes delete source-code
+
+# Skip confirmation (for scripts)
+arc indexes delete source-code --confirm
+
+# JSON output
+arc indexes delete source-code --confirm --json
+```
+
+### Git Project Management (Code Indexes)
+
+For indexes containing git-aware source code, additional commands are available:
+
+#### List Projects
+
+```bash
+# Show all indexed git projects
+arc indexes list-projects MyCode
+
+# JSON output
+arc indexes list-projects MyCode --json
+```
+
+**Example output:**
+
+| Project Identifier | Commit Hash    |
+| ------------------ | -------------- |
+| arcaneum#main      | a1b2c3d4e5f6... |
+| mylib#develop      | f6e5d4c3b2a1... |
+
+#### Delete Project
+
+Remove all documents for a specific git project/branch:
+
+```bash
+# Delete with confirmation
+arc indexes delete-project arcaneum#main --index MyCode
+
+# Skip confirmation
+arc indexes delete-project myrepo#feature-x --index MyCode --confirm
+
+# JSON output
+arc indexes delete-project arcaneum#main --index MyCode --json
+```
+
+Other projects/branches in the same index are unaffected.
 
 ### Search
 
@@ -954,6 +1163,9 @@ arc search text "query" --index source-code --limit 20 --offset 10
 
 # JSON output
 arc search text "query" --index source-code --json
+
+# Verbose output (shows language, project metadata)
+arc search text "query" --index source-code --verbose
 ```
 
 **Filter Syntax:**

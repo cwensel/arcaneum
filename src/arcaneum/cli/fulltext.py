@@ -6,7 +6,7 @@ import os
 import sys
 import time
 import click
-from typing import Optional
+from typing import List, Optional
 from rich.console import Console
 from rich.table import Table
 
@@ -19,6 +19,32 @@ from .utils import create_meili_client
 
 console = Console()
 logger = logging.getLogger(__name__)
+
+
+def resolve_corpora(corpora: tuple, legacy_option: str, option_name: str) -> List[str]:
+    """Resolve corpus targets with backwards compatibility.
+
+    Args:
+        corpora: Tuple of corpus names from --corpus option
+        legacy_option: Value from legacy --collection or --index option
+        option_name: Name of legacy option for error messages ('collection' or 'index')
+
+    Returns:
+        List of corpus names to search
+
+    Raises:
+        click.UsageError: If both options specified or neither specified
+    """
+    if corpora and legacy_option:
+        raise click.UsageError(f"Cannot use both --corpus and --{option_name}")
+
+    if legacy_option:
+        return [legacy_option]  # Silently accept legacy option
+
+    if not corpora:
+        raise click.UsageError("Missing required option: --corpus")
+
+    return list(corpora)
 
 
 def format_location(hit: dict) -> str:
@@ -65,7 +91,7 @@ def format_location(hit: dict) -> str:
 
 def search_text_command(
     query: str,
-    index_name: str,
+    corpora: List[str],
     filter_arg: Optional[str],
     limit: int,
     offset: int,
@@ -78,7 +104,7 @@ def search_text_command(
 
     Args:
         query: Search query (use quotes for exact phrases)
-        index_name: MeiliSearch index to search
+        corpora: List of MeiliSearch index names to search
         filter_arg: Metadata filter expression (e.g., 'language = python')
         limit: Maximum number of results
         offset: Number of results to skip (for pagination)
@@ -101,12 +127,9 @@ def search_text_command(
                 "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
             )
 
-        # Check if index exists
-        if not client.index_exists(index_name):
-            raise ResourceNotFoundError(f"Index '{index_name}' not found")
-
+        corpora_str = ", ".join(corpora)
         if verbose:
-            logger.info(f"Searching index '{index_name}' for: \"{query}\"")
+            logger.info(f"Searching corpus '{corpora_str}' for: \"{query}\"")
             if filter_arg:
                 logger.info(f"Filter: {filter_arg}")
 
@@ -115,7 +138,7 @@ def search_text_command(
         # Start interaction logging (RDR-018)
         interaction_logger.start(
             "search", "text",
-            index=index_name,
+            corpora=corpora,
             query=query,
             limit=limit,
             offset=offset,
@@ -123,39 +146,102 @@ def search_text_command(
         )
 
         try:
-            results = client.search(
-                index_name,
-                query,
-                filter=filter_arg,
-                limit=limit,
-                offset=offset,
-                attributes_to_highlight=['content']
-            )
+            # Search each corpus and merge results
+            all_hits = []
+            missing_corpora = []
+            total_processing_time = 0
+            total_estimated_hits = 0
+
+            for corpus_name in corpora:
+                # Check if index exists
+                if not client.index_exists(corpus_name):
+                    missing_corpora.append(corpus_name)
+                    if len(corpora) > 1:
+                        # Warn about missing corpus but continue with others
+                        if verbose:
+                            logger.warning(f"Corpus '{corpus_name}' not found, skipping")
+                        continue
+                    else:
+                        # Single corpus not found is an error
+                        raise ResourceNotFoundError(f"Corpus '{corpus_name}' not found")
+
+                results = client.search(
+                    corpus_name,
+                    query,
+                    filter=filter_arg,
+                    limit=limit + offset,  # Get extra for merging
+                    offset=0,  # Apply offset after merge
+                    attributes_to_highlight=['content']
+                )
+
+                # Tag hits with source corpus
+                for hit in results.get('hits', []):
+                    hit['_corpus'] = corpus_name
+                all_hits.extend(results.get('hits', []))
+                total_processing_time += results.get('processingTimeMs', 0)
+                total_estimated_hits += results.get('estimatedTotalHits', 0)
+
+            # If all corpora are missing, error out
+            if len(missing_corpora) == len(corpora):
+                raise ResourceNotFoundError(f"No matching corpora found: {', '.join(corpora)}")
+
+            # MeiliSearch doesn't return scores in the same way as Qdrant,
+            # but results are already ranked by relevance within each index.
+            # For multi-index search, interleave results (simple round-robin)
+            # then apply pagination.
+            if len(corpora) > 1 and len(corpora) != len(missing_corpora):
+                # Group hits by corpus for interleaving
+                hits_by_corpus = {}
+                for hit in all_hits:
+                    corpus = hit.get('_corpus', 'unknown')
+                    if corpus not in hits_by_corpus:
+                        hits_by_corpus[corpus] = []
+                    hits_by_corpus[corpus].append(hit)
+
+                # Interleave results
+                interleaved = []
+                max_len = max(len(h) for h in hits_by_corpus.values()) if hits_by_corpus else 0
+                for i in range(max_len):
+                    for corpus in corpora:
+                        if corpus in hits_by_corpus and i < len(hits_by_corpus[corpus]):
+                            interleaved.append(hits_by_corpus[corpus][i])
+
+                all_hits = interleaved
+
+            # Apply pagination
+            hits = all_hits[offset:offset + limit]
 
             execution_time_ms = (time.time() - start_time) * 1000
 
             if verbose:
                 logger.info(f"Search completed in {execution_time_ms:.1f}ms")
+                if missing_corpora:
+                    logger.warning(f"Missing corpora: {', '.join(missing_corpora)}")
 
             # Log successful search
-            interaction_logger.finish(result_count=len(results.get('hits', [])))
+            interaction_logger.finish(result_count=len(hits))
         except Exception as e:
             # Log failed search
             interaction_logger.finish(error=str(e))
             raise
+
+        # Use first corpus name for backwards-compatible output format
+        # (or combined name for multi-corpus)
+        display_index = corpora[0] if len(corpora) == 1 else f"[{', '.join(corpora)}]"
 
         # Format and output results
         if output_json:
             # JSON output mode
             output = {
                 "status": "success",
-                "message": f"Found {results.get('estimatedTotalHits', 0)} results",
+                "message": f"Found {total_estimated_hits} results",
                 "data": {
                     "query": query,
-                    "index": index_name,
-                    "hits": results.get('hits', []),
-                    "estimatedTotalHits": results.get('estimatedTotalHits', 0),
-                    "processingTimeMs": results.get('processingTimeMs', 0),
+                    "index": display_index,
+                    "corpora": corpora,
+                    "hits": hits,
+                    "estimatedTotalHits": total_estimated_hits,
+                    "processingTimeMs": total_processing_time,
                     "limit": limit,
                     "offset": offset,
                 },
@@ -164,12 +250,8 @@ def search_text_command(
             print(json.dumps(output, indent=2))
         else:
             # Human-readable text output
-            processing_time = results.get('processingTimeMs', 0)
-            estimated_total = results.get('estimatedTotalHits', 0)
-            hits = results.get('hits', [])
-
-            console.print(f"\n[bold]Search Results[/bold] ({processing_time}ms)")
-            console.print(f"Found {estimated_total} matches in '{index_name}'\n")
+            console.print(f"\n[bold]Search Results[/bold] ({total_processing_time}ms)")
+            console.print(f"Found {total_estimated_hits} matches in '{display_index}'\n")
 
             if not hits:
                 console.print("[dim]No results found[/dim]")
@@ -178,7 +260,13 @@ def search_text_command(
                     # Get file location with full context (RDR-012 enhancement)
                     location = format_location(hit)
 
-                    console.print(f"[cyan]{i}. {location}[/cyan]")
+                    # Show source corpus for multi-corpus searches
+                    if len(corpora) > 1:
+                        corpus_tag = f" [{hit.get('_corpus', '?')}]"
+                    else:
+                        corpus_tag = ""
+
+                    console.print(f"[cyan]{i}. {location}{corpus_tag}[/cyan]")
 
                     # Show metadata if available
                     if verbose:
@@ -216,7 +304,8 @@ def search_text_command(
             attr_match = re.search(r"Attribute `(\w+)`", error_str)
             bad_attr = attr_match.group(1) if attr_match else None
 
-            # Fetch filterable attributes for this index
+            # Fetch filterable attributes for the first index (for error message)
+            index_name = corpora[0] if corpora else "unknown"
             try:
                 settings = client.get_index_settings(index_name)
                 filterable = settings.get('filterableAttributes', [])

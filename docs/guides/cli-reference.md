@@ -44,8 +44,9 @@ arc index text pdf <path> --index <name>      # Index PDFs to MeiliSearch (full-
 ### Search Commands
 
 ```bash
-arc search semantic <query> --collection <name>  # Semantic search (Qdrant)
-arc search text <query> --index <name>           # Full-text search (MeiliSearch)
+arc search semantic <query> --corpus <name>                 # Semantic search (Qdrant)
+arc search semantic <query> --corpus <n1> --corpus <n2>     # Multi-corpus search
+arc search text <query> --corpus <name>                     # Full-text search (MeiliSearch)
 ```
 
 ### Full-Text Index Management
@@ -728,10 +729,10 @@ arc index pdf /path/to/pdfs --collection pdf-docs
 arc index text pdf /path/to/pdfs --index pdf-docs
 
 # Semantic search (conceptual matches)
-arc search semantic "machine learning" --collection pdf-docs
+arc search semantic "machine learning" --corpus pdf-docs
 
 # Full-text search (exact phrases)
-arc search text '"neural network"' --index pdf-docs
+arc search text '"neural network"' --corpus pdf-docs
 ```
 
 ## Model Selection
@@ -1124,10 +1125,10 @@ arc indexes list-projects MyCode --json
 
 **Example output:**
 
-| Project Identifier | Commit Hash    |
-| ------------------ | -------------- |
-| arcaneum#main      | a1b2c3d4e5f6... |
-| mylib#develop      | f6e5d4c3b2a1... |
+| Project Identifier | Commit Hash      |
+| ------------------ | ---------------- |
+| arcaneum#main      | a1b2c3d4e5f6...  |
+| mylib#develop      | f6e5d4c3b2a1...  |
 
 #### Delete Project
 
@@ -1150,22 +1151,25 @@ Other projects/branches in the same index are unaffected.
 
 ```bash
 # Basic search
-arc search text "authentication" --index source-code
+arc search text "authentication" --corpus source-code
 
 # Exact phrase search (use quotes)
-arc search text '"def authenticate"' --index source-code
+arc search text '"def authenticate"' --corpus source-code
+
+# Multi-corpus search
+arc search text "authentication" --corpus code1 --corpus code2
 
 # With filter
-arc search text "authentication" --index source-code --filter "language = python"
+arc search text "authentication" --corpus source-code --filter "language = python"
 
 # With pagination
-arc search text "query" --index source-code --limit 20 --offset 10
+arc search text "query" --corpus source-code --limit 20 --offset 10
 
 # JSON output
-arc search text "query" --index source-code --json
+arc search text "query" --corpus source-code --json
 
 # Verbose output (shows language, project metadata)
-arc search text "query" --index source-code --verbose
+arc search text "query" --corpus source-code --verbose
 ```
 
 **Filter Syntax:**

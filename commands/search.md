@@ -1,6 +1,6 @@
 ---
 description: Search across collections
-argument-hint: semantic "query" --collection NAME
+argument-hint: semantic "query" --corpus NAME
 ---
 
 Search your indexed content using semantic search (most common) or full-text search.
@@ -8,30 +8,33 @@ Search your indexed content using semantic search (most common) or full-text sea
 **Quick Start - Most Common Usage:**
 
 ```bash
-arc search semantic "your query here" --collection CollectionName
+arc search semantic "your query here" --corpus CorpusName
 ```
 
 **IMPORTANT:** The subcommand (`semantic` or `text`) comes BEFORE the query.
 
 **Subcommands (required):**
 
-- `semantic`: Vector-based semantic search (Qdrant) - use `--collection`
-- `text`: Keyword-based full-text search (MeiliSearch) - use `--index`
+- `semantic`: Vector-based semantic search (Qdrant)
+- `text`: Keyword-based full-text search (MeiliSearch)
 
 **Examples:**
 
 ```text
 # Semantic search (most common)
-/arc:search semantic "identity proofing" --collection Standards
-/arc:search semantic "authentication logic" --collection MyCode --limit 5
+/arc:search semantic "identity proofing" --corpus Standards
+/arc:search semantic "authentication logic" --corpus MyCode --limit 5
+
+# Multi-corpus search
+/arc:search semantic "authentication" --corpus Code --corpus Docs
 
 # Full-text keyword search
-/arc:search text "def authenticate" --index MyCode-fulltext
+/arc:search text "def authenticate" --corpus MyCode
 ```
 
 **Common Options:**
 
-- --collection: Collection to search (required for semantic)
+- --corpus: Corpus/collection to search (can specify multiple times)
 - --limit: Number of results to return (default: 10)
 - --offset: Number of results to skip for pagination (default: 0)
 - --filter: Metadata filter (key=value or JSON)
@@ -42,10 +45,6 @@ arc search semantic "your query here" --collection CollectionName
 
 - --vector-name: Vector name (auto-detected if not specified)
 - --score-threshold: Minimum similarity score
-
-**Full-Text Search Options:**
-
-- --index: MeiliSearch index name (required)
 
 **Execution:**
 

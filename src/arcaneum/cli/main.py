@@ -501,8 +501,9 @@ def store(file, collection, model, title, category, tags, metadata, chunk_size, 
 
 # Search commands (RDR-007, RDR-012)
 @cli.group(cls=HelpfulGroup, usage_examples=[
-    'arc search semantic "your query" --collection CollectionName',
-    'arc search text "your query" --index IndexName',
+    'arc search semantic "your query" --corpus CorpusName',
+    'arc search semantic "your query" --corpus Corp1 --corpus Corp2',
+    'arc search text "your query" --corpus CorpusName',
 ])
 def search():
     """Search collections"""
@@ -511,7 +512,8 @@ def search():
 
 @search.command('semantic')
 @click.argument('query')
-@click.option('--collection', required=True, help='Collection to search')
+@click.option('--corpus', 'corpora', multiple=True, help='Corpus to search (can specify multiple)')
+@click.option('--collection', 'legacy_collection', default=None, hidden=True, help='(Deprecated) Collection to search')
 @click.option('--vector-name', help='Vector name to use (auto-detects if not specified)')
 @click.option('--filter', 'filter_arg', help='Metadata filter (key=value or JSON)')
 @click.option('--limit', type=int, default=10, help='Number of results')
@@ -519,24 +521,27 @@ def search():
 @click.option('--score-threshold', type=float, help='Minimum score threshold')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-def search_semantic(query, collection, vector_name, filter_arg, limit, offset, score_threshold, output_json, verbose):
+def search_semantic(query, corpora, legacy_collection, vector_name, filter_arg, limit, offset, score_threshold, output_json, verbose):
     """Vector-based semantic search"""
-    from arcaneum.cli.search import search_command
-    search_command(query, collection, vector_name, filter_arg, limit, offset, score_threshold, output_json, verbose)
+    from arcaneum.cli.search import search_command, resolve_corpora
+    resolved_corpora = resolve_corpora(corpora, legacy_collection, 'collection')
+    search_command(query, resolved_corpora, vector_name, filter_arg, limit, offset, score_threshold, output_json, verbose)
 
 
 @search.command('text')
 @click.argument('query')
-@click.option('--index', 'index_name', required=True, help='MeiliSearch index to search')
+@click.option('--corpus', 'corpora', multiple=True, help='Corpus to search (can specify multiple)')
+@click.option('--index', 'legacy_index', default=None, hidden=True, help='(Deprecated) MeiliSearch index to search')
 @click.option('--filter', 'filter_arg', help='Metadata filter (key=value or JSON)')
 @click.option('--limit', type=int, default=10, help='Number of results')
 @click.option('--offset', type=int, default=0, help='Number of results to skip (for pagination)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-def search_text(query, index_name, filter_arg, limit, offset, output_json, verbose):
+def search_text(query, corpora, legacy_index, filter_arg, limit, offset, output_json, verbose):
     """Keyword-based full-text search"""
-    from arcaneum.cli.fulltext import search_text_command
-    search_text_command(query, index_name, filter_arg, limit, offset, output_json, verbose)
+    from arcaneum.cli.fulltext import search_text_command, resolve_corpora
+    resolved_corpora = resolve_corpora(corpora, legacy_index, 'index')
+    search_text_command(query, resolved_corpora, filter_arg, limit, offset, output_json, verbose)
 
 
 # Dual indexing commands (RDR-009)

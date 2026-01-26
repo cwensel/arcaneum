@@ -87,10 +87,13 @@ request semantic search, Claude will automatically use `arc`.
 arc collection list
 
 # Semantic search
-arc search semantic "authentication flow" --collection MyCode --limit 10
+arc search semantic "authentication flow" --corpus MyCode --limit 10
+
+# Multi-corpus search
+arc search semantic "authentication" --corpus Code --corpus Docs
 
 # Full-text search
-arc search text "validateToken" --index MyCode --limit 10
+arc search text "validateToken" --corpus MyCode --limit 10
 ```
 
 ## Requirements

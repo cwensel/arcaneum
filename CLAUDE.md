@@ -52,17 +52,20 @@ When asked to search collections, use this exact syntax:
 
 ```bash
 # Semantic search (most common)
-arc search semantic "your query" --collection CollectionName
+arc search semantic "your query" --corpus CorpusName
+
+# Multi-corpus search
+arc search semantic "your query" --corpus Corp1 --corpus Corp2
 
 # Full-text search
-arc search text "your query" --index IndexName
+arc search text "your query" --corpus CorpusName
 
 # List available collections
 arc collection list
 ```
 
 **IMPORTANT:** The subcommand (`semantic` or `text`) must come BEFORE the query.
-Do NOT use `arc search --collection` - that syntax is incorrect.
+Do NOT use `arc search --corpus` without a subcommand - that syntax is incorrect.
 
 ## Source Control
 

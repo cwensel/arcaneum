@@ -89,7 +89,7 @@ arc container start
 # 4. Index dependencies and search for patterns
 arc collection create Frameworks --type code
 arc index code ~/libs/fastapi --collection Frameworks
-arc search semantic "dependency injection pattern" --collection Frameworks
+arc search semantic "dependency injection pattern" --corpus Frameworks
 ```
 
 **First time?** Run `arc doctor` to check prerequisites and get setup guidance.
@@ -110,14 +110,15 @@ arc collection list
 arc collection items NAME
 arc index pdf PATH --collection NAME
 arc index code PATH --collection NAME
-arc search semantic "query" --collection NAME
+arc search semantic "query" --corpus NAME
+arc search semantic "query" --corpus N1 --corpus N2  # Multi-corpus
 
 # Indexes (MeiliSearch - Full-Text Search)
 arc indexes create NAME --type TYPE
 arc indexes list
 arc index text pdf PATH --index NAME
 arc index text code PATH --index NAME
-arc search text "query" --index NAME
+arc search text "query" --corpus NAME
 
 # Dual Indexing (Both Systems)
 arc corpus create NAME --type TYPE
@@ -143,8 +144,8 @@ arc index code ~/libs/sqlalchemy --collection Frameworks
 arc collection items Frameworks
 
 # Search for patterns and APIs
-arc search semantic "dependency injection pattern" --collection Frameworks --limit 10
-arc search semantic "database connection pooling" --collection Frameworks --limit 10
+arc search semantic "dependency injection pattern" --corpus Frameworks --limit 10
+arc search semantic "database connection pooling" --corpus Frameworks --limit 10
 ```
 
 ### Search Technical Documentation
@@ -157,8 +158,8 @@ arc collection create Papers --type pdf
 arc index pdf ~/Documents/papers --collection Papers
 
 # Search for concepts when planning new features
-arc search semantic "distributed consensus algorithms" --collection Papers
-arc search semantic "rate limiting strategies" --collection Papers
+arc search semantic "distributed consensus algorithms" --corpus Papers
+arc search semantic "rate limiting strategies" --corpus Papers
 ```
 
 ### Full-Text Search (MeiliSearch)
@@ -171,7 +172,7 @@ arc indexes create my-docs --type pdf
 arc index text pdf ~/Documents/papers --index my-docs
 
 # Search for exact phrases
-arc search text '"neural network architecture"' --index my-docs
+arc search text '"neural network architecture"' --corpus my-docs
 ```
 
 ### Dual Indexing (Semantic + Full-Text)
@@ -187,10 +188,10 @@ arc corpus sync MyDocs ~/Documents
 arc corpus sync MyDocs ~/Documents ~/Papers ~/Reports
 
 # Semantic search (conceptual)
-arc search semantic "machine learning concepts" --collection MyDocs
+arc search semantic "machine learning concepts" --corpus MyDocs
 
 # Full-text search (exact phrases)
-arc search text '"specific phrase"' --index MyDocs
+arc search text '"specific phrase"' --corpus MyDocs
 ```
 
 ### Index Markdown Files
@@ -207,7 +208,7 @@ arc index markdown ~/docs --collection Docs \
   --no-recursive
 
 # Search your notes
-arc search semantic "project planning" --collection Notes
+arc search semantic "project planning" --corpus Notes
 ```
 
 **Features:**

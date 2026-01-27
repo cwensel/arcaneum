@@ -119,6 +119,62 @@ def get_meili_client() -> FullTextClient:
     return FullTextClient(url, api_key)
 
 
+def read_path_list(from_file: str) -> List[Path]:
+    """Read paths (files or directories) from a file or stdin.
+
+    Unlike read_file_list, this function accepts both files and directories.
+
+    Args:
+        from_file: Path to file containing list of paths (one per line),
+                   or "-" to read from stdin
+
+    Returns:
+        List of Path objects (absolute paths) that exist
+
+    Notes:
+        - Empty lines and lines starting with '#' are skipped
+        - Relative paths are resolved relative to current working directory
+        - Non-existent paths are skipped with warning
+    """
+    paths = []
+
+    # Read lines from stdin or file
+    if from_file == '-':
+        logger.debug("Reading path list from stdin")
+        lines = sys.stdin.readlines()
+    else:
+        from_file_path = Path(from_file)
+        if not from_file_path.exists():
+            logger.error(f"Path list file not found: {from_file}")
+            return []
+        logger.debug(f"Reading path list from {from_file}")
+        with open(from_file_path, 'r') as f:
+            lines = f.readlines()
+
+    # Process each line
+    for line_num, line in enumerate(lines, 1):
+        line = line.strip()
+
+        # Skip empty lines and comments
+        if not line or line.startswith('#'):
+            continue
+
+        # Convert to Path and make absolute
+        path = Path(line)
+        if not path.is_absolute():
+            path = path.absolute()
+
+        # Check if path exists
+        if not path.exists():
+            logger.warning(f"Line {line_num}: Path not found, skipping: {line}")
+            continue
+
+        paths.append(path)
+
+    logger.info(f"Read {len(paths)} valid paths from list")
+    return paths
+
+
 def discover_files(
     directory: Path,
     file_types: Optional[str],
@@ -297,6 +353,7 @@ def chunk_code_file(file_path: Path, chunk_size: int, chunk_overlap: int) -> Lis
 def sync_directory_command(
     corpus: str,
     paths: tuple,
+    from_file: Optional[str],
     models: str,
     file_types: Optional[str],
     force: bool,
@@ -317,6 +374,7 @@ def sync_directory_command(
     Args:
         corpus: Corpus name (must exist)
         paths: Tuple of directories or files to sync
+        from_file: Path to file containing paths (one per line), or "-" for stdin
         models: Comma-separated list of embedding models
         file_types: File extensions to index (e.g., ".py,.js")
         force: If True, reindex all files (bypass change detection)
@@ -335,13 +393,20 @@ def sync_directory_command(
         effective_text_workers = 1  # Sequential
     else:
         effective_text_workers = text_workers
+    # Combine paths from command line and from-file
+    all_input_paths = list(paths) if paths else []
+    if from_file:
+        file_paths = read_path_list(from_file)
+        all_input_paths.extend(str(p) for p in file_paths)
+
     # Start interaction logging (RDR-018)
     interaction_logger.start(
         "corpus", "sync",
         corpus=corpus,
-        paths=list(paths),
+        paths=all_input_paths,
         models=models,
         file_types=file_types,
+        from_file=from_file,
     )
 
     # Supported file extensions for single-file sync
@@ -351,7 +416,7 @@ def sync_directory_command(
         # Validate and resolve all paths (directories or files)
         dir_paths = []
         single_files = []
-        for path in paths:
+        for path in all_input_paths:
             resolved_path = Path(path).resolve()
             if not resolved_path.exists():
                 raise InvalidArgumentError(f"Path not found: {path}")
@@ -370,17 +435,18 @@ def sync_directory_command(
                 raise InvalidArgumentError(f"Not a file or directory: {path}")
 
         if not output_json:
+            source_info = " (from file)" if from_file else ""
             if len(single_files) == 1 and not dir_paths:
-                print_info(f"Syncing file '{paths[0]}' to corpus '{corpus}'")
+                print_info(f"Syncing file '{all_input_paths[0]}' to corpus '{corpus}'{source_info}")
             elif len(dir_paths) == 1 and not single_files:
-                print_info(f"Syncing directory '{paths[0]}' to corpus '{corpus}'")
+                print_info(f"Syncing directory '{all_input_paths[0]}' to corpus '{corpus}'{source_info}")
             else:
                 parts = []
                 if dir_paths:
                     parts.append(f"{len(dir_paths)} director{'y' if len(dir_paths) == 1 else 'ies'}")
                 if single_files:
                     parts.append(f"{len(single_files)} file{'s' if len(single_files) > 1 else ''}")
-                print_info(f"Syncing {' and '.join(parts)} to corpus '{corpus}'")
+                print_info(f"Syncing {' and '.join(parts)} to corpus '{corpus}'{source_info}")
 
         # Initialize clients
         qdrant = create_qdrant_client()

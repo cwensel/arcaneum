@@ -1,6 +1,8 @@
 """Tests for CLI utility functions."""
 
 import pytest
+import tempfile
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 from qdrant_client.models import VectorParams, Distance
 
@@ -9,6 +11,7 @@ from arcaneum.cli.utils import (
     validate_models,
     build_vectors_config,
 )
+from arcaneum.cli.sync import read_path_list
 
 
 class TestGetModelDimensions:
@@ -172,3 +175,91 @@ class TestCreateMeiliClient:
         result = create_meili_client()
 
         mock_client_class.assert_called_once_with('http://env-url:9000', 'test-api-key')
+
+
+class TestReadPathList:
+    """Tests for read_path_list function (from sync.py)."""
+
+    def test_read_paths_from_file(self, tmp_path):
+        """Test reading paths from a file."""
+        # Create test directories and files
+        dir1 = tmp_path / "dir1"
+        dir1.mkdir()
+        file1 = tmp_path / "file1.txt"
+        file1.write_text("content")
+
+        # Create path list file
+        path_list = tmp_path / "paths.txt"
+        path_list.write_text(f"{dir1}\n{file1}\n")
+
+        paths = read_path_list(str(path_list))
+
+        assert len(paths) == 2
+        assert dir1 in paths
+        assert file1 in paths
+
+    def test_skips_comments_and_empty_lines(self, tmp_path):
+        """Test that comments and empty lines are skipped."""
+        dir1 = tmp_path / "dir1"
+        dir1.mkdir()
+
+        path_list = tmp_path / "paths.txt"
+        path_list.write_text(f"# This is a comment\n\n{dir1}\n\n# Another comment\n")
+
+        paths = read_path_list(str(path_list))
+
+        assert len(paths) == 1
+        assert dir1 in paths
+
+    def test_skips_nonexistent_paths(self, tmp_path):
+        """Test that nonexistent paths are skipped with warning."""
+        dir1 = tmp_path / "dir1"
+        dir1.mkdir()
+
+        path_list = tmp_path / "paths.txt"
+        path_list.write_text(f"{dir1}\n/nonexistent/path\n")
+
+        paths = read_path_list(str(path_list))
+
+        assert len(paths) == 1
+        assert dir1 in paths
+
+    def test_resolves_relative_paths(self, tmp_path, monkeypatch):
+        """Test that relative paths are resolved."""
+        monkeypatch.chdir(tmp_path)
+
+        dir1 = tmp_path / "relative_dir"
+        dir1.mkdir()
+
+        path_list = tmp_path / "paths.txt"
+        path_list.write_text("relative_dir\n")
+
+        paths = read_path_list(str(path_list))
+
+        assert len(paths) == 1
+        assert paths[0].is_absolute()
+        assert paths[0] == dir1
+
+    def test_returns_empty_list_for_nonexistent_file(self, tmp_path):
+        """Test that nonexistent path list file returns empty list."""
+        paths = read_path_list(str(tmp_path / "nonexistent.txt"))
+        assert paths == []
+
+    def test_accepts_both_files_and_directories(self, tmp_path):
+        """Test that both files and directories are accepted."""
+        dir1 = tmp_path / "mydir"
+        dir1.mkdir()
+        file1 = tmp_path / "myfile.pdf"
+        file1.write_text("content")
+        file2 = tmp_path / "another.md"
+        file2.write_text("content")
+
+        path_list = tmp_path / "paths.txt"
+        path_list.write_text(f"{dir1}\n{file1}\n{file2}\n")
+
+        paths = read_path_list(str(path_list))
+
+        assert len(paths) == 3
+        assert dir1 in paths
+        assert file1 in paths
+        assert file2 in paths

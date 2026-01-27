@@ -588,7 +588,8 @@ def delete_corpus(name, confirm, output_json):
 
 @corpus.command('sync')
 @click.argument('corpus')
-@click.argument('paths', nargs=-1, type=click.Path(exists=True), required=True)
+@click.argument('paths', nargs=-1, type=click.Path(exists=True), required=False)
+@click.option('--from-file', help='Read paths from file (one per line, or "-" for stdin)')
 @click.option('--models', default='stella,jina', help='Embedding models (comma-separated)')
 @click.option('--file-types', help='File extensions to index (e.g., .py,.md)')
 @click.option('--force', is_flag=True, help='Force reindex all files (bypass change detection)')
@@ -602,7 +603,7 @@ def delete_corpus(name, confirm, output_json):
               help='Batch parallelization workers for --no-gpu mode (default: 1, conservative to prevent system crashes)')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed progress (files, chunks, indexing)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def sync_directory(corpus, paths, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json):
+def sync_directory(corpus, paths, from_file, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json):
     """Index to both vector and full-text.
 
     Examples:
@@ -610,12 +611,19 @@ def sync_directory(corpus, paths, models, file_types, force, verify, text_worker
         arc corpus sync MyCorpus /path/one /path/two /path/three
         arc corpus sync MyCorpus document.pdf
         arc corpus sync MyCorpus notes.md /path/to/dir
+        arc corpus sync MyCorpus --from-file paths.txt
+        find . -name "*.pdf" | arc corpus sync MyCorpus --from-file -
 
     Use --text-workers to parallelize AST chunking for code corpora.
     Use --no-gpu for CPU-only mode (avoids MPS instability with large models).
     """
+    # Validate that at least one of paths or from_file is provided
+    if not paths and not from_file:
+        click.echo("Error: Either PATH(s) or --from-file must be provided", err=True)
+        raise SystemExit(1)
+
     from arcaneum.cli.sync import sync_directory_command
-    sync_directory_command(corpus, paths, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json)
+    sync_directory_command(corpus, paths, from_file, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json)
 
 
 @corpus.command('parity')

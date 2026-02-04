@@ -415,7 +415,7 @@ def create_corpus_command(
             for model in model_list:
                 dims = get_model_dimensions(model)
                 console.print(f"  • {model}: {dims}D")
-            console.print(f"\n[dim]Next: arc corpus sync /path/to/files --corpus {name}[/dim]")
+            console.print(f"\n[dim]Next: arc corpus sync {name} /path/to/files[/dim]")
 
         # Log successful operation (RDR-018)
         interaction_logger.finish()

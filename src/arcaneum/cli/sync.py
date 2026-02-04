@@ -9,6 +9,7 @@ import gc
 import logging
 import multiprocessing as mp
 import os
+import signal
 
 # Suppress tokenizers fork warning - must be set before any tokenizers import
 os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
@@ -64,6 +65,19 @@ DEFAULT_EXCLUDE_FILE_PATTERNS = {
     '*.map',
     '*.js.map',
     '*.css.map',
+    # Generated code files (poor search quality, can cause memory issues)
+    '*_generated.go',      # Kubernetes/OpenAPI generated Go
+    '*.generated.go',      # Alternative Go generated pattern
+    'zz_generated_*.go',   # Kubernetes controller-gen output (underscore)
+    'zz_generated.*.go',   # Kubernetes controller-gen output (dot, e.g., zz_generated.deepcopy.go)
+    '*_generated.py',      # Generated Python
+    '*.pb.go',             # Protocol buffer generated Go
+    '*_pb2.py',            # Protocol buffer generated Python
+    '*_pb2_grpc.py',       # gRPC generated Python
+    '*.gen.go',            # Code generators
+    '*.gen.ts',            # TypeScript generated
+    'generated.ts',        # Common generated filename
+    'generated.js',        # Common generated filename
 }
 
 # Directory names that should be excluded entirely
@@ -120,10 +134,21 @@ def _group_paths_by_git_root(paths: List[Path]) -> Dict[Optional[str], List[Path
     return groups
 
 
+def _worker_init():
+    """Initialize worker process with proper signal handling.
+
+    By default, Python's multiprocessing workers ignore SIGINT, causing them
+    to continue running when the user presses Ctrl-C. This initializer resets
+    SIGINT to the default behavior, allowing workers to be terminated cleanly.
+    """
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+
+
 def _chunk_code_file_worker(
     file_path: str,
     chunk_size: int,
     chunk_overlap: int,
+    hard_max_chars: Optional[int] = None,
 ) -> Tuple[str, List[Dict[str, Any]], Optional[str]]:
     """Process a single code file: read and chunk using AST.
 
@@ -133,6 +158,8 @@ def _chunk_code_file_worker(
         file_path: Path to source code file
         chunk_size: Target chunk size in tokens
         chunk_overlap: Overlap between chunks in tokens
+        hard_max_chars: Absolute max chars per chunk to prevent embedding OOM.
+                       Based on embedding model's max_seq_length × 2.
 
     Returns:
         Tuple of (file_path, list of chunk dicts, error or None)
@@ -150,6 +177,8 @@ def _chunk_code_file_worker(
 
         # Read file
         file_p = Path(file_path)
+        if not file_p.is_file():
+            return (file_path, [], f"Not a file: {file_path}")
         try:
             code = file_p.read_text(encoding='utf-8', errors='replace')
         except Exception as e:
@@ -166,8 +195,12 @@ def _chunk_code_file_worker(
         }
         language = ext_to_lang.get(file_p.suffix.lower(), 'unknown')
 
-        # Chunk using AST
-        chunker = ASTCodeChunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        # Chunk using AST with hard limit to prevent embedding OOM
+        chunker = ASTCodeChunker(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            hard_max_chars=hard_max_chars
+        )
         chunks = chunker.chunk_code(file_path, code)
 
         # Convert to serializable dicts
@@ -295,10 +328,12 @@ def _discover_git_tracked_files(directory: Path, extensions: set) -> List[Path]:
     files = []
     for file_path in tracked_files:
         p = Path(file_path)
-        # Only include files under the target directory
+        # Only include actual files under the target directory
+        # (git ls-files can return paths that are directories on disk)
         try:
             p.relative_to(directory_abs)
-            files.append(p)
+            if p.is_file():
+                files.append(p)
         except ValueError:
             # File is not under target directory, skip
             continue
@@ -356,7 +391,8 @@ def discover_files(
     files = []
     for ext in extensions:
         pattern = f"*{ext}"  # rglob already handles recursive search
-        found = list(directory.rglob(pattern))
+        # Filter to actual files only (directories can have extensions too)
+        found = [f for f in directory.rglob(pattern) if f.is_file()]
         files.extend(found)
 
     # Filter out excluded files (minified, generated, etc.)
@@ -463,13 +499,19 @@ def chunk_markdown_file(file_path: Path, chunk_size: int, chunk_overlap: int) ->
     return [{'text': c.text, 'metadata': c.metadata} for c in chunks]
 
 
-def chunk_code_file(file_path: Path, chunk_size: int, chunk_overlap: int) -> List[Dict[str, Any]]:
+def chunk_code_file(
+    file_path: Path,
+    chunk_size: int,
+    chunk_overlap: int,
+    hard_max_chars: Optional[int] = None
+) -> List[Dict[str, Any]]:
     """Chunk a source code file using AST-aware chunking.
 
     Args:
         file_path: Path to source file
         chunk_size: Target chunk size in tokens
         chunk_overlap: Overlap between chunks in tokens
+        hard_max_chars: Absolute max chars per chunk to prevent embedding OOM
 
     Returns:
         List of chunk dicts with 'text' and 'metadata'
@@ -498,10 +540,11 @@ def chunk_code_file(file_path: Path, chunk_size: int, chunk_overlap: int) -> Lis
 
     chunker = ASTCodeChunker(
         chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap
+        chunk_overlap=chunk_overlap,
+        hard_max_chars=hard_max_chars
     )
 
-    chunks = chunker.chunk(text, language)
+    chunks = chunker.chunk_code(str(file_path), text)
 
     result = []
     for i, chunk in enumerate(chunks):
@@ -869,6 +912,12 @@ def sync_directory_command(
                     'char_to_token_ratio': 3.3,
                 }
 
+            # Calculate hard_max_chars from embedding model's max_seq_length
+            # This prevents OOM during embedding for dense generated code (OpenAPI, protobuf)
+            embedding_model_config = EMBEDDING_MODELS.get(first_model, {})
+            max_seq_length = embedding_model_config.get('max_seq_length', 8192)
+            hard_max_chars = max_seq_length * 2  # Conservative: assume 0.5 tokens/char worst case
+
             # Pre-chunk code files in parallel if workers > 1
             pre_chunked_code_files: Dict[str, List[Dict[str, Any]]] = {}
             if corpus_type == 'code' and effective_text_workers > 1:
@@ -882,6 +931,7 @@ def sync_directory_command(
                     verbose,
                     output_json,
                     console,
+                    hard_max_chars=hard_max_chars,
                 )
                 if not output_json:
                     print_info(f"Pre-chunked {len(pre_chunked_code_files)} files")
@@ -931,7 +981,8 @@ def sync_directory_command(
                                 chunks = chunk_code_file(
                                     file_path,
                                     model_config.get('chunk_size', 400),
-                                    model_config.get('chunk_overlap', 20)
+                                    model_config.get('chunk_overlap', 20),
+                                    hard_max_chars=hard_max_chars
                                 )
                         else:
                             logger.warning(f"Unknown corpus type: {corpus_type}, skipping {file_path}")
@@ -955,6 +1006,15 @@ def sync_directory_command(
                         # This is much more efficient than embedding one chunk at a time,
                         # especially for CPU mode where batching reduces Python overhead
                         chunk_texts = [chunk['text'] for chunk in chunks]
+
+                        # Log large chunks for OOM debugging (only in verbose mode)
+                        chunk_sizes = [len(t) for t in chunk_texts]
+                        max_chunk_size = max(chunk_sizes) if chunk_sizes else 0
+                        if max_chunk_size > 10000 and verbose and not output_json:
+                            progress.console.print(
+                                f"[dim]  Large chunks: max={max_chunk_size} chars, "
+                                f"limit={hard_max_chars}[/dim]"
+                            )
 
                         # Generate embeddings for all chunks at once, per model
                         model_embeddings = {}
@@ -1105,6 +1165,11 @@ def sync_directory_command(
                     'char_to_token_ratio': 3.3,
                 }
 
+            # Calculate hard_max_chars from embedding model's max_seq_length
+            embedding_model_config = EMBEDDING_MODELS.get(first_model, {})
+            max_seq_length = embedding_model_config.get('max_seq_length', 8192)
+            hard_max_chars = max_seq_length * 2
+
             # Pre-chunk code files for backfill in parallel if workers > 1
             backfill_pre_chunked: Dict[str, List[Dict[str, Any]]] = {}
             if corpus_type == 'code' and effective_text_workers > 1:
@@ -1118,6 +1183,7 @@ def sync_directory_command(
                     verbose,
                     output_json,
                     console,
+                    hard_max_chars=hard_max_chars,
                 )
 
             with Progress(
@@ -1152,7 +1218,8 @@ def sync_directory_command(
                                 chunks = chunk_code_file(
                                     file_path,
                                     model_config.get('chunk_size', 400),
-                                    model_config.get('chunk_overlap', 20)
+                                    model_config.get('chunk_overlap', 20),
+                                    hard_max_chars=hard_max_chars
                                 )
                         else:
                             progress.advance(backfill_task)
@@ -1976,6 +2043,7 @@ def _parallel_chunk_code_files(
     verbose: bool,
     output_json: bool,
     console,
+    hard_max_chars: Optional[int] = None,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """Pre-chunk code files in parallel using ProcessPoolExecutor.
 
@@ -1987,6 +2055,8 @@ def _parallel_chunk_code_files(
         verbose: Show verbose output
         output_json: JSON output mode
         console: Rich console for output
+        hard_max_chars: Absolute max chars per chunk to prevent embedding OOM.
+                       Based on embedding model's max_seq_length × 2.
 
     Returns:
         Dict mapping file_path -> list of chunk dicts
@@ -1998,7 +2068,7 @@ def _parallel_chunk_code_files(
         # Sequential mode
         for file_path in file_paths:
             file_path_str, chunks, error = _chunk_code_file_worker(
-                file_path, chunk_size, chunk_overlap
+                file_path, chunk_size, chunk_overlap, hard_max_chars
             )
             if error:
                 errors.append((file_path_str, error))
@@ -2006,17 +2076,24 @@ def _parallel_chunk_code_files(
                 chunked_files[file_path_str] = chunks
         return chunked_files
 
-    # Parallel mode
+    # Parallel mode - use 'fork' on Unix for better Ctrl-C handling
+    # 'spawn' creates independent processes that ignore parent signals
     try:
         ctx = mp.get_context('fork') if sys.platform != 'win32' else mp.get_context('spawn')
     except ValueError:
         ctx = mp.get_context('spawn')
 
-    with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as executor:
+    executor = None
+    try:
+        executor = ProcessPoolExecutor(
+            max_workers=workers,
+            mp_context=ctx,
+            initializer=_worker_init
+        )
         futures = {
             executor.submit(
                 _chunk_code_file_worker,
-                fp, chunk_size, chunk_overlap
+                fp, chunk_size, chunk_overlap, hard_max_chars
             ): fp
             for fp in file_paths
         }
@@ -2037,6 +2114,14 @@ def _parallel_chunk_code_files(
 
         # Clean up
         del futures
+
+    except KeyboardInterrupt:
+        if not output_json:
+            console.print("\n[yellow]Interrupted - shutting down workers...[/yellow]")
+        raise
+    finally:
+        if executor:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     gc.collect()
 
@@ -2089,6 +2174,12 @@ def _backfill_meili_to_qdrant(
     files_failed = 0
     skipped_paths = []
 
+    # Calculate hard_max_chars from embedding model's max_seq_length
+    first_model = model_list[0] if model_list else 'jina-code'
+    embedding_model_config = EMBEDDING_MODELS.get(first_model, {})
+    max_seq_length = embedding_model_config.get('max_seq_length', 8192)
+    hard_max_chars = max_seq_length * 2
+
     # For code corpora with parallel workers, pre-chunk all files in parallel
     pre_chunked_files: Dict[str, List[Dict[str, Any]]] = {}
     if corpus_type == 'code' and text_workers > 1:
@@ -2110,6 +2201,7 @@ def _backfill_meili_to_qdrant(
                 verbose,
                 output_json,
                 progress.console,
+                hard_max_chars=hard_max_chars,
             )
             if verbose and not output_json:
                 progress.console.print(f"[dim]  Pre-chunked {len(pre_chunked_files)} files in parallel[/dim]")
@@ -2152,7 +2244,8 @@ def _backfill_meili_to_qdrant(
                 chunks = chunk_code_file(
                     file_path,
                     model_config.get('chunk_size', 400),
-                    model_config.get('chunk_overlap', 20)
+                    model_config.get('chunk_overlap', 20),
+                    hard_max_chars=hard_max_chars
                 )
             else:
                 progress.advance(backfill_task)

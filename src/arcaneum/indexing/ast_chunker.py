@@ -101,7 +101,8 @@ class ASTCodeChunker:
         self,
         chunk_size: int = 400,
         chunk_overlap: int = 20,
-        max_chars: Optional[int] = None
+        max_chars: Optional[int] = None,
+        hard_max_chars: Optional[int] = None
     ):
         """Initialize AST code chunker.
 
@@ -111,10 +112,14 @@ class ASTCodeChunker:
                        - 2000-4000 tokens for 32K context models (jina-code-1.5b)
             chunk_overlap: Overlap between chunks in tokens (default 5%)
             max_chars: Maximum characters per chunk (None = auto-calculate)
+            hard_max_chars: Absolute maximum chars per chunk based on embedding model's
+                           max_seq_length. Chunks exceeding this are re-split to prevent
+                           OOM during embedding. (None = no hard limit)
         """
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.max_chars = max_chars or int(chunk_size * self.CHARS_PER_TOKEN)
+        self.hard_max_chars = hard_max_chars
 
         if not LLAMA_INDEX_AVAILABLE:
             logger.warning(
@@ -156,7 +161,11 @@ class ASTCodeChunker:
                 chunks = self._chunk_with_ast(code, language)
                 if chunks:
                     extraction_method = f"ast_{language}"
-                    return [Chunk(content=c, method=extraction_method) for c in chunks]
+                    result = [Chunk(content=c, method=extraction_method) for c in chunks]
+                    # Enforce hard_max_chars limit if set
+                    if self.hard_max_chars:
+                        result = self._enforce_hard_limit(result)
+                    return result
             except Exception as e:
                 logger.debug(f"AST parsing failed for {file_path} ({language}): {e}")
                 # Fall through to line-based chunking
@@ -164,7 +173,13 @@ class ASTCodeChunker:
         # Fallback to line-based chunking
         logger.debug(f"Using line-based chunking for {file_path}")
         chunks = self._chunk_line_based(code)
-        return [Chunk(content=c, method="line_based") for c in chunks]
+        result = [Chunk(content=c, method="line_based") for c in chunks]
+
+        # Enforce hard_max_chars limit if set - re-split any oversized chunks
+        if self.hard_max_chars:
+            result = self._enforce_hard_limit(result)
+
+        return result
 
     def _chunk_with_ast(self, code: str, language: str) -> List[str]:
         """Chunk code using AST parsing via LlamaIndex CodeSplitter.
@@ -317,6 +332,151 @@ class ASTCodeChunker:
         chunks = [c for c in chunks if c and c.strip()]
 
         return chunks if chunks else [code]  # Return original if no chunks created
+
+    def _enforce_hard_limit(self, chunks: List[Chunk]) -> List[Chunk]:
+        """Re-split any chunks exceeding hard_max_chars to prevent embedding OOM.
+
+        This is a post-processing step that ensures no chunk exceeds the embedding
+        model's capacity. Oversized chunks are split at natural break points
+        (newlines, then punctuation) with overlap to preserve context continuity.
+
+        Args:
+            chunks: List of Chunk objects from AST or line-based chunking
+
+        Returns:
+            List of Chunk objects with all chunks <= hard_max_chars
+        """
+        if not self.hard_max_chars:
+            return chunks
+
+        # Calculate overlap for re-split chunks (15% of hard_max_chars, similar to normal chunking)
+        overlap_chars = int(self.hard_max_chars * 0.15)
+
+        result = []
+        split_count = 0
+
+        for chunk in chunks:
+            if len(chunk.content) <= self.hard_max_chars:
+                result.append(chunk)
+            else:
+                # Need to split this chunk with overlap
+                split_count += 1
+                sub_chunks = self._split_oversized_chunk(
+                    chunk.content, self.hard_max_chars, overlap_chars
+                )
+                for sub in sub_chunks:
+                    result.append(Chunk(content=sub, method=f"{chunk.method}_resplit"))
+
+        if split_count > 0:
+            logger.info(
+                f"Re-split {split_count} oversized chunks exceeding {self.hard_max_chars} chars "
+                f"(total chunks: {len(chunks)} -> {len(result)}, overlap: {overlap_chars} chars)"
+            )
+
+        return result
+
+    def _split_oversized_chunk(self, text: str, max_chars: int, overlap_chars: int = 0) -> List[str]:
+        """Split an oversized chunk into smaller pieces with overlap.
+
+        Uses a sliding window approach to maintain context continuity across chunks.
+        Each chunk (except the first) includes overlap_chars from the end of the
+        previous chunk's content, providing context for large functions that span
+        multiple chunks.
+
+        Tries to split at natural boundaries in order of preference:
+        1. Double newlines (paragraph breaks)
+        2. Single newlines
+        3. Sentence-ending punctuation followed by space
+        4. Other punctuation (semicolons, braces)
+        5. Hard cut at max_chars if no break point found
+
+        Args:
+            text: The oversized text to split
+            max_chars: Maximum characters per resulting chunk
+            overlap_chars: Number of characters to overlap between chunks
+
+        Returns:
+            List of text chunks, each <= max_chars, with overlap for context
+        """
+        if len(text) <= max_chars:
+            return [text]
+
+        result = []
+        pos = 0
+
+        while pos < len(text):
+            # Determine how much text to consider for this chunk
+            # For first chunk, use full max_chars
+            # For subsequent chunks, we'll prepend overlap from previous
+            is_first_chunk = (pos == 0)
+
+            if is_first_chunk:
+                available_chars = max_chars
+            else:
+                # Subsequent chunks: include overlap at start, so less room for new content
+                available_chars = max_chars - overlap_chars
+
+            end_pos = pos + available_chars
+
+            if end_pos >= len(text):
+                # Last chunk - take everything remaining
+                if is_first_chunk:
+                    result.append(text[pos:])
+                else:
+                    # Prepend overlap from previous chunk
+                    overlap_start = max(0, pos - overlap_chars)
+                    result.append(text[overlap_start:])
+                break
+
+            # Try to find a good split point within available space
+            segment = text[pos:end_pos]
+            split_offset = -1  # Offset within segment
+
+            # Try double newline first (paragraph break)
+            nl_pos = segment.rfind('\n\n')
+            if nl_pos > available_chars * 0.5:  # Only if at least halfway through
+                split_offset = nl_pos + 2
+
+            # Try single newline
+            if split_offset == -1:
+                nl_pos = segment.rfind('\n')
+                if nl_pos > available_chars * 0.3:
+                    split_offset = nl_pos + 1
+
+            # Try sentence endings
+            if split_offset == -1:
+                for ending in ['. ', '.\n', '? ', '?\n', '! ', '!\n']:
+                    end_pos_in_seg = segment.rfind(ending)
+                    if end_pos_in_seg > available_chars * 0.3:
+                        split_offset = end_pos_in_seg + len(ending)
+                        break
+
+            # Try code-specific break points
+            if split_offset == -1:
+                for brk in [';\n', '},\n', '}\n', ',\n', '; ', '}, ', '} ']:
+                    brk_pos = segment.rfind(brk)
+                    if brk_pos > available_chars * 0.3:
+                        split_offset = brk_pos + len(brk)
+                        break
+
+            # Hard cut if no good break point found
+            if split_offset == -1:
+                split_offset = available_chars
+
+            # Build the chunk content
+            if is_first_chunk:
+                chunk_content = text[pos:pos + split_offset]
+            else:
+                # Prepend overlap from previous chunk's end
+                overlap_start = max(0, pos - overlap_chars)
+                chunk_content = text[overlap_start:pos + split_offset]
+
+            result.append(chunk_content)
+
+            # Move position forward (no overlap in position - overlap is in content)
+            pos = pos + split_offset
+
+        return result
 
     def detect_language(self, file_path: str) -> Optional[str]:
         """Detect programming language from file extension.

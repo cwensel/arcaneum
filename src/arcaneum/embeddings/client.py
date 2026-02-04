@@ -559,6 +559,49 @@ class EmbeddingClient:
         """
         model = self.get_model(model_name)
 
+        # Pre-truncate texts that exceed safe character limit to prevent OOM
+        # Generated code (OpenAPI, protobuf) can have high token density where
+        # 1 char ≈ 1 token. Use conservative ratio of 2 chars/token.
+        # This prevents tokenizer from allocating massive buffers before truncation.
+        model_config = EMBEDDING_MODELS.get(model_name, {})
+        max_seq_length = model_config.get("max_seq_length", 8192)
+        max_chars = max_seq_length * 2  # Conservative: assume 0.5 tokens/char worst case
+
+        # Log chunk sizes for debugging OOM issues
+        max_text_len = max(len(t) for t in texts) if texts else 0
+
+        if max_text_len > max_chars * 0.8:
+            logger.warning(
+                f"Large chunks detected: max={max_text_len} chars, limit={max_chars} chars "
+                f"(model={model_name}, max_seq_length={max_seq_length})"
+            )
+
+        truncated_count = 0
+        safe_texts = []
+        for text in texts:
+            if len(text) > max_chars:
+                safe_texts.append(text[:max_chars])
+                truncated_count += 1
+            else:
+                safe_texts.append(text)
+
+        if truncated_count > 0:
+            logger.warning(
+                f"Truncated {truncated_count}/{len(texts)} texts exceeding "
+                f"{max_chars} chars (max_seq_length={max_seq_length})"
+            )
+
+        texts = safe_texts
+
+        # Additional safeguard: if we still have very large texts after truncation,
+        # something is wrong - refuse to process to prevent OOM
+        remaining_large = [i for i, t in enumerate(texts) if len(t) > max_chars]
+        if remaining_large:
+            raise RuntimeError(
+                f"BUG: {len(remaining_large)} texts still exceed {max_chars} chars after truncation. "
+                f"Sizes: {[len(texts[i]) for i in remaining_large[:5]]}"
+            )
+
         # Handle different backends
         if hasattr(model, '_backend') and model._backend == "sentence-transformers":
             # SentenceTransformers: use encode() with convert_to_numpy=True (arcaneum-ppa2)

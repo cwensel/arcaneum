@@ -21,7 +21,7 @@ from .types import GitMetadata
 logger = logging.getLogger(__name__)
 
 
-def apply_git_metadata(doc, git_metadata: GitMetadata) -> None:
+def apply_git_metadata(doc, git_metadata: GitMetadata, include_version_id: bool = False) -> None:
     """Apply GitMetadata to a document object.
 
     Centralizes git metadata assignment to prevent inconsistencies between indexing paths.
@@ -30,12 +30,16 @@ def apply_git_metadata(doc, git_metadata: GitMetadata) -> None:
     Args:
         doc: Document object with git metadata attributes (e.g., DualIndexDocument)
         git_metadata: GitMetadata containing project info, branch, commit hash, etc.
+        include_version_id: If True, set git_version_identifier for multi-version indexing
     """
     doc.project = git_metadata.project_name
     doc.branch = git_metadata.branch
     doc.git_project_identifier = git_metadata.identifier
     doc.git_commit_hash = git_metadata.commit_hash
     doc.git_remote_url = git_metadata.remote_url
+
+    if include_version_id:
+        doc.git_version_identifier = git_metadata.version_identifier
 
 
 class GitProjectDiscovery:

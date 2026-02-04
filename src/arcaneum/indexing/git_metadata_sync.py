@@ -291,6 +291,56 @@ class GitMetadataSync:
 
         return stale
 
+    def is_version_indexed(
+        self,
+        collection_name: str,
+        version_identifier: str
+    ) -> bool:
+        """Check if a specific version (project#branch@commit) is already indexed.
+
+        This supports the --git-version mode where multiple versions of the same
+        branch can coexist in the collection.
+
+        Args:
+            collection_name: Name of Qdrant collection
+            version_identifier: Versioned identifier "project#branch@commit_short"
+                               (e.g., "arcaneum#main@abc1234")
+
+        Returns:
+            True if version is already indexed, False otherwise
+        """
+        try:
+            # Query for any points with this version identifier
+            result = self.qdrant.scroll(
+                collection_name=collection_name,
+                scroll_filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="git_version_identifier",
+                            match=MatchValue(value=version_identifier)
+                        )
+                    ]
+                ),
+                with_payload=False,
+                with_vectors=False,
+                limit=1  # Only need to know if any exist
+            )
+
+            points, _ = result
+            is_indexed = len(points) > 0
+
+            if is_indexed:
+                logger.debug(f"Version {version_identifier} already indexed in {collection_name}")
+            else:
+                logger.debug(f"Version {version_identifier} not indexed in {collection_name}")
+
+            return is_indexed
+
+        except Exception as e:
+            logger.error(f"Error checking version index for {version_identifier}: {e}")
+            # Fail-safe: return False to allow indexing
+            return False
+
     def verify_consistency(self, collection_name: str) -> Tuple[bool, str]:
         """Verify metadata consistency in collection.
 

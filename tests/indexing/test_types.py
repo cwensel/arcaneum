@@ -65,6 +65,38 @@ class TestGitMetadata:
 
         assert metadata.remote_url is None
 
+    def test_version_identifier_property(self):
+        """Test version_identifier generation with project#branch@commit."""
+        metadata = GitMetadata(
+            project_root="/path/to/repo",
+            commit_hash="abc123def456abc123def456abc123def456abc1",
+            branch="feature-x",
+            project_name="my-project"
+        )
+
+        assert metadata.version_identifier == "my-project#feature-x@abc123d"
+
+    def test_version_identifier_with_different_commits(self):
+        """Test that different commits produce different version identifiers."""
+        metadata1 = GitMetadata(
+            project_root="/path/to/repo",
+            commit_hash="abc1234567890abcdef1234567890abcdef12345",
+            branch="main",
+            project_name="project"
+        )
+
+        metadata2 = GitMetadata(
+            project_root="/path/to/repo",
+            commit_hash="def5678901234567890abcdef5678901234567890",
+            branch="main",
+            project_name="project"
+        )
+
+        # Same project#branch, different @commit
+        assert metadata1.version_identifier == "project#main@abc1234"
+        assert metadata2.version_identifier == "project#main@def5678"
+        assert metadata1.version_identifier != metadata2.version_identifier
+
 
 class TestCodeChunkMetadata:
     """Tests for CodeChunkMetadata dataclass."""

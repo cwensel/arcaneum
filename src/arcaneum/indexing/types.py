@@ -39,6 +39,19 @@ class GitMetadata:
         """
         return f"{self.project_name}#{self.branch}"
 
+    @property
+    def version_identifier(self) -> str:
+        """Versioned identifier combining project name, branch, and commit.
+
+        Format: "project-name#branch@commit_short"
+        Examples: "arcaneum#main@abc1234", "myproject#feature-x@def5678"
+
+        This enables multi-version support where multiple commits of the same
+        branch can coexist in the collection (e.g., for version comparison).
+        """
+        commit_short = self.commit_hash[:7] if self.commit_hash else "unknown"
+        return f"{self.project_name}#{self.branch}@{commit_short}"
+
 
 @dataclass
 class CodeChunkMetadata:

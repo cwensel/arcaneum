@@ -406,3 +406,103 @@ class TestApplyGitMetadata:
         assert doc.git_project_identifier == git_meta.identifier
         assert doc.git_commit_hash == git_meta.commit_hash
         assert doc.git_remote_url == git_meta.remote_url
+
+    def test_apply_git_metadata_with_version_identifier(self):
+        """Test applying git metadata with include_version_id=True."""
+        git_meta = GitMetadata(
+            project_root="/path/to/repo",
+            commit_hash="abc123def456abc123def456abc123def456abc1",
+            branch="main",
+            project_name="myproject",
+            remote_url="https://github.com/org/myproject.git"
+        )
+
+        doc = DualIndexDocument(content="test content")
+        apply_git_metadata(doc, git_meta, include_version_id=True)
+
+        assert doc.project == "myproject"
+        assert doc.branch == "main"
+        assert doc.git_project_identifier == "myproject#main"
+        assert doc.git_commit_hash == "abc123def456abc123def456abc123def456abc1"
+        assert doc.git_remote_url == "https://github.com/org/myproject.git"
+        assert doc.git_version_identifier == "myproject#main@abc123d"
+
+    def test_apply_git_metadata_without_version_identifier(self):
+        """Test applying git metadata with include_version_id=False (default)."""
+        git_meta = GitMetadata(
+            project_root="/path/to/repo",
+            commit_hash="abc123def456abc123def456abc123def456abc1",
+            branch="main",
+            project_name="myproject",
+            remote_url=None
+        )
+
+        doc = DualIndexDocument(content="test content")
+        apply_git_metadata(doc, git_meta)  # Default is include_version_id=False
+
+        assert doc.git_version_identifier is None
+
+
+class TestGitSyncHelpers:
+    """Tests for git-aware sync helper functions in cli/sync.py."""
+
+    def test_find_git_root_in_repo(self, simple_repo):
+        """Test _find_git_root returns correct root for path inside repo."""
+        from arcaneum.cli.sync import _find_git_root
+
+        # Test with the repo root
+        assert _find_git_root(Path(simple_repo)) == simple_repo
+
+        # Test with a file inside the repo
+        test_file = Path(simple_repo) / "test.txt"
+        assert _find_git_root(test_file) == simple_repo
+
+    def test_find_git_root_outside_repo(self, temp_dir):
+        """Test _find_git_root returns None for non-git path."""
+        from arcaneum.cli.sync import _find_git_root
+
+        # temp_dir is not a git repo
+        result = _find_git_root(Path(temp_dir))
+        assert result is None
+
+    def test_group_paths_by_git_root(self, simple_repo, temp_dir):
+        """Test _group_paths_by_git_root groups correctly."""
+        from arcaneum.cli.sync import _group_paths_by_git_root
+
+        # Create some paths
+        repo_file = Path(simple_repo) / "test.txt"
+        non_git_file = Path(temp_dir) / "other.txt"
+        non_git_file.touch()
+
+        paths = [repo_file, non_git_file]
+        groups = _group_paths_by_git_root(paths)
+
+        # Should have two groups: git repo and None (non-git)
+        assert simple_repo in groups
+        assert repo_file in groups[simple_repo]
+        assert None in groups
+        assert non_git_file in groups[None]
+
+    def test_group_paths_multiple_repos(self, simple_repo, temp_dir):
+        """Test _group_paths_by_git_root with multiple git repos."""
+        from arcaneum.cli.sync import _group_paths_by_git_root
+
+        # Create a second git repo
+        second_repo = Path(temp_dir) / "second-repo"
+        second_repo.mkdir()
+        git.Repo.init(second_repo)
+
+        paths = [
+            Path(simple_repo) / "file1.py",
+            Path(simple_repo) / "file2.py",
+            second_repo / "file3.py",
+        ]
+
+        groups = _group_paths_by_git_root(paths)
+
+        # Should have two groups, one for each repo
+        assert len([k for k in groups.keys() if k is not None]) == 2
+        assert simple_repo in groups
+        assert str(second_repo) in groups
+        assert len(groups[simple_repo]) == 2
+        assert len(groups[str(second_repo)]) == 1

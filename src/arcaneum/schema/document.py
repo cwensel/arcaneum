@@ -66,6 +66,7 @@ class DualIndexDocument:
     git_project_identifier: Optional[str] = None
     git_commit_hash: Optional[str] = None
     git_remote_url: Optional[str] = None
+    git_version_identifier: Optional[str] = None  # "project#branch@commit" for multi-version indexing
 
     # Code-specific
     function_names: List[str] = field(default_factory=list)
@@ -143,6 +144,9 @@ def to_qdrant_point(doc: DualIndexDocument, point_id: Optional[int] = None):
 
     if doc.git_remote_url:
         payload["git_remote_url"] = doc.git_remote_url
+
+    if doc.git_version_identifier:
+        payload["git_version_identifier"] = doc.git_version_identifier
 
     if doc.function_names:
         payload["function_names"] = doc.function_names
@@ -224,6 +228,9 @@ def to_meilisearch_doc(doc: DualIndexDocument) -> Dict[str, Any]:
 
     if doc.git_project_identifier:
         meili_doc["git_project_identifier"] = doc.git_project_identifier
+
+    if doc.git_version_identifier:
+        meili_doc["git_version_identifier"] = doc.git_version_identifier
 
     if doc.function_names:
         meili_doc["function_names"] = doc.function_names

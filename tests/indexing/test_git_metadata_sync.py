@@ -370,6 +370,36 @@ class TestGitMetadataSync:
         # Should return empty dict on error (fail-safe)
         assert indexed == {}
 
+    def test_is_version_indexed_found(self, metadata_sync, mock_qdrant):
+        """Test is_version_indexed returns True when version exists."""
+        mock_qdrant.scroll.return_value = ([create_mock_point(1, "project#main", "a" * 40)], None)
+
+        result = metadata_sync.is_version_indexed("test-collection", "project#main@abc1234")
+
+        assert result is True
+        # Verify the scroll was called with the correct filter
+        mock_qdrant.scroll.assert_called()
+        call_args = mock_qdrant.scroll.call_args
+        assert call_args.kwargs['collection_name'] == "test-collection"
+        assert call_args.kwargs['limit'] == 1
+
+    def test_is_version_indexed_not_found(self, metadata_sync, mock_qdrant):
+        """Test is_version_indexed returns False when version doesn't exist."""
+        mock_qdrant.scroll.return_value = ([], None)
+
+        result = metadata_sync.is_version_indexed("test-collection", "project#main@xyz9999")
+
+        assert result is False
+
+    def test_is_version_indexed_error_handling(self, metadata_sync, mock_qdrant):
+        """Test is_version_indexed returns False on error (fail-safe)."""
+        mock_qdrant.scroll.side_effect = Exception("Connection error")
+
+        result = metadata_sync.is_version_indexed("test-collection", "project#main@abc1234")
+
+        # Should return False on error (fail-safe: will allow indexing)
+        assert result is False
+
 
 class TestIndexedProject:
     """Tests for IndexedProject dataclass."""

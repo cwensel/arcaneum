@@ -35,6 +35,7 @@ from ..indexing.dual_indexer import DualIndexer
 from ..indexing.collection_metadata import get_collection_type, get_collection_metadata
 from ..indexing.common.sync import MetadataBasedSync, compute_quick_hash
 from ..indexing.git_operations import GitProjectDiscovery, apply_git_metadata
+from ..indexing.git_metadata_sync import GitMetadataSync
 from ..config import DEFAULT_MODELS
 
 console = Console()
@@ -80,6 +81,43 @@ DEFAULT_EXCLUDE_DIRECTORIES = {
     'dist',
     'build',
 }
+
+
+def _find_git_root(path: Path) -> Optional[str]:
+    """Find git root containing path, or None if not in a git repo.
+
+    Args:
+        path: Path to file or directory
+
+    Returns:
+        Absolute path to git root, or None if not in a git repo
+    """
+    try:
+        import git
+
+        # If path is a file (or doesn't exist), search from parent directory
+        search_path = path if path.is_dir() else path.parent
+
+        repo = git.Repo(search_path, search_parent_directories=True)
+        return repo.working_tree_dir
+    except Exception:
+        return None
+
+
+def _group_paths_by_git_root(paths: List[Path]) -> Dict[Optional[str], List[Path]]:
+    """Group paths by git root. Non-git paths under None key.
+
+    Args:
+        paths: List of file or directory paths
+
+    Returns:
+        Dictionary mapping git root (or None) to list of paths
+    """
+    groups: Dict[Optional[str], List[Path]] = {}
+    for path in paths:
+        root = _find_git_root(path)
+        groups.setdefault(root, []).append(path)
+    return groups
 
 
 def _chunk_code_file_worker(
@@ -494,7 +532,9 @@ def sync_directory_command(
     no_gpu: bool,
     cpu_workers: Optional[int],
     verbose: bool,
-    output_json: bool
+    output_json: bool,
+    git_update: bool = False,
+    git_version: bool = False
 ):
     """Sync directories or files to both Qdrant and MeiliSearch.
 
@@ -516,6 +556,8 @@ def sync_directory_command(
         cpu_workers: Number of parallel workers for CPU embedding (None=1, conservative default)
         verbose: If True, show detailed progress
         output_json: If True, output JSON format
+        git_update: If True, skip repos with unchanged commit hash (git-aware fast path)
+        git_version: If True, keep multiple versions indexed (different commits coexist)
     """
     # Calculate effective text workers
     if text_workers is None:
@@ -616,6 +658,16 @@ def sync_directory_command(
         if not output_json:
             print_info(f"Corpus type: {corpus_type}")
             print_info(f"Models: {configured_models}")
+            # Show sync mode for code corpora
+            if corpus_type == 'code':
+                if force:
+                    print_info("Sync mode: force (reindex all files)")
+                elif git_update:
+                    print_info("Sync mode: --git-update (skip repos with unchanged commit)")
+                elif git_version:
+                    print_info("Sync mode: --git-version (keep multiple versions indexed)")
+                else:
+                    print_info("Sync mode: file-level (default, use --git-update for repo-level)")
             print_info(f"Dual indexing to:")
             print_info(f"  - Qdrant collection: {corpus} (semantic search)")
             print_info(f"  - MeiliSearch index: {corpus} (full-text search)")
@@ -623,13 +675,78 @@ def sync_directory_command(
         # Parse models
         model_list = [m.strip() for m in configured_models.split(',')]
 
+        # Git-aware sync: skip repos based on commit hash
+        # Track repos to skip and version identifiers to apply
+        skip_git_roots: Set[str] = set()
+        version_identifiers: Dict[str, str] = {}  # git_root -> version_identifier
+
+        if (git_update or git_version) and not force:
+            # Group input paths by git root
+            all_paths = dir_paths + single_files
+            path_groups = _group_paths_by_git_root(all_paths)
+
+            git_sync = GitMetadataSync(qdrant)
+            git_discovery = GitProjectDiscovery()
+
+            if git_update:
+                # --git-update mode: skip repos with unchanged commit hash
+                indexed_projects = git_sync.get_indexed_projects(corpus)
+
+                for git_root, group_paths in path_groups.items():
+                    if git_root is None:
+                        if not output_json:
+                            print_info("Warning: --git-update specified but some paths are not in git repos")
+                        continue
+
+                    meta = git_discovery.extract_metadata(git_root)
+                    if meta and meta.identifier in indexed_projects:
+                        if indexed_projects[meta.identifier].commit_hash == meta.commit_hash:
+                            skip_git_roots.add(git_root)
+                            if not output_json:
+                                print_info(f"Skipping {meta.identifier}: commit unchanged ({meta.commit_hash[:7]})")
+                        else:
+                            if not output_json:
+                                print_info(f"Commit changed for {meta.identifier}: {indexed_projects[meta.identifier].commit_hash[:7]} -> {meta.commit_hash[:7]}")
+                    elif meta:
+                        if not output_json:
+                            print_info(f"New project detected: {meta.identifier}")
+
+            elif git_version:
+                # --git-version mode: keep multiple versions indexed
+                for git_root, group_paths in path_groups.items():
+                    if git_root is None:
+                        if not output_json:
+                            print_error("--git-version requires git repos (non-git paths found)")
+                        continue
+
+                    meta = git_discovery.extract_metadata(git_root)
+                    if meta:
+                        version_id = meta.version_identifier
+                        if git_sync.is_version_indexed(corpus, version_id):
+                            skip_git_roots.add(git_root)
+                            if not output_json:
+                                print_info(f"Skipping {version_id}: already indexed")
+                        else:
+                            version_identifiers[git_root] = version_id
+                            if not output_json:
+                                print_info(f"Will index new version: {version_id}")
+
         # Discover files from all directories and include single files
+        # Filter out files from skipped git repos
         files = []
         for dir_path in dir_paths:
+            # Check if this directory is in a skipped git root
+            dir_git_root = _find_git_root(dir_path)
+            if dir_git_root in skip_git_roots:
+                continue
             dir_files = discover_files(dir_path, file_types, corpus_type)
             files.extend(dir_files)
         # Add single files directly (already validated for extension)
-        files.extend(single_files)
+        for single_file in single_files:
+            file_git_root = _find_git_root(single_file)
+            if file_git_root in skip_git_roots:
+                continue
+            files.append(single_file)
 
         if not files:
             if output_json:
@@ -910,7 +1027,9 @@ def sync_directory_command(
                                             git_meta = git_metadata_cache[git_root]
 
                                         if git_meta:
-                                            apply_git_metadata(doc, git_meta)
+                                            # Include version_identifier for --git-version mode
+                                            include_version = git_version and git_root in version_identifiers
+                                            apply_git_metadata(doc, git_meta, include_version_id=include_version)
 
                             documents.append(doc)
 
@@ -1436,7 +1555,8 @@ def _fetch_git_metadata_for_files(
             limit=1000,
             offset=offset,
             with_payload=["file_path", "git_project_identifier",
-                         "git_project_name", "git_branch", "git_commit_hash"],
+                         "git_project_name", "git_branch", "git_commit_hash",
+                         "git_version_identifier"],
             with_vectors=False
         )
         if not points:
@@ -1447,11 +1567,21 @@ def _fetch_git_metadata_for_files(
             # Only store if file is in our needed set and has git metadata
             if file_path in file_paths_needed and point.payload.get("git_project_identifier"):
                 if file_path not in git_metadata_by_file:
+                    project_name = point.payload.get("git_project_name")
+                    branch = point.payload.get("git_branch")
+                    commit_hash = point.payload.get("git_commit_hash")
+
+                    # Compute git_version_identifier if we have the required fields
+                    version_id = point.payload.get("git_version_identifier")
+                    if not version_id and project_name and branch and commit_hash:
+                        version_id = f"{project_name}#{branch}@{commit_hash[:7]}"
+
                     git_metadata_by_file[file_path] = {
                         "git_project_identifier": point.payload.get("git_project_identifier"),
-                        "git_project_name": point.payload.get("git_project_name"),
-                        "git_branch": point.payload.get("git_branch"),
-                        "git_commit_hash": point.payload.get("git_commit_hash"),
+                        "git_project_name": project_name,
+                        "git_branch": branch,
+                        "git_commit_hash": commit_hash,
+                        "git_version_identifier": version_id,
                     }
 
         points_scanned += len(points)
@@ -1488,9 +1618,10 @@ def _repair_meili_metadata(
     Returns:
         Tuple of (documents_updated, documents_failed)
     """
-    # Step 1: Find MeiliSearch documents missing git_project_identifier
+    # Step 1: Find MeiliSearch documents missing git_project_identifier or git_version_identifier
     # Use get_documents API (not search) to iterate through ALL documents
     docs_to_repair = []
+    docs_needing_version_id = []  # Docs that have git metadata but missing version_identifier
     batch_offset = 0
     batch_size = 1000
 
@@ -1502,7 +1633,8 @@ def _repair_meili_metadata(
         result = index.get_documents({
             'offset': batch_offset,
             'limit': batch_size,
-            'fields': ['id', 'file_path', 'chunk_index', 'git_project_identifier']
+            'fields': ['id', 'file_path', 'chunk_index', 'git_project_identifier',
+                      'git_project_name', 'git_branch', 'git_commit_hash', 'git_version_identifier']
         })
 
         # Handle both dict and object results
@@ -1518,66 +1650,94 @@ def _repair_meili_metadata(
             # Get field values handling both dict and object
             if isinstance(doc, dict):
                 has_git_id = bool(doc.get('git_project_identifier'))
+                has_version_id = bool(doc.get('git_version_identifier'))
                 doc_id = doc.get('id')
                 file_path = doc.get('file_path')
                 chunk_index = doc.get('chunk_index', 0)
+                project_name = doc.get('git_project_name')
+                branch = doc.get('git_branch')
+                commit_hash = doc.get('git_commit_hash')
             else:
                 has_git_id = bool(getattr(doc, 'git_project_identifier', None))
+                has_version_id = bool(getattr(doc, 'git_version_identifier', None))
                 doc_id = getattr(doc, 'id', None)
                 file_path = getattr(doc, 'file_path', None)
                 chunk_index = getattr(doc, 'chunk_index', 0)
+                project_name = getattr(doc, 'git_project_name', None)
+                branch = getattr(doc, 'git_branch', None)
+                commit_hash = getattr(doc, 'git_commit_hash', None)
 
-            # Check if git_project_identifier is missing
+            # Check if git_project_identifier is missing - needs full repair from Qdrant
             if not has_git_id:
                 docs_to_repair.append({
                     'id': doc_id,
                     'file_path': file_path,
                     'chunk_index': chunk_index,
                 })
+            # Check if doc has git metadata but version_identifier is missing or incorrect
+            elif project_name and branch and commit_hash:
+                expected_version_id = f"{project_name}#{branch}@{commit_hash[:7]}"
+                # Get current value for comparison
+                if isinstance(doc, dict):
+                    current_version_id = doc.get('git_version_identifier')
+                else:
+                    current_version_id = getattr(doc, 'git_version_identifier', None)
+
+                # Repair if missing OR if format doesn't match expected
+                if current_version_id != expected_version_id:
+                    docs_needing_version_id.append({
+                        'id': doc_id,
+                        'git_version_identifier': expected_version_id,
+                    })
 
         batch_offset += len(docs)
         if len(docs) < batch_size:
             break
 
-    if not docs_to_repair:
+    if not docs_to_repair and not docs_needing_version_id:
         if not output_json:
             console.print(f"[green]✓ No documents need metadata repair[/green]")
         return 0, 0
 
     if not output_json:
-        console.print(f"[blue]Found {len(docs_to_repair)} documents to repair[/blue]")
+        if docs_to_repair:
+            console.print(f"[blue]Found {len(docs_to_repair)} documents missing git metadata[/blue]")
+        if docs_needing_version_id:
+            console.print(f"[blue]Found {len(docs_needing_version_id)} documents needing git_version_identifier repair[/blue]")
 
-    # Step 2: Build a map of file_path -> git metadata from Qdrant
-    # Get unique file paths that need repair
-    file_paths_needed = set(d['file_path'] for d in docs_to_repair if d['file_path'])
-
-    if not output_json:
-        console.print(f"[dim]Scanning Qdrant for git metadata ({len(file_paths_needed)} files needed)...[/dim]")
-
-    # Single scroll through Qdrant, bounded to needed files
-    git_metadata_by_file = _fetch_git_metadata_for_files(
-        qdrant, corpus, file_paths_needed, console, output_json
-    )
-
-    if not git_metadata_by_file:
-        if not output_json:
-            console.print(f"[yellow]No git metadata found in Qdrant to use for repair[/yellow]")
-        return 0, 0
-
-    if not output_json:
-        console.print(f"[dim]Found git metadata for {len(git_metadata_by_file)} files[/dim]")
-
-    # Step 3: Build update documents
+    # Step 2: Build a map of file_path -> git metadata from Qdrant (only if needed)
     updates = []
-    for doc in docs_to_repair:
-        file_path = doc.get('file_path')
-        if file_path and file_path in git_metadata_by_file:
-            git_meta = git_metadata_by_file[file_path]
-            update_doc = {
-                'id': doc['id'],
-                **git_meta
-            }
-            updates.append(update_doc)
+    if docs_to_repair:
+        # Get unique file paths that need repair
+        file_paths_needed = set(d['file_path'] for d in docs_to_repair if d['file_path'])
+
+        if not output_json:
+            console.print(f"[dim]Scanning Qdrant for git metadata ({len(file_paths_needed)} files needed)...[/dim]")
+
+        # Single scroll through Qdrant, bounded to needed files
+        git_metadata_by_file = _fetch_git_metadata_for_files(
+            qdrant, corpus, file_paths_needed, console, output_json
+        )
+
+        if git_metadata_by_file:
+            if not output_json:
+                console.print(f"[dim]Found git metadata for {len(git_metadata_by_file)} files[/dim]")
+
+            # Step 3: Build update documents from Qdrant metadata
+            for doc in docs_to_repair:
+                file_path = doc.get('file_path')
+                if file_path and file_path in git_metadata_by_file:
+                    git_meta = git_metadata_by_file[file_path]
+                    update_doc = {
+                        'id': doc['id'],
+                        **git_meta
+                    }
+                    updates.append(update_doc)
+        elif not output_json:
+            console.print(f"[yellow]No git metadata found in Qdrant to use for repair[/yellow]")
+
+    # Add docs that just need git_version_identifier computed (no Qdrant lookup needed)
+    updates.extend(docs_needing_version_id)
 
     if not updates:
         if not output_json:

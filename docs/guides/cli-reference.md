@@ -88,7 +88,7 @@ use `corpus sync` directly - no need to run `corpus create` first.
 ### Corpus Sync Options
 
 ```bash
-arc corpus sync MyCorpus /path/to/files                    # Basic sync
+arc corpus sync MyCorpus /path/to/files                    # Basic sync (file-level change detection)
 arc corpus sync MyCorpus /path/one /path/two               # Multiple paths
 arc corpus sync MyCorpus /path --force                     # Force reindex all
 arc corpus sync MyCorpus /path --verify                    # Verify after sync
@@ -96,6 +96,13 @@ arc corpus sync MyCorpus /path --no-gpu                    # CPU-only mode
 arc corpus sync MyCorpus /path --models bge                # Use specific model
 arc corpus sync MyCorpus /path --max-embedding-batch 8     # Limit batch size (OOM recovery)
 arc corpus sync MyCorpus /path --verbose                   # Detailed progress
+```
+
+**Git-Aware Sync Options (for code corpora):**
+
+```bash
+arc corpus sync MyCorpus /path/to/repo --git-update        # Skip unchanged repos (fast)
+arc corpus sync MyCorpus /path/to/repo --git-version       # Keep multiple versions indexed
 ```
 
 **Options:**
@@ -108,6 +115,18 @@ arc corpus sync MyCorpus /path --verbose                   # Detailed progress
 - `--text-workers`: Parallel workers for code AST chunking (default: auto)
 - `--verbose`: Show detailed progress (files, chunks, indexing)
 - `--json`: Output JSON format for scripting
+- `--git-update`: Skip repos with unchanged commit hash (git-aware fast path)
+- `--git-version`: Keep multiple versions indexed (different commits coexist)
+
+**Git Sync Modes:**
+
+| Mode           | Behavior                              | Use Case                     |
+| -------------- | ------------------------------------- | ---------------------------- |
+| Default        | File-level change detection           | General use, mixed content   |
+| `--git-update` | Skip repos if commit unchanged        | CI/batch re-indexing         |
+| `--git-version`| Index each commit as separate version | Compare code across versions |
+
+**Note:** `--git-update` and `--git-version` are mutually exclusive. Use `--force` to override either mode.
 
 **GPU and Apple Silicon:**
 
@@ -143,7 +162,9 @@ arc corpus parity MyCorpus --json
 
 - `--dry-run`: Show what would be backfilled without making changes
 - `--verify`: Verify chunk counts match between systems (detects partial uploads)
-- `--repair-metadata`: Update MeiliSearch docs with missing git metadata from Qdrant (code corpora only)
+- `--repair-metadata`: Repair git metadata in MeiliSearch (code corpora only):
+  - Backfills missing `git_project_identifier` from Qdrant
+  - Computes and repairs `git_version_identifier` for version-aware search
 - `--create-missing`: Create missing MeiliSearch indexes for qdrant_only corpora
 - `--confirm`: Skip confirmation prompt when processing all corpora
 - `--verbose`: Show detailed progress for each file

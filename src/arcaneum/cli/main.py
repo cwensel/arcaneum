@@ -603,7 +603,11 @@ def delete_corpus(name, confirm, output_json):
               help='Batch parallelization workers for --no-gpu mode (default: 1, conservative to prevent system crashes)')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed progress (files, chunks, indexing)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def sync_directory(corpus, paths, from_file, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json):
+@click.option('--git-update', is_flag=True,
+              help='Skip repos with unchanged commit hash (git-aware fast path)')
+@click.option('--git-version', is_flag=True,
+              help='Keep multiple versions indexed (different commits coexist)')
+def sync_directory(corpus, paths, from_file, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version):
     """Index to both vector and full-text.
 
     Examples:
@@ -622,8 +626,13 @@ def sync_directory(corpus, paths, from_file, models, file_types, force, verify, 
         click.echo("Error: Either PATH(s) or --from-file must be provided", err=True)
         raise SystemExit(1)
 
+    # Validate mutually exclusive git flags
+    if git_update and git_version:
+        click.echo("Error: --git-update and --git-version are mutually exclusive", err=True)
+        raise SystemExit(1)
+
     from arcaneum.cli.sync import sync_directory_command
-    sync_directory_command(corpus, paths, from_file, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json)
+    sync_directory_command(corpus, paths, from_file, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version)
 
 
 @corpus.command('parity')

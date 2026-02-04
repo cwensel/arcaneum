@@ -655,8 +655,8 @@ def corpus_info_command(name: str, output_json: bool):
 
             # Usage hint
             console.print(f"\n[dim]Search with:[/dim]")
-            console.print(f"[dim]  arc search semantic \"query\" --collection {name}[/dim]")
-            console.print(f"[dim]  arc search text \"query\" --index {name}[/dim]")
+            console.print(f"[dim]  arc search semantic \"query\" --corpus {name}[/dim]")
+            console.print(f"[dim]  arc search text \"query\" --corpus {name}[/dim]")
 
         # Log successful operation (RDR-018)
         interaction_logger.finish()

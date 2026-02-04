@@ -1155,8 +1155,8 @@ def sync_directory_command(
             console.print(f"   Total in MeiliSearch: {total_meili} documents")
 
             console.print(f"\n[dim]Search with:[/dim]")
-            console.print(f"  arc search semantic \"your query\" --collection {corpus}")
-            console.print(f"  arc search text \"your query\" --index {corpus}")
+            console.print(f"  arc search semantic \"your query\" --corpus {corpus}")
+            console.print(f"  arc search text \"your query\" --corpus {corpus}")
 
         # Post-verify if requested (uses same verifier as index commands)
         verification_result = None

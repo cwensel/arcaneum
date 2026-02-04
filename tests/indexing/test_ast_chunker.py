@@ -438,3 +438,79 @@ class TestChunkingAccuracy:
             # Chunks should end with complete lines (not mid-line)
             # This is important for code readability
             assert not chunk.content or chunk.content[-1] in ['\n', ' ', '}', ')', ';', ':']
+
+
+class TestMinifiedCodeHandling:
+    """Tests for handling minified code (very long single lines)."""
+
+    def test_split_long_line_basic(self):
+        """Test that _split_long_line splits very long lines."""
+        chunker = ASTCodeChunker(chunk_size=100)  # ~350 chars max
+
+        # Create a line longer than max_chars (100 * 3.5 = 350)
+        long_line = "a" * 500
+
+        segments = chunker._split_long_line(long_line, 350)
+
+        # Should produce multiple segments
+        assert len(segments) > 1
+        # Each segment should be <= max_chars
+        for seg in segments:
+            assert len(seg) <= 350
+        # Combined segments should equal original
+        assert "".join(segments) == long_line
+
+    def test_split_long_line_prefers_break_points(self):
+        """Test that _split_long_line prefers natural break points."""
+        chunker = ASTCodeChunker(chunk_size=100)
+
+        # Create a line with semicolons that can be used as break points
+        # Pattern: code;code;code;... repeating
+        long_line = ";".join(["code" * 10] * 20)  # ~860 chars
+
+        segments = chunker._split_long_line(long_line, 300)
+
+        # Most segments should end with semicolon (except possibly the last)
+        semicolon_endings = sum(1 for seg in segments[:-1] if seg.endswith(';'))
+        assert semicolon_endings >= len(segments) - 2
+
+    def test_split_long_line_short_line_unchanged(self):
+        """Test that short lines are returned unchanged."""
+        chunker = ASTCodeChunker(chunk_size=100)
+
+        short_line = "var x = 1;"
+        segments = chunker._split_long_line(short_line, 350)
+
+        assert len(segments) == 1
+        assert segments[0] == short_line
+
+    def test_chunk_minified_javascript(self):
+        """Test chunking simulated minified JavaScript."""
+        chunker = ASTCodeChunker(chunk_size=100)  # Small for testing
+
+        # Simulate minified JS: entire file on one line
+        minified_js = 'var a=1,b=2;function add(x,y){return x+y;}' * 50
+
+        # Should not raise memory error
+        chunks = chunker.chunk_code("jquery.min.js", minified_js)
+
+        assert len(chunks) > 0
+        # All chunks should be reasonably sized
+        max_expected_chars = int(100 * chunker.CHARS_PER_TOKEN * 1.5)  # Allow some margin
+        for chunk in chunks:
+            assert len(chunk.content) < max_expected_chars
+
+    def test_chunk_minified_preserves_all_content(self):
+        """Test that all content is preserved when chunking minified code."""
+        chunker = ASTCodeChunker(chunk_size=50)
+
+        # Create deterministic minified-like content
+        minified = "function a(){return 1;};function b(){return 2;};" * 10
+
+        chunks = chunker.chunk_code("min.js", minified, force_line_based=True)
+
+        # Combined chunks should contain all original content
+        combined = "".join(c.content for c in chunks)
+        # Account for potential newlines added between segments
+        combined_cleaned = combined.replace('\n', '')
+        assert minified in combined_cleaned or combined_cleaned == minified

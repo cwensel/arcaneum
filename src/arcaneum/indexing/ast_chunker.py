@@ -210,13 +210,57 @@ class ASTCodeChunker:
             logger.debug(f"AST splitting failed for {language}: {e}")
             raise
 
+    def _split_long_line(self, line: str, max_chars: int) -> List[str]:
+        """Split a very long line into smaller segments.
+
+        Used for minified code where a single line can be the entire file.
+        Splits at max_chars boundaries, preferring natural break points
+        (semicolons, commas, braces) when possible.
+
+        Args:
+            line: The long line to split
+            max_chars: Maximum characters per segment
+
+        Returns:
+            List of line segments
+        """
+        if len(line) <= max_chars:
+            return [line]
+
+        segments = []
+        pos = 0
+
+        while pos < len(line):
+            # Take up to max_chars
+            end = min(pos + max_chars, len(line))
+
+            if end < len(line):
+                # Try to find a natural break point (semicolon, comma, closing brace)
+                # within the last 20% of the segment
+                search_start = pos + int(max_chars * 0.8)
+                best_break = -1
+
+                for break_char in [';', ',', '}', ')', ']']:
+                    break_pos = line.rfind(break_char, search_start, end)
+                    if break_pos > best_break:
+                        best_break = break_pos
+
+                if best_break > search_start:
+                    end = best_break + 1  # Include the break character
+
+            segments.append(line[pos:end])
+            pos = end
+
+        return segments
+
     def _chunk_line_based(self, code: str) -> List[str]:
         """Fallback line-based chunking when AST parsing fails.
 
         Simple strategy:
         1. Split code into lines
-        2. Group lines into chunks of approximately chunk_size tokens
-        3. Add overlap between chunks
+        2. Split very long lines (e.g., minified code) into smaller segments
+        3. Group lines into chunks of approximately chunk_size tokens
+        4. Add overlap between chunks
 
         Args:
             code: Source code content
@@ -224,10 +268,24 @@ class ASTCodeChunker:
         Returns:
             List of code chunk strings
         """
-        lines = code.split('\n')
+        raw_lines = code.split('\n')
 
-        if not lines:
+        if not raw_lines:
             return []
+
+        # Maximum characters per line segment (to prevent memory issues)
+        # Use chunk_size * CHARS_PER_TOKEN as the limit
+        max_line_chars = int(self.chunk_size * self.CHARS_PER_TOKEN)
+
+        # Pre-process: split very long lines (handles minified code)
+        lines = []
+        for line in raw_lines:
+            if len(line) > max_line_chars:
+                # Split long line into manageable segments
+                segments = self._split_long_line(line, max_line_chars)
+                lines.extend(segments)
+            else:
+                lines.append(line)
 
         chunks = []
         current_chunk = []

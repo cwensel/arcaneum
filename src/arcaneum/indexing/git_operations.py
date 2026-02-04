@@ -21,6 +21,23 @@ from .types import GitMetadata
 logger = logging.getLogger(__name__)
 
 
+def apply_git_metadata(doc, git_metadata: GitMetadata) -> None:
+    """Apply GitMetadata to a document object.
+
+    Centralizes git metadata assignment to prevent inconsistencies between indexing paths.
+    Works with DualIndexDocument (sync.py) which uses attribute assignment.
+
+    Args:
+        doc: Document object with git metadata attributes (e.g., DualIndexDocument)
+        git_metadata: GitMetadata containing project info, branch, commit hash, etc.
+    """
+    doc.project = git_metadata.project_name
+    doc.branch = git_metadata.branch
+    doc.git_project_identifier = git_metadata.identifier
+    doc.git_commit_hash = git_metadata.commit_hash
+    doc.git_remote_url = git_metadata.remote_url
+
+
 class GitProjectDiscovery:
     """Discovers git projects and extracts metadata with robust error handling.
 

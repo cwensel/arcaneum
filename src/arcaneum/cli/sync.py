@@ -4,6 +4,7 @@ This module implements the 'corpus sync' command that indexes documents
 to both Qdrant and MeiliSearch in a single operation.
 """
 
+import fnmatch
 import gc
 import logging
 import multiprocessing as mp
@@ -33,11 +34,52 @@ from ..schema.document import DualIndexDocument
 from ..indexing.dual_indexer import DualIndexer
 from ..indexing.collection_metadata import get_collection_type, get_collection_metadata
 from ..indexing.common.sync import MetadataBasedSync, compute_quick_hash
-from ..indexing.git_operations import GitProjectDiscovery
+from ..indexing.git_operations import GitProjectDiscovery, apply_git_metadata
 from ..config import DEFAULT_MODELS
 
 console = Console()
 logger = logging.getLogger(__name__)
+
+# Default patterns for files to exclude from indexing
+# These are typically generated, minified, or machine-readable files
+# that don't benefit from semantic search
+
+# Filename patterns (matched against file name only)
+DEFAULT_EXCLUDE_FILE_PATTERNS = {
+    # Minified JavaScript (poor search quality, can cause memory issues)
+    '*.min.js',
+    '*.min.css',
+    '*-min.js',
+    '*-min.css',
+    # Search index files (machine-generated JSON)
+    '*-search-index.js',
+    '*-search-index.json',
+    'search-index.js',
+    'search-index.json',
+    # Bundle outputs
+    '*.bundle.js',
+    '*.bundle.css',
+    # Source maps
+    '*.map',
+    '*.js.map',
+    '*.css.map',
+}
+
+# Directory names that should be excluded entirely
+# Any file under these directories will be skipped
+DEFAULT_EXCLUDE_DIRECTORIES = {
+    # JavaDoc/JSDoc generated files
+    'javadoc',
+    'jsdoc',
+    'apidocs',
+    # Node modules (if not already gitignored)
+    'node_modules',
+    # Vendor directories
+    'vendor',
+    # Build outputs
+    'dist',
+    'build',
+}
 
 
 def _chunk_code_file_worker(
@@ -175,12 +217,67 @@ def read_path_list(from_file: str) -> List[Path]:
     return paths
 
 
+def _is_git_repo(directory: Path) -> bool:
+    """Check if directory is inside a git repository."""
+    try:
+        import git
+        git.Repo(directory, search_parent_directories=True)
+        return True
+    except Exception:
+        return False
+
+
+def _discover_git_tracked_files(directory: Path, extensions: set) -> List[Path]:
+    """Discover files using git ls-files (respects .gitignore).
+
+    Args:
+        directory: Directory to scan (must be in a git repo)
+        extensions: Set of file extensions to filter
+
+    Returns:
+        List of file paths to index
+    """
+    git_discovery = GitProjectDiscovery()
+
+    # Find git root
+    try:
+        import git
+        repo = git.Repo(directory, search_parent_directories=True)
+        git_root = repo.working_tree_dir
+    except Exception as e:
+        logger.warning(f"Could not find git root for {directory}: {e}")
+        return []
+
+    # Get tracked files with extensions filter
+    ext_list = list(extensions)
+    tracked_files = git_discovery.get_tracked_files(git_root, ext_list)
+
+    # Convert to Path objects and filter to only files under the target directory
+    directory_abs = directory.absolute()
+    files = []
+    for file_path in tracked_files:
+        p = Path(file_path)
+        # Only include files under the target directory
+        try:
+            p.relative_to(directory_abs)
+            files.append(p)
+        except ValueError:
+            # File is not under target directory, skip
+            continue
+
+    return files
+
+
 def discover_files(
     directory: Path,
     file_types: Optional[str],
     corpus_type: str
 ) -> List[Path]:
     """Discover files to index based on corpus type and file filters.
+
+    For git repositories, uses 'git ls-files' to respect .gitignore and only
+    index tracked files. For non-git directories, uses rglob with exclusion
+    patterns.
 
     Args:
         directory: Directory to scan
@@ -208,16 +305,50 @@ def discover_files(
         logger.warning(f"No file extensions defined for corpus type: {corpus_type}")
         return []
 
-    # Discover files
+    # Check if directory is a git repository
+    if _is_git_repo(directory):
+        logger.info(f"Git repository detected, using git ls-files for file discovery")
+        files = _discover_git_tracked_files(directory, extensions)
+        # Sort for consistent ordering
+        files.sort()
+        return files
+
+    # Non-git directory: use rglob with exclusion patterns
+    logger.info(f"Non-git directory, using rglob with exclusion patterns")
     files = []
     for ext in extensions:
         pattern = f"*{ext}"  # rglob already handles recursive search
         found = list(directory.rglob(pattern))
         files.extend(found)
 
+    # Filter out excluded files (minified, generated, etc.)
+    filtered_files = []
+    excluded_count = 0
+    for f in files:
+        excluded = False
+
+        # Check if file is in an excluded directory
+        path_parts = set(f.parts)
+        if path_parts & DEFAULT_EXCLUDE_DIRECTORIES:
+            excluded = True
+        else:
+            # Check against filename patterns
+            for pattern in DEFAULT_EXCLUDE_FILE_PATTERNS:
+                if fnmatch.fnmatch(f.name, pattern):
+                    excluded = True
+                    break
+
+        if excluded:
+            excluded_count += 1
+        else:
+            filtered_files.append(f)
+
+    if excluded_count > 0:
+        logger.info(f"Excluded {excluded_count} files matching exclusion patterns")
+
     # Sort for consistent ordering
-    files.sort()
-    return files
+    filtered_files.sort()
+    return filtered_files
 
 
 def compute_file_hash(file_path: Path) -> str:
@@ -779,9 +910,7 @@ def sync_directory_command(
                                             git_meta = git_metadata_cache[git_root]
 
                                         if git_meta:
-                                            doc.project = git_meta.project_name
-                                            doc.branch = git_meta.branch
-                                            doc.git_project_identifier = git_meta.identifier
+                                            apply_git_metadata(doc, git_meta)
 
                             documents.append(doc)
 

@@ -8,8 +8,9 @@ from pathlib import Path
 import pytest
 import git
 
-from arcaneum.indexing.git_operations import GitProjectDiscovery
+from arcaneum.indexing.git_operations import GitProjectDiscovery, apply_git_metadata
 from arcaneum.indexing.types import GitMetadata
+from arcaneum.schema.document import DualIndexDocument
 
 
 @pytest.fixture
@@ -348,3 +349,60 @@ class TestGitProjectDiscovery:
         assert not any("secret.ignored" in f for f in tracked_files)
         # Tracked file should be in the list
         assert any("tracked.txt" in f for f in tracked_files)
+
+
+class TestApplyGitMetadata:
+    """Tests for apply_git_metadata utility function."""
+
+    def test_apply_git_metadata_all_fields(self):
+        """Test that all git metadata fields are applied to document."""
+        doc = DualIndexDocument(content="test content")
+        git_meta = GitMetadata(
+            project_root="/path/to/repo",
+            commit_hash="abc123def456789012345678901234567890abcd",
+            branch="main",
+            project_name="test-project",
+            remote_url="https://github.com/user/test-project.git"
+        )
+
+        apply_git_metadata(doc, git_meta)
+
+        assert doc.project == "test-project"
+        assert doc.branch == "main"
+        assert doc.git_project_identifier == "test-project#main"
+        assert doc.git_commit_hash == "abc123def456789012345678901234567890abcd"
+        assert doc.git_remote_url == "https://github.com/user/test-project.git"
+
+    def test_apply_git_metadata_no_remote_url(self):
+        """Test applying metadata when remote_url is None."""
+        doc = DualIndexDocument(content="test content")
+        git_meta = GitMetadata(
+            project_root="/path/to/repo",
+            commit_hash="abc123def456789012345678901234567890abcd",
+            branch="feature-branch",
+            project_name="local-project",
+            remote_url=None
+        )
+
+        apply_git_metadata(doc, git_meta)
+
+        assert doc.project == "local-project"
+        assert doc.branch == "feature-branch"
+        assert doc.git_project_identifier == "local-project#feature-branch"
+        assert doc.git_commit_hash == "abc123def456789012345678901234567890abcd"
+        assert doc.git_remote_url is None
+
+    def test_apply_git_metadata_with_extracted_metadata(self, simple_repo):
+        """Test applying real extracted metadata to a document."""
+        discovery = GitProjectDiscovery()
+        git_meta = discovery.extract_metadata(simple_repo)
+        assert git_meta is not None
+
+        doc = DualIndexDocument(content="test content")
+        apply_git_metadata(doc, git_meta)
+
+        assert doc.project == git_meta.project_name
+        assert doc.branch == git_meta.branch
+        assert doc.git_project_identifier == git_meta.identifier
+        assert doc.git_commit_hash == git_meta.commit_hash
+        assert doc.git_remote_url == git_meta.remote_url

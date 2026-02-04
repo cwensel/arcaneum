@@ -20,25 +20,19 @@ arc <command> [options]
 
 ## Command Overview
 
-### Collection Management
+### Corpus Management (Recommended)
+
+A "corpus" is a paired Qdrant collection and MeiliSearch index with the same name,
+providing both semantic and full-text search capabilities.
 
 ```bash
-arc collection create <name> --model <model>  # Create Qdrant collection
-arc collection list                          # List all collections
-arc collection info <name>                    # Show collection details
-arc collection items <name>                   # List indexed files/repos
-arc collection verify <name>                  # Verify collection integrity
-arc collection export <name> -o <file>        # Export to portable format
-arc collection import <file>                  # Import from export file
-arc collection delete <name>                  # Delete collection
-```
-
-### Indexing Commands
-
-```bash
-arc index pdf <path> --collection <name>      # Index PDFs to Qdrant (semantic)
-arc index code <path> --collection <name>     # Index source code to Qdrant
-arc index text pdf <path> --index <name>      # Index PDFs to MeiliSearch (full-text)
+arc corpus create <name> --type <type>        # Create both collection and index
+arc corpus list                               # List all corpora
+arc corpus sync <name> <path> [<path>...]     # Index to both systems
+arc corpus items <name>                       # List items with parity status
+arc corpus verify <name>                      # Verify corpus health
+arc corpus parity <name>                      # Check/restore parity
+arc corpus delete <name>                      # Delete both collection and index
 ```
 
 ### Search Commands
@@ -49,26 +43,44 @@ arc search semantic <query> --corpus <n1> --corpus <n2>     # Multi-corpus searc
 arc search text <query> --corpus <name>                     # Full-text search (MeiliSearch)
 ```
 
-### Full-Text Index Management
+### Collection Management (Qdrant Only)
 
-MeiliSearch index commands mirror Qdrant collection commands:
-
-| Qdrant (arc collection)   | MeiliSearch (arc indexes) |
-| ------------------------- | ------------------------- |
-| `arc collection create`   | `arc indexes create`      |
-| `arc collection list`     | `arc indexes list`        |
-| `arc collection info`     | `arc indexes info`        |
-| `arc collection delete`   | `arc indexes delete`      |
+Use collections when you only need semantic search:
 
 ```bash
-arc indexes create <name> --type <type>   # Create MeiliSearch index
-arc indexes list                        # List all indexes
-arc indexes info <name>                         # Show index details
-arc indexes delete <name>                 # Delete index
-arc indexes update-settings <name> --type <type>  # Update index settings
+arc collection create <name> --type <type>    # Create Qdrant collection
+arc collection list                           # List all collections
+arc collection info <name>                    # Show collection details
+arc collection items <name>                   # List indexed files/repos
+arc collection verify <name>                  # Verify collection integrity
+arc collection export <name> -o <file>        # Export to portable format
+arc collection import <file>                  # Import from export file
+arc collection delete <name>                  # Delete collection
 ```
 
-### Dual Indexing (Qdrant + MeiliSearch)
+### Index Management (MeiliSearch Only)
+
+Use indexes when you only need full-text search:
+
+```bash
+arc indexes create <name> --type <type>              # Create MeiliSearch index
+arc indexes list                                     # List all indexes
+arc indexes info <name>                              # Show index details
+arc indexes delete <name>                            # Delete index
+arc indexes update-settings <name> --type <type>    # Update index settings
+```
+
+### Indexing Commands (Single-System)
+
+For direct indexing to a single system:
+
+```bash
+arc index pdf <path> --collection <name>      # Index PDFs to Qdrant (semantic)
+arc index code <path> --collection <name>     # Index source code to Qdrant
+arc index text pdf <path> --index <name>      # Index PDFs to MeiliSearch (full-text)
+```
+
+### Corpus Commands (Detailed)
 
 A "corpus" is a paired Qdrant collection and MeiliSearch index with the same name.
 
@@ -733,15 +745,32 @@ arc index text pdf ./text-pdfs --index pdf-docs --no-ocr
 arc index text pdf ./pdfs --index pdf-docs --json
 ```
 
-### Dual Indexing Workflow
+### Dual Indexing Workflow (Recommended: Corpus)
 
-For comprehensive search, index to both Qdrant and MeiliSearch.
-The CLI commands mirror each other: `arc collection` for Qdrant, `arc indexes` for MeiliSearch:
+For comprehensive search, use corpus commands to index to both Qdrant and MeiliSearch:
+
+```bash
+# Create corpus (creates both collection and index)
+arc corpus create pdf-docs --type pdf
+
+# Sync to both systems
+arc corpus sync pdf-docs /path/to/pdfs
+
+# Semantic search (conceptual matches)
+arc search semantic "machine learning" --corpus pdf-docs
+
+# Full-text search (exact phrases)
+arc search text '"neural network"' --corpus pdf-docs
+```
+
+### Dual Indexing (Manual - Advanced)
+
+Alternatively, manage Qdrant and MeiliSearch separately:
 
 ```bash
 # Create both collection and index (mirrored commands)
 arc collection create pdf-docs --type pdf      # Qdrant
-arc indexes create pdf-docs --type pdf  # MeiliSearch
+arc indexes create pdf-docs --type pdf         # MeiliSearch
 
 # Index to Qdrant (semantic search)
 arc index pdf /path/to/pdfs --collection pdf-docs
@@ -749,10 +778,8 @@ arc index pdf /path/to/pdfs --collection pdf-docs
 # Index to MeiliSearch (full-text search)
 arc index text pdf /path/to/pdfs --index pdf-docs
 
-# Semantic search (conceptual matches)
+# Search (both use --corpus flag)
 arc search semantic "machine learning" --corpus pdf-docs
-
-# Full-text search (exact phrases)
 arc search text '"neural network"' --corpus pdf-docs
 ```
 
@@ -796,16 +823,33 @@ arc collection create MyCode --type code --model jina-code-0.5b
 
 ## Common Workflows
 
-### Setup New Project
+### Setup New Project (Recommended: Corpus)
 
 ```bash
 # 1. Start services
 arc container start
 
-# 2. Create collection (model inferred from type)
+# 2. Create corpus (indexes to both Qdrant and MeiliSearch)
+arc corpus create my-docs --type pdf
+
+# 3. Sync documents
+arc corpus sync my-docs ./documents
+
+# 4. Search with semantic or full-text
+arc search semantic "query" --corpus my-docs
+arc search text "exact phrase" --corpus my-docs
+```
+
+### Setup New Project (Single System)
+
+```bash
+# 1. Start services
+arc container start
+
+# 2. Create collection (Qdrant only)
 arc collection create my-docs --type pdf
 
-# 3. Index documents (model retrieved from collection)
+# 3. Index documents
 arc index pdf ./documents --collection my-docs
 ```
 
@@ -813,12 +857,12 @@ arc index pdf ./documents --collection my-docs
 
 ```bash
 # First run: indexes all PDFs
-arc index pdf ./docs --collection my-docs
+arc corpus sync my-docs ./docs
 
 # Add new files to ./docs/...
 
 # Second run: only indexes new/modified files
-arc index pdf ./docs --collection my-docs
+arc corpus sync my-docs ./docs
 ```
 
 ### JSON Output for Automation
@@ -922,9 +966,10 @@ The `arc` CLI is the entrypoint for all Claude Code plugins and slash commands:
 
 ```bash
 # These commands are available in Claude Code via slash commands
-/create-collection pdf-docs --model stella
-/index-pdfs ./documents --collection pdf-docs --model stella
-/search "machine learning" --collection pdf-docs
+/arc:corpus create my-docs --type pdf
+/arc:corpus sync my-docs ./documents
+/arc:search semantic "machine learning" --corpus my-docs
+/arc:search text "exact phrase" --corpus my-docs
 ```
 
 See individual slash command files in `/commands/` directory for detailed usage.

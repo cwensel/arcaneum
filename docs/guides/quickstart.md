@@ -73,111 +73,119 @@ MeiliSearch started successfully
 
 Note: MeiliSearch API key is auto-generated and stored in `~/.config/arcaneum/meilisearch.key`.
 
-### 2. Create a Collection
+### 2. Create a Corpus
 
-Create a collection for code (model automatically inferred from type):
+Create a corpus for code (indexes to both Qdrant and MeiliSearch):
 
 ```bash
-arc collection create MyCode --type code
+arc corpus create MyCode --type code
 ```
 
-### 3. Index Your Code
+### 3. Sync Your Code
 
-Index a directory of source code:
+Sync a directory of source code (indexes to both search systems):
 
 ```bash
-arc index code ~/my-project --collection MyCode
+arc corpus sync MyCode ~/my-project
 ```
 
 Example output:
 
 ```text
 Source Code Indexing Configuration
-  Collection: MyCode (type: code)
+  Corpus: MyCode (type: code)
   Embedding: jinaai/jina-code-embeddings-0.5b
   Vector: jina-code-0.5b
 
 Git discovery completed: 1 repos, 3 branches
-Indexed 247 files → 1,532 chunks
+Indexed 247 files → 1,532 chunks (Qdrant + MeiliSearch)
 ```
 
 ### 4. Search
 
-Now search your indexed code:
+Now search your indexed code with semantic or full-text queries:
 
 ```bash
-arc search semantic "authentication logic" --collection MyCode --limit 5
+# Semantic search (conceptual similarity)
+arc search semantic "authentication logic" --corpus MyCode --limit 5
+
+# Full-text search (exact matches)
+arc search text "def authenticate" --corpus MyCode
 ```
 
-You'll see semantically similar code chunks ranked by relevance!
+You'll see code chunks ranked by relevance!
 
 ## Common Workflows
 
-### Indexing PDFs
+### Indexing PDFs (Recommended: Corpus)
 
 ```bash
-# Create PDF collection (model inferred from type)
-arc collection create MyDocs --type pdf
+# Create corpus for PDFs (indexes to both Qdrant and MeiliSearch)
+arc corpus create MyDocs --type pdf
 
-# Index PDFs (with OCR for scanned documents)
-arc index pdf ~/Documents/papers --collection MyDocs
+# Sync PDFs (with OCR for scanned documents)
+arc corpus sync MyDocs ~/Documents/papers
 
-# Index with larger batch size for better throughput
-arc index pdf ~/Documents/papers --collection MyDocs --embedding-batch-size 500
+# Sync multiple directories at once
+arc corpus sync MyDocs ~/Documents/papers ~/Documents/specs
 
-# Search PDFs semantically
-arc search semantic "machine learning techniques" --collection MyDocs
+# Semantic search (conceptual matches)
+arc search semantic "machine learning techniques" --corpus MyDocs
+
+# Full-text search (exact phrases)
+arc search text '"neural network"' --corpus MyDocs
 ```
 
-### Full-Text PDF Search
-
-For exact phrase and keyword search, index PDFs to MeiliSearch.
-The `arc indexes` commands mirror `arc collection` commands:
-
-```bash
-# Create MeiliSearch index (mirrors arc collection create)
-arc indexes create pdf-docs --type pdf
-
-# Index PDFs for full-text search
-arc index text pdf ~/Documents/papers --index pdf-docs
-
-# Search for exact phrases
-arc search text '"neural network architecture"' --index pdf-docs
-```
-
-**Tip:** Use both semantic search (Qdrant) for conceptual matches and full-text
-search (MeiliSearch) for exact phrases. See [PDF Indexing Guide](pdf-indexing.md)
-for the dual indexing workflow.
+**Tip:** Using `arc corpus` gives you both semantic and full-text search in one workflow.
+See [PDF Indexing Guide](pdf-indexing.md) for advanced options.
 
 ### Multi-Branch Code Indexing
 
 Arcaneum automatically indexes all branches of git repositories:
 
 ```bash
-# Index with git-aware chunking (uses the model from collection)
-arc index code ~/projects/my-app --collection MyCode
+# Create code corpus and sync
+arc corpus create MyCode --type code
+arc corpus sync MyCode ~/projects/my-app
 
 # Search finds code across all branches
-arc search semantic "payment processing" --collection MyCode
+arc search semantic "payment processing" --corpus MyCode
+arc search text "async def process_payment" --corpus MyCode
 ```
 
 ### Checking Status
 
 ```bash
-# List all collections
-arc collection list
+# List all corpora (shows both Qdrant and MeiliSearch status)
+arc corpus list
 
-# Show collection details
-arc collection info MyCode
+# List what's indexed with parity status
+arc corpus items MyCode
 
-# List what's indexed in a collection
-arc collection items MyCode
+# Check corpus health
+arc corpus verify MyCode
 
 # Check container status
 arc container status
 
 # View container logs
 arc container logs
+```
+
+### Single-System Indexing (Advanced)
+
+If you only need one type of search, use collections or indexes directly:
+
+```bash
+# Semantic search only (Qdrant)
+arc collection create MyCode --type code
+arc index code ~/project --collection MyCode
+arc search semantic "query" --corpus MyCode
+
+# Full-text search only (MeiliSearch)
+arc indexes create MyDocs --type pdf
+arc index text pdf ~/docs --index MyDocs
+arc search text "query" --corpus MyDocs
 ```
 
 ## Configuration
@@ -358,10 +366,11 @@ Then restart Claude Code to activate the plugin.
 All `arc` commands are available as slash commands:
 
 ```text
-/doctor
-/collection create MyCode --model jina-code-0.5b --type code
-/index code ~/my-project --collection MyCode
-/search semantic "authentication logic" --collection MyCode
+/arc:doctor
+/arc:corpus create MyCode --type code
+/arc:corpus sync MyCode ~/my-project
+/arc:search semantic "authentication logic" --corpus MyCode
+/arc:search text "def authenticate" --corpus MyCode
 ```
 
 The plugin provides the same functionality as the CLI, but integrated into your Claude Code workflow.
@@ -441,28 +450,29 @@ arc container start          # Start services
 arc container stop           # Stop services
 arc container status         # Check status
 
-# Collections (Qdrant)
-arc collection list                    # List all collections
-arc collection create NAME --model MODEL --type TYPE
-arc collection items NAME              # List indexed files/repos
-arc collection delete NAME --confirm
+# Corpus (Recommended - Dual Indexing)
+arc corpus create NAME --type TYPE       # pdf, code, or markdown
+arc corpus list                          # List all corpora
+arc corpus sync NAME PATH [PATH...]      # Sync directories to both systems
+arc corpus items NAME                    # List items with parity status
+arc corpus verify NAME                   # Check corpus health
+arc corpus delete NAME --confirm
 
-# Full-Text Indexes (MeiliSearch) - mirrors arc collection
-arc indexes create NAME --type TYPE
-arc indexes list
-arc indexes info NAME
-arc indexes delete NAME --confirm
+# Searching
+arc search semantic "query" --corpus NAME    # Semantic search (Qdrant)
+arc search text "query" --corpus NAME        # Full-text search (MeiliSearch)
 
-# Indexing (Semantic - Qdrant)
+# Collections (Qdrant Only - Advanced)
+arc collection create NAME --type TYPE
+arc collection list
+arc collection items NAME
 arc index code PATH --collection NAME
 arc index pdf PATH --collection NAME
 
-# Indexing (Full-Text - MeiliSearch)
+# Indexes (MeiliSearch Only - Advanced)
+arc indexes create NAME --type TYPE
+arc indexes list
 arc index text pdf PATH --index NAME
-
-# Searching
-arc search semantic "query" --collection NAME   # Semantic search
-arc search text "query" --index NAME            # Full-text search
 
 # Configuration
 arc config show-cache-dir    # Show cache location

@@ -7,6 +7,10 @@ Store agent-generated content (research, analysis, synthesized information) with
 metadata. Content is persisted to disk for re-indexing and full-text retrieval, then
 indexed to Qdrant for semantic search.
 
+**Tip:** For full search capabilities (semantic + full-text), first create a corpus with
+`/arc:corpus create Memory --type markdown`, then use this command with `--collection Memory`.
+The stored content will be searchable via both `/arc:search semantic` and `/arc:search text`.
+
 **Storage Location:** `~/.local/share/arcaneum/agent-memory/{collection}/`
 
 **Options:**
@@ -70,9 +74,11 @@ Content is always persisted for durability. This enables:
 
 **Related Commands:**
 
-- /collection create - Create collection before storing (use --type markdown)
-- /search semantic - Search stored content
-- /index markdown - For indexing existing markdown directories (different use case)
+- /arc:corpus create - Create corpus for dual search (recommended: `--type markdown`)
+- /arc:collection create - Create collection for semantic search only
+- /arc:search semantic - Search stored content semantically
+- /arc:search text - Search stored content with full-text (requires corpus)
+- /arc:index markdown - For indexing existing markdown directories (different use case)
 
 **Implementation:**
 

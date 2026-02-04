@@ -1,9 +1,12 @@
 ---
-description: Manage MeiliSearch full-text indexes
+description: Manage MeiliSearch full-text indexes (full-text search only)
 argument-hint: <create|list|info|delete|items|verify|export|import> [name] [options]
 ---
 
 Manage MeiliSearch full-text indexes (mirrors `arc collection` for Qdrant).
+
+**Note:** For most users, `/arc:corpus` is recommended as it provides both semantic and full-text
+search. Use `/arc:indexes` when you only need full-text search.
 
 **IMPORTANT:** You must specify a subcommand (`create`, `list`, `info`, `delete`, `items`, `verify`, `export`, or `import`).
 
@@ -59,9 +62,10 @@ arc indexes $ARGUMENTS
 
 **Related Commands:**
 
-- /collection - Manage Qdrant collections (semantic search)
-- /corpus create - Create both vector and full-text indexes
-- /search text - Full-text search in MeiliSearch indexes
+- /arc:corpus create - Create corpus for dual indexing (recommended)
+- /arc:corpus sync - Index to both systems (recommended)
+- /arc:collection - Manage Qdrant collections (semantic search only)
+- /arc:search text - Full-text search in MeiliSearch indexes
 
 **Implementation:**
 

@@ -1,9 +1,12 @@
 ---
-description: Manage Qdrant collections
+description: Manage Qdrant collections (semantic search only)
 argument-hint: <create|list|info|delete|items> [name] [options]
 ---
 
 Manage Qdrant vector collections for storing embeddings.
+
+**Note:** For most users, `/arc:corpus` is recommended as it provides both semantic and full-text
+search. Use `/arc:collection` when you only need semantic search.
 
 **IMPORTANT:** You must specify a subcommand (`create`, `list`, `info`, `delete`, or `items`).
 
@@ -50,9 +53,10 @@ Collections should specify a type (pdf or code) to ensure content matches:
 
 **Related Commands:**
 
-- /index pdf - Index PDFs into a collection
-- /index code - Index source code into a collection
-- /corpus create - Create both vector and full-text indexes
+- /arc:corpus create - Create corpus for dual indexing (recommended)
+- /arc:corpus sync - Index to both systems (recommended)
+- /arc:index pdf - Index PDFs into a collection (semantic only)
+- /arc:index code - Index source code into a collection (semantic only)
 
 **Implementation:**
 

@@ -112,23 +112,25 @@ From within Claude Code:
 Test each command systematically:
 
 ```bash
-# Collection management
-/create-collection test-local --model stella --type code
-/list-collections --verbose
-/list-collections --json
-/delete-collection test-local --confirm
+# Corpus management (recommended workflow)
+/arc:corpus create test-local --type code
+/arc:corpus sync test-local /path/to/test/repo
+/arc:corpus items test-local
+/arc:corpus delete test-local --confirm
+
+# Collection management (single system)
+/arc:collection create test-local --type code
+/arc:collection list --verbose
+/arc:collection list --json
+/arc:collection delete test-local --confirm
 
 # Model management
-/list-models
-/list-models --json
-
-# Indexing (if you have test data)
-/index-source /path/to/test/repo --collection test-code
-/index-pdfs /path/to/test/pdfs --collection test-docs
+/arc:models list
+/arc:models list --json
 
 # Search
-/search "test query" --collection test-code --limit 5
-/search "test query" --collection test-code --json
+/arc:search semantic "test query" --corpus test-code --limit 5
+/arc:search text "exact match" --corpus test-code --json
 ```
 
 #### Step 4: Test Error Handling
@@ -471,19 +473,19 @@ python -m arcaneum.cli.main --version && echo "✓ Version command works"
 
 ## Safe Testing Practices
 
-### 1. Use Test Collections
+### 1. Use Test Corpora
 
-Always test with disposable collections:
+Always test with disposable corpora:
 
 ```bash
-# Create test collection
-arc collection create test-dev --model stella --type code
+# Create test corpus
+arc corpus create test-dev --type code
 
-# Test indexing with small dataset
-arc index code ~/small-test-repo --collection test-dev
+# Test syncing with small dataset
+arc corpus sync test-dev ~/small-test-repo
 
 # Clean up when done
-arc collection delete test-dev --confirm
+arc corpus delete test-dev --confirm
 ```
 
 ### 2. Use Separate Qdrant Instance (Optional)
@@ -662,19 +664,19 @@ This script validates:
 
 ## Integration Testing Matrix
 
-| Test Case                     | Command                                              | Expected Result                      | Exit Code |
-| ----------------------------- | ---------------------------------------------------- | ------------------------------------ | --------- |
-| **Setup verification**        | `/doctor --json`                                     | Valid JSON with all checks           | 0 or 1    |
-| **Setup verbose**             | `/doctor --verbose`                                  | Table with detailed diagnostics      | 0 or 1    |
-| **Valid collection creation** | `/create-collection test --model stella --type code` | Collection created, JSON if --json   | 0         |
-| **Invalid model**             | `/create-collection test --model bad`                | Error with available models list     | 2         |
-| **List collections**          | `/list-collections --json`                           | Valid JSON output                    | 0         |
-| **Collection info**           | `/collection-info nonexistent`                       | Collection not found error           | 1 or 3    |
-| **Delete with confirm**       | `/delete-collection test --confirm --json`           | Success JSON response                | 0         |
-| **List models**               | `/list-models --json`                                | Valid JSON with all models           | 0         |
-| **Search valid**              | `/search "test" --collection code --limit 5`         | Results or empty results             | 0         |
-| **Search invalid collection** | `/search "test" --collection bad`                    | Collection not found                 | 3         |
-| **Index source (small)**      | `/index-source . --collection test --depth 0`        | Progress messages with [INFO]        | 0         |
+| Test Case                     | Command                                                | Expected Result                      | Exit Code |
+| ----------------------------- | ------------------------------------------------------ | ------------------------------------ | --------- |
+| **Setup verification**        | `/arc:doctor --json`                                   | Valid JSON with all checks           | 0 or 1    |
+| **Setup verbose**             | `/arc:doctor --verbose`                                | Table with detailed diagnostics      | 0 or 1    |
+| **Valid corpus creation**     | `/arc:corpus create test --type code`                  | Corpus created, JSON if --json       | 0         |
+| **Invalid type**              | `/arc:corpus create test --type bad`                   | Error with available types list      | 2         |
+| **List corpora**              | `/arc:corpus list --json`                              | Valid JSON output                    | 0         |
+| **Corpus info**               | `/arc:corpus items nonexistent`                        | Corpus not found error               | 1 or 3    |
+| **Delete with confirm**       | `/arc:corpus delete test --confirm --json`             | Success JSON response                | 0         |
+| **List models**               | `/arc:models list --json`                              | Valid JSON with all models           | 0         |
+| **Search valid**              | `/arc:search semantic "test" --corpus code --limit 5`  | Results or empty results             | 0         |
+| **Search invalid corpus**     | `/arc:search semantic "test" --corpus bad`             | Corpus not found                     | 3         |
+| **Sync corpus (small)**       | `/arc:corpus sync test . --depth 0`                    | Progress messages with [INFO]        | 0         |
 
 ## Common Testing Mistakes to Avoid
 

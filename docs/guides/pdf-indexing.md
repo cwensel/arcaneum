@@ -44,29 +44,37 @@ docker compose up -d
 
 ## Quick Start
 
-### 1. Create Collection
+### Using Corpus (Recommended)
+
+The recommended approach is to use corpus commands for dual indexing:
 
 ```bash
-arc collection create pdf-docs --model stella --hnsw-m 16 --hnsw-ef 100
+# Create corpus (creates both Qdrant collection and MeiliSearch index)
+arc corpus create pdf-docs --type pdf
+
+# Sync PDFs to both systems
+arc corpus sync pdf-docs /path/to/pdfs
+
+# Search with semantic or full-text
+arc search semantic "machine learning concepts" --corpus pdf-docs
+arc search text '"specific phrase"' --corpus pdf-docs
 ```
 
-### 2. Index PDFs
+### Using Collection Only (Semantic Search Only)
+
+If you only need semantic search:
 
 ```bash
-arc index pdf /path/to/pdfs \
-  --collection pdf-docs \
-  --model stella \
-  --workers 4
+arc collection create pdf-docs --type pdf
+arc index pdf /path/to/pdfs --collection pdf-docs
 ```
 
-### 3. Index PDFs with OCR disabled (if all PDFs are machine-generated text)
+### Index PDFs with OCR disabled (if all PDFs are machine-generated text)
 
 ```bash
-arc index pdf /path/to/text-pdfs \
-  --collection pdf-docs \
-  --model stella \
-  --no-ocr \
-  --workers 4
+arc corpus sync pdf-docs /path/to/text-pdfs --no-ocr
+# Or for collection-only:
+arc index pdf /path/to/text-pdfs --collection pdf-docs --no-ocr
 ```
 
 **Note**: OCR is enabled by default to handle scanned PDFs automatically.
@@ -437,10 +445,26 @@ exact phrase and keyword search. This complements semantic search by providing:
 - **Typo-tolerant search**: Find content despite spelling variations
 - **Page-level granularity**: Results point to specific pages
 
-### Quick Start
+### Quick Start (Corpus - Recommended)
+
+The easiest way to get both semantic and full-text search is to use corpus:
 
 ```bash
-# Create MeiliSearch index (if not already created)
+# Create corpus and sync (indexes to both systems)
+arc corpus create pdf-docs --type pdf
+arc corpus sync pdf-docs /path/to/pdfs
+
+# Both search types work
+arc search semantic "machine learning concepts" --corpus pdf-docs
+arc search text '"neural network"' --corpus pdf-docs
+```
+
+### Quick Start (MeiliSearch Only)
+
+If you only need full-text search:
+
+```bash
+# Create MeiliSearch index
 arc indexes create pdf-docs --type pdf
 
 # Index PDFs to MeiliSearch for full-text search
@@ -504,7 +528,7 @@ The `corpus` commands provide a unified workflow for dual indexing:
 
 ```bash
 # Create both collection and index in one command
-arc corpus create my-papers --type pdf --models stella
+arc corpus create my-papers --type pdf
 
 # Index to both systems in one command
 arc corpus sync my-papers /path/to/pdfs
@@ -512,9 +536,9 @@ arc corpus sync my-papers /path/to/pdfs
 # Sync multiple directories at once
 arc corpus sync my-papers /path/to/pdfs /path/to/more/pdfs
 
-# Search both systems
-arc search semantic "machine learning" --collection my-papers  # Qdrant
-arc search text '"neural network"' --index my-papers           # MeiliSearch
+# Search both systems using --corpus flag
+arc search semantic "machine learning" --corpus my-papers    # Qdrant
+arc search text '"neural network"' --corpus my-papers        # MeiliSearch
 ```
 
 **Using Existing Collection/Index as a Corpus:**
@@ -530,9 +554,9 @@ arc corpus sync Papers /path/to/pdfs
 The only requirement is that both the collection and index exist with the same name.
 The `corpus create` command is just a convenience that creates both in one step.
 
-#### Using Separate Commands
+#### Using Separate Commands (Advanced)
 
-Alternatively, you can manage Qdrant and MeiliSearch separately:
+If you need fine-grained control, you can manage Qdrant and MeiliSearch separately:
 
 ```bash
 # Step 1: Create collections/indexes
@@ -546,10 +570,10 @@ arc index pdf /path/to/pdfs --collection pdf-docs
 arc index text pdf /path/to/pdfs --index pdf-docs
 
 # Search semantically (conceptual matches)
-arc search semantic "machine learning techniques" --collection pdf-docs
+arc search semantic "machine learning techniques" --corpus pdf-docs
 
 # Search exact phrases (keyword matches)
-arc search text '"neural network architecture"' --index pdf-docs
+arc search text '"neural network architecture"' --corpus pdf-docs
 ```
 
 ### Change Detection

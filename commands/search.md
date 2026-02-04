@@ -79,9 +79,10 @@ Both commands show:
 
 **Related Commands:**
 
-- /collection list - See available collections
-- /index pdf - Index PDFs for searching
-- /index code - Index code for searching
+- /arc:corpus create - Create corpus for dual indexing (recommended)
+- /arc:corpus sync - Index content to both systems
+- /arc:corpus list - List available corpora
+- /arc:collection list - See available collections (semantic only)
 
 **Implementation:**
 

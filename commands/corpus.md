@@ -1,9 +1,10 @@
 ---
-description: Manage dual-index corpora
+description: Manage dual-index corpora (recommended)
 argument-hint: <create|delete|sync|info|items|parity> <name> [paths...] [options]
 ---
 
-Manage corpora that combine both vector search (Qdrant) and full-text search (MeiliSearch) for the same content.
+**Recommended for most users.** Manage corpora that combine both vector search (Qdrant) and
+full-text search (MeiliSearch) for the same content.
 
 **IMPORTANT:** You must specify a subcommand.
 
@@ -94,16 +95,17 @@ This enables hybrid search strategies:
 
 **When to Use Corpus vs Collection:**
 
-**Use Corpus When:**
+**Use Corpus (Recommended):**
 
+- Default choice for most use cases
 - Need both semantic and keyword search
 - Users search different ways (concepts vs exact terms)
 - Want fast keyword filtering of semantic results
 - Building search UIs with multiple search modes
 
-**Use Collection When:**
+**Use Collection (Advanced):**
 
-- Only need semantic search
+- Only need semantic search (no full-text)
 - Working with embeddings/vectors directly
 - Integrating with existing vector workflows
 - MeiliSearch not available/needed
@@ -126,11 +128,12 @@ Corpus sync is approximately 2x slower than single-system indexing due to dual u
 
 **Related Commands:**
 
-- /collection create - Create vector-only collection
-- /index pdf - Index PDFs to vector only
-- /index code - Index code to vector only
-- /search semantic - Search vector index
-- /search text - Search full-text index
+- /arc:search semantic - Search vector index
+- /arc:search text - Search full-text index
+- /arc:collection create - Create vector-only collection (advanced)
+- /arc:indexes create - Create full-text index only (advanced)
+- /arc:index pdf - Index PDFs to vector only (advanced)
+- /arc:index code - Index code to vector only (advanced)
 
 **Implementation:**
 

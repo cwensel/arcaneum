@@ -86,10 +86,13 @@ pip install -e .
 arc doctor
 arc container start
 
-# 4. Index dependencies and search for patterns
-arc collection create Frameworks --type code
-arc index code ~/libs/fastapi --collection Frameworks
+# 4. Create a corpus and sync content (indexes to both Qdrant and MeiliSearch)
+arc corpus create Frameworks --type code
+arc corpus sync Frameworks ~/libs/fastapi ~/libs/sqlalchemy
+
+# 5. Search with semantic or full-text queries
 arc search semantic "dependency injection pattern" --corpus Frameworks
+arc search text "async def" --corpus Frameworks
 ```
 
 **First time?** Run `arc doctor` to check prerequisites and get setup guidance.
@@ -104,111 +107,84 @@ arc container start          # Start Qdrant and MeiliSearch
 arc container status         # Check service health
 arc doctor                   # Verify setup
 
-# Collections (Qdrant - Semantic Search)
-arc collection create NAME --type TYPE   # pdf, code, or markdown
+# Corpus (Recommended - Dual Indexing to Both Systems)
+arc corpus create NAME --type TYPE       # pdf, code, or markdown
+arc corpus list                          # List all corpora
+arc corpus sync NAME PATH [PATH...]      # Sync one or more directories
+arc corpus items NAME                    # List items with parity status
+arc corpus parity NAME                   # Check/restore parity between systems
+arc corpus delete NAME                   # Delete both collection and index
+
+# Search (Works with corpus, collection, or index)
+arc search semantic "query" --corpus NAME              # Conceptual similarity
+arc search semantic "query" --corpus N1 --corpus N2   # Multi-corpus
+arc search text "query" --corpus NAME                  # Exact phrase matching
+
+# Collections (Qdrant Only - Semantic Search)
+arc collection create NAME --type TYPE   # When you only need semantic search
 arc collection list
 arc collection items NAME
 arc index pdf PATH --collection NAME
 arc index code PATH --collection NAME
-arc search semantic "query" --corpus NAME
-arc search semantic "query" --corpus N1 --corpus N2  # Multi-corpus
 
-# Indexes (MeiliSearch - Full-Text Search)
-arc indexes create NAME --type TYPE
+# Indexes (MeiliSearch Only - Full-Text Search)
+arc indexes create NAME --type TYPE      # When you only need full-text search
 arc indexes list
 arc index text pdf PATH --index NAME
 arc index text code PATH --index NAME
-arc search text "query" --corpus NAME
-
-# Dual Indexing (Both Systems)
-arc corpus create NAME --type TYPE
-arc corpus delete NAME                   # Delete both collection and index
-arc corpus sync NAME PATH [PATH...]      # Sync one or more directories
-arc corpus items NAME                    # List items with parity status
-arc corpus parity NAME                   # Check/restore parity
 ```
 
 ## Common Workflows
 
-### Search Dependencies and Libraries
+### Search Dependencies and Libraries (Recommended)
 
 ```bash
-# Create a code collection (model inferred from type)
-arc collection create Frameworks --type code
+# Create a corpus for framework source code
+arc corpus create Frameworks --type code
 
-# Index framework source code (git-aware, multi-branch)
-arc index code ~/libs/fastapi --collection Frameworks
-arc index code ~/libs/sqlalchemy --collection Frameworks
+# Sync framework directories (indexes to both Qdrant and MeiliSearch)
+arc corpus sync Frameworks ~/libs/fastapi ~/libs/sqlalchemy
 
 # List what's indexed
-arc collection items Frameworks
+arc corpus items Frameworks
 
-# Search for patterns and APIs
+# Semantic search for patterns and APIs
 arc search semantic "dependency injection pattern" --corpus Frameworks --limit 10
-arc search semantic "database connection pooling" --corpus Frameworks --limit 10
+
+# Full-text search for exact code
+arc search text "async def create_app" --corpus Frameworks
 ```
 
 ### Search Technical Documentation
 
 ```bash
-# Create a PDF collection (model inferred from type)
-arc collection create Papers --type pdf
+# Create a corpus for PDF documents
+arc corpus create Papers --type pdf
 
-# Index research papers and documentation
-arc index pdf ~/Documents/papers --collection Papers
+# Sync documentation directories
+arc corpus sync Papers ~/Documents/papers ~/Documents/specs
 
-# Search for concepts when planning new features
+# Semantic search for concepts
 arc search semantic "distributed consensus algorithms" --corpus Papers
-arc search semantic "rate limiting strategies" --corpus Papers
-```
 
-### Full-Text Search (MeiliSearch)
-
-```bash
-# Create MeiliSearch index
-arc indexes create my-docs --type pdf
-
-# Index for full-text search
-arc index text pdf ~/Documents/papers --index my-docs
-
-# Search for exact phrases
-arc search text '"neural network architecture"' --corpus my-docs
-```
-
-### Dual Indexing (Semantic + Full-Text)
-
-```bash
-# Create paired collection and index
-arc corpus create MyDocs --type pdf
-
-# Index to both Qdrant and MeiliSearch
-arc corpus sync MyDocs ~/Documents
-
-# Sync multiple directories at once
-arc corpus sync MyDocs ~/Documents ~/Papers ~/Reports
-
-# Semantic search (conceptual)
-arc search semantic "machine learning concepts" --corpus MyDocs
-
-# Full-text search (exact phrases)
-arc search text '"specific phrase"' --corpus MyDocs
+# Full-text search for exact phrases
+arc search text '"rate limiting"' --corpus Papers
 ```
 
 ### Index Markdown Files
 
 ```bash
-# Index documentation or notes (model inferred from type)
-arc collection create Notes --type markdown
-arc index markdown ~/obsidian-vault --collection Notes
+# Create a corpus for notes and documentation
+arc corpus create Notes --type markdown
 
-# With custom options
-arc index markdown ~/docs --collection Docs \
-  --exclude ".obsidian,templates" \
-  --chunk-size 512 \
-  --no-recursive
+# Sync your notes directory
+arc corpus sync Notes ~/obsidian-vault
 
-# Search your notes
+# Semantic search
 arc search semantic "project planning" --corpus Notes
+
+# Full-text search
+arc search text "meeting notes" --corpus Notes
 ```
 
 **Features:**
@@ -219,22 +195,42 @@ arc search semantic "project planning" --corpus Notes
 - Custom exclude patterns
 - Supports .md, .markdown, .mdown extensions
 
+### Single-System Indexing (Advanced)
+
+Use collections or indexes directly when you only need one type of search:
+
+```bash
+# Semantic search only (Qdrant collection)
+arc collection create MyCollection --type code
+arc index code ~/project --collection MyCollection
+arc search semantic "query" --corpus MyCollection
+
+# Full-text search only (MeiliSearch index)
+arc indexes create MyIndex --type pdf
+arc index text pdf ~/docs --index MyIndex
+arc search text "query" --corpus MyIndex
+```
+
 ### Store Agent Memory
 
 ```bash
-# Store agent-generated content (for Claude skills/agents)
-arc collection create Memory --type markdown
+# Create a corpus for agent-generated content
+arc corpus create Memory --type markdown
 
 # Store from file with metadata
-arc store analysis.md --collection Memory \
+arc store analysis.md --corpus Memory \
   --title "Security Analysis" \
   --category "security" \
   --tags "audit,findings"
 
 # Store from stdin (agent workflow)
-echo "# Research\n\nFindings..." | arc store - --collection Memory
+echo "# Research\n\nFindings..." | arc store - --corpus Memory
 
-# Content persisted to: ~/.local/share/arcaneum/agent-memory/{collection}/
+# Search agent memory
+arc search semantic "security vulnerabilities" --corpus Memory
+arc search text "SQL injection" --corpus Memory
+
+# Content persisted to: ~/.local/share/arcaneum/agent-memory/{corpus}/
 # Enables re-indexing and full-text retrieval
 ```
 
@@ -357,23 +353,24 @@ All commands use the `arc:` namespace prefix:
 
 | Command | Description |
 | ------- | ----------- |
-| `/arc:collection` | Manage Qdrant collections (create, list, info, delete) |
-| `/arc:indexes` | Manage MeiliSearch indexes (mirrors collection commands) |
-| `/arc:corpus` | Manage dual-index corpora (Qdrant + MeiliSearch) |
-| `/arc:index` | Index PDF, code, or markdown content |
+| `/arc:corpus` | **Recommended** - Manage dual-index corpora (Qdrant + MeiliSearch) |
 | `/arc:search` | Semantic or full-text search |
+| `/arc:index` | Index PDF, code, or markdown content |
+| `/arc:store` | Store agent-generated content for memory |
 | `/arc:container` | Manage Docker services (start, stop, status) |
 | `/arc:doctor` | Verify setup and prerequisites |
 | `/arc:models` | List available embedding models |
 | `/arc:config` | Manage configuration and cache |
-| `/arc:store` | Store agent-generated content for memory |
+| `/arc:collection` | Manage Qdrant collections (semantic search only) |
+| `/arc:indexes` | Manage MeiliSearch indexes (full-text search only) |
 
 **Usage Examples:**
 
 ```text
-/arc:collection create my-docs --model stella --type pdf
-/arc:index pdf ~/Documents --collection my-docs
-/arc:search "example query" --collection my-docs
+/arc:corpus create my-docs --type pdf
+/arc:corpus sync my-docs ~/Documents
+/arc:search semantic "example query" --corpus my-docs
+/arc:search text "exact phrase" --corpus my-docs
 /arc:models list
 ```
 

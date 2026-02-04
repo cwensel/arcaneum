@@ -2,13 +2,14 @@
 
 import hashlib
 import os
-import multiprocessing as mp
 from pathlib import Path
 from typing import List, Set, Callable, Tuple, Dict
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchAny, FilterSelector
 import logging
 import xxhash
+
+from .multiprocessing import get_mp_context, worker_init
 
 logger = logging.getLogger(__name__)
 
@@ -162,11 +163,15 @@ def _compute_hashes_parallel(file_list: List[Path],
     # Use multiprocessing pool with chunksize for better progress feedback
     chunksize = max(1, total_files // (num_workers * 10))
 
-    # Use fork context on Unix for better performance and compatibility
-    # (avoids spawn issues with pickling on macOS)
-    ctx = mp.get_context('fork') if hasattr(os, 'fork') else mp.get_context()
+    # Use shared context and signal handler for proper Ctrl-C handling
+    ctx = get_mp_context()
+    pool = None
 
-    with ctx.Pool(processes=num_workers) as pool:
+    try:
+        pool = ctx.Pool(
+            processes=num_workers,
+            initializer=worker_init
+        )
         if show_progress:
             # Use imap for incremental results with progress tracking
             results = pool.imap(_compute_hash_worker, work_items, chunksize=chunksize)
@@ -185,6 +190,14 @@ def _compute_hashes_parallel(file_list: List[Path],
             for file_path, file_hash in results:
                 if file_hash is not None:
                     file_hashes[str(file_path.absolute())] = file_hash
+
+    except KeyboardInterrupt:
+        logger.warning("Interrupted - terminating hash workers...")
+        raise
+    finally:
+        if pool:
+            pool.terminate()
+            pool.join()
 
     return file_hashes
 

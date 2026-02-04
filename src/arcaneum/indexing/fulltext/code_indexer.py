@@ -15,10 +15,9 @@ Key features:
 import gc
 import hashlib
 import logging
-import multiprocessing as mp
 import os
 import re
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from multiprocessing import cpu_count
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
@@ -26,6 +25,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
 
 from ..git_operations import GitProjectDiscovery
+from ..common.multiprocessing import create_process_pool
 from ..types import GitMetadata
 from .ast_extractor import ASTFunctionExtractor, CodeDefinition
 from .sync import GitCodeMetadataSync
@@ -409,13 +409,11 @@ class SourceCodeFullTextIndexer:
         """
         documents: List[Dict[str, Any]] = []
 
-        # Use fork context on Unix for better performance
-        ctx = mp.get_context('fork') if hasattr(os, 'fork') else mp.get_context()
-
-        with ProcessPoolExecutor(
-            max_workers=self.workers,
-            mp_context=ctx
-        ) as executor:
+        # Use shared process pool with proper fork context and signal handling
+        executor = None
+        future_to_file = {}
+        try:
+            executor = create_process_pool(max_workers=self.workers)
             # Submit all file processing jobs
             future_to_file = {
                 executor.submit(_extract_definitions_worker, file_path): file_path
@@ -455,9 +453,15 @@ class SourceCodeFullTextIndexer:
                     logger.warning(f"Error processing {file_path}: {e}")
                     stats['errors'].append({'file': file_path, 'error': str(e)})
 
-        # Cleanup
-        del future_to_file
-        gc.collect()
+        except KeyboardInterrupt:
+            logger.warning("Interrupted - shutting down workers...")
+            raise
+        finally:
+            if executor:
+                executor.shutdown(wait=False, cancel_futures=True)
+            # Cleanup
+            del future_to_file
+            gc.collect()
 
         return documents, stats
 

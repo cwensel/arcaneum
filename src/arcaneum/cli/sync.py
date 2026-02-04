@@ -7,16 +7,14 @@ to both Qdrant and MeiliSearch in a single operation.
 import fnmatch
 import gc
 import logging
-import multiprocessing as mp
 import os
-import signal
 
 # Suppress tokenizers fork warning - must be set before any tokenizers import
 os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
 
 import sys
 import hashlib
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from multiprocessing import cpu_count
 from pathlib import Path
 from typing import List, Optional, Set, Dict, Any, Tuple
@@ -35,6 +33,7 @@ from ..schema.document import DualIndexDocument
 from ..indexing.dual_indexer import DualIndexer
 from ..indexing.collection_metadata import get_collection_type, get_collection_metadata
 from ..indexing.common.sync import MetadataBasedSync, compute_quick_hash
+from ..indexing.common.multiprocessing import get_mp_context, worker_init, create_process_pool
 from ..indexing.git_operations import GitProjectDiscovery, apply_git_metadata
 from ..indexing.git_metadata_sync import GitMetadataSync
 from ..config import DEFAULT_MODELS
@@ -132,16 +131,6 @@ def _group_paths_by_git_root(paths: List[Path]) -> Dict[Optional[str], List[Path
         root = _find_git_root(path)
         groups.setdefault(root, []).append(path)
     return groups
-
-
-def _worker_init():
-    """Initialize worker process with proper signal handling.
-
-    By default, Python's multiprocessing workers ignore SIGINT, causing them
-    to continue running when the user presses Ctrl-C. This initializer resets
-    SIGINT to the default behavior, allowing workers to be terminated cleanly.
-    """
-    signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 
 def _chunk_code_file_worker(
@@ -2076,20 +2065,10 @@ def _parallel_chunk_code_files(
                 chunked_files[file_path_str] = chunks
         return chunked_files
 
-    # Parallel mode - use 'fork' on Unix for better Ctrl-C handling
-    # 'spawn' creates independent processes that ignore parent signals
-    try:
-        ctx = mp.get_context('fork') if sys.platform != 'win32' else mp.get_context('spawn')
-    except ValueError:
-        ctx = mp.get_context('spawn')
-
+    # Parallel mode - use shared utilities for consistent fork context and signal handling
     executor = None
     try:
-        executor = ProcessPoolExecutor(
-            max_workers=workers,
-            mp_context=ctx,
-            initializer=_worker_init
-        )
+        executor = create_process_pool(max_workers=workers)
         futures = {
             executor.submit(
                 _chunk_code_file_worker,

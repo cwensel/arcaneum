@@ -8,7 +8,6 @@ import numpy as np
 from pathlib import Path
 from typing import Tuple, Optional, Dict
 from multiprocessing import cpu_count
-import multiprocessing as mp
 import os
 import io
 import logging
@@ -16,6 +15,7 @@ import tempfile
 import gc
 
 from ...utils.memory import calculate_safe_workers
+from ..common.multiprocessing import get_mp_context, worker_init
 
 logger = logging.getLogger(__name__)
 
@@ -330,12 +330,17 @@ class OCREngine:
             gc.collect()
 
             # Process pages in parallel using multiprocessing.Pool with fork context
-            # Use fork context on Unix for better performance and to avoid malloc warnings
-            ctx = mp.get_context('fork') if hasattr(os, 'fork') else mp.get_context()
+            # Use shared context and signal handler for proper Ctrl-C handling
+            ctx = get_mp_context()
+            pool = None
+            async_results = []
 
-            with ctx.Pool(processes=self.ocr_workers) as pool:
+            try:
+                pool = ctx.Pool(
+                    processes=self.ocr_workers,
+                    initializer=worker_init
+                )
                 # Submit all page jobs for this batch
-                async_results = []
                 for page_num, img_bytes in serialized_images:
                     async_result = pool.apply_async(
                         _ocr_single_page_worker,
@@ -354,16 +359,23 @@ class OCREngine:
                         if verbose and page_text.strip():
                             print(f"  → OCR: Page {result_page_num}/{total_pages} ({len(page_text)} chars, conf: {page_conf:.0f}%)", flush=True)
 
-                    except mp.TimeoutError:
+                    except TimeoutError:
                         logger.error(f"OCR timeout for page {page_num} (exceeded {self.page_timeout}s)")
                         batch_results[page_num] = ("", 0.0)
                     except Exception as e:
                         logger.error(f"OCR failed for page {page_num}: {e}")
                         batch_results[page_num] = ("", 0.0)
 
-            # Clear serialized images
-            del serialized_images, async_results
-            gc.collect()
+            except KeyboardInterrupt:
+                logger.warning("Interrupted - terminating OCR workers...")
+                raise
+            finally:
+                if pool:
+                    pool.terminate()
+                    pool.join()
+                # Clear serialized images
+                del serialized_images, async_results
+                gc.collect()
 
         # temp_dir is automatically cleaned up here
 

@@ -10,7 +10,7 @@ import os
 import time
 from typing import List, Optional, Set
 from pathlib import Path
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from multiprocessing import cpu_count
 
 import sys
@@ -18,6 +18,7 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 
 from .git_operations import GitProjectDiscovery
+from .common.multiprocessing import create_process_pool
 from ..utils.formatting import format_duration
 from ..embeddings.client import EmbeddingClient
 from .git_metadata_sync import GitMetadataSync
@@ -567,9 +568,12 @@ class SourceCodeIndexer:
         # Track file processing time for profiler
         file_processing_start = time.time()
 
-        with ProcessPoolExecutor(max_workers=self.parallel_workers) as executor:
+        # Use shared process pool with proper fork context and signal handling
+        executor = None
+        future_to_file = {}
+        try:
+            executor = create_process_pool(max_workers=self.parallel_workers)
             # Submit all file processing jobs
-            future_to_file = {}
             for file_path in files:
                 future = executor.submit(
                     _process_file_worker,
@@ -606,9 +610,15 @@ class SourceCodeIndexer:
                     logger.error(f"Error processing {file_path}: {e}")
                     continue
 
-        # Memory cleanup: Clear futures dictionary after ProcessPoolExecutor (arcaneum-b8lg)
-        # Future objects hold references to worker results that prevent GC
-        del future_to_file
+        except KeyboardInterrupt:
+            logger.warning("Interrupted - shutting down workers...")
+            raise
+        finally:
+            if executor:
+                executor.shutdown(wait=False, cancel_futures=True)
+            # Memory cleanup: Clear futures dictionary (arcaneum-b8lg)
+            # Future objects hold references to worker results that prevent GC
+            del future_to_file
 
         # Record file processing stage timing
         if profiler:

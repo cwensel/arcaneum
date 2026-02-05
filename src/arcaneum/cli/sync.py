@@ -23,6 +23,35 @@ from uuid import uuid4
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn
 
+
+class AdaptiveProgress(Progress):
+    """Progress bar with adaptive ETA window that grows for longer-running tasks.
+
+    Starts with a short smoothing window (120s) for responsive early estimates,
+    then grows the window up to a maximum (300s) as elapsed time increases.
+    This gives more stable and accurate ETAs for long-running processes.
+    """
+
+    def __init__(self, *args, min_estimate_period: float = 120, max_estimate_period: float = 300, **kwargs):
+        kwargs.setdefault('speed_estimate_period', min_estimate_period)
+        super().__init__(*args, **kwargs)
+        self._min_estimate_period = min_estimate_period
+        self._max_estimate_period = max_estimate_period
+        self._adaptive_start_time: Optional[float] = None
+
+    def start(self) -> None:
+        self._adaptive_start_time = self.get_time()
+        super().start()
+
+    def update(self, *args, **kwargs) -> None:
+        if self._adaptive_start_time is not None:
+            elapsed = self.get_time() - self._adaptive_start_time
+            self.speed_estimate_period = min(
+                self._max_estimate_period,
+                max(self._min_estimate_period, elapsed),
+            )
+        super().update(*args, **kwargs)
+
 from ..cli.output import print_json, print_error, print_info
 from ..cli.utils import create_qdrant_client
 from ..cli.interaction_logger import interaction_logger
@@ -943,7 +972,7 @@ def sync_directory_command(
                 if not output_json:
                     print_info(f"Pre-chunked {len(pre_chunked_code_files)} files")
 
-            with Progress(
+            with AdaptiveProgress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
@@ -951,7 +980,6 @@ def sync_directory_command(
                 TimeRemainingColumn(),
                 console=console,
                 disable=output_json,
-                speed_estimate_period=120,
             ) as progress:
                 task = progress.add_task("Indexing...", total=total_corpus_files, completed=already_indexed_count)
 
@@ -1148,7 +1176,7 @@ def sync_directory_command(
             if not output_json:
                 console.print(f"\n[blue]Backfilling {len(meili_backfill_paths)} files to MeiliSearch...[/blue]")
 
-            with Progress(
+            with AdaptiveProgress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
@@ -1156,7 +1184,6 @@ def sync_directory_command(
                 TimeRemainingColumn(),
                 console=console,
                 disable=output_json,
-                speed_estimate_period=120,
             ) as progress:
                 backfill_task = progress.add_task("Backfilling...", total=len(meili_backfill_paths))
                 meili_backfilled, meili_backfill_chunks, meili_backfill_failed = _backfill_qdrant_to_meili(
@@ -1212,7 +1239,7 @@ def sync_directory_command(
                     hard_max_chars=hard_max_chars,
                 )
 
-            with Progress(
+            with AdaptiveProgress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
@@ -1220,7 +1247,6 @@ def sync_directory_command(
                 TimeRemainingColumn(),
                 console=console,
                 disable=output_json,
-                speed_estimate_period=120,
             ) as progress:
                 backfill_task = progress.add_task("Backfilling Qdrant...", total=len(qdrant_backfill_paths))
 
@@ -2994,7 +3020,7 @@ def _parity_single_corpus(
             if not output_json:
                 console.print(f"\n[blue]Backfilling {len(meili_backfill_paths)} files to MeiliSearch...[/blue]")
 
-            with Progress(
+            with AdaptiveProgress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
@@ -3002,7 +3028,6 @@ def _parity_single_corpus(
                 TimeRemainingColumn(),
                 console=console,
                 disable=output_json,
-                speed_estimate_period=120,
             ) as progress:
                 backfill_task = progress.add_task("Backfilling...", total=len(meili_backfill_paths))
                 meili_backfilled, meili_backfill_chunks, meili_backfill_failed = _backfill_qdrant_to_meili(
@@ -3034,7 +3059,7 @@ def _parity_single_corpus(
                     'char_to_token_ratio': 3.3,
                 }
 
-            with Progress(
+            with AdaptiveProgress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
@@ -3042,7 +3067,6 @@ def _parity_single_corpus(
                 TimeRemainingColumn(),
                 console=console,
                 disable=output_json,
-                speed_estimate_period=120,
             ) as progress:
                 backfill_task = progress.add_task("Backfilling Qdrant...", total=len(qdrant_backfill_paths))
                 qdrant_backfilled, qdrant_backfill_chunks, qdrant_backfill_failed, _ = _backfill_meili_to_qdrant(

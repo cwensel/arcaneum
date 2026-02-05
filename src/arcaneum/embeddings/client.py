@@ -41,6 +41,7 @@ EMBEDDING_MODELS = {
         "recommended_for": "code",
         "params_billions": 0.137,  # ~137M params
         "max_seq_length": 8192,  # Limit attention memory: O(batch × seq_len²)
+        "mps_max_batch": 16,  # MPS: conservative batch to handle files with many long chunks
     },
     "jina-code-0.5b": {
         "name": "jinaai/jina-code-embeddings-0.5b",
@@ -53,7 +54,8 @@ EMBEDDING_MODELS = {
         # Limit seq_length to control attention memory: O(batch × seq_len²)
         # Model supports 32K but was trained on 512; 8192 is recommended max
         # See: https://huggingface.co/jinaai/jina-code-embeddings-0.5b
-        "max_seq_length": 8192
+        "max_seq_length": 8192,
+        "mps_max_batch": 8,  # MPS needs conservative batches due to unified memory
     },
     "jina-code-1.5b": {
         "name": "jinaai/jina-code-embeddings-1.5b",
@@ -63,7 +65,8 @@ EMBEDDING_MODELS = {
         "available": True,
         "recommended_for": "code",
         "params_billions": 1.5,  # 1.5B params
-        "max_seq_length": 8192  # Same as 0.5b - limit attention memory
+        "max_seq_length": 8192,  # Same as 0.5b - limit attention memory
+        "mps_max_batch": 2,  # MPS needs very small batches for 1.5B model (like stella)
     },
     "codesage-large": {
         "name": "codesage/codesage-large",
@@ -74,6 +77,7 @@ EMBEDDING_MODELS = {
         "recommended_for": "code",
         "params_billions": 0.4,  # ~400M params
         "max_seq_length": 8192,  # Limit attention memory: O(batch × seq_len²)
+        "mps_max_batch": 8,  # MPS needs conservative batches due to unified memory
     },
     "nomic-code": {
         "name": "nomic-ai/nomic-embed-code",
@@ -84,6 +88,7 @@ EMBEDDING_MODELS = {
         "recommended_for": "code",
         "params_billions": 7.0,  # 7B params - very large
         "max_seq_length": 8192,  # Limit attention memory: O(batch × seq_len²)
+        "mps_max_batch": 1,  # MPS: 7B model needs single-item batches to avoid OOM
     },
 
     # General purpose models (SentenceTransformers)
@@ -653,28 +658,72 @@ class EmbeddingClient:
                 )
             except Exception as e:
                 error_msg = str(e).lower()
-                # Detect MPS "not enough space" errors (macOS Metal shader graph allocation failures)
-                if self._device == "mps" and ("enough space" in error_msg or "mpsgraph" in error_msg):
-                    # Try with minimal batch size
+                # Detect MPS OOM errors - multiple patterns:
+                # - "not enough space" / "mpsgraph" - Metal shader graph allocation failures
+                # - "mps backend out of memory" - PyTorch MPS memory pool exhaustion
+                # - "command buffer exited with error" - Metal command buffer failures
+                mps_oom_patterns = [
+                    "enough space",
+                    "mpsgraph",
+                    "mps backend out of memory",
+                    "command buffer exited with error",
+                ]
+                is_mps_oom = self._device == "mps" and any(p in error_msg for p in mps_oom_patterns)
+                if is_mps_oom:
+                    # Try with minimal batch size after clearing GPU cache
+                    # Cache clearing helps with memory fragmentation on MPS
+                    import gc
+                    import sys
+                    gc.collect()
+                    self._clear_gpu_cache()
+
                     if internal_batch_size > 1:
-                        logger.warning(
-                            f"MPS memory error with batch_size={internal_batch_size}, retrying with batch_size=1. "
-                            f"Consider using ARC_NO_GPU=1 for CPU mode."
-                        )
-                        embeddings = model.encode(
-                            texts,
-                            batch_size=1,
-                            show_progress_bar=False,
-                            convert_to_numpy=True
-                        )
+                        # Brief message - Metal already dumped verbose error
+                        print(f"  (GPU memory pressure, reducing batch {internal_batch_size} → 1...)", file=sys.stderr, flush=True)
+                        logger.debug(f"MPS OOM at batch_size={internal_batch_size}, retrying with batch_size=1")
+                        try:
+                            embeddings = model.encode(
+                                texts,
+                                batch_size=1,
+                                show_progress_bar=False,
+                                convert_to_numpy=True
+                            )
+                        except Exception as retry_error:
+                            # If batch_size=1 also fails, clear cache again and try once more
+                            retry_msg = str(retry_error).lower()
+                            if any(p in retry_msg for p in mps_oom_patterns):
+                                logger.debug("MPS OOM at batch_size=1, clearing cache for final retry")
+                                gc.collect()
+                                self._clear_gpu_cache()
+                                time.sleep(0.5)  # Brief pause for GPU recovery
+                                embeddings = model.encode(
+                                    texts,
+                                    batch_size=1,
+                                    show_progress_bar=False,
+                                    convert_to_numpy=True
+                                )
+                            else:
+                                raise
                     else:
-                        # batch_size=1 still failing, suggest CPU fallback
-                        logger.error(
-                            f"MPS failed even with batch_size=1. Use ARC_NO_GPU=1 for CPU mode."
-                        )
-                        raise RuntimeError(
-                            f"MPS GPU memory exhausted. Run with ARC_NO_GPU=1 to use CPU instead."
-                        ) from e
+                        # Already at batch_size=1, try clearing cache and one more attempt
+                        logger.debug("MPS OOM at batch_size=1, clearing cache for final retry")
+                        time.sleep(0.5)  # Brief pause for GPU recovery
+                        try:
+                            embeddings = model.encode(
+                                texts,
+                                batch_size=1,
+                                show_progress_bar=False,
+                                convert_to_numpy=True
+                            )
+                        except Exception as final_error:
+                            final_msg = str(final_error).lower()
+                            if any(p in final_msg for p in mps_oom_patterns):
+                                logger.debug("MPS failed even with batch_size=1 after cache clear")
+                                raise RuntimeError(
+                                    f"MPS GPU memory exhausted. Run with ARC_NO_GPU=1 to use CPU instead."
+                                ) from final_error
+                            else:
+                                raise
                 else:
                     raise
             # Return numpy arrays directly - Qdrant Python client accepts numpy.ndarray natively
@@ -905,6 +954,13 @@ class EmbeddingClient:
 
                         batch_embeddings = result
 
+                    except KeyboardInterrupt:
+                        # User pressed Ctrl-C - clean up and re-raise
+                        # This handles interrupts that arrive between GPU operations
+                        logger.debug("KeyboardInterrupt received during embedding")
+                        gc.collect()
+                        self._clear_gpu_cache()
+                        raise
                     except Exception as e:
                         # Detect GPU OOM from various sources:
                         # - PyTorch: "out of memory", "CUDA out of memory"
@@ -929,10 +985,10 @@ class EmbeddingClient:
                             # Halve the batch size (more gradual than /4)
                             new_max = max(min_batch_size, current_max_internal // 2)
 
-                            # Single clean warning message
+                            # Brief message - Metal/CUDA already dumped verbose error
                             import sys
                             print(
-                                f"\n⚠ GPU OOM: batch size {current_max_internal} → {new_max}, retrying...",
+                                f"  (GPU memory pressure, reducing batch {current_max_internal} → {new_max}...)",
                                 file=sys.stderr, flush=True
                             )
                             logger.debug(
@@ -1053,6 +1109,11 @@ class EmbeddingClient:
                         completed_batches += 1
                         if progress_callback:
                             progress_callback(completed_batches, total_batches)
+                    except KeyboardInterrupt:
+                        # User pressed Ctrl-C - cancel remaining futures and re-raise
+                        logger.debug("KeyboardInterrupt received during CPU embedding")
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        raise
                     except TimeoutError:
                         # Log timeout error
                         logger.error(f"Batch {start_idx}-{end_idx} timed out (exceeded {timeout}s)")

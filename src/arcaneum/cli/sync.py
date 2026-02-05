@@ -1370,6 +1370,14 @@ def sync_directory_command(
             total_chunks=total_chunks,
         )
 
+    except KeyboardInterrupt:
+        # Handle Ctrl-C gracefully - this can happen during embedding which blocks in native code
+        interaction_logger.finish(error="interrupted by user")
+        if not output_json:
+            console.print("\n[yellow]Interrupted - sync cancelled[/yellow]")
+        else:
+            print_json("error", "Sync interrupted by user", data={"interrupted": True})
+        sys.exit(130)  # Standard exit code for SIGINT
     except (InvalidArgumentError, ResourceNotFoundError):
         interaction_logger.finish(error="invalid argument or resource not found")
         raise
@@ -3058,6 +3066,13 @@ def _parity_single_corpus(
                 result_count=meili_backfilled + qdrant_backfilled,
             )
 
+    except KeyboardInterrupt:
+        # Handle Ctrl-C gracefully - this can happen during embedding which blocks in native code
+        if not all_corpora_mode:
+            interaction_logger.finish(error="interrupted by user")
+        if not output_json:
+            console.print("\n[yellow]Interrupted - parity operation cancelled[/yellow]")
+        raise
     except (InvalidArgumentError, ResourceNotFoundError):
         if not all_corpora_mode:
             interaction_logger.finish(error="invalid argument or resource not found")

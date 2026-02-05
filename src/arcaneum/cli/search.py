@@ -146,9 +146,7 @@ def search_command(
                         query_filter=query_filter,
                         score_threshold=score_threshold
                     )
-                    # Tag results with source corpus
-                    for result in corpus_results:
-                        result['_corpus'] = corpus_name
+                    # Results already have collection attribute set by search_collection
                     all_results.extend(corpus_results)
                 except Exception as e:
                     error_str = str(e).lower()
@@ -169,7 +167,7 @@ def search_command(
                 raise ResourceNotFoundError(f"No matching corpora found: {', '.join(corpora)}")
 
             # Sort merged results by score (descending) and apply pagination
-            all_results.sort(key=lambda x: x.get('score', 0), reverse=True)
+            all_results.sort(key=lambda x: x.score, reverse=True)
             results = all_results[offset:offset + limit]
 
             execution_time_ms = (time.time() - start_time) * 1000

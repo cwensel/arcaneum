@@ -9,6 +9,32 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from arcaneum.search.searcher import SearchResult
+
+
+def make_search_result(
+    score: float,
+    collection: str,
+    file_path: str,
+    content: str,
+    point_id: str = "test-id",
+    **extra_metadata
+) -> SearchResult:
+    """Helper to create SearchResult objects for testing."""
+    metadata = {
+        'file_path': file_path,
+        'content': content,
+        **extra_metadata
+    }
+    return SearchResult(
+        score=score,
+        collection=collection,
+        location=file_path,
+        content=content,
+        metadata=metadata,
+        point_id=point_id
+    )
+
 
 class TestSearchSemantic:
     """Test 'arc search semantic' command."""
@@ -22,25 +48,23 @@ class TestSearchSemantic:
 
     @pytest.fixture
     def sample_search_results(self):
-        """Sample search results from Qdrant."""
+        """Sample search results as SearchResult dataclass objects."""
         return [
-            MagicMock(
-                id='doc1',
+            make_search_result(
                 score=0.95,
-                payload={
-                    'file_path': '/path/to/doc1.pdf',
-                    'content': 'This is the first result about authentication.',
-                    'page_number': 5,
-                }
+                collection='TestCollection',
+                file_path='/path/to/doc1.pdf',
+                content='This is the first result about authentication.',
+                point_id='doc1',
+                page_number=5,
             ),
-            MagicMock(
-                id='doc2',
+            make_search_result(
                 score=0.85,
-                payload={
-                    'file_path': '/path/to/doc2.pdf',
-                    'content': 'This is the second result about security.',
-                    'page_number': 10,
-                }
+                collection='TestCollection',
+                file_path='/path/to/doc2.pdf',
+                content='This is the second result about security.',
+                point_id='doc2',
+                page_number=10,
             ),
         ]
 
@@ -66,7 +90,7 @@ class TestSearchSemantic:
                             with pytest.raises(SystemExit) as exc_info:
                                 search_command(
                                     query='authentication',
-                                    collection='TestCollection',
+                                    corpora=['TestCollection'],
                                     vector_name=None,
                                     filter_arg=None,
                                     limit=10,
@@ -99,7 +123,7 @@ class TestSearchSemantic:
                                     with pytest.raises(SystemExit) as exc_info:
                                         search_command(
                                             query='authentication',
-                                            collection='TestCollection',
+                                            corpora=['TestCollection'],
                                             vector_name=None,
                                             filter_arg='page_number > 3',
                                             limit=10,
@@ -126,7 +150,7 @@ class TestSearchSemantic:
                             with pytest.raises(SystemExit) as exc_info:
                                 search_command(
                                     query='authentication',
-                                    collection='TestCollection',
+                                    corpora=['TestCollection'],
                                     vector_name=None,
                                     filter_arg=None,
                                     limit=5,
@@ -137,10 +161,11 @@ class TestSearchSemantic:
                                 )
 
         assert exc_info.value.code == 0
-        # Verify pagination params were passed
+        # For multi-corpus support, search_collection is called with limit+offset
+        # and offset=0, then pagination is applied after merging results
         call_kwargs = mock_search.call_args[1]
-        assert call_kwargs['limit'] == 5
-        assert call_kwargs['offset'] == 10
+        assert call_kwargs['limit'] == 15  # limit + offset for merge buffer
+        assert call_kwargs['offset'] == 0  # offset applied after merge
 
     def test_score_threshold(self, mock_qdrant_client, mock_embedder, sample_search_results, capsys):
         """Test search with score threshold."""
@@ -156,7 +181,7 @@ class TestSearchSemantic:
                             with pytest.raises(SystemExit) as exc_info:
                                 search_command(
                                     query='authentication',
-                                    collection='TestCollection',
+                                    corpora=['TestCollection'],
                                     vector_name=None,
                                     filter_arg=None,
                                     limit=10,
@@ -190,7 +215,7 @@ class TestSearchSemantic:
                             with pytest.raises(SystemExit) as exc_info:
                                 search_command(
                                     query='authentication',
-                                    collection='TestCollection',
+                                    corpora=['TestCollection'],
                                     vector_name=None,
                                     filter_arg=None,
                                     limit=10,
@@ -220,7 +245,7 @@ class TestSearchSemantic:
                         with pytest.raises(SystemExit) as exc_info:
                             search_command(
                                 query='authentication',
-                                collection='TestCollection',
+                                corpora=['TestCollection'],
                                 vector_name=None,
                                 filter_arg=None,
                                 limit=10,
@@ -248,7 +273,7 @@ class TestSearchSemantic:
                         with pytest.raises(ResourceNotFoundError) as exc_info:
                             search_command(
                                 query='test',
-                                collection='NonExistent',
+                                corpora=['NonExistent'],
                                 vector_name=None,
                                 filter_arg=None,
                                 limit=10,
@@ -273,7 +298,7 @@ class TestSearchSemantic:
                         with pytest.raises(SystemExit):
                             search_command(
                                 query='test query',
-                                collection='TestCollection',
+                                corpora=['TestCollection'],
                                 vector_name=None,
                                 filter_arg=None,
                                 limit=10,
@@ -286,7 +311,7 @@ class TestSearchSemantic:
         # Verify logging was called
         mock_logger.start.assert_called_once()
         call_kwargs = mock_logger.start.call_args[1]
-        assert call_kwargs['collection'] == 'TestCollection'
+        assert call_kwargs['corpora'] == ['TestCollection']
         assert call_kwargs['query'] == 'test query'
 
         mock_logger.finish.assert_called_once()
@@ -312,7 +337,7 @@ class TestSearchNoResults:
                             with pytest.raises(SystemExit) as exc_info:
                                 search_command(
                                     query='nonexistent query xyz123',
-                                    collection='TestCollection',
+                                    corpora=['TestCollection'],
                                     vector_name=None,
                                     filter_arg=None,
                                     limit=10,
@@ -346,7 +371,7 @@ class TestSearchInvalidFilter:
                         with pytest.raises(InvalidArgumentError) as exc_info:
                             search_command(
                                 query='test',
-                                collection='TestCollection',
+                                corpora=['TestCollection'],
                                 vector_name=None,
                                 filter_arg='invalid @@@ filter',
                                 limit=10,
@@ -357,3 +382,213 @@ class TestSearchInvalidFilter:
                             )
 
         assert 'Invalid filter' in str(exc_info.value)
+
+
+class TestMultiCorpusSearch:
+    """Test multi-corpus search functionality.
+
+    These tests ensure SearchResult dataclass objects are handled correctly
+    when merging results from multiple corpora.
+    """
+
+    @pytest.fixture
+    def mock_embedder(self):
+        """Create a mocked SearchEmbedder."""
+        embedder = MagicMock()
+        embedder.embed.return_value = [0.1] * 1024
+        return embedder
+
+    @pytest.fixture
+    def corpus1_results(self):
+        """Results from first corpus."""
+        return [
+            make_search_result(
+                score=0.95,
+                collection='Corpus1',
+                file_path='/path/to/corpus1/doc1.pdf',
+                content='High relevance result from corpus 1.',
+                point_id='c1-doc1',
+            ),
+            make_search_result(
+                score=0.75,
+                collection='Corpus1',
+                file_path='/path/to/corpus1/doc2.pdf',
+                content='Medium relevance result from corpus 1.',
+                point_id='c1-doc2',
+            ),
+        ]
+
+    @pytest.fixture
+    def corpus2_results(self):
+        """Results from second corpus."""
+        return [
+            make_search_result(
+                score=0.85,
+                collection='Corpus2',
+                file_path='/path/to/corpus2/doc1.pdf',
+                content='High relevance result from corpus 2.',
+                point_id='c2-doc1',
+            ),
+            make_search_result(
+                score=0.65,
+                collection='Corpus2',
+                file_path='/path/to/corpus2/doc2.pdf',
+                content='Lower relevance result from corpus 2.',
+                point_id='c2-doc2',
+            ),
+        ]
+
+    def test_multi_corpus_search_merges_and_sorts_results(
+        self, mock_qdrant_client, mock_embedder, corpus1_results, corpus2_results, capsys
+    ):
+        """Test that multi-corpus search merges results and sorts by score.
+
+        This test would have caught the bug where SearchResult dataclass
+        objects were incorrectly treated as dictionaries (using [] assignment
+        and .get() method).
+        """
+        from arcaneum.cli.search import search_command
+
+        def search_side_effect(client, embedder, query, collection_name, **kwargs):
+            if collection_name == 'Corpus1':
+                return corpus1_results
+            elif collection_name == 'Corpus2':
+                return corpus2_results
+            raise Exception(f"Unknown collection: {collection_name}")
+
+        with patch('arcaneum.cli.search.create_qdrant_client', return_value=mock_qdrant_client):
+            with patch('arcaneum.cli.search.SearchEmbedder', return_value=mock_embedder):
+                with patch('arcaneum.cli.search.search_collection', side_effect=search_side_effect):
+                    with patch('arcaneum.cli.search.interaction_logger'):
+                        with pytest.raises(SystemExit) as exc_info:
+                            search_command(
+                                query='test query',
+                                corpora=['Corpus1', 'Corpus2'],
+                                vector_name=None,
+                                filter_arg=None,
+                                limit=10,
+                                offset=0,
+                                score_threshold=None,
+                                output_json=False,
+                                verbose=False
+                            )
+
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        # Verify results are shown (basic smoke test)
+        assert 'Found 4 results' in captured.out
+
+    def test_multi_corpus_search_json_output(
+        self, mock_qdrant_client, mock_embedder, corpus1_results, corpus2_results, capsys
+    ):
+        """Test multi-corpus search with JSON output format."""
+        from arcaneum.cli.search import search_command
+
+        def search_side_effect(client, embedder, query, collection_name, **kwargs):
+            if collection_name == 'Corpus1':
+                return corpus1_results
+            elif collection_name == 'Corpus2':
+                return corpus2_results
+            raise Exception(f"Unknown collection: {collection_name}")
+
+        with patch('arcaneum.cli.search.create_qdrant_client', return_value=mock_qdrant_client):
+            with patch('arcaneum.cli.search.SearchEmbedder', return_value=mock_embedder):
+                with patch('arcaneum.cli.search.search_collection', side_effect=search_side_effect):
+                    with patch('arcaneum.cli.search.interaction_logger'):
+                        with pytest.raises(SystemExit) as exc_info:
+                            search_command(
+                                query='test query',
+                                corpora=['Corpus1', 'Corpus2'],
+                                vector_name=None,
+                                filter_arg=None,
+                                limit=10,
+                                offset=0,
+                                score_threshold=None,
+                                output_json=True,
+                                verbose=False
+                            )
+
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+
+        # Verify results are merged
+        assert output['total_results'] == 4
+
+        # Verify results are sorted by score (descending)
+        scores = [r['score'] for r in output['results']]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_multi_corpus_search_with_pagination(
+        self, mock_qdrant_client, mock_embedder, corpus1_results, corpus2_results, capsys
+    ):
+        """Test multi-corpus search respects limit and offset."""
+        from arcaneum.cli.search import search_command
+
+        def search_side_effect(client, embedder, query, collection_name, **kwargs):
+            if collection_name == 'Corpus1':
+                return corpus1_results
+            elif collection_name == 'Corpus2':
+                return corpus2_results
+            raise Exception(f"Unknown collection: {collection_name}")
+
+        with patch('arcaneum.cli.search.create_qdrant_client', return_value=mock_qdrant_client):
+            with patch('arcaneum.cli.search.SearchEmbedder', return_value=mock_embedder):
+                with patch('arcaneum.cli.search.search_collection', side_effect=search_side_effect):
+                    with patch('arcaneum.cli.search.interaction_logger'):
+                        with pytest.raises(SystemExit) as exc_info:
+                            search_command(
+                                query='test query',
+                                corpora=['Corpus1', 'Corpus2'],
+                                vector_name=None,
+                                filter_arg=None,
+                                limit=2,
+                                offset=1,
+                                score_threshold=None,
+                                output_json=True,
+                                verbose=False
+                            )
+
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+
+        # Should return 2 results (limit) after skipping 1 (offset)
+        assert output['total_results'] == 2
+
+    def test_multi_corpus_partial_failure_continues(
+        self, mock_qdrant_client, mock_embedder, corpus1_results, capsys
+    ):
+        """Test that search continues if one corpus is not found."""
+        from arcaneum.cli.search import search_command
+
+        def search_side_effect(client, embedder, query, collection_name, **kwargs):
+            if collection_name == 'Corpus1':
+                return corpus1_results
+            elif collection_name == 'MissingCorpus':
+                raise Exception("Collection 'MissingCorpus' doesn't exist")
+            raise Exception(f"Unknown collection: {collection_name}")
+
+        with patch('arcaneum.cli.search.create_qdrant_client', return_value=mock_qdrant_client):
+            with patch('arcaneum.cli.search.SearchEmbedder', return_value=mock_embedder):
+                with patch('arcaneum.cli.search.search_collection', side_effect=search_side_effect):
+                    with patch('arcaneum.cli.search.interaction_logger'):
+                        with pytest.raises(SystemExit) as exc_info:
+                            search_command(
+                                query='test query',
+                                corpora=['Corpus1', 'MissingCorpus'],
+                                vector_name=None,
+                                filter_arg=None,
+                                limit=10,
+                                offset=0,
+                                score_threshold=None,
+                                output_json=True,
+                                verbose=False
+                            )
+
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+
+        # Should still return results from Corpus1
+        assert output['total_results'] == 2

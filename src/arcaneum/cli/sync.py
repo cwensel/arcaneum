@@ -21,7 +21,7 @@ from typing import List, Optional, Set, Dict, Any, Tuple
 from uuid import uuid4
 
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn
 
 from ..cli.output import print_json, print_error, print_info
 from ..cli.utils import create_qdrant_client
@@ -37,6 +37,7 @@ from ..indexing.common.multiprocessing import get_mp_context, worker_init, creat
 from ..indexing.git_operations import GitProjectDiscovery, apply_git_metadata
 from ..indexing.git_metadata_sync import GitMetadataSync
 from ..config import DEFAULT_MODELS
+from ..utils.formatting import format_size
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -947,8 +948,10 @@ def sync_directory_command(
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
                 TaskProgressColumn(),
+                TimeRemainingColumn(),
                 console=console,
                 disable=output_json,
+                speed_estimate_period=120,
             ) as progress:
                 task = progress.add_task("Indexing...", total=total_corpus_files, completed=already_indexed_count)
 
@@ -1110,7 +1113,8 @@ def sync_directory_command(
                             total_meili += meili_count
 
                             if verbose and not output_json:
-                                progress.console.print(f"[green]  ✓ {file_path.name}: {len(chunks)} chunks → Qdrant({qdrant_count}) + MeiliSearch({meili_count})[/green]")
+                                embedded_size = sum(len(c['text'].encode('utf-8')) for c in chunks)
+                                progress.console.print(f"[green]  ✓ {file_path.name} — {len(chunks)} chunks, {format_size(embedded_size)} embedded[/green]")
 
                         total_indexed += 1
 
@@ -1149,8 +1153,10 @@ def sync_directory_command(
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
                 TaskProgressColumn(),
+                TimeRemainingColumn(),
                 console=console,
                 disable=output_json,
+                speed_estimate_period=120,
             ) as progress:
                 backfill_task = progress.add_task("Backfilling...", total=len(meili_backfill_paths))
                 meili_backfilled, meili_backfill_chunks, meili_backfill_failed = _backfill_qdrant_to_meili(
@@ -1211,8 +1217,10 @@ def sync_directory_command(
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
                 TaskProgressColumn(),
+                TimeRemainingColumn(),
                 console=console,
                 disable=output_json,
+                speed_estimate_period=120,
             ) as progress:
                 backfill_task = progress.add_task("Backfilling Qdrant...", total=len(qdrant_backfill_paths))
 
@@ -1297,7 +1305,8 @@ def sync_directory_command(
                             qdrant_backfill_chunks += len(points)
 
                             if verbose and not output_json:
-                                progress.console.print(f"[green]  ✓ {file_path.name}: {len(points)} chunks → Qdrant[/green]")
+                                embedded_size = sum(len(p.payload['text'].encode('utf-8')) for p in points)
+                                progress.console.print(f"[green]  ✓ {file_path.name} — {len(points)} chunks, {format_size(embedded_size)} embedded (Qdrant backfill)[/green]")
 
                         qdrant_backfilled += 1
 
@@ -2058,7 +2067,7 @@ def _backfill_qdrant_to_meili(
                     )
 
     if verbose and not output_json:
-        progress.console.print(f"[green]  ✓ Uploaded {chunks_success} chunks for {len(completed_files)} files to MeiliSearch[/green]")
+        progress.console.print(f"[green]  ✓ {len(completed_files)} files, {chunks_success} chunks uploaded to MeiliSearch[/green]")
 
     return files_success, chunks_success, files_failed
 
@@ -2322,7 +2331,8 @@ def _backfill_meili_to_qdrant(
                 chunks_success += len(points)
 
                 if verbose and not output_json:
-                    progress.console.print(f"[green]  ✓ {file_path.name}: {len(points)} chunks → Qdrant[/green]")
+                    embedded_size = sum(len(p.payload['text'].encode('utf-8')) for p in points)
+                    progress.console.print(f"[green]  ✓ {file_path.name} — {len(points)} chunks, {format_size(embedded_size)} embedded (Qdrant backfill)[/green]")
 
             files_success += 1
 
@@ -2989,8 +2999,10 @@ def _parity_single_corpus(
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
                 TaskProgressColumn(),
+                TimeRemainingColumn(),
                 console=console,
                 disable=output_json,
+                speed_estimate_period=120,
             ) as progress:
                 backfill_task = progress.add_task("Backfilling...", total=len(meili_backfill_paths))
                 meili_backfilled, meili_backfill_chunks, meili_backfill_failed = _backfill_qdrant_to_meili(
@@ -3027,8 +3039,10 @@ def _parity_single_corpus(
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
                 TaskProgressColumn(),
+                TimeRemainingColumn(),
                 console=console,
                 disable=output_json,
+                speed_estimate_period=120,
             ) as progress:
                 backfill_task = progress.add_task("Backfilling Qdrant...", total=len(qdrant_backfill_paths))
                 qdrant_backfilled, qdrant_backfill_chunks, qdrant_backfill_failed, _ = _backfill_meili_to_qdrant(

@@ -614,8 +614,16 @@ def sync_directory_command(
         from_file=from_file,
     )
 
-    # Supported file extensions for single-file sync
-    SUPPORTED_FILE_EXTENSIONS = {'.pdf', '.md', '.markdown'}
+    # Supported file extensions by corpus type
+    SUPPORTED_EXTENSIONS_BY_TYPE = {
+        'pdf': {'.pdf'},
+        'markdown': {'.md', '.markdown'},
+        'code': {'.py', '.js', '.ts', '.tsx', '.jsx', '.java', '.go', '.rs', '.rb',
+                 '.cpp', '.c', '.h', '.hpp', '.cs', '.swift', '.kt', '.scala',
+                 '.php', '.pl', '.sh', '.bash', '.zsh', '.ps1', '.lua', '.r',
+                 '.sql', '.graphql', '.proto', '.thrift', '.yaml', '.yml', '.json',
+                 '.xml', '.html', '.css', '.scss', '.less', '.vue', '.svelte'},
+    }
 
     try:
         # Validate and resolve all paths (directories or files)
@@ -628,13 +636,7 @@ def sync_directory_command(
             if resolved_path.is_dir():
                 dir_paths.append(resolved_path)
             elif resolved_path.is_file():
-                # Validate file extension
-                ext = resolved_path.suffix.lower()
-                if ext not in SUPPORTED_FILE_EXTENSIONS:
-                    raise InvalidArgumentError(
-                        f"Unsupported file type '{ext}' for: {path}. "
-                        f"Supported types: {', '.join(sorted(SUPPORTED_FILE_EXTENSIONS))}"
-                    )
+                # Accept all files for now - validate extension after we know corpus type
                 single_files.append(resolved_path)
             else:
                 raise InvalidArgumentError(f"Not a file or directory: {path}")
@@ -686,6 +688,17 @@ def sync_directory_command(
         if not corpus_type:
             corpus_type = 'pdf'  # Default
             logger.warning(f"Collection type not set, defaulting to {corpus_type}")
+
+        # Validate single file extensions against corpus type
+        if single_files:
+            valid_extensions = SUPPORTED_EXTENSIONS_BY_TYPE.get(corpus_type, set())
+            for single_file in single_files:
+                ext = single_file.suffix.lower()
+                if ext not in valid_extensions:
+                    raise InvalidArgumentError(
+                        f"File type '{ext}' not supported for corpus type '{corpus_type}'. "
+                        f"Supported extensions: {', '.join(sorted(valid_extensions))}"
+                    )
 
         if not output_json:
             print_info(f"Corpus type: {corpus_type}")

@@ -647,85 +647,55 @@ class EmbeddingClient:
                 # CPU: Use conservative batches
                 internal_batch_size = min(batch_size, 256)
 
-            # Disable progress bar - pipeline handles progress display
-            # Wrap in MPS error handling for graceful degradation
-            try:
-                embeddings = model.encode(
-                    texts,
-                    batch_size=internal_batch_size,
-                    show_progress_bar=False,
-                    convert_to_numpy=True
-                )
-            except Exception as e:
-                error_msg = str(e).lower()
-                # Detect MPS OOM errors - multiple patterns:
-                # - "not enough space" / "mpsgraph" - Metal shader graph allocation failures
-                # - "mps backend out of memory" - PyTorch MPS memory pool exhaustion
-                # - "command buffer exited with error" - Metal command buffer failures
-                mps_oom_patterns = [
-                    "enough space",
-                    "mpsgraph",
-                    "mps backend out of memory",
-                    "command buffer exited with error",
-                ]
-                is_mps_oom = self._device == "mps" and any(p in error_msg for p in mps_oom_patterns)
-                if is_mps_oom:
-                    # Try with minimal batch size after clearing GPU cache
-                    # Cache clearing helps with memory fragmentation on MPS
-                    import gc
-                    import sys
-                    gc.collect()
-                    self._clear_gpu_cache()
+            # For files with many chunks, process in outer batches to avoid buffer allocation failures
+            # Metal/MPS can fail with "Invalid buffer size" when trying to allocate output buffers
+            # for hundreds of embeddings at once, even with small internal batch_size
+            MAX_OUTER_BATCH = 128  # Process at most 128 texts per model.encode() call
+            import numpy as np
 
-                    if internal_batch_size > 1:
-                        # Brief message - Metal already dumped verbose error
-                        print(f"  (GPU memory pressure, reducing batch {internal_batch_size} → 1...)", file=sys.stderr, flush=True)
-                        logger.debug(f"MPS OOM at batch_size={internal_batch_size}, retrying with batch_size=1")
-                        try:
-                            embeddings = model.encode(
-                                texts,
-                                batch_size=1,
-                                show_progress_bar=False,
-                                convert_to_numpy=True
-                            )
-                        except Exception as retry_error:
-                            # If batch_size=1 also fails, clear cache again and try once more
-                            retry_msg = str(retry_error).lower()
-                            if any(p in retry_msg for p in mps_oom_patterns):
-                                logger.debug("MPS OOM at batch_size=1, clearing cache for final retry")
-                                gc.collect()
-                                self._clear_gpu_cache()
-                                time.sleep(0.5)  # Brief pause for GPU recovery
-                                embeddings = model.encode(
-                                    texts,
-                                    batch_size=1,
-                                    show_progress_bar=False,
-                                    convert_to_numpy=True
-                                )
-                            else:
-                                raise
-                    else:
-                        # Already at batch_size=1, try clearing cache and one more attempt
-                        logger.debug("MPS OOM at batch_size=1, clearing cache for final retry")
-                        time.sleep(0.5)  # Brief pause for GPU recovery
-                        try:
-                            embeddings = model.encode(
-                                texts,
-                                batch_size=1,
-                                show_progress_bar=False,
-                                convert_to_numpy=True
-                            )
-                        except Exception as final_error:
-                            final_msg = str(final_error).lower()
-                            if any(p in final_msg for p in mps_oom_patterns):
-                                logger.debug("MPS failed even with batch_size=1 after cache clear")
-                                raise RuntimeError(
-                                    f"MPS GPU memory exhausted. Run with ARC_NO_GPU=1 to use CPU instead."
-                                ) from final_error
-                            else:
-                                raise
-                else:
-                    raise
+            if len(texts) > MAX_OUTER_BATCH:
+                # Process in outer batches to avoid large buffer allocations
+                import gc
+                logger.debug(f"Large input ({len(texts)} texts), processing in {MAX_OUTER_BATCH}-text outer batches")
+
+                dim = self.get_dimensions(model_name)
+                all_embeddings = np.zeros((len(texts), dim), dtype=np.float32)
+                offset = 0
+
+                for start_idx in range(0, len(texts), MAX_OUTER_BATCH):
+                    end_idx = min(start_idx + MAX_OUTER_BATCH, len(texts))
+                    batch_texts = texts[start_idx:end_idx]
+
+                    # Clear cache before each outer batch to prevent fragmentation
+                    if self._device in ("mps", "cuda") and start_idx > 0:
+                        gc.collect()
+                        self._clear_gpu_cache()
+
+                    batch_embeddings = self._encode_with_oom_recovery(
+                        model, batch_texts, internal_batch_size, model_name
+                    )
+                    all_embeddings[offset:offset + len(batch_texts)] = batch_embeddings
+                    offset += len(batch_texts)
+
+                    # Release batch references
+                    del batch_embeddings
+                    del batch_texts
+
+                embeddings = all_embeddings
+            else:
+                # Small input - process all at once
+                embeddings = self._encode_with_oom_recovery(
+                    model, texts, internal_batch_size, model_name
+                )
+
+            # Validate embeddings before returning - MPS OOM can corrupt results without raising
+            # The Metal driver may print errors to stderr but return garbage embeddings
+            if not self._validate_embeddings(embeddings, len(texts), model_name):
+                raise RuntimeError(
+                    "GPU produced invalid embeddings (likely OOM corruption). "
+                    "Try running with ARC_NO_GPU=1 to use CPU instead."
+                )
+
             # Return numpy arrays directly - Qdrant Python client accepts numpy.ndarray natively
             # Removing .tolist() conversion saves 5-15% overhead on embeddings (arcaneum-zfch)
             return embeddings
@@ -765,7 +735,108 @@ class EmbeddingClient:
                 del batch_embeddings
                 del batch
 
+            # Validate embeddings before returning
+            if not self._validate_embeddings(all_embeddings, len(texts), model_name):
+                raise RuntimeError("FastEmbed produced invalid embeddings")
+
             return all_embeddings
+
+    def _encode_with_oom_recovery(self, model, texts: List[str], internal_batch_size: int, model_name: str):
+        """Encode texts with OOM recovery for MPS/CUDA.
+
+        Metal/MPS OOM errors can occur in two ways:
+        1. Python exception is raised (we catch and retry)
+        2. Error printed to stderr but function returns corrupted data (we validate and retry)
+
+        This method handles both cases by validating results and retrying on corruption.
+
+        Args:
+            model: SentenceTransformer model
+            texts: List of texts to encode
+            internal_batch_size: Batch size for model.encode()
+            model_name: Model name for logging
+
+        Returns:
+            numpy array of embeddings
+
+        Raises:
+            RuntimeError: If GPU memory is exhausted even at batch_size=1
+        """
+        import gc
+        import sys
+
+        mps_oom_patterns = [
+            "enough space",
+            "mpsgraph",
+            "mps backend out of memory",
+            "command buffer exited with error",
+            "invalid buffer size",  # Metal buffer allocation failure
+        ]
+
+        def try_encode(batch_size: int):
+            """Try to encode and validate, returning None if OOM/corruption detected."""
+            try:
+                # Sync GPU to surface any pending async errors
+                self._sync_gpu_if_needed()
+
+                result = model.encode(
+                    texts,
+                    batch_size=batch_size,
+                    show_progress_bar=False,
+                    convert_to_numpy=True
+                )
+
+                # Sync again after encoding
+                self._sync_gpu_if_needed()
+
+                # Validate - Metal OOM can corrupt results without raising exceptions
+                if not self._validate_embeddings(result, len(texts), model_name):
+                    logger.debug(f"Embeddings corrupted at batch_size={batch_size}")
+                    return None  # Treat as OOM, caller will retry
+
+                return result
+
+            except Exception as e:
+                error_msg = str(e).lower()
+                is_mps_oom = self._device == "mps" and any(p in error_msg for p in mps_oom_patterns)
+                if is_mps_oom:
+                    logger.debug(f"MPS OOM exception at batch_size={batch_size}: {e}")
+                    return None  # Signal to retry
+                else:
+                    raise  # Non-OOM error, propagate
+
+        # Try with requested batch size
+        result = try_encode(internal_batch_size)
+        if result is not None:
+            return result
+
+        # OOM or corruption detected - clear cache and retry with batch_size=1
+        logger.debug(f"OOM/corruption at batch_size={internal_batch_size}, clearing cache and retrying with batch_size=1")
+        print(f"  (GPU memory pressure, reducing batch {internal_batch_size} → 1...)", file=sys.stderr, flush=True)
+
+        gc.collect()
+        self._clear_gpu_cache()
+        time.sleep(0.5)  # Brief pause for GPU recovery
+
+        result = try_encode(1)
+        if result is not None:
+            return result
+
+        # Still failing - try one more time after aggressive cleanup
+        logger.debug("Still failing at batch_size=1, aggressive cleanup and final retry")
+        gc.collect()
+        self._clear_gpu_cache()
+        time.sleep(1.0)  # Longer pause
+
+        result = try_encode(1)
+        if result is not None:
+            return result
+
+        # Give up
+        raise RuntimeError(
+            f"MPS GPU memory exhausted even at batch_size=1. "
+            f"Run with ARC_NO_GPU=1 to use CPU instead."
+        )
 
     def embed_parallel(
         self,
@@ -1301,6 +1372,33 @@ class EmbeddingClient:
                 zero_count = np.sum(zero_vectors)
                 logger.debug(f"Embeddings validation failed: {zero_count} all-zero vectors")
                 return False
+
+            # Check for extreme L2 norms - embeddings should be roughly unit normalized
+            # Most embedding models produce normalized or near-normalized vectors
+            norms = np.linalg.norm(embeddings, axis=1)
+            if np.any(norms < 0.01):  # Suspiciously small (near-zero)
+                small_count = np.sum(norms < 0.01)
+                logger.debug(f"Embeddings validation failed: {small_count} vectors with tiny norm (<0.01)")
+                return False
+
+            if np.any(norms > 1000):  # Suspiciously large
+                large_count = np.sum(norms > 1000)
+                logger.debug(f"Embeddings validation failed: {large_count} vectors with huge norm (>1000)")
+                return False
+
+            # Check for duplicate embeddings (GPU may copy same buffer to multiple outputs on OOM)
+            if expected_count > 1:
+                # Check if all embeddings are identical (catastrophic failure)
+                if np.allclose(embeddings[0], embeddings, rtol=1e-5, atol=1e-8):
+                    logger.debug("Embeddings validation failed: all embeddings are identical")
+                    return False
+
+                # Check for suspiciously low variance across embeddings
+                # Different texts should produce different embeddings
+                variance = np.var(embeddings, axis=0).mean()
+                if variance < 1e-10:
+                    logger.debug(f"Embeddings validation failed: suspiciously low variance ({variance:.2e})")
+                    return False
 
             return True
 

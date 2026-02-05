@@ -801,6 +801,7 @@ def sync_directory_command(
 
         # Apply change detection (skip already indexed files) unless --force
         already_indexed_count = 0
+        total_corpus_files = len(files)  # Default: all discovered files
         meili_backfill_paths = []  # Files in Qdrant but missing from MeiliSearch
         qdrant_backfill_paths = []  # Files in MeiliSearch but missing from Qdrant
 
@@ -845,10 +846,13 @@ def sync_directory_command(
             # Count files in both systems (truly skipped)
             already_indexed_count = len(in_both_systems & discovered_file_paths)
 
+            # Calculate total corpus size for progress display
+            total_corpus_files = already_indexed_count + len(files_to_process)
+
             if not output_json:
                 if already_indexed_count > 0:
-                    print_info(f"Skipping {already_indexed_count} files already in both systems")
-                if len(files_to_process) > 0:
+                    print_info(f"Corpus: {already_indexed_count}/{total_corpus_files} files indexed, processing {len(files_to_process)} new files")
+                elif len(files_to_process) > 0:
                     print_info(f"Processing {len(files_to_process)} new files")
 
             files = files_to_process
@@ -933,7 +937,7 @@ def sync_directory_command(
                 console=console,
                 disable=output_json,
             ) as progress:
-                task = progress.add_task("Indexing...", total=len(files))
+                task = progress.add_task("Indexing...", total=total_corpus_files, completed=already_indexed_count)
 
                 for file_path in files:
                     progress.update(task, description=f"Processing {file_path.name}...")

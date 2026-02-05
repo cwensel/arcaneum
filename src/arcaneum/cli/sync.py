@@ -1119,6 +1119,20 @@ def sync_directory_command(
                         if not output_json:
                             progress.console.print(f"[yellow]Warning: Failed to process {file_path.name}: {e}[/yellow]")
 
+                            # Check if this is a GPU OOM error and provide helpful re-index command
+                            error_str = str(e).lower()
+                            gpu_oom_patterns = [
+                                "gpu produced invalid embeddings",
+                                "mps gpu memory exhausted",
+                                "oom corruption",
+                                "out of memory",
+                                "invalid buffer size",
+                            ]
+                            if any(pattern in error_str for pattern in gpu_oom_patterns):
+                                abs_path = file_path.absolute()
+                                reindex_cmd = f"arc corpus sync {corpus} \"{abs_path}\" --force --no-gpu"
+                                progress.console.print(f"[dim]  To re-index with CPU: {reindex_cmd}[/dim]")
+
                     progress.advance(task)
 
         # Backfill MeiliSearch for files already in Qdrant but missing from MeiliSearch

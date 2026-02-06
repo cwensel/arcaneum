@@ -218,6 +218,15 @@ class EmbeddingClient:
         # See: RDR-013 Phase 2, arcaneum-m7hg
         self._gpu_lock = None  # Deprecated: no longer needed with single-threaded embedding
 
+        # Set when a GPU encode times out — prevents further GPU use in this session.
+        # After a timeout, a daemon thread is still running on the GPU; any new Metal
+        # command buffers would conflict and cause a fatal assertion (SIGABRT).
+        self._gpu_poisoned = False
+
+        # CPU fallback models: model_name → SentenceTransformer on device="cpu"
+        # Lazy-loaded when _gpu_poisoned is True, so remaining files can still be processed.
+        self._cpu_fallback_models = {}
+
         # CPU parallelization settings
         # Default to 1 worker (sequential batching) to avoid thread over-subscription.
         # With cpu_workers=1, we let OMP/MKL handle parallelism within each batch.
@@ -232,6 +241,30 @@ class EmbeddingClient:
         # Configure thread environment for CPU mode
         if not use_gpu:
             self._configure_cpu_threading()
+
+    def _get_cpu_fallback_model(self, model_name: str):
+        """Load a fresh SentenceTransformer on CPU for fallback after GPU poisoning.
+
+        Creates a completely new model instance on CPU — no shared state with the
+        GPU model. Uses local_files_only=True since model files are already cached.
+        Cached in _cpu_fallback_models so it's only loaded once per model.
+        """
+        if model_name in self._cpu_fallback_models:
+            return self._cpu_fallback_models[model_name]
+
+        from sentence_transformers import SentenceTransformer
+        config = EMBEDDING_MODELS[model_name]
+        model = SentenceTransformer(
+            config["name"],
+            cache_folder=self.cache_dir,
+            local_files_only=True,
+            device="cpu",
+            trust_remote_code=True,
+        )
+        if "max_seq_length" in config:
+            model.max_seq_length = config["max_seq_length"]
+        self._cpu_fallback_models[model_name] = model
+        return model
 
     def _detect_device(self) -> str:
         """Detect best available GPU device (RDR-013 Phase 2).
@@ -741,27 +774,37 @@ class EmbeddingClient:
 
             return all_embeddings
 
-    def _encode_with_oom_recovery(self, model, texts: List[str], internal_batch_size: int, model_name: str):
+    def _encode_with_oom_recovery(self, model, texts: List[str], internal_batch_size: int, model_name: str,
+                                   encode_timeout: int = 120):
         """Encode texts with OOM recovery for MPS/CUDA.
 
         Metal/MPS OOM errors can occur in two ways:
         1. Python exception is raised (we catch and retry)
         2. Error printed to stderr but function returns corrupted data (we validate and retry)
+        3. GPU hangs indefinitely retrying at the C++ level (we timeout via thread)
 
-        This method handles both cases by validating results and retrying on corruption.
+        This method handles all three cases.
 
         Args:
             model: SentenceTransformer model
             texts: List of texts to encode
             internal_batch_size: Batch size for model.encode()
             model_name: Model name for logging
+            encode_timeout: Maximum seconds to wait for a single encode call (default: 120)
 
         Returns:
             numpy array of embeddings
 
         Raises:
-            RuntimeError: If GPU memory is exhausted even at batch_size=1
+            RuntimeError: If GPU memory is exhausted even at batch_size=1, or encode times out
         """
+        if self._gpu_poisoned:
+            cpu_model = self._get_cpu_fallback_model(model_name)
+            logger.info(f"GPU poisoned, falling back to CPU for {len(texts)} texts")
+            return cpu_model.encode(
+                texts, batch_size=32, show_progress_bar=False, convert_to_numpy=True
+            )
+
         import gc
         import sys
 
@@ -774,36 +817,80 @@ class EmbeddingClient:
         ]
 
         def try_encode(batch_size: int):
-            """Try to encode and validate, returning None if OOM/corruption detected."""
-            try:
-                # Sync GPU to surface any pending async errors
-                self._sync_gpu_if_needed()
+            """Try to encode and validate, returning None if OOM/corruption detected.
 
-                result = model.encode(
-                    texts,
-                    batch_size=batch_size,
-                    show_progress_bar=False,
-                    convert_to_numpy=True
+            Runs model.encode() in a daemon thread with a timeout to prevent
+            infinite hangs when the GPU retries failed Metal command buffers
+            at the C++ level (where Python's try/except can't intervene).
+            """
+            # Use a container to pass result/exception back from thread
+            container = {'result': None, 'error': None}
+
+            def _run_encode():
+                try:
+                    self._sync_gpu_if_needed()
+
+                    result = model.encode(
+                        texts,
+                        batch_size=batch_size,
+                        show_progress_bar=False,
+                        convert_to_numpy=True
+                    )
+
+                    self._sync_gpu_if_needed()
+                    container['result'] = result
+                except Exception as e:
+                    container['error'] = e
+
+            thread = threading.Thread(target=_run_encode, daemon=True)
+            thread.start()
+            thread.join(timeout=encode_timeout)
+
+            if thread.is_alive():
+                # Thread is stuck - GPU is hanging.
+                # Do NOT call _clear_gpu_cache() here — the daemon thread is still
+                # executing model.encode() on the GPU. Clearing the cache while Metal
+                # command buffers are in-flight causes a fatal assertion:
+                #   "commit an already committed command buffer" → SIGABRT
+                # The daemon thread will eventually finish or die on its own.
+                #
+                # Poison the GPU so no further encode attempts touch it this session.
+                self._gpu_poisoned = True
+                logger.warning(
+                    f"model.encode() timed out after {encode_timeout}s at batch_size={batch_size} "
+                    f"for {len(texts)} texts — GPU likely hung on Metal OOM retry loop. "
+                    f"GPU is now disabled for this session, falling back to CPU."
+                )
+                import sys
+                print(
+                    f"  GPU encode timed out — falling back to CPU for remaining work.",
+                    file=sys.stderr, flush=True
+                )
+                # Fall back to CPU for these texts instead of raising
+                cpu_model = self._get_cpu_fallback_model(model_name)
+                return cpu_model.encode(
+                    texts, batch_size=32, show_progress_bar=False, convert_to_numpy=True
                 )
 
-                # Sync again after encoding
-                self._sync_gpu_if_needed()
-
-                # Validate - Metal OOM can corrupt results without raising exceptions
-                if not self._validate_embeddings(result, len(texts), model_name):
-                    logger.debug(f"Embeddings corrupted at batch_size={batch_size}")
-                    return None  # Treat as OOM, caller will retry
-
-                return result
-
-            except Exception as e:
+            # Thread completed - check for exceptions
+            if container['error'] is not None:
+                e = container['error']
                 error_msg = str(e).lower()
                 is_mps_oom = self._device == "mps" and any(p in error_msg for p in mps_oom_patterns)
                 if is_mps_oom:
                     logger.debug(f"MPS OOM exception at batch_size={batch_size}: {e}")
                     return None  # Signal to retry
                 else:
-                    raise  # Non-OOM error, propagate
+                    raise e  # Non-OOM error, propagate
+
+            result = container['result']
+
+            # Validate - Metal OOM can corrupt results without raising exceptions
+            if not self._validate_embeddings(result, len(texts), model_name):
+                logger.debug(f"Embeddings corrupted at batch_size={batch_size}")
+                return None  # Treat as OOM, caller will retry
+
+            return result
 
         # Try with requested batch size
         result = try_encode(internal_batch_size)

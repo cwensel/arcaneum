@@ -90,6 +90,8 @@ DEFAULT_EXCLUDE_FILE_PATTERNS = {
     # Bundle outputs
     '*.bundle.js',
     '*.bundle.css',
+    '*-bundle.js',
+    '*-bundle.css',
     # Source maps
     '*.map',
     '*.js.map',
@@ -198,6 +200,9 @@ def _chunk_code_file_worker(
         file_p = Path(file_path)
         if not file_p.is_file():
             return (file_path, [], f"Not a file: {file_path}")
+        file_size = file_p.stat().st_size
+        if file_size > _MAX_CODE_FILE_SIZE:
+            return (file_path, [], f"File too large ({file_size} bytes > {_MAX_CODE_FILE_SIZE})")
         try:
             code = file_p.read_text(encoding='utf-8', errors='replace')
         except Exception as e:
@@ -360,6 +365,78 @@ def _discover_git_tracked_files(directory: Path, extensions: set) -> List[Path]:
     return files
 
 
+# Extensions that may contain minified content
+_MINIFIED_CHECK_EXTENSIONS = {'.js', '.css'}
+
+# Maximum line length before a file is considered minified
+_MINIFIED_LINE_LENGTH_THRESHOLD = 5000
+
+# How many bytes to read when checking for minification
+_MINIFIED_CHECK_BYTES = 65536
+
+# Maximum file size (bytes) for source code files before skipping.
+# 1 MB of source code is extremely large — most real source files are <100 KB.
+# Files exceeding this are almost certainly generated, vendored, or data files
+# that escaped filename-pattern filtering.  Embedding them wastes GPU time and
+# can trigger OOM / timeouts.  PDFs and markdown have their own size handling.
+_MAX_CODE_FILE_SIZE = 1_000_000  # 1 MB
+
+
+def _filter_excluded_files(files: List[Path]) -> List[Path]:
+    """Filter out excluded files by name patterns, directory, and content-based minification.
+
+    Args:
+        files: List of file paths to filter
+
+    Returns:
+        Filtered list of file paths
+    """
+    filtered_files = []
+    excluded_count = 0
+    minified_count = 0
+
+    for f in files:
+        excluded = False
+
+        # Check if file is in an excluded directory
+        path_parts = set(f.parts)
+        if path_parts & DEFAULT_EXCLUDE_DIRECTORIES:
+            excluded = True
+        else:
+            # Check against filename patterns
+            for pattern in DEFAULT_EXCLUDE_FILE_PATTERNS:
+                if fnmatch.fnmatch(f.name, pattern):
+                    excluded = True
+                    break
+
+        if excluded:
+            excluded_count += 1
+            continue
+
+        # Content-based minification detection for JS/CSS files
+        if f.suffix.lower() in _MINIFIED_CHECK_EXTENSIONS:
+            try:
+                with open(f, 'r', encoding='utf-8', errors='replace') as fh:
+                    head = fh.read(_MINIFIED_CHECK_BYTES)
+                if head:
+                    longest_line = max(len(line) for line in head.split('\n'))
+                    if longest_line > _MINIFIED_LINE_LENGTH_THRESHOLD:
+                        logger.info(f"Skipping likely minified file {f.name} (longest line: {longest_line} chars)")
+                        minified_count += 1
+                        continue
+            except OSError:
+                pass  # If we can't read it, let downstream handle the error
+
+        filtered_files.append(f)
+
+    if excluded_count > 0:
+        logger.info(f"Excluded {excluded_count} files matching exclusion patterns")
+    if minified_count > 0:
+        logger.info(f"Excluded {minified_count} files detected as minified (line > {_MINIFIED_LINE_LENGTH_THRESHOLD} chars)")
+
+    return filtered_files
+
+
 def discover_files(
     directory: Path,
     file_types: Optional[str],
@@ -401,47 +478,22 @@ def discover_files(
     if _is_git_repo(directory):
         logger.info(f"Git repository detected, using git ls-files for file discovery")
         files = _discover_git_tracked_files(directory, extensions)
-        # Sort for consistent ordering
-        files.sort()
-        return files
-
-    # Non-git directory: use rglob with exclusion patterns
-    logger.info(f"Non-git directory, using rglob with exclusion patterns")
-    files = []
-    for ext in extensions:
-        pattern = f"*{ext}"  # rglob already handles recursive search
-        # Filter to actual files only (directories can have extensions too)
-        found = [f for f in directory.rglob(pattern) if f.is_file()]
-        files.extend(found)
+    else:
+        # Non-git directory: use rglob with exclusion patterns
+        logger.info(f"Non-git directory, using rglob with exclusion patterns")
+        files = []
+        for ext in extensions:
+            pattern = f"*{ext}"  # rglob already handles recursive search
+            # Filter to actual files only (directories can have extensions too)
+            found = [f for f in directory.rglob(pattern) if f.is_file()]
+            files.extend(found)
 
     # Filter out excluded files (minified, generated, etc.)
-    filtered_files = []
-    excluded_count = 0
-    for f in files:
-        excluded = False
-
-        # Check if file is in an excluded directory
-        path_parts = set(f.parts)
-        if path_parts & DEFAULT_EXCLUDE_DIRECTORIES:
-            excluded = True
-        else:
-            # Check against filename patterns
-            for pattern in DEFAULT_EXCLUDE_FILE_PATTERNS:
-                if fnmatch.fnmatch(f.name, pattern):
-                    excluded = True
-                    break
-
-        if excluded:
-            excluded_count += 1
-        else:
-            filtered_files.append(f)
-
-    if excluded_count > 0:
-        logger.info(f"Excluded {excluded_count} files matching exclusion patterns")
+    files = _filter_excluded_files(files)
 
     # Sort for consistent ordering
-    filtered_files.sort()
-    return filtered_files
+    files.sort()
+    return files
 
 
 def compute_file_hash(file_path: Path) -> str:
@@ -1000,6 +1052,24 @@ def sync_directory_command(
                         # Chunk file based on corpus type
                         if verbose and not output_json:
                             progress.console.print(f"[dim]Extracting text from {file_path.name}...[/dim]")
+
+                        # Skip oversized code files before chunking — they are almost
+                        # certainly generated/vendored and waste GPU time or cause OOM.
+                        if corpus_type == 'code':
+                            file_size = file_path.stat().st_size
+                            if file_size > _MAX_CODE_FILE_SIZE:
+                                logger.warning(
+                                    f"Skipping {file_path.name}: {format_size(file_size)} exceeds "
+                                    f"{format_size(_MAX_CODE_FILE_SIZE)} limit (likely generated/data file)"
+                                )
+                                if not output_json:
+                                    progress.console.print(
+                                        f"[yellow]  Skipping {file_path.name} — {format_size(file_size)} "
+                                        f"exceeds {format_size(_MAX_CODE_FILE_SIZE)} limit "
+                                        f"(likely generated/data file)[/yellow]"
+                                    )
+                                progress.advance(task)
+                                continue
 
                         if corpus_type == 'pdf':
                             chunks = chunk_pdf_file(file_path, model_config)
@@ -2278,6 +2348,23 @@ def _backfill_meili_to_qdrant(
             continue
 
         try:
+            # Skip oversized code files before chunking
+            if corpus_type == 'code':
+                file_size = file_path.stat().st_size
+                if file_size > _MAX_CODE_FILE_SIZE:
+                    logger.warning(
+                        f"Skipping {file_path.name}: {format_size(file_size)} exceeds "
+                        f"{format_size(_MAX_CODE_FILE_SIZE)} limit (likely generated/data file)"
+                    )
+                    if not output_json:
+                        progress.console.print(
+                            f"[yellow]  Skipping {file_path.name} — {format_size(file_size)} "
+                            f"exceeds {format_size(_MAX_CODE_FILE_SIZE)} limit "
+                            f"(likely generated/data file)[/yellow]"
+                        )
+                    progress.advance(backfill_task)
+                    continue
+
             # Chunk file based on corpus type
             chunks = None
 

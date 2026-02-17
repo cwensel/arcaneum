@@ -607,7 +607,11 @@ def delete_corpus(name, confirm, output_json):
               help='Skip repos with unchanged commit hash (git-aware fast path)')
 @click.option('--git-version', is_flag=True,
               help='Keep multiple versions indexed (different commits coexist)')
-def sync_directory(corpus, paths, from_file, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version):
+@click.option('--skip-dir-prefix', multiple=True, default=('_',),
+              help='Skip directories starting with PREFIX (default: _). Repeatable.')
+@click.option('--no-skip-dir-prefix', is_flag=True,
+              help='Disable all directory prefix skipping')
+def sync_directory(corpus, paths, from_file, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, skip_dir_prefix, no_skip_dir_prefix):
     """Index to both vector and full-text.
 
     Examples:
@@ -631,8 +635,11 @@ def sync_directory(corpus, paths, from_file, models, file_types, force, verify, 
         click.echo("Error: --git-update and --git-version are mutually exclusive", err=True)
         raise SystemExit(1)
 
+    # Resolve skip prefixes: --no-skip-dir-prefix disables all, otherwise use provided prefixes
+    effective_prefixes = () if no_skip_dir_prefix else skip_dir_prefix
+
     from arcaneum.cli.sync import sync_directory_command
-    sync_directory_command(corpus, paths, from_file, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version)
+    sync_directory_command(corpus, paths, from_file, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, effective_prefixes)
 
 
 @corpus.command('parity')

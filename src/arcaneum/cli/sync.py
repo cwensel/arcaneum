@@ -382,17 +382,21 @@ _MINIFIED_CHECK_BYTES = 65536
 _MAX_CODE_FILE_SIZE = 1_000_000  # 1 MB
 
 
-def _filter_excluded_files(files: List[Path]) -> List[Path]:
+def _filter_excluded_files(files: List[Path], skip_dir_prefixes: Tuple[str, ...] = ('_',)) -> List[Path]:
     """Filter out excluded files by name patterns, directory, and content-based minification.
 
     Args:
         files: List of file paths to filter
+        skip_dir_prefixes: Tuple of prefixes; directories starting with any of these are skipped.
+                          Empty tuple disables prefix-based skipping.
 
     Returns:
         Filtered list of file paths
     """
     filtered_files = []
     excluded_count = 0
+    prefix_skip_count = 0
+    prefix_dirs_seen: Set[str] = set()
     minified_count = 0
 
     for f in files:
@@ -402,7 +406,17 @@ def _filter_excluded_files(files: List[Path]) -> List[Path]:
         path_parts = set(f.parts)
         if path_parts & DEFAULT_EXCLUDE_DIRECTORIES:
             excluded = True
-        else:
+        elif skip_dir_prefixes:
+            # Check if any directory component starts with a skipped prefix (not the filename itself)
+            for part in f.parent.parts:
+                if any(part.startswith(prefix) for prefix in skip_dir_prefixes):
+                    excluded = True
+                    prefix_skip_count += 1
+                    if part not in prefix_dirs_seen:
+                        prefix_dirs_seen.add(part)
+                        logger.info(f"Skipping directory with excluded prefix: {part}")
+                    break
+        if not excluded:
             # Check against filename patterns
             for pattern in DEFAULT_EXCLUDE_FILE_PATTERNS:
                 if fnmatch.fnmatch(f.name, pattern):
@@ -431,6 +445,8 @@ def _filter_excluded_files(files: List[Path]) -> List[Path]:
 
     if excluded_count > 0:
         logger.info(f"Excluded {excluded_count} files matching exclusion patterns")
+    if prefix_skip_count > 0:
+        logger.info(f"Excluded {prefix_skip_count} files in {len(prefix_dirs_seen)} prefix-matched director{'y' if len(prefix_dirs_seen) == 1 else 'ies'}: {', '.join(sorted(prefix_dirs_seen))}")
     if minified_count > 0:
         logger.info(f"Excluded {minified_count} files detected as minified (line > {_MINIFIED_LINE_LENGTH_THRESHOLD} chars)")
 
@@ -440,7 +456,8 @@ def _filter_excluded_files(files: List[Path]) -> List[Path]:
 def discover_files(
     directory: Path,
     file_types: Optional[str],
-    corpus_type: str
+    corpus_type: str,
+    skip_dir_prefixes: Tuple[str, ...] = ('_',)
 ) -> List[Path]:
     """Discover files to index based on corpus type and file filters.
 
@@ -452,6 +469,8 @@ def discover_files(
         directory: Directory to scan
         file_types: Comma-separated file extensions (e.g., ".py,.js")
         corpus_type: Type of corpus (pdf, code, markdown)
+        skip_dir_prefixes: Tuple of prefixes; directories starting with any are skipped.
+                          Empty tuple disables prefix-based skipping.
 
     Returns:
         List of file paths to index
@@ -489,7 +508,7 @@ def discover_files(
             files.extend(found)
 
     # Filter out excluded files (minified, generated, etc.)
-    files = _filter_excluded_files(files)
+    files = _filter_excluded_files(files, skip_dir_prefixes=skip_dir_prefixes)
 
     # Sort for consistent ordering
     files.sort()
@@ -648,7 +667,8 @@ def sync_directory_command(
     verbose: bool,
     output_json: bool,
     git_update: bool = False,
-    git_version: bool = False
+    git_version: bool = False,
+    skip_dir_prefixes: Tuple[str, ...] = ('_',)
 ):
     """Sync directories or files to both Qdrant and MeiliSearch.
 
@@ -672,6 +692,8 @@ def sync_directory_command(
         output_json: If True, output JSON format
         git_update: If True, skip repos with unchanged commit hash (git-aware fast path)
         git_version: If True, keep multiple versions indexed (different commits coexist)
+        skip_dir_prefixes: Tuple of prefixes; directories starting with any are skipped.
+                          Empty tuple disables prefix-based skipping. Default: ('_',)
     """
     # Calculate effective text workers
     if text_workers is None:
@@ -866,7 +888,7 @@ def sync_directory_command(
             dir_git_root = _find_git_root(dir_path)
             if dir_git_root in skip_git_roots:
                 continue
-            dir_files = discover_files(dir_path, file_types, corpus_type)
+            dir_files = discover_files(dir_path, file_types, corpus_type, skip_dir_prefixes=skip_dir_prefixes)
             files.extend(dir_files)
         # Add single files directly (already validated for extension)
         for single_file in single_files:

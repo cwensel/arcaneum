@@ -31,6 +31,11 @@ For each divergence:
 - **[Brief label]**: The RDR planned [X]. The
   implementation did [Y] because [reason].
 
+### Existing Infrastructure Reused Instead of New Code
+
+- [Component planned in RDR] was replaced by
+  [existing module] because [reason]
+
 ### What Was Added Beyond the Plan
 
 - [Features, infrastructure, or tooling that were
@@ -49,23 +54,33 @@ Classify each divergence into one of these categories
 to enable cross-RDR pattern analysis. Mark all that
 apply with the count of instances.
 
-| Category | Count | Examples |
-| -------- | ----- | -------- |
-| **Unvalidated assumption** | | |
-| **Framework API detail** | | |
-| **Missing failure mode** | | |
-| **Missing Day 2 operation** | | |
-| **Deferred critical constraint** | | |
-| **Over-specified code** | | |
-| **Under-specified architecture** | | |
-| **Scope underestimation** | | |
-| **Internal contradiction** | | |
-| **Missing cross-cutting concern** | | |
+| Category | Count | Examples | Preventable? |
+| --- | --- | --- | --- |
+| **Unvalidated assumption** | | | |
+| **Framework API detail** | | | |
+| **Missing failure mode** | | | |
+| **Missing Day 2 operation** | | | |
+| **Deferred critical constraint** | | | |
+| **Over-specified code** | | | |
+| **Under-specified architecture** | | | |
+| **Scope underestimation** | | | |
+| **Internal contradiction** | | | |
+| **Missing cross-cutting concern** | | | |
+
+**Preventable?** column: "Yes — source search" or
+"Yes — spike" if verification would have prevented the
+drift, "No" if inherently unpredictable.
+
+### Pattern References
+
+[For each drift category with count >= 2, reference
+the applicable pattern from SYNTHESIS.md (if one
+exists). This enables incremental synthesis updates.]
 
 ### Drift Category Definitions
 
 - **Unvalidated assumption** — a claim presented as fact
-  but never verified by spike/POC
+  but never verified by source search or spike
 - **Framework API detail** — method signatures, interface
   contracts, or config syntax wrong
 - **Missing failure mode** — what breaks, what fails
@@ -109,9 +124,11 @@ Focus on what should have been in the plan but wasn't:
 Focus on effort that did not contribute to a successful
 implementation:
 
-- [Excessive code samples, exhaustive option analysis,
-  speculative performance estimates, deferred feature
-  code, etc.]
+- **Code samples rewritten**: [list]
+- **Deferred feature code unused**: [list]
+- **Config/schema never implemented**: [list]
+- **Performance targets unvalidated**: [list]
+- **Alternative analysis disproportionate**: [list]
 
 ---
 

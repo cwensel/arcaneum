@@ -240,8 +240,8 @@ extension points.]
 
 - Specify interfaces (function signatures, input/output
   types, error contracts) -- not class implementations
-- Mark every external API call as Verified (tested in
-  spike) or Assumed (needs validation before
+- Mark every external API call as Verified (source
+  search) or Assumed (needs validation before
   implementation)
 - Do NOT include full class implementations, YAML/config
   schemas, or code for deferred features
@@ -359,16 +359,20 @@ A namespace review would have caught these during planning.
 Add the following gate items:
 
 ```markdown
-### API Spike Verification
+### API Verification
 
 List every external API call in pseudocode. For each,
-state whether it was tested in a spike or assumed from
-documentation. Any call marked "Assumed" must include
-a plan to verify before implementation begins.
+state how it was verified. Source search (checking
+dependency source code) is the standard method for
+libraries and open-source dependencies. A spike
+(running code against a live service) is for opaque
+services where source code is unavailable. Any call
+marked "Assumed" must include a plan to verify before
+implementation begins.
 
 | API Call | Library | Status |
 | --- | --- | --- |
-| [call] | [lib] | Verified by spike / Assumed |
+| [call] | [lib] | Source Search / Spike / Assumed |
 
 ### Day 2 Operations Check
 
@@ -394,10 +398,12 @@ confirm the plan addresses:
 - Failure modes specific to target hardware
 ```
 
-**Evidence**: Pattern 3 (API assumptions without spikes) drove 45 drift instances.
-Pattern 4 (missing Day 2 operations) drove 20 instances. Pattern 6 (CLI naming)
-caused rework in 8 RDRs. Pattern 2 (GPU/memory) was the largest unplanned effort
-in the project.
+**Evidence**: Pattern 3 (API assumptions without spikes or source search) drove 45
+drift instances. Of these, the majority were API signatures and constraints that
+could have been caught by searching dependency source code (5-10 min) without
+requiring a full runtime spike. Pattern 4 (missing Day 2 operations) drove 20
+instances. Pattern 6 (CLI naming) caused rework in 8 RDRs. Pattern 2 (GPU/memory)
+was the largest unplanned effort in the project.
 
 ### D.7 Revise Cross-Cutting Concerns checklist
 
@@ -455,21 +461,30 @@ documents this across all post-mortems.
 
 ## E. Process Recommendations
 
-### E.1 Require a spike for external API integration (targets Pattern 3)
+### E.1 Require source verification for external API integration (targets Pattern 3)
 
 **Change**: Add to the Research Guidance section of README.md:
 
 > When an RDR depends on external API behavior (third-party libraries,
-> service APIs, plugin systems), require at least one verified API
-> interaction per external service before locking the RDR. A 30-minute
-> spike loading/calling the actual API is mandatory. Documentation-only
-> research is insufficient -- method signatures and behavior from docs
-> are frequently wrong in detail.
+> service APIs, plugin systems), verify APIs against dependency
+> source code before locking the RDR. Clone the repo and use
+> `arc corpus sync` + `arc search text/semantic` to confirm method
+> signatures, constraints, and defaults (5-10 min per dependency).
+> This is the **standard verification method** for libraries and
+> open-source dependencies.
+>
+> For opaque services where source code is unavailable, a spike
+> (running code against the live service) serves the same purpose.
+>
+> Documentation-only research is insufficient for load-bearing
+> assumptions — method signatures and behavior from docs are
+> frequently wrong in detail.
 
 **Evidence**: FastEmbed model coverage (002, 003), MeiliSearch filter syntax
 (010, 011), Claude Code plugin discovery (001, 006), and Qdrant query\_points
-API (007) were all assumed from documentation and wrong. Each could have been
-caught by a brief spike.
+API (007) were all assumed from documentation and wrong. The majority were
+API signatures and constraints that could have been caught by searching
+dependency source code without a full runtime spike.
 
 ### E.2 Add "Reuse Audit" step to the Research phase (targets Patterns 1, 5)
 
@@ -485,12 +500,12 @@ caught by a brief spike.
 existing infrastructure. This step takes 5-10 minutes and prevents
 designing redundant code.
 
-### E.3 Treat all code samples as illustrative unless spike-verified (targets Pattern 1)
+### E.3 Treat all code samples as illustrative unless source-verified (targets Pattern 1)
 
 **Change**: Update the "On code examples" guidance in README.md:
 
 > **On code examples**: All code in RDRs is illustrative by default.
-> Mark framework API calls as Verified (tested in spike) or Assumed
+> Mark framework API calls as Verified (source search) or Assumed
 > (needs validation). Do not include full class implementations --
 > specify behavior and interfaces instead. Do not include code for
 > deferred features. Code for the current scope should demonstrate

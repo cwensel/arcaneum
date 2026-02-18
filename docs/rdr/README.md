@@ -76,27 +76,59 @@ start fresh.
 - Any work benefiting from documented alternatives
   before committing to writing code
 
+When scoping work, account for the full surface — not
+just the happy path. Include Day 2 operations (list,
+info, delete, verify, backup for each resource
+created), error handling, and cross-cutting integration
+points.
+
 ## Research Guidance
 
 Consult during planning:
 
 - Requirements and standards documentation (cite
   specific sections)
-- Dependency source code (not just public docs —
-  documentation-only research frequently produces
-  wrong assumptions)
+- Dependency source code — see
+  [Dependency Source Verification](#dependency-source-verification)
+  below
+- Existing codebase modules that overlap with the
+  proposed design (audit for reuse before designing
+  new components)
 - Existing codebase patterns or idioms
-- Run spikes/POCs for any load-bearing assumption
+- Run spikes/POCs for opaque services where source
+  code is unavailable
 
 Include in RDR: Citations, code snippets demonstrating
 capabilities/limitations, hard-to-earn discoveries.
 
-**On code examples**: Include illustrative snippets for
-novel patterns. Mark framework API calls as "verify
-during implementation" — method signatures from
-documentation reading are frequently wrong in detail.
-Do not include full implementations; specify behavior
-and architecture instead.
+### Dependency Source Verification
+
+API signatures, constraints, and defaults assumed from
+documentation are frequently wrong at implementation
+time. Clone
+the dependency repo and search its source to verify
+method signatures, parameter constraints, default
+values, error conditions, and version availability
+(5-10 min per dependency).
+
+Mark every external API reference in an RDR:
+
+- **Source Search** — verified against dependency
+  source code. Standard method for libraries.
+- **Spike** — verified by running code against a
+  live service. For opaque services where source
+  is unavailable.
+- **Docs Only** — documentation reading alone.
+  Insufficient for load-bearing assumptions.
+
+**On code examples**: All code in RDRs is illustrative
+by default. Mark framework API calls as Verified
+(source search) or Assumed (needs validation). Do not
+include full class implementations, config/schema
+definitions, or code for deferred features. Specify
+behavior and interfaces instead — code for the current
+scope should demonstrate architectural patterns, not
+production-ready implementations.
 
 ## Finalization Decisioning
 
@@ -112,29 +144,24 @@ RDR record. This forces the author to actively verify
 rather than passively confirm.
 
 **The gate covers five concerns derived from
-post-mortem analysis of implemented RDRs:**
+recurring RDR authoring patterns:**
 
 1. **Contradiction Check** — Do research findings
    conflict with the proposed solution? Do planned
    features contradict stated design principles?
-   *(Observed in RDR-004, 011)*
 2. **Assumption Verification** — Are all load-bearing
-   assumptions verified by spike/POC, not just
+   assumptions verified by source search, not just
    documentation review?
-   *(Observed in RDR-003, 005, 006, 009, 010)*
 3. **Scope Verification** — Is the minimum viable
    validation in scope? Is the downstream use case
    that proves the approach included, not deferred?
-   *(Observed in RDR-003, 006)*
 4. **Cross-Cutting Concerns** — Are versioning,
    licensing, build tool compatibility, deployment
    model, IDE compatibility, and incremental adoption
    addressed where applicable?
-   *(Observed in RDR-004, 007, 010, 011)*
 5. **Proportionality** — Is the document right-sized?
    Are alternatives, code examples, and future
    considerations trimmed to what adds value?
-   *(Observed in RDR-005, 006, 008, 010)*
 
 **When to run the gate**: After the Proposed Solution
 and Alternatives are complete, before marking

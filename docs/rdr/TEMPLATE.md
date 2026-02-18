@@ -37,6 +37,12 @@ related components.]
 [What was analyzed? Code, docs, source, experiments,
 standards. Cite specific locations.]
 
+#### Dependency Source Verification
+
+| Dependency | Source Searched? | Key Findings |
+| --- | --- | --- |
+| [library/service name] | Yes / No | [Signatures, constraints, or defaults confirmed or corrected] |
+
 ### Key Discoveries
 
 [Label each finding's evidence basis:
@@ -51,7 +57,18 @@ standards. Cite specific locations.]
 Each must be verified before marking this RDR Final.]
 
 - [ ] [Assumption 1] — **Status**: Verified | Unverified
+  — **Method**: Source Search | Spike | Docs Only
 - [ ] [Assumption 2] — **Status**: Verified | Unverified
+  — **Method**: Source Search | Spike | Docs Only
+
+**Method definitions**:
+
+- **Source Search**: API verified against dependency
+  source code (standard method for libraries)
+- **Spike**: Behavior verified by running code
+  against a live service (for opaque services only)
+- **Docs Only**: Based on documentation reading alone
+  (insufficient for load-bearing assumptions)
 
 ## Proposed Solution
 
@@ -62,12 +79,35 @@ Each must be verified before marking this RDR Final.]
 ### Technical Design
 
 [Architecture, component relationships, data flow,
-extension points. Include illustrative code snippets
-for novel patterns — not full implementations.]
+extension points.]
 
-```java
+**Code guidance**:
+
+- Specify interfaces (function signatures, input/output
+  types, error contracts) — not class implementations
+- Mark every external API call as Verified (source
+  search) or Assumed (needs validation before
+  implementation)
+- Do NOT include full class implementations,
+  config/schema definitions, or code for deferred
+  features
+- Limit illustrative code to patterns that cannot be
+  expressed as prose (e.g., callback signatures,
+  serialization formats)
+
+```text
 // Illustrative — verify API signatures during implementation
 ```
+
+### Existing Infrastructure Audit
+
+[List existing modules that overlap with proposed
+components. For each, state whether to reuse, extend,
+or replace — with justification.]
+
+| Proposed Component | Existing Module | Decision |
+| --- | --- | --- |
+| [New component] | [Existing module path] | Reuse / Extend / Replace: [reason] |
 
 ### Decision Rationale
 
@@ -149,6 +189,19 @@ Omit if not applicable.]
 
 [Instructions]
 
+### Day 2 Operations
+
+[For every persistent resource this RDR creates
+(collection, index, data store, config entry),
+address management operations:]
+
+| Resource | List | Info | Delete | Verify | Backup |
+| --- | --- | --- | --- | --- | --- |
+| [Resource] | In scope / Deferred / N/A | ... | ... | ... | ... |
+
+[If any operation is marked "Deferred," justify why
+it is not needed for initial usability.]
+
 ### New Dependencies
 
 [Dependencies to add/update. For third-party: note
@@ -165,6 +218,14 @@ not estimates.]
 
 1. **Scenario**: [Description]
    **Expected**: [Result]
+
+### Performance Expectations
+
+[Do not include effort estimates or speculative
+throughput targets. Rough performance metrics are
+appropriate only when comparing alternatives — note
+empirical data or obvious gains that support the
+chosen approach over a rejected one.]
 
 ## Finalization Gate
 
@@ -185,6 +246,12 @@ design principles, and proposed solution."]
 any that remain unverified with a plan to verify
 before implementation begins.]
 
+#### API Verification
+
+| API Call | Library | Verification |
+| --- | --- | --- |
+| [method/endpoint] | [library name] | Source Search / Spike / Docs Only |
+
 ### Scope Verification
 
 [Confirm the Minimum Viable Validation is in scope
@@ -202,6 +269,10 @@ addressed in this RDR. Mark the rest N/A.]
 - **Deployment model**: [How addressed | N/A]
 - **IDE compatibility**: [How addressed | N/A]
 - **Incremental adoption**: [How addressed | N/A]
+- **Secret/credential lifecycle**: [Generation,
+  storage, rotation, override | N/A]
+- **Memory management**: [Peak memory estimation,
+  streaming strategy, cleanup | N/A]
 
 ### Proportionality
 
@@ -212,4 +283,5 @@ any sections that should be trimmed before locking.]
 
 - [Requirements/standards with section numbers]
 - [Dependency docs, source paths reviewed]
+- [Dependency repos searched (clone + code search)]
 - [Related issues, articles, discussions]

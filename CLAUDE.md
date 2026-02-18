@@ -7,15 +7,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Arcaneum is a CLI tool for semantic and full-text search across Qdrant and MeiliSearch vector databases.
 It provides Claude Code integration through slash commands and plugins.
 
-This repository uses Recommendation Data Records (RDRs) for detailed technical planning before implementation.
+This repository uses Recommendation Decisioning Records (RDRs) for detailed technical planning before implementation.
 
 **Note**: This project uses [bd (beads)](https://github.com/steveyegge/beads) for issue tracking.
 Use `bd` commands instead of markdown TODOs. See @AGENTS.md for workflow details.
 
-## Recommendation Data Records (RDRs)
+## Recommendation Decisioning Records (RDRs)
 
-RDRs are detailed implementation plans created **before** coding begins. They serve as planning
-documents, iteration artifacts, and AI collaboration tools.
+RDRs are specification prompts built through iterative research and refinement. They evolve during
+planning and become locked specifications for implementation.
 
 - **Location**: `docs/rdr/`
 - **Template**: `docs/rdr/TEMPLATE.md`
@@ -28,13 +28,16 @@ or when you want to iterate on an approach before committing to code.
 
 ### Quick RDR Workflow
 
-1. Create RDR using template for complex work
-2. Iterate and refine based on feedback
-3. Implement using RDR as guide
-4. Update status and index when complete
+1. **Create** (Draft) — Document problem, constraints, technical environment
+2. **Research** (Draft) — Investigate, add findings, label as Verified/Documented/Assumed
+3. **Decide** (Draft) — Select approach, document rationale, complete Finalization Gate
+4. **Lock** (Final) — All gate items answered; RDR is the spec for implementation
+5. **Implement** (Final) — Use locked RDR as spec; do not edit during implementation
+6. **Close** — Update status; create post-mortem in `docs/rdr/post-mortem/`
 
-**IMPORTANT**: RDRs are **immutable** once marked as implemented. They are historical design documents
-that show what was planned and why. Do NOT update RDRs to reflect current code state.
+**IMPORTANT**: RDRs are **immutable** once locked (Final). They are specification documents
+that show what was planned and why. If implementation reveals the RDR is wrong, abandon
+implementation, iterate on the RDR with lessons learned, and start fresh.
 
 See `docs/rdr/README.md` for complete RDR workflow, format details, and usage guidelines.
 

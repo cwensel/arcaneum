@@ -382,13 +382,16 @@ _MINIFIED_CHECK_BYTES = 65536
 _MAX_CODE_FILE_SIZE = 1_000_000  # 1 MB
 
 
-def _filter_excluded_files(files: List[Path], skip_dir_prefixes: Tuple[str, ...] = ('_',)) -> List[Path]:
+def _filter_excluded_files(files: List[Path], skip_dir_prefixes: Tuple[str, ...] = ('_',),
+                           base_directory: Optional[Path] = None) -> List[Path]:
     """Filter out excluded files by name patterns, directory, and content-based minification.
 
     Args:
         files: List of file paths to filter
         skip_dir_prefixes: Tuple of prefixes; directories starting with any of these are skipped.
                           Empty tuple disables prefix-based skipping.
+        base_directory: If provided, prefix filtering only applies to directories nested
+                       within this base (i.e., the base directory itself is never filtered).
 
     Returns:
         Filtered list of file paths
@@ -407,8 +410,17 @@ def _filter_excluded_files(files: List[Path], skip_dir_prefixes: Tuple[str, ...]
         if path_parts & DEFAULT_EXCLUDE_DIRECTORIES:
             excluded = True
         elif skip_dir_prefixes:
-            # Check if any directory component starts with a skipped prefix (not the filename itself)
-            for part in f.parent.parts:
+            # Check if any directory component starts with a skipped prefix (not the filename itself).
+            # Only check directories nested within the base_directory — the base itself
+            # (which the user explicitly passed on the command line) is never filtered.
+            if base_directory is not None:
+                try:
+                    check_parts = f.parent.relative_to(base_directory).parts
+                except ValueError:
+                    check_parts = f.parent.parts
+            else:
+                check_parts = f.parent.parts
+            for part in check_parts:
                 if any(part.startswith(prefix) for prefix in skip_dir_prefixes):
                     excluded = True
                     prefix_skip_count += 1
@@ -494,12 +506,20 @@ def discover_files(
         return []
 
     # Check if directory is a git repository
+    files = []
     if _is_git_repo(directory):
         logger.info(f"Git repository detected, using git ls-files for file discovery")
         files = _discover_git_tracked_files(directory, extensions)
-    else:
-        # Non-git directory: use rglob with exclusion patterns
-        logger.info(f"Non-git directory, using rglob with exclusion patterns")
+        if not files:
+            # git ls-files returned nothing — the directory may be inside a parent
+            # git repo but contain untracked content (e.g., a folder of cloned repos).
+            # Fall back to rglob so the files are still discovered.
+            logger.info(f"No tracked files found under {directory}, falling back to rglob")
+
+    if not files:
+        # Non-git directory (or git fallback): use rglob with exclusion patterns
+        if not _is_git_repo(directory):
+            logger.info(f"Non-git directory, using rglob with exclusion patterns")
         files = []
         for ext in extensions:
             pattern = f"*{ext}"  # rglob already handles recursive search
@@ -508,7 +528,10 @@ def discover_files(
             files.extend(found)
 
     # Filter out excluded files (minified, generated, etc.)
-    files = _filter_excluded_files(files, skip_dir_prefixes=skip_dir_prefixes)
+    # Pass the base directory so prefix filtering only applies to nested dirs,
+    # not the directory the user explicitly provided on the command line.
+    files = _filter_excluded_files(files, skip_dir_prefixes=skip_dir_prefixes,
+                                   base_directory=directory.absolute())
 
     # Sort for consistent ordering
     files.sort()

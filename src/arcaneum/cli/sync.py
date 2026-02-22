@@ -691,7 +691,8 @@ def sync_directory_command(
     output_json: bool,
     git_update: bool = False,
     git_version: bool = False,
-    skip_dir_prefixes: Tuple[str, ...] = ('_',)
+    skip_dir_prefixes: Tuple[str, ...] = ('_',),
+    dry_run: bool = False
 ):
     """Sync directories or files to both Qdrant and MeiliSearch.
 
@@ -717,6 +718,7 @@ def sync_directory_command(
         git_version: If True, keep multiple versions indexed (different commits coexist)
         skip_dir_prefixes: Tuple of prefixes; directories starting with any are skipped.
                           Empty tuple disables prefix-based skipping. Default: ('_',)
+        dry_run: If True, show what would be synced without making changes
     """
     # Calculate effective text workers
     if text_workers is None:
@@ -1014,6 +1016,48 @@ def sync_directory_command(
         total_chunks = 0
         total_qdrant = 0
         total_meili = 0
+
+        # Dry-run mode: report what would happen and exit
+        if dry_run:
+            if output_json:
+                data = {
+                    "dry_run": True,
+                    "would_index": len(files),
+                    "already_indexed": already_indexed_count,
+                    "would_backfill_to_meili": len(meili_backfill_paths),
+                    "would_backfill_to_qdrant": len(qdrant_backfill_paths),
+                }
+                if verbose:
+                    data["files"] = [str(f) for f in files]
+                    if meili_backfill_paths:
+                        data["meili_backfill_files"] = meili_backfill_paths
+                    if qdrant_backfill_paths:
+                        data["qdrant_backfill_files"] = qdrant_backfill_paths
+                print_json("success", "Dry run complete", data=data)
+            else:
+                console.print(f"\n[bold yellow]DRY RUN - No changes will be made[/bold yellow]")
+                console.print(f"\nWould index: {len(files)} new files")
+                if already_indexed_count > 0:
+                    console.print(f"Already indexed: {already_indexed_count} files (would skip)")
+                if meili_backfill_paths:
+                    console.print(f"Would backfill to MeiliSearch: {len(meili_backfill_paths)} files")
+                if qdrant_backfill_paths:
+                    console.print(f"Would backfill to Qdrant: {len(qdrant_backfill_paths)} files")
+                if verbose:
+                    if files:
+                        console.print(f"\nFiles to index:")
+                        for f in files:
+                            console.print(f"  {f}")
+                    if meili_backfill_paths:
+                        console.print(f"\nFiles to backfill to MeiliSearch:")
+                        for p in meili_backfill_paths:
+                            console.print(f"  {p}")
+                    if qdrant_backfill_paths:
+                        console.print(f"\nFiles to backfill to Qdrant:")
+                        for p in qdrant_backfill_paths:
+                            console.print(f"  {p}")
+            interaction_logger.finish(result_count=0)
+            return
 
         # Only initialize embedding infrastructure if there are new files to process
         if files:

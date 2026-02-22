@@ -593,6 +593,7 @@ def delete_corpus(name, confirm, output_json):
 @click.option('--models', default='stella,jina', help='Embedding models (comma-separated)')
 @click.option('--file-types', help='File extensions to index (e.g., .py,.md)')
 @click.option('--force', is_flag=True, help='Force reindex all files (bypass change detection)')
+@click.option('--dry-run', is_flag=True, help='Show what would be synced without making changes')
 @click.option('--verify', is_flag=True, help='Verify collection integrity after indexing')
 @click.option('--text-workers', type=int, default=None,
               help='Parallel workers for code AST chunking (default: auto=cpu/2, 0=sequential)')
@@ -611,7 +612,7 @@ def delete_corpus(name, confirm, output_json):
               help='Skip directories starting with PREFIX (default: _). Repeatable.')
 @click.option('--no-skip-dir-prefix', is_flag=True,
               help='Disable all directory prefix skipping')
-def sync_directory(corpus, paths, from_file, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, skip_dir_prefix, no_skip_dir_prefix):
+def sync_directory(corpus, paths, from_file, models, file_types, force, dry_run, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, skip_dir_prefix, no_skip_dir_prefix):
     """Index to both vector and full-text.
 
     Examples:
@@ -639,7 +640,7 @@ def sync_directory(corpus, paths, from_file, models, file_types, force, verify, 
     effective_prefixes = () if no_skip_dir_prefix else skip_dir_prefix
 
     from arcaneum.cli.sync import sync_directory_command
-    sync_directory_command(corpus, paths, from_file, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, effective_prefixes)
+    sync_directory_command(corpus, paths, from_file, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, effective_prefixes, dry_run=dry_run)
 
 
 @corpus.command('parity')

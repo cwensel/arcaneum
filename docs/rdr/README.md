@@ -36,6 +36,7 @@ implementation.
 | 017 | [Collection Export and Import for Cross-Machine Migration](RDR-017-collection-export-import.md) | Implemented | High |
 | 018 | [Arc CLI Interaction Logging for Claude Code](RDR-018-claude-interaction-logging.md) | Implemented | High |
 | 019 | [Package Distribution](RDR-019-package-distribution.md) | Recommendation | High |
+| 020 | [GPU Fallback Stability for Unattended Indexing](RDR-020-gpu-fallback-stability.md) | Final | High |
 
 ## Workflow
 

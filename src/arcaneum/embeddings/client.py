@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 from arcaneum.paths import get_models_dir
+import atexit
 import threading
 import logging
 import time
@@ -227,6 +228,20 @@ class EmbeddingClient:
         # Lazy-loaded when _gpu_poisoned is True, so remaining files can still be processed.
         self._cpu_fallback_models = {}
 
+        # Deferred GPU cleanup: model_name → (thread, model_ref) for daemon threads
+        # still running on GPU after timeout. Cleaned up when thread completes. (RDR-020)
+        self._pending_gpu_cleanup = {}
+
+        # GPU recovery: allow one attempt to re-enable GPU per session after poisoning.
+        # If GPU fails again after recovery, it stays poisoned permanently. (RDR-020)
+        self._gpu_recovery_attempts = 0
+        self._max_gpu_recovery_attempts = 1
+
+        # Register atexit handler to join daemon threads before Python destroys the
+        # MPS allocator. Without this, a daemon thread still running model.encode()
+        # on Metal will SIGSEGV when __cxa_finalize tears down MPSAllocator. (RDR-020)
+        atexit.register(self._atexit_join_gpu_threads)
+
         # CPU parallelization settings
         # Default to 1 worker (sequential batching) to avoid thread over-subscription.
         # With cpu_workers=1, we let OMP/MKL handle parallelism within each batch.
@@ -263,8 +278,105 @@ class EmbeddingClient:
         )
         if "max_seq_length" in config:
             model.max_seq_length = config["max_seq_length"]
+        # Mark backend so _embed_impl routes to encode() path, not embed() (FastEmbed)
+        model._backend = "sentence-transformers"
         self._cpu_fallback_models[model_name] = model
         return model
+
+    def _try_deferred_gpu_cleanup(self) -> bool:
+        """Reclaim GPU resources from completed daemon threads (RDR-020).
+
+        After a GPU timeout, the daemon thread holds a closure reference to the model.
+        Once the thread completes, we can safely delete the model ref and clear GPU cache.
+
+        Returns:
+            True if any cleanup occurred, False otherwise.
+        """
+        if not self._pending_gpu_cleanup:
+            return False
+
+        import gc
+        cleaned = False
+        finished = []
+
+        for name, (thread, model_ref) in self._pending_gpu_cleanup.items():
+            if not thread.is_alive():
+                finished.append(name)
+                del model_ref
+                cleaned = True
+                logger.info(f"Daemon thread for '{name}' completed, releasing GPU model ref.")
+
+        for name in finished:
+            del self._pending_gpu_cleanup[name]
+
+        if cleaned:
+            gc.collect()
+            # Safe to clear GPU cache now — no active command buffers
+            self._clear_gpu_cache()
+            logger.info("Deferred GPU cleanup complete.")
+
+        return cleaned
+
+    def _atexit_join_gpu_threads(self):
+        """Join pending daemon threads at process exit to prevent SIGSEGV (RDR-020).
+
+        When Python exits, __cxa_finalize destroys the MPS allocator. If a daemon
+        thread is still running model.encode() on Metal, it will SIGSEGV trying to
+        use the destroyed allocator. This handler waits for daemon threads to finish
+        before Python's cleanup runs.
+        """
+        if not self._pending_gpu_cleanup:
+            return
+
+        for name, (thread, _model_ref) in list(self._pending_gpu_cleanup.items()):
+            if thread.is_alive():
+                logger.info(f"Waiting for GPU daemon thread '{name}' to finish before exit...")
+                thread.join(timeout=300)  # 5 min max wait
+                if thread.is_alive():
+                    logger.warning(f"GPU daemon thread '{name}' did not finish within 300s.")
+
+    def _try_gpu_recovery(self, model_name: str) -> bool:
+        """Attempt to re-enable GPU after poisoning if daemon threads have completed (RDR-020).
+
+        Only attempts recovery if:
+        - GPU is currently poisoned
+        - Recovery attempts not exhausted (_max_gpu_recovery_attempts)
+        - No daemon threads still alive in _pending_gpu_cleanup
+
+        On success, clears the poison flag and releases the CPU fallback model so
+        get_model() will load a fresh GPU model on the next call.
+
+        Returns:
+            True if GPU was re-enabled, False otherwise.
+        """
+        if not self._gpu_poisoned:
+            return False
+
+        if self._gpu_recovery_attempts >= self._max_gpu_recovery_attempts:
+            logger.debug("GPU recovery attempts exhausted, staying on CPU.")
+            return False
+
+        # Don't recover if any daemon threads are still running
+        for name, (thread, _) in self._pending_gpu_cleanup.items():
+            if thread.is_alive():
+                logger.debug(f"Daemon thread for '{name}' still alive, deferring GPU recovery.")
+                return False
+
+        # All clear — attempt recovery
+        self._gpu_recovery_attempts += 1
+        self._gpu_poisoned = False
+
+        # Release CPU fallback model to free memory before GPU model loads
+        if model_name in self._cpu_fallback_models:
+            del self._cpu_fallback_models[model_name]
+            import gc
+            gc.collect()
+
+        logger.info(
+            f"GPU recovery attempt {self._gpu_recovery_attempts}/{self._max_gpu_recovery_attempts}: "
+            f"re-enabling GPU for '{model_name}'."
+        )
+        return True
 
     def _detect_device(self) -> str:
         """Detect best available GPU device (RDR-013 Phase 2).
@@ -397,6 +509,13 @@ class EmbeddingClient:
                 f"Unknown model: {model_name}. "
                 f"Available models: {list(EMBEDDING_MODELS.keys())}"
             )
+
+        # When GPU is poisoned, return CPU fallback for sentence-transformers models
+        # instead of loading a new GPU model (RDR-020).
+        if self._gpu_poisoned:
+            config = EMBEDDING_MODELS[model_name]
+            if config.get("backend") == "sentence-transformers":
+                return self._get_cpu_fallback_model(model_name)
 
         if model_name not in self._models:
             config = EMBEDDING_MODELS[model_name]
@@ -650,7 +769,7 @@ class EmbeddingClient:
             # Use dynamic batch sizing based on available memory at runtime
             # This replaces the previous hard-coded values (8/32/64) which caused
             # excessive kernel launches and poor GPU utilization
-            if self._device in ("mps", "cuda"):
+            if self._device in ("mps", "cuda") and not self._gpu_poisoned:
                 from ..utils.memory import get_gpu_memory_info, estimate_safe_batch_size_v2
 
                 available_bytes, _, device_type = get_gpu_memory_info()
@@ -700,7 +819,7 @@ class EmbeddingClient:
                     batch_texts = texts[start_idx:end_idx]
 
                     # Clear cache before each outer batch to prevent fragmentation
-                    if self._device in ("mps", "cuda") and start_idx > 0:
+                    if self._device in ("mps", "cuda") and not self._gpu_poisoned and start_idx > 0:
                         gc.collect()
                         self._clear_gpu_cache()
 
@@ -798,6 +917,20 @@ class EmbeddingClient:
         Raises:
             RuntimeError: If GPU memory is exhausted even at batch_size=1, or encode times out
         """
+        # Attempt deferred GPU cleanup and recovery between files (RDR-020).
+        # This runs before the poisoned check so we can potentially re-enable GPU.
+        if self._gpu_poisoned:
+            cleanup_occurred = self._try_deferred_gpu_cleanup()
+            if cleanup_occurred:
+                if self._try_gpu_recovery(model_name):
+                    # GPU re-enabled — fall through to normal GPU encode path below.
+                    # get_model() will load a fresh GPU model.
+                    model = self.get_model(model_name)
+                    logger.info(f"GPU recovered, using GPU for {len(texts)} texts")
+                else:
+                    # Cleanup happened but recovery not possible — continue on CPU
+                    pass
+
         if self._gpu_poisoned:
             cpu_model = self._get_cpu_fallback_model(model_name)
             logger.info(f"GPU poisoned, falling back to CPU for {len(texts)} texts")
@@ -866,6 +999,20 @@ class EmbeddingClient:
                     f"  GPU encode timed out — falling back to CPU for remaining work.",
                     file=sys.stderr, flush=True
                 )
+
+                # Release GPU model from self._models to prevent OOM (RDR-020).
+                # The daemon thread holds a closure reference to `model`, so the actual
+                # GPU memory (~3GB) stays until the thread completes. But removing from
+                # self._models prevents get_model() from returning it and prevents loading
+                # a second GPU copy.
+                if model_name in self._models:
+                    gpu_model_ref = self._models.pop(model_name)
+                    self._pending_gpu_cleanup[model_name] = (thread, gpu_model_ref)
+                    logger.info(
+                        f"Removed GPU model '{model_name}' from active models. "
+                        f"Daemon thread holds closure ref; deferred cleanup pending."
+                    )
+
                 # Fall back to CPU for these texts instead of raising
                 cpu_model = self._get_cpu_fallback_model(model_name)
                 return cpu_model.encode(

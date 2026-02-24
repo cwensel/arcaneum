@@ -37,6 +37,7 @@ implementation.
 | 018 | [Arc CLI Interaction Logging for Claude Code](RDR-018-claude-interaction-logging.md) | Implemented | High |
 | 019 | [Package Distribution](RDR-019-package-distribution.md) | Recommendation | High |
 | 020 | [GPU Fallback Stability for Unattended Indexing](RDR-020-gpu-fallback-stability.md) | Final | High |
+| 021 | [Contextual Embedding Enrichment](RDR-021-contextual-embedding-enrichment.md) | Final | Medium |
 
 ## Workflow
 

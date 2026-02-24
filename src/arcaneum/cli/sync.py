@@ -559,10 +559,20 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any]) -> List[Dict[s
     """
     from ..indexing.pdf.chunker import PDFChunker
     from ..indexing.pdf.extractor import PDFExtractor
+    from ..indexing.pdf.ocr import OCREngine
 
     # Extract text from PDF using PDFExtractor class
     extractor = PDFExtractor()
     text, metadata = extractor.extract(file_path)
+
+    # OCR fallback for scanned/image PDFs (matches uploader.py threshold)
+    if not text or len(text.strip()) < 100:
+        try:
+            ocr_engine = OCREngine(engine='tesseract', language='eng')
+            text, ocr_metadata = ocr_engine.process_pdf(file_path)
+            metadata.update(ocr_metadata)
+        except Exception as e:
+            logger.warning(f"OCR failed for {file_path}: {e}")
 
     if not text or not text.strip():
         logger.warning(f"No text extracted from {file_path}")

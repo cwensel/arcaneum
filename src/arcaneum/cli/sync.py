@@ -547,6 +547,161 @@ def compute_file_hash(file_path: Path) -> str:
     return hasher.hexdigest()[:16]  # First 16 chars is enough
 
 
+def _detect_renames(
+    new_file_paths: Set[str],
+    sync_manager: MetadataBasedSync,
+    corpus: str,
+) -> List[Tuple[str, str]]:
+    """Detect renamed/moved files by matching content hashes.
+
+    For each "new" file (not in either index), computes its content hash
+    and checks if existing indexed content matches. If the old path no
+    longer exists on disk, it's a rename.
+
+    Args:
+        new_file_paths: Set of absolute path strings for files not in either index
+        sync_manager: MetadataBasedSync instance for Qdrant queries
+        corpus: Corpus/collection name
+
+    Returns:
+        List of (old_path, new_path) tuples for detected renames
+    """
+    renames = []
+
+    for new_path in sorted(new_file_paths):
+        file_path = Path(new_path)
+        if not file_path.exists():
+            continue
+
+        file_hash = compute_file_hash(file_path)
+        old_paths = sync_manager.find_file_by_content_hash(corpus, file_hash)
+
+        if not old_paths:
+            continue
+
+        # Filter to old paths that no longer exist on disk
+        missing_old_paths = [p for p in old_paths if not Path(p).exists()]
+
+        if not missing_old_paths:
+            # All old paths still exist — this is a duplicate, not a rename
+            continue
+
+        old_path = missing_old_paths[0]
+        renames.append((old_path, new_path))
+
+    return renames
+
+
+def _handle_renames_meili(
+    renames: List[Tuple[str, str]],
+    qdrant,
+    meili: FullTextClient,
+    corpus: str,
+) -> int:
+    """Update file_path and filename in MeiliSearch documents for renames.
+
+    Must run BEFORE Qdrant handle_renames() since it uses the old file_path
+    to find point IDs in Qdrant, then updates the corresponding MeiliSearch docs.
+
+    Args:
+        renames: List of (old_path, new_path) tuples
+        qdrant: Qdrant client
+        meili: FullTextClient instance
+        corpus: Corpus/index name
+
+    Returns:
+        Number of MeiliSearch documents updated
+    """
+    from qdrant_client.models import Filter, FieldCondition, MatchValue
+
+    if not renames:
+        return 0
+
+    total_updated = 0
+    index = meili.get_index(corpus)
+
+    for old_path, new_path in renames:
+        # Scroll Qdrant to find all point IDs with the old file_path
+        update_docs = []
+        offset = None
+
+        while True:
+            points, offset = qdrant.scroll(
+                collection_name=corpus,
+                scroll_filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="file_path",
+                            match=MatchValue(value=old_path)
+                        )
+                    ]
+                ),
+                limit=100,
+                offset=offset,
+                with_payload=False,
+                with_vectors=False
+            )
+
+            if not points:
+                break
+
+            for point in points:
+                update_docs.append({
+                    "id": str(point.id),
+                    "file_path": new_path,
+                    "filename": Path(new_path).name,
+                })
+
+            if offset is None:
+                break
+
+        # Batch update MeiliSearch
+        if update_docs:
+            try:
+                task = index.update_documents(update_docs)
+                meili.client.wait_for_task(task.task_uid)
+                total_updated += len(update_docs)
+            except Exception as e:
+                logger.error(f"Failed to update MeiliSearch for rename {old_path} -> {new_path}: {e}")
+
+    return total_updated
+
+
+def _detect_stale_paths(
+    all_indexed_paths: Set[str],
+    synced_directories: List[Path],
+    renamed_old_paths: Set[str],
+) -> List[str]:
+    """Find indexed paths that no longer exist on disk within synced directories.
+
+    Args:
+        all_indexed_paths: Set of all indexed file paths (from Qdrant + MeiliSearch)
+        synced_directories: List of directories being synced (for scoping)
+        renamed_old_paths: Set of old paths already handled by rename detection
+
+    Returns:
+        List of stale file paths to clean up
+    """
+    stale_paths = []
+    synced_dir_strs = [str(d.absolute()) for d in synced_directories]
+
+    for indexed_path in sorted(all_indexed_paths):
+        # Skip paths already handled by rename detection
+        if indexed_path in renamed_old_paths:
+            continue
+
+        # Only clean paths within the synced directories (don't touch other scopes)
+        in_scope = any(indexed_path.startswith(d) for d in synced_dir_strs)
+        if not in_scope:
+            continue
+
+        # Check if the file still exists on disk
+        if not Path(indexed_path).exists():
+            stale_paths.append(indexed_path)
+
+    return stale_paths
+
+
 def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Chunk a PDF file using existing PDF chunking logic.
 
@@ -956,6 +1111,10 @@ def sync_directory_command(
         total_corpus_files = len(files)  # Default: all discovered files
         meili_backfill_paths = []  # Files in Qdrant but missing from MeiliSearch
         qdrant_backfill_paths = []  # Files in MeiliSearch but missing from Qdrant
+        detected_renames = []  # Rename/move detections
+        stale_paths = []  # Stale indexed paths to clean
+        files_renamed = 0
+        stale_cleaned = 0
 
         if force:
             if not output_json:
@@ -992,6 +1151,98 @@ def sync_directory_command(
             all_indexed_paths = qdrant_file_paths | meili_file_paths
             new_file_paths = discovered_file_paths - all_indexed_paths
 
+            # Detect renames: files that appear "new" but match existing content
+            detected_renames = _detect_renames(
+                new_file_paths, sync_manager, corpus,
+            )
+
+            renamed_old_paths = set()
+            renamed_new_paths = set()
+            files_renamed = 0
+            stale_cleaned = 0
+
+            if detected_renames:
+                renamed_old_paths = {old for old, new in detected_renames}
+                renamed_new_paths = {new for old, new in detected_renames}
+
+                if not output_json:
+                    # Compute compact rename summary: find common directory prefix change
+                    old_dirs = [str(Path(old).parent) for old, new in detected_renames]
+                    new_dirs = [str(Path(new).parent) for old, new in detected_renames]
+                    unique_old_dirs = set(old_dirs)
+                    unique_new_dirs = set(new_dirs)
+
+                    if len(unique_old_dirs) == 1 and len(unique_new_dirs) == 1:
+                        # All renames share the same directory change — show compact form
+                        old_dir = unique_old_dirs.pop()
+                        new_dir = unique_new_dirs.pop()
+                        # Find common ancestor to shorten the display
+                        common = os.path.commonpath([old_dir, new_dir])
+                        old_rel = os.path.relpath(old_dir, common) + "/"
+                        new_rel = os.path.relpath(new_dir, common) + "/"
+                        print_info(f"Detected {len(detected_renames)} renames: {old_rel} -> {new_rel}")
+                    else:
+                        print_info(f"Detected {len(detected_renames)} renamed/moved files")
+
+                    if verbose:
+                        for old, new in detected_renames:
+                            print_info(f"  {Path(new).name}")
+
+                if not dry_run:
+                    # Update MeiliSearch FIRST (needs old file_path to find docs via Qdrant)
+                    meili_updated = _handle_renames_meili(
+                        detected_renames, qdrant, meili, corpus,
+                    )
+
+                    # Update Qdrant metadata
+                    rename_tuples = [
+                        (old, new, {'filename': Path(new).name})
+                        for old, new in detected_renames
+                    ]
+                    sync_manager.handle_renames(corpus, rename_tuples)
+                    files_renamed = len(detected_renames)
+
+                    if not output_json:
+                        print_info(f"Renamed {files_renamed} files ({meili_updated} chunks updated in both indexes)")
+
+                # Remove renamed files from new_file_paths so they aren't re-indexed
+                new_file_paths -= renamed_new_paths
+
+            # Detect stale paths: indexed files that no longer exist on disk
+            stale_paths = _detect_stale_paths(
+                all_indexed_paths, dir_paths, renamed_old_paths,
+            )
+
+            if stale_paths:
+                if not output_json:
+                    print_info(f"Detected {len(stale_paths)} stale paths (no longer on disk)")
+                    if verbose:
+                        for sp in stale_paths:
+                            print_info(f"  {Path(sp).name}")
+
+                if not dry_run:
+                    # Clean up stale entries from both indexes
+                    from qdrant_client.models import Filter, FieldCondition, MatchValue, FilterSelector
+                    meili.delete_documents_by_file_paths(corpus, stale_paths)
+                    for stale_path in stale_paths:
+                        qdrant.delete(
+                            collection_name=corpus,
+                            points_selector=FilterSelector(
+                                filter=Filter(
+                                    must=[
+                                        FieldCondition(
+                                            key="file_path",
+                                            match=MatchValue(value=stale_path)
+                                        )
+                                    ]
+                                )
+                            )
+                        )
+                    stale_cleaned = len(stale_paths)
+
+                    if not output_json:
+                        print_info(f"Cleaned {stale_cleaned} stale paths from both indexes")
+
             # Filter to only process new files (not in either system)
             files_to_process = [f for f in files if str(f.absolute()) in new_file_paths]
 
@@ -1010,7 +1261,31 @@ def sync_directory_command(
             files = files_to_process
 
         # If no new files but there are files to backfill, continue
+        # Also continue if renames or stale cleanup happened (to show summary)
         if not files and not meili_backfill_paths and not qdrant_backfill_paths:
+            if files_renamed > 0 or stale_cleaned > 0:
+                # Renames/cleanup happened but no new files — show summary and return
+                data = {
+                    "corpus": corpus,
+                    "directories": [str(p) for p in dir_paths],
+                    "files_indexed": 0,
+                    "files_skipped": already_indexed_count,
+                    "files_renamed": files_renamed,
+                    "stale_cleaned": stale_cleaned,
+                }
+                if output_json:
+                    print_json("success", "Sync complete (renames/cleanup only)", data=data)
+                else:
+                    console.print(f"\n[green]✅ Sync complete for corpus '{corpus}'[/green]")
+                    if files_renamed > 0:
+                        console.print(f"   Renamed (path updated):   {files_renamed} files")
+                    if stale_cleaned > 0:
+                        console.print(f"   Stale paths cleaned:      {stale_cleaned} paths")
+                    if already_indexed_count > 0:
+                        console.print(f"   Already synced:           {already_indexed_count} files")
+                interaction_logger.finish(result_count=files_renamed)
+                return
+
             if output_json:
                 print_json("success", "All files already indexed", data={
                     "indexed": 0,
@@ -1034,11 +1309,17 @@ def sync_directory_command(
                     "dry_run": True,
                     "would_index": len(files),
                     "already_indexed": already_indexed_count,
+                    "would_rename": len(detected_renames),
+                    "would_cleanup": len(stale_paths),
                     "would_backfill_to_meili": len(meili_backfill_paths),
                     "would_backfill_to_qdrant": len(qdrant_backfill_paths),
                 }
                 if verbose:
                     data["files"] = [str(f) for f in files]
+                    if detected_renames:
+                        data["renames"] = [{"old": old, "new": new} for old, new in detected_renames]
+                    if stale_paths:
+                        data["stale_paths"] = stale_paths
                     if meili_backfill_paths:
                         data["meili_backfill_files"] = meili_backfill_paths
                     if qdrant_backfill_paths:
@@ -1049,11 +1330,23 @@ def sync_directory_command(
                 console.print(f"\nWould index: {len(files)} new files")
                 if already_indexed_count > 0:
                     console.print(f"Already indexed: {already_indexed_count} files (would skip)")
+                if detected_renames:
+                    console.print(f"Would rename: {len(detected_renames)} files (path update only)")
+                if stale_paths:
+                    console.print(f"Would clean up: {len(stale_paths)} stale paths")
                 if meili_backfill_paths:
                     console.print(f"Would backfill to MeiliSearch: {len(meili_backfill_paths)} files")
                 if qdrant_backfill_paths:
                     console.print(f"Would backfill to Qdrant: {len(qdrant_backfill_paths)} files")
                 if verbose:
+                    if detected_renames:
+                        console.print(f"\nRenames detected:")
+                        for old, new in detected_renames:
+                            console.print(f"  {Path(new).name}")
+                    if stale_paths:
+                        console.print(f"\nStale paths to clean:")
+                        for sp in stale_paths:
+                            console.print(f"  {Path(sp).name}")
                     if files:
                         console.print(f"\nFiles to index:")
                         for f in files:
@@ -1521,6 +1814,8 @@ def sync_directory_command(
             "directories": [str(p) for p in dir_paths],
             "files_indexed": total_indexed,
             "files_skipped": already_indexed_count,
+            "files_renamed": files_renamed,
+            "stale_cleaned": stale_cleaned,
             "meili_backfilled": meili_backfilled,
             "meili_backfill_failed": meili_backfill_failed,
             "qdrant_backfilled": qdrant_backfilled,
@@ -1537,6 +1832,14 @@ def sync_directory_command(
             print_json("success", f"Indexed {total_indexed} files ({total_chunks} chunks)", data=data)
         else:
             console.print(f"\n[green]✅ Sync complete for corpus '{corpus}'[/green]")
+
+            # Renamed files (path update only, no re-indexing)
+            if files_renamed > 0:
+                console.print(f"   Renamed (path updated):   {files_renamed} files")
+
+            # Stale paths cleaned
+            if stale_cleaned > 0:
+                console.print(f"   Stale paths cleaned:      {stale_cleaned} paths")
 
             # New files (indexed to both systems)
             if total_indexed > 0:

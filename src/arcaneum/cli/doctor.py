@@ -62,16 +62,18 @@ def check_qdrant_connection(verbose: bool = False) -> Tuple[bool, str]:
 
 
 def check_meilisearch_connection(verbose: bool = False) -> Tuple[bool, str]:
-    """Check MeiliSearch server connectivity (optional)."""
+    """Check MeiliSearch server connectivity."""
     try:
         from meilisearch import Client
     except ImportError:
-        return None, "meilisearch not installed (optional)"
+        return False, "meilisearch not installed"
 
     try:
+        from arcaneum.paths import get_meilisearch_api_key
+
         # Use default MeiliSearch URL
         meilisearch_url = os.getenv("MEILISEARCH_URL", "http://localhost:7700")
-        api_key = os.getenv("MEILISEARCH_API_KEY")
+        api_key = get_meilisearch_api_key()
         client = Client(meilisearch_url, api_key)
 
         # Try to get health to verify connectivity
@@ -83,9 +85,9 @@ def check_meilisearch_connection(verbose: bool = False) -> Tuple[bool, str]:
             return False, f"MeiliSearch status: {health.get('status', 'unknown')}"
     except Exception as e:
         if verbose:
-            return None, f"MeiliSearch connection failed: {str(e)} (optional)"
+            return False, f"MeiliSearch connection failed: {str(e)}"
         else:
-            return None, "MeiliSearch connection failed (optional, not required)"
+            return False, "MeiliSearch connection failed (check server is running)"
 
 
 def check_embedding_models(verbose: bool = False) -> Tuple[bool, str]:
@@ -146,7 +148,7 @@ def check_environment_vars(verbose: bool = False) -> Tuple[bool, str]:
     elif len(set_vars) > 0:
         return True, f"{len(set_vars)} environment variable(s) configured"
     else:
-        return None, "Using default configuration (no env vars set)"
+        return True, "Using defaults (localhost, auto-generated keys)"
 
 
 def doctor_command(verbose: bool = False, output_json: bool = False):

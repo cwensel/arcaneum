@@ -101,9 +101,8 @@ class TestDoctorChecks:
             mock_client_class.side_effect = Exception("Connection refused")
             success, message = check_meilisearch_connection()
 
-        # MeiliSearch is optional, so it returns None for status
-        assert success is None or success is False
-        assert "failed" in message.lower() or "optional" in message.lower()
+        assert success is False
+        assert "failed" in message.lower()
 
     def test_embedding_models_check(self):
         """Test embedding models availability check."""
@@ -149,9 +148,8 @@ class TestDoctorChecks:
 
         success, message = check_environment_vars()
 
-        # Returns None when no env vars are set (using defaults)
-        assert success is None
-        assert "default" in message.lower()
+        assert success is True
+        assert "defaults" in message.lower()
 
 
 class TestDoctorOutput:
@@ -168,7 +166,7 @@ class TestDoctorOutput:
                     with patch('arcaneum.cli.doctor.check_meilisearch_connection', return_value=(True, "connected")):
                         with patch('arcaneum.cli.doctor.check_embedding_models', return_value=(True, "available")):
                             with patch('arcaneum.cli.doctor.check_temp_dir_writable', return_value=(True, "writable")):
-                                with patch('arcaneum.cli.doctor.check_environment_vars', return_value=(None, "defaults")):
+                                with patch('arcaneum.cli.doctor.check_environment_vars', return_value=(True, "defaults")):
                                     doctor_command(verbose=False, output_json=True)
 
         captured = capsys.readouterr()
@@ -190,7 +188,7 @@ class TestDoctorOutput:
                     with patch('arcaneum.cli.doctor.check_meilisearch_connection', return_value=(True, "connected")):
                         with patch('arcaneum.cli.doctor.check_embedding_models', return_value=(True, "available")):
                             with patch('arcaneum.cli.doctor.check_temp_dir_writable', return_value=(True, "writable")):
-                                with patch('arcaneum.cli.doctor.check_environment_vars', return_value=(None, "defaults")):
+                                with patch('arcaneum.cli.doctor.check_environment_vars', return_value=(True, "defaults")):
                                     doctor_command(verbose=False, output_json=False)
 
         captured = capsys.readouterr()
@@ -205,10 +203,10 @@ class TestDoctorOutput:
         with patch('arcaneum.cli.doctor.check_python_version', return_value=(True, "Python 3.12")):
             with patch('arcaneum.cli.doctor.check_dependency', return_value=(True, "installed")):
                 with patch('arcaneum.cli.doctor.check_qdrant_connection', return_value=(True, "connected")):
-                    with patch('arcaneum.cli.doctor.check_meilisearch_connection', return_value=(None, "optional")):
+                    with patch('arcaneum.cli.doctor.check_meilisearch_connection', return_value=(True, "connected")):
                         with patch('arcaneum.cli.doctor.check_embedding_models', return_value=(True, "available")):
                             with patch('arcaneum.cli.doctor.check_temp_dir_writable', return_value=(True, "writable")):
-                                with patch('arcaneum.cli.doctor.check_environment_vars', return_value=(None, "defaults")):
+                                with patch('arcaneum.cli.doctor.check_environment_vars', return_value=(True, "defaults")):
                                     result = doctor_command(verbose=False, output_json=True)
 
         assert result == EXIT_SUCCESS
@@ -221,10 +219,10 @@ class TestDoctorOutput:
         with patch('arcaneum.cli.doctor.check_python_version', return_value=(True, "Python 3.12")):
             with patch('arcaneum.cli.doctor.check_dependency', return_value=(False, "not installed")):
                 with patch('arcaneum.cli.doctor.check_qdrant_connection', return_value=(False, "failed")):
-                    with patch('arcaneum.cli.doctor.check_meilisearch_connection', return_value=(None, "optional")):
+                    with patch('arcaneum.cli.doctor.check_meilisearch_connection', return_value=(False, "failed")):
                         with patch('arcaneum.cli.doctor.check_embedding_models', return_value=(True, "available")):
                             with patch('arcaneum.cli.doctor.check_temp_dir_writable', return_value=(True, "writable")):
-                                with patch('arcaneum.cli.doctor.check_environment_vars', return_value=(None, "defaults")):
+                                with patch('arcaneum.cli.doctor.check_environment_vars', return_value=(True, "defaults")):
                                     result = doctor_command(verbose=False, output_json=True)
 
         assert result == EXIT_ERROR
@@ -240,7 +238,7 @@ class TestDoctorVerboseMode:
         with patch('arcaneum.cli.doctor.check_python_version', return_value=(True, "Python 3.12")):
             with patch('arcaneum.cli.doctor.check_dependency', return_value=(True, "qdrant-client 1.0.0")):
                 with patch('arcaneum.cli.doctor.check_qdrant_connection', return_value=(True, "connected (5 collections)")):
-                    with patch('arcaneum.cli.doctor.check_meilisearch_connection', return_value=(None, "optional")):
+                    with patch('arcaneum.cli.doctor.check_meilisearch_connection', return_value=(True, "connected")):
                         with patch('arcaneum.cli.doctor.check_embedding_models', return_value=(True, "3 models available")):
                             with patch('arcaneum.cli.doctor.check_temp_dir_writable', return_value=(True, "/tmp writable")):
                                 with patch('arcaneum.cli.doctor.check_environment_vars', return_value=(True, "QDRANT_URL set")):

@@ -748,45 +748,63 @@ def corpus_items_command(name: str, output_json: bool):
             elif not meili.index_exists(name):
                 errors.append(f"MeiliSearch: Index '{name}' not found")
             else:
-                # Fetch all documents and group appropriately
+                # Use get_documents() instead of search() to avoid maxTotalHits cap
+                index = meili.get_index(name)
                 batch_offset = 0
                 batch_size = 1000
 
-                while True:
-                    results = meili.search(
-                        name,
-                        "",
-                        limit=batch_size,
-                        offset=batch_offset,
-                    )
+                # Determine fields to fetch based on collection type
+                if collection_type == "code":
+                    doc_fields = ['file_path', 'filename', 'language', 'programming_language',
+                                  'git_project_identifier', 'git_project_name', 'git_branch']
+                else:
+                    doc_fields = ['file_path', 'filename', 'language', 'programming_language']
 
-                    hits = results.get('hits', [])
-                    if not hits:
+                while True:
+                    result = index.get_documents({
+                        'offset': batch_offset,
+                        'limit': batch_size,
+                        'fields': doc_fields,
+                    })
+
+                    # Handle both dict and object results
+                    if hasattr(result, 'results'):
+                        docs = result.results
+                    else:
+                        docs = result.get('results', [])
+
+                    if not docs:
                         break
 
-                    for hit in hits:
+                    for doc in docs:
+                        # Extract field values handling both dict and object docs
+                        def _get(field):
+                            if isinstance(doc, dict):
+                                return doc.get(field)
+                            return getattr(doc, field, None)
+
                         # For code collections, group by git_project_identifier
                         # For other types, group by file_path
                         if collection_type == "code":
-                            item_id = hit.get('git_project_identifier')
+                            item_id = _get('git_project_identifier')
                         else:
-                            item_id = hit.get('file_path') or hit.get('filename')
+                            item_id = _get('file_path') or _get('filename')
 
                         if item_id and item_id not in meili_items:
                             meili_items[item_id] = {
-                                'file_path': hit.get('file_path'),
-                                'filename': hit.get('filename'),
-                                'language': hit.get('language') or hit.get('programming_language'),
-                                'git_project_identifier': hit.get('git_project_identifier'),
-                                'git_project_name': hit.get('git_project_name'),
-                                'git_branch': hit.get('git_branch'),
+                                'file_path': _get('file_path'),
+                                'filename': _get('filename'),
+                                'language': _get('language') or _get('programming_language'),
+                                'git_project_identifier': _get('git_project_identifier'),
+                                'git_project_name': _get('git_project_name'),
+                                'git_branch': _get('git_branch'),
                                 'meili_chunks': 1,
                             }
                         elif item_id:
                             meili_items[item_id]['meili_chunks'] += 1
 
-                    batch_offset += len(hits)
-                    if len(hits) < batch_size:
+                    batch_offset += len(docs)
+                    if len(docs) < batch_size:
                         break
 
         except Exception as e:

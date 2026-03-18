@@ -14,8 +14,11 @@ class Arcaneum < Formula
   depends_on "python@3.12"
 
   def install
-    venv = virtualenv_create(libexec, "python3.12")
-    venv.pip_install_and_link buildpath
+    virtualenv_create(libexec, "python3.12")
+    # Install with all dependencies from PyPI. Homebrew's pip_install_and_link
+    # uses --no-deps which would require 50+ resource blocks for transitive deps.
+    system libexec/"bin/pip", "install", buildpath
+    (bin/"arc").write_env_script libexec/"bin/arc", PATH: "#{libexec}/bin:${PATH}"
   end
 
   test do

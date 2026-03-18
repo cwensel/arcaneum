@@ -19,6 +19,18 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
 ]
+keywords = [
+    "semantic-search",
+    "full-text-search",
+    "qdrant",
+    "meilisearch",
+    "vector-database",
+    "embeddings",
+    "claude-code",
+    "ai-tools",
+    "pdf-indexing",
+    "code-indexing",
+]
 
 dependencies = [
     "click>=8.3.0",
@@ -72,6 +84,13 @@ ocr = [
 
 [project.scripts]
 arc = "arcaneum.cli.main:main"
+
+[project.urls]
+Homepage = "https://github.com/cwensel/arcaneum"
+Repository = "https://github.com/cwensel/arcaneum"
+Documentation = "https://github.com/cwensel/arcaneum#readme"
+Issues = "https://github.com/cwensel/arcaneum/issues"
+Changelog = "https://github.com/cwensel/arcaneum/releases"
 
 [tool.setuptools.packages.find]
 where = ["src"]

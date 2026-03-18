@@ -259,10 +259,33 @@ arc container stop     # Stop services
 ### Install
 
 ```bash
+# Option A: Install via pipx (recommended for global CLI use)
+pipx install "git+https://github.com/cwensel/arcaneum.git"
+
+# Option A (pinned version):
+pipx install "git+https://github.com/cwensel/arcaneum.git@v0.2.0"
+
+# Option B: Install from release artifact
+pipx install "https://github.com/cwensel/arcaneum/releases/download/v0.2.0/arcaneum-0.2.0-py3-none-any.whl"
+
+# Option C: Install via pip
+pip install "git+https://github.com/cwensel/arcaneum.git"
+
+# Option D: Development install (from cloned repo)
 git clone https://github.com/cwensel/arcaneum
 cd arcaneum
 pip install -e .
 ```
+
+### Claude Code Plugin
+
+After installing the CLI globally, install the plugin in Claude Code:
+
+```text
+/plugin install cwensel/arcaneum
+```
+
+The plugin assumes `arc` is available in PATH. Slash commands execute `arc` directly.
 
 ### Verify Setup
 

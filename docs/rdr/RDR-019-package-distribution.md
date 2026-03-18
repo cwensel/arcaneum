@@ -3,7 +3,7 @@
 ## Metadata
 
 - **Date**: 2026-01-19
-- **Status**: Recommendation
+- **Status**: Partially Implemented (Phase 1 complete, Phases 2-3 not started)
 - **Type**: Feature
 - **Priority**: High
 - **Related Issues**: None
@@ -650,7 +650,7 @@ prefer typed tool interfaces over Bash execution.
 
 ### Common Tasks (All Phases)
 
-- Sync versions: `pyproject.toml`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`
+- Sync versions: `pyproject.toml`, `src/arcaneum/__init__.py`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`
 - Consider optional dependency groups for smaller installs (see Future Considerations)
 
 ## References

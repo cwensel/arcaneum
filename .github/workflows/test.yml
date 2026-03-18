@@ -1,0 +1,262 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Cache ML models
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/arcaneum/models
+            ~/.cache/fastembed
+          key: ml-models-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ml-models-${{ runner.os }}-
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y tesseract-ocr poppler-utils
+
+      - name: Install package
+        run: pip install -e ".[dev]"
+
+      - name: Run unit tests
+        run: |
+          pytest tests/unit tests/fulltext tests/schema \
+            --junit-xml=test-results/unit.xml \
+            --cov=src/arcaneum \
+            --cov-report=xml:coverage/unit.xml \
+            --cov-report=term-missing \
+            -v
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-test-results
+          path: test-results/unit.xml
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-coverage
+          path: coverage/unit.xml
+
+      - name: Report test summary
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Unit Test Results
+          path: test-results/unit.xml
+          reporter: java-junit
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+
+    services:
+      qdrant:
+        image: qdrant/qdrant:v1.16.2
+        ports:
+          - 6333:6333
+          - 6334:6334
+        options: >-
+          --health-cmd "curl -sf http://localhost:6333/healthz"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+      meilisearch:
+        image: getmeili/meilisearch:v1.12
+        ports:
+          - 7700:7700
+        env:
+          MEILI_NO_ANALYTICS: "true"
+          MEILI_ENV: development
+        options: >-
+          --health-cmd "curl -sf http://localhost:7700/health"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y tesseract-ocr poppler-utils
+
+      - name: Cache ML models
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/arcaneum/models
+            ~/.cache/fastembed
+          key: ml-models-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ml-models-${{ runner.os }}-
+
+      - name: Install package
+        run: pip install -e ".[dev]"
+
+      - name: Wait for services
+        run: |
+          until curl -sf http://localhost:6333/healthz; do sleep 2; done
+          until curl -sf http://localhost:7700/health; do sleep 2; done
+          echo "All services ready"
+
+      - name: Run integration tests
+        env:
+          QDRANT_URL: http://localhost:6333
+          MEILI_URL: http://localhost:7700
+        run: |
+          pytest tests/integration tests/indexing \
+            tests/test_collection_creation.py tests/test_export_import.py \
+            --junit-xml=test-results/integration.xml \
+            --cov=src/arcaneum \
+            --cov-report=xml:coverage/integration.xml \
+            --cov-report=term-missing \
+            -v
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-test-results
+          path: test-results/integration.xml
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-coverage
+          path: coverage/integration.xml
+
+      - name: Report test summary
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Integration Test Results
+          path: test-results/integration.xml
+          reporter: java-junit
+
+  cli-tests:
+    name: CLI Tests
+    runs-on: ubuntu-latest
+
+    services:
+      qdrant:
+        image: qdrant/qdrant:v1.16.2
+        ports:
+          - 6333:6333
+        options: >-
+          --health-cmd "curl -sf http://localhost:6333/healthz"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+      meilisearch:
+        image: getmeili/meilisearch:v1.12
+        ports:
+          - 7700:7700
+        env:
+          MEILI_NO_ANALYTICS: "true"
+          MEILI_ENV: development
+        options: >-
+          --health-cmd "curl -sf http://localhost:7700/health"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y tesseract-ocr poppler-utils
+
+      - name: Cache ML models
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/arcaneum/models
+            ~/.cache/fastembed
+          key: ml-models-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ml-models-${{ runner.os }}-
+
+      - name: Install package
+        run: pip install -e ".[dev]"
+
+      - name: Wait for services
+        run: |
+          until curl -sf http://localhost:6333/healthz; do sleep 2; done
+          until curl -sf http://localhost:7700/health; do sleep 2; done
+          echo "All services ready"
+
+      - name: Run CLI tests
+        env:
+          QDRANT_URL: http://localhost:6333
+          MEILI_URL: http://localhost:7700
+        run: |
+          pytest tests/cli \
+            --junit-xml=test-results/cli.xml \
+            --cov=src/arcaneum \
+            --cov-report=xml:coverage/cli.xml \
+            --cov-report=term-missing \
+            -v
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cli-test-results
+          path: test-results/cli.xml
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cli-coverage
+          path: coverage/cli.xml
+
+      - name: Report test summary
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: CLI Test Results
+          path: test-results/cli.xml
+          reporter: java-junit

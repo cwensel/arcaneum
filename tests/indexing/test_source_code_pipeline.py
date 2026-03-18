@@ -14,8 +14,16 @@ from arcaneum.indexing.qdrant_indexer import QdrantIndexer
 
 @pytest.fixture
 def temp_git_repo():
-    """Create a temporary git repository with some Python code."""
-    temp_dir = tempfile.mkdtemp()
+    """Create a temporary git repository with some Python code.
+
+    Yields the repo directory. The repo lives inside a dedicated parent
+    directory (parent/test-repo/) so that tests using os.path.dirname()
+    get a controlled search root rather than /tmp (which is unreliable
+    on Linux CI runners due to find scanning the entire /tmp tree).
+    """
+    parent_dir = tempfile.mkdtemp()
+    temp_dir = os.path.join(parent_dir, "test-repo")
+    os.makedirs(temp_dir)
 
     # Initialize git repo
     repo = git.Repo.init(temp_dir)
@@ -67,7 +75,7 @@ def test_multiply():
     yield temp_dir
 
     # Cleanup
-    shutil.rmtree(temp_dir)
+    shutil.rmtree(parent_dir)
 
 
 @pytest.fixture

@@ -1,5 +1,7 @@
 # Arcaneum
 
+[![Tests](https://github.com/cwensel/arcaneum/actions/workflows/test.yml/badge.svg)](https://github.com/cwensel/arcaneum/actions/workflows/test.yml)
+
 CLI tools and Claude Code plugins for semantic and full-text search.
 
 ## Overview

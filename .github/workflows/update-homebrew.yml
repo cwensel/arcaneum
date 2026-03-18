@@ -1,0 +1,60 @@
+name: Update Homebrew Tap
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  update-tap:
+    name: Update Homebrew Formula
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get release info
+        id: release
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Download source tarball and compute SHA256
+        id: sha
+        run: |
+          TARBALL_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.release.outputs.tag }}/arcaneum-${{ steps.release.outputs.version }}.tar.gz"
+          echo "Downloading $TARBALL_URL"
+          curl -sL "$TARBALL_URL" -o arcaneum.tar.gz
+          SHA256=$(sha256sum arcaneum.tar.gz | cut -d' ' -f1)
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+          echo "SHA256: $SHA256"
+
+      - name: Update Homebrew formula
+        run: |
+          VERSION="${{ steps.release.outputs.version }}"
+          TAG="${{ steps.release.outputs.tag }}"
+          SHA256="${{ steps.sha.outputs.sha256 }}"
+
+          # Update the formula in the local copy
+          FORMULA="homebrew/Formula/arcaneum.rb"
+
+          sed -i "s|url \".*\"|url \"https://github.com/${{ github.repository }}/releases/download/${TAG}/arcaneum-${VERSION}.tar.gz\"|" "$FORMULA"
+          sed -i "s|sha256 \".*\"|sha256 \"${SHA256}\"|" "$FORMULA"
+
+          echo "Updated formula:"
+          cat "$FORMULA"
+
+      - name: Push to Homebrew tap repo
+        uses: cpina/github-action-push-to-another-repository@v1.7.2
+        env:
+          API_TOKEN_GITHUB: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        with:
+          source-directory: 'homebrew'
+          destination-github-username: 'cwensel'
+          destination-repository-name: 'homebrew-arcaneum'
+          target-branch: 'main'
+          commit-message: 'Update arcaneum to ${{ steps.release.outputs.tag }}'

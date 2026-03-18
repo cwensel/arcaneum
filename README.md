@@ -262,6 +262,9 @@ arc container stop     # Stop services
 # Recommended: Install via pipx from latest release
 pipx install "https://github.com/cwensel/arcaneum/releases/download/v0.2.0/arcaneum-0.2.0-py3-none-any.whl"
 
+# Or install via Homebrew (macOS/Linux)
+brew install cwensel/arcaneum/arcaneum
+
 # Or install latest from source
 pipx install "git+https://github.com/cwensel/arcaneum.git"
 

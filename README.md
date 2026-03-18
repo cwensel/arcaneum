@@ -1,7 +1,7 @@
 # Arcaneum
 
 [![Tests](https://github.com/cwensel/arcaneum/actions/workflows/test.yml/badge.svg)](https://github.com/cwensel/arcaneum/actions/workflows/test.yml)
-[![Release](https://github.com/cwensel/arcaneum/actions/workflows/release.yml/badge.svg)](https://github.com/cwensel/arcaneum/releases/latest)
+[![Release](https://img.shields.io/github/v/release/cwensel/arcaneum)](https://github.com/cwensel/arcaneum/releases/latest)
 
 CLI tools and Claude Code plugins for semantic and full-text search.
 

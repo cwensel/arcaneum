@@ -3,14 +3,14 @@
   "description": "Arcaneum semantic search tools marketplace",
   "owner": {
     "name": "Arcaneum Contributors",
-    "url": "https://github.com/yourorg"
+    "url": "https://github.com/cwensel"
   },
   "plugins": [
     {
       "name": "arc",
       "source": "./",
       "description": "CLI tools for semantic and full-text search with Qdrant and MeiliSearch",
-      "version": "0.1.0"
+      "version": "0.2.0"
     }
   ]
 }

@@ -3,6 +3,11 @@ name: Update Homebrew Tap
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v0.2.0)'
+        required: true
 
 permissions:
   contents: read
@@ -19,16 +24,22 @@ jobs:
       - name: Get release info
         id: release
         run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${{ github.event.release.tag_name }}"
+          fi
+          VERSION="${TAG#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $TAG, version: $VERSION"
 
       - name: Download source tarball and compute SHA256
         id: sha
         run: |
           TARBALL_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.release.outputs.tag }}/arcaneum-${{ steps.release.outputs.version }}.tar.gz"
           echo "Downloading $TARBALL_URL"
-          curl -sL "$TARBALL_URL" -o arcaneum.tar.gz
+          curl -sfL "$TARBALL_URL" -o arcaneum.tar.gz
           SHA256=$(sha256sum arcaneum.tar.gz | cut -d' ' -f1)
           echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
           echo "SHA256: $SHA256"
@@ -39,7 +50,6 @@ jobs:
           TAG="${{ steps.release.outputs.tag }}"
           SHA256="${{ steps.sha.outputs.sha256 }}"
 
-          # Update the formula in the local copy
           FORMULA="homebrew/Formula/arcaneum.rb"
 
           sed -i "s|url \".*\"|url \"https://github.com/${{ github.repository }}/releases/download/${TAG}/arcaneum-${VERSION}.tar.gz\"|" "$FORMULA"

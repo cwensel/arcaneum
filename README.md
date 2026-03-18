@@ -253,28 +253,22 @@ arc container stop     # Stop services
 ### Prerequisites
 
 - **Python 3.12+** - Check with `python --version`
-- **Git** - For cloning the repository
+- **[pipx](https://pipx.pypa.io/)** - Recommended for global CLI install
 - **Docker** - [Install Docker Desktop](https://docs.docker.com/get-docker/) (Mac/Windows) or Docker Engine (Linux)
 
 ### Install
 
 ```bash
-# Option A: Install via pipx (recommended for global CLI use)
-pipx install "git+https://github.com/cwensel/arcaneum.git"
-
-# Option A (pinned version):
-pipx install "git+https://github.com/cwensel/arcaneum.git@v0.2.0"
-
-# Option B: Install from release artifact
+# Recommended: Install via pipx from latest release
 pipx install "https://github.com/cwensel/arcaneum/releases/download/v0.2.0/arcaneum-0.2.0-py3-none-any.whl"
 
-# Option C: Install via pip
-pip install "git+https://github.com/cwensel/arcaneum.git"
+# Or install latest from source
+pipx install "git+https://github.com/cwensel/arcaneum.git"
 
-# Option D: Development install (from cloned repo)
+# Development install (from cloned repo)
 git clone https://github.com/cwensel/arcaneum
 cd arcaneum
-pip install -e .
+pip install -e ".[dev]"
 ```
 
 ### Claude Code Plugin

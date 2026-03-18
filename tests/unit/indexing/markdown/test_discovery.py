@@ -18,9 +18,9 @@ from arcaneum.indexing.markdown.discovery import (
     MarkdownDiscovery,
     MarkdownFileMetadata,
     discover_markdown_files,
-    compute_file_hash,
     FRONTMATTER_AVAILABLE
 )
+from arcaneum.indexing.common.sync import compute_text_file_hash
 
 
 @pytest.fixture
@@ -173,7 +173,7 @@ class TestMarkdownDiscovery:
         assert metadata.file_name == "sample.md"
         assert metadata.file_path == str(file_path.absolute())
         assert metadata.file_size > 0
-        assert len(metadata.content_hash) == 64  # SHA256 hex length
+        assert len(metadata.content_hash) == 32  # xxh3_128 hex length
         assert metadata.modified_time > 0
 
         # Frontmatter fields
@@ -197,7 +197,7 @@ class TestMarkdownDiscovery:
 
         assert metadata.file_name == "simple.md"
         assert metadata.file_size > 0
-        assert len(metadata.content_hash) == 64
+        assert len(metadata.content_hash) == 32  # xxh3_128 hex length
         assert metadata.has_frontmatter is False
         assert metadata.title is None
         assert metadata.author is None
@@ -341,10 +341,10 @@ class TestConvenienceFunctions:
         file_path = temp_dir / "test.md"
         file_path.write_text(content)
 
-        hash1 = compute_file_hash(file_path)
-        hash2 = compute_file_hash(file_path)
+        hash1 = compute_text_file_hash(file_path)
+        hash2 = compute_text_file_hash(file_path)
 
-        assert len(hash1) == 64  # SHA256 hex
+        assert len(hash1) == 32  # xxh3_128 hex
         assert hash1 == hash2  # Consistent
 
 
@@ -361,7 +361,7 @@ class TestEdgeCases:
 
         assert metadata.file_name == "empty.md"
         assert metadata.file_size == 0
-        assert len(metadata.content_hash) == 64
+        assert len(metadata.content_hash) == 32  # xxh3_128 hex length
 
     def test_large_file(self, temp_dir):
         """Test handling of large markdown file."""
@@ -373,7 +373,7 @@ class TestEdgeCases:
         metadata = discovery.extract_metadata(file_path)
 
         assert metadata.file_size > 100000
-        assert len(metadata.content_hash) == 64
+        assert len(metadata.content_hash) == 32  # xxh3_128 hex length
 
     def test_malformed_frontmatter(self, temp_dir):
         """Test handling of malformed frontmatter."""

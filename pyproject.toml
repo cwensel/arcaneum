@@ -62,6 +62,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.4.2",
+    "pytest-cov>=6.0.0",
     "black>=25.9.0",
     "ruff>=0.14.2",
 ]
@@ -96,3 +97,10 @@ markers = [
     "slow: Tests taking >5 seconds",
 ]
 addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["src/arcaneum"]
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+show_missing = true

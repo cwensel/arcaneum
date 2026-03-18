@@ -79,15 +79,10 @@ Get started with Arcaneum in just a few commands:
 
 ```bash
 # 1. Install
-git clone https://github.com/cwensel/arcaneum
-cd arcaneum
-pip install -e .
+pipx install "https://github.com/cwensel/arcaneum/releases/download/v0.2.0/arcaneum-0.2.0-py3-none-any.whl"
 
-# 2. Install Claude Code plugin (optional)
-# In Claude Code:
-# /plugin marketplace add /path/to/arcaneum
-# /plugin install arc
-# (then restart Claude Code)
+# 2. Install Claude Code plugin (optional, in Claude Code)
+# /plugin install cwensel/arcaneum
 
 # 3. Verify and start services
 arc doctor
@@ -350,26 +345,11 @@ Behind a VPN with SSL issues? See **[Corporate Network Setup](docs/testing/offli
 
 ## Claude Code Plugin
 
-### Installation
-
-**1. Install the Python package** (required first):
-
-```bash
-git clone https://github.com/cwensel/arcaneum
-cd arcaneum
-pip install -e .
-```
-
-**2. Install Claude Code plugin**:
-
-In Claude Code, add the local marketplace and install the plugin:
+Install the CLI globally first (see [Installation](#installation)), then in Claude Code:
 
 ```text
-/plugin marketplace add /path/to/arcaneum
-/plugin install arc@arcaneum-marketplace
+/plugin install cwensel/arcaneum
 ```
-
-Then restart Claude Code to activate the plugin.
 
 ### Available Commands
 
@@ -430,14 +410,16 @@ Use `/help` in Claude Code to see all available commands or `/arc:doctor` to che
 
 ### Testing
 
-Tests will be added as features are implemented.
-
 ```bash
-# Run tests (after implementation)
-pytest tests/
+# Run unit tests
+pytest tests/unit tests/fulltext tests/schema -v
 
 # Run with coverage
-pytest --cov=arcaneum tests/
+pytest tests/unit tests/fulltext tests/schema --cov=src/arcaneum -v
+
+# Run integration tests (requires Qdrant and MeiliSearch running)
+arc container start
+pytest tests/integration tests/indexing tests/cli -v
 ```
 
 ## Documentation

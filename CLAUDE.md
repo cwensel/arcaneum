@@ -70,6 +70,29 @@ arc collection list
 **IMPORTANT:** The subcommand (`semantic` or `text`) must come BEFORE the query.
 Do NOT use `arc search --corpus` without a subcommand - that syntax is incorrect.
 
+## Releasing
+
+Version is tracked in four files. Use the bump script to update all of them:
+
+```bash
+./scripts/bump-version.sh 0.3.0
+```
+
+This updates: `pyproject.toml`, `src/arcaneum/__init__.py`,
+`.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`.
+
+**Release workflow** (requires developer confirmation at each step):
+
+```bash
+./scripts/bump-version.sh <version>
+git add -A && git commit -m "Release v<version>"
+git tag -a v<version> -m "Release v<version>"
+git push origin main --tags
+```
+
+Pushing the tag triggers `.github/workflows/release.yml`, which builds the wheel/sdist
+and creates a GitHub Release with artifacts.
+
 ## Source Control
 
 Git operations require developer confirmation before execution:

@@ -1,8 +1,13 @@
 # Arcaneum
 
 [![Tests](https://github.com/cwensel/arcaneum/actions/workflows/test.yml/badge.svg)](https://github.com/cwensel/arcaneum/actions/workflows/test.yml)
+[![Release](https://github.com/cwensel/arcaneum/actions/workflows/release.yml/badge.svg)](https://github.com/cwensel/arcaneum/releases/latest)
 
 CLI tools and Claude Code plugins for semantic and full-text search.
+
+```bash
+pipx install "https://github.com/cwensel/arcaneum/releases/download/v0.2.0/arcaneum-0.2.0-py3-none-any.whl"
+```
 
 ## Overview
 

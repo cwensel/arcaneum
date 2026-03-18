@@ -44,7 +44,7 @@ Current state:
 - Package version: 0.2.0
 - Entry point: `arc` command via `arcaneum.cli.main:main`
 - Build system: setuptools with `pyproject.toml`
-- Heavy dependencies: PyTorch, sentence-transformers, transformers (~1.2GB installed, see analysis below)
+- Heavy dependencies: PyTorch, sentence-transformers, transformers (~1.3GB installed, see analysis below)
 - LLM embedding models: Downloaded on-demand (~500MB-1.5GB per model)
 
 **Key Insight**: This is a specialized project not expecting wide adoption. All distribution
@@ -54,14 +54,14 @@ rather than official registries (PyPI, homebrew-core, Claude plugin directory).
 ### Technical Environment
 
 - **Runtime**: Python 3.12+
-- **Build Backend**: setuptools >= 61.0
+- **Build Backend**: setuptools >= 64.0
 - **CLI Framework**: Click 8.3.0+
 - **Key Dependencies**: torch, sentence-transformers, qdrant-client, meilisearch
 - **Claude Plugin**: `.claude-plugin/plugin.json` with marketplace.json
 
 ### Dependency Size Analysis
 
-Total installed size: **~1.2GB** (excluding on-demand downloads)
+Total installed size: **~1.3GB** (excluding on-demand downloads)
 
 #### ML/AI Dependencies (~650MB)
 
@@ -76,7 +76,7 @@ Total installed size: **~1.2GB** (excluding on-demand downloads)
 | `huggingface-hub`          | 5 MB           | Model download/caching             |
 | `safetensors`              | 1 MB           | Safe model serialization           |
 
-#### Document Processing Dependencies (~420MB)
+#### Document Processing Dependencies (~460MB)
 
 | Package                    | Installed Size | Purpose                            |
 | -------------------------- | -------------- | ---------------------------------- |
@@ -85,9 +85,13 @@ Total installed size: **~1.2GB** (excluding on-demand downloads)
 | `pymupdf`                  | 69 MB          | PDF text extraction                |
 | `llama-index-core`         | 28 MB          | Document chunking utilities        |
 | `Pillow`                   | 14 MB          | Image handling                     |
-| `pdfminer-six`             | 8 MB           | PDF text extraction fallback       |
+| `pymupdf4llm`              | <1 MB          | PDF table extraction               |
+| `pymupdf-layout`           | <1 MB          | PDF page layout detection          |
+| `pdfplumber`               | 5 MB           | PDF text extraction                |
+| `pytesseract`              | <1 MB          | OCR interface                      |
+| `pdf2image`                | <1 MB          | PDF to image conversion            |
 
-#### Core/Utility Dependencies (~50MB)
+#### Core/Utility Dependencies (~60MB)
 
 | Package                    | Installed Size | Purpose                            |
 | -------------------------- | -------------- | ---------------------------------- |
@@ -102,6 +106,11 @@ Total installed size: **~1.2GB** (excluding on-demand downloads)
 | `PyYAML`                   | 1 MB           | YAML parsing                       |
 | `meilisearch`              | <1 MB          | Full-text search client            |
 | `tqdm`                     | <1 MB          | Progress bars                      |
+| `markdown-it-py`           | <1 MB          | Markdown parsing                   |
+| `python-frontmatter`       | <1 MB          | YAML frontmatter extraction        |
+| `xxhash`                   | <1 MB          | Fast file deduplication hashing    |
+| `msgpack`                  | <1 MB          | Collection export/import format    |
+| `socksio`                  | <1 MB          | SOCKS proxy support for httpx      |
 | Others                     | ~5 MB          | Various small utilities            |
 
 #### Dependency Categories by Install Impact
@@ -109,11 +118,11 @@ Total installed size: **~1.2GB** (excluding on-demand downloads)
 | Category           | Size    | Required For                  | Could Be Optional? |
 | ------------------ | ------- | ----------------------------- | ------------------ |
 | PyTorch + ONNX     | ~510 MB | All embedding operations      | No (core feature)  |
-| Tree-sitter        | ~324 MB | Source code indexing          | Yes (feature flag) |
-| PDF Processing     | ~90 MB  | PDF indexing                  | Yes (feature flag) |
-| OpenCV + Pillow    | ~113 MB | OCR, image processing         | Yes (feature flag) |
+| Tree-sitter        | ~324 MB | Source code indexing          | Currently required |
+| PDF Processing     | ~90 MB  | PDF indexing                  | Currently required |
+| OpenCV + Pillow    | ~113 MB | OCR, image processing         | Currently required |
 | Transformers/HF    | ~120 MB | Model loading                 | No (core feature)  |
-| Core utilities     | ~50 MB  | Basic CLI operation           | No                 |
+| Core utilities     | ~60 MB  | Basic CLI operation           | No                 |
 
 ### On-Demand Downloads
 
@@ -341,7 +350,7 @@ For fully automated versioning, `pyproject.toml` can derive version from git tag
 
 ```toml
 [build-system]
-requires = ["setuptools>=61.0", "setuptools-scm"]
+requires = ["setuptools>=64.0", "setuptools-scm"]
 
 [project]
 dynamic = ["version"]
@@ -591,7 +600,7 @@ benefit is theoretical - most users won't have PyTorch via Homebrew already.
 ### Negative Consequences
 
 - Users must have Python 3.12+ installed
-- Heavy dependencies (~1.2GB) may take time to install on first use
+- Heavy dependencies (~1.3GB) may take time to install on first use
 - LLM models downloaded on-demand add ~1.5GB on first search
 - Two-step install: CLI first, then plugin
 
@@ -675,17 +684,19 @@ prefer typed tool interfaces over Bash execution.
 
 #### Optional Dependency Groups
 
-Based on the dependency analysis, install size could be significantly reduced with
-optional dependency groups in `pyproject.toml`:
+Based on the dependency analysis, install size could be reduced by moving currently-required
+dependencies into optional groups. **Note**: As of v0.2.0, all PDF, code, and OCR dependencies
+are required in `pyproject.toml`. Making them optional would be a breaking change for existing
+users who rely on the current all-inclusive install.
 
 ```toml
 [project.optional-dependencies]
-# Current
+# Current state
 dev = ["pytest", "black", "ruff"]
 ocr = ["easyocr"]
 
-# Proposed additions
-pdf = ["pymupdf", "pymupdf4llm", "pdfplumber", "pdf2image"]
+# Proposed changes (would require moving deps from [project.dependencies])
+pdf = ["pymupdf", "pymupdf4llm", "pymupdf-layout", "pdfplumber", "pdf2image", "pytesseract"]
 code = ["tree-sitter-language-pack", "llama-index-core", "GitPython"]
 ocr-full = ["easyocr", "pytesseract", "opencv-python-headless"]
 all = ["arcaneum[pdf,code,ocr-full]"]

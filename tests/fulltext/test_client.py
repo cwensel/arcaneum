@@ -23,6 +23,16 @@ def client():
     if not client.health_check():
         pytest.skip("MeiliSearch server not available")
 
+    # Skip if API key is not configured (server running but auth fails)
+    if MEILISEARCH_API_KEY is None:
+        pytest.skip("MEILISEARCH_API_KEY not set; skipping auth-required tests")
+
+    # Verify API key works by attempting a simple authenticated call
+    try:
+        client.list_indexes()
+    except Exception:
+        pytest.skip("MEILISEARCH_API_KEY is invalid or lacks permissions")
+
     yield client
 
     # Cleanup: delete test indexes

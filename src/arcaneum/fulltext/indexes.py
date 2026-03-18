@@ -1,5 +1,6 @@
 """Index configuration templates for MeiliSearch (RDR-008, RDR-011)."""
 
+import copy
 from typing import Dict, Any
 
 
@@ -177,7 +178,7 @@ def get_index_settings(index_type: str) -> Dict[str, Any]:
             f"Available: {list(settings_map.keys())} (aliases: {list(type_aliases.keys())})"
         )
 
-    return settings_map[canonical_type].copy()
+    return copy.deepcopy(settings_map[canonical_type])
 
 
 def get_available_index_types() -> list[str]:

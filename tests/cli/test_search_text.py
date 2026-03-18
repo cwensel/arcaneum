@@ -61,7 +61,7 @@ class TestSearchTextBasicExecution:
                 with pytest.raises(SystemExit) as exc_info:
                     search_text_command(
                         query='def authenticate',
-                        index_name='MyCode-fulltext',
+                        corpora=['MyCode-fulltext'],
                         filter_arg=None,
                         limit=10,
                         offset=0,
@@ -90,7 +90,7 @@ class TestSearchTextBasicExecution:
                 with pytest.raises(SystemExit) as exc_info:
                     search_text_command(
                         query='def authenticate',
-                        index_name='MyCode-fulltext',
+                        corpora=['MyCode-fulltext'],
                         filter_arg=None,
                         limit=10,
                         offset=0,
@@ -164,7 +164,7 @@ class TestExactPhraseSearchInCode:
                 with pytest.raises(SystemExit) as exc_info:
                     search_text_command(
                         query='"def authenticate"',
-                        index_name='MyCode-fulltext',
+                        corpora=['MyCode-fulltext'],
                         filter_arg=None,
                         limit=10,
                         offset=0,
@@ -242,7 +242,7 @@ class TestKeywordSearchWithFilters:
                 with pytest.raises(SystemExit) as exc_info:
                     search_text_command(
                         query='calculate',
-                        index_name='MyCode-fulltext',
+                        corpora=['MyCode-fulltext'],
                         filter_arg='language = python',
                         limit=10,
                         offset=0,
@@ -322,7 +322,7 @@ class TestPDFSearchWithPageFilter:
                 with pytest.raises(SystemExit) as exc_info:
                     search_text_command(
                         query='neural network',
-                        index_name='PDFs',
+                        corpora=['PDFs'],
                         filter_arg='page_number > 5',
                         limit=10,
                         offset=0,
@@ -371,7 +371,7 @@ class TestErrorHandlingMissingIndex:
                 with pytest.raises(ResourceNotFoundError) as exc_info:
                     search_text_command(
                         query='query',
-                        index_name='NonExistent',
+                        corpora=['NonExistent'],
                         filter_arg=None,
                         limit=10,
                         offset=0,
@@ -380,7 +380,7 @@ class TestErrorHandlingMissingIndex:
                     )
 
                 # Verify clear error message
-                assert "Index 'NonExistent' not found" in str(exc_info.value)
+                assert "Corpus 'NonExistent' not found" in str(exc_info.value)
 
     def test_missing_index_with_json_raises_resource_not_found(self, mock_client):
         """Test that missing index in JSON mode also raises ResourceNotFoundError."""
@@ -389,7 +389,7 @@ class TestErrorHandlingMissingIndex:
                 with pytest.raises(ResourceNotFoundError) as exc_info:
                     search_text_command(
                         query='query',
-                        index_name='NonExistent',
+                        corpora=['NonExistent'],
                         filter_arg=None,
                         limit=10,
                         offset=0,
@@ -397,7 +397,7 @@ class TestErrorHandlingMissingIndex:
                         verbose=False
                     )
 
-                assert "Index 'NonExistent' not found" in str(exc_info.value)
+                assert "Corpus 'NonExistent' not found" in str(exc_info.value)
 
 
 class TestErrorHandlingServerUnavailable:
@@ -417,7 +417,7 @@ class TestErrorHandlingServerUnavailable:
                 with pytest.raises(ResourceNotFoundError) as exc_info:
                     search_text_command(
                         query='query',
-                        index_name='MyIndex',
+                        corpora=['MyIndex'],
                         filter_arg=None,
                         limit=10,
                         offset=0,
@@ -465,7 +465,7 @@ class TestJSONOutputForProgrammaticUse:
                 with pytest.raises(SystemExit) as exc_info:
                     search_text_command(
                         query='test',
-                        index_name='MyCode-fulltext',
+                        corpora=['MyCode-fulltext'],
                         filter_arg=None,
                         limit=10,
                         offset=0,
@@ -519,7 +519,7 @@ class TestJSONOutputForProgrammaticUse:
                 with pytest.raises(SystemExit) as exc_info:
                     search_text_command(
                         query='test',
-                        index_name='TestIndex',
+                        corpora=['TestIndex'],
                         filter_arg=None,
                         limit=10,
                         offset=0,
@@ -559,7 +559,7 @@ class TestPaginationOptions:
                 with pytest.raises(SystemExit):
                     search_text_command(
                         query='test',
-                        index_name='TestIndex',
+                        corpora=['TestIndex'],
                         filter_arg=None,
                         limit=50,
                         offset=0,
@@ -589,7 +589,7 @@ class TestPaginationOptions:
                 with pytest.raises(SystemExit):
                     search_text_command(
                         query='test',
-                        index_name='TestIndex',
+                        corpora=['TestIndex'],
                         filter_arg=None,
                         limit=10,
                         offset=20,
@@ -601,8 +601,8 @@ class TestPaginationOptions:
             'TestIndex',
             'test',
             filter=None,
-            limit=10,
-            offset=20,
+            limit=30,  # limit + offset combined for internal merging
+            offset=0,
             attributes_to_highlight=['content']
         )
 
@@ -643,7 +643,7 @@ class TestVerboseOutput:
                 with pytest.raises(SystemExit) as exc_info:
                     search_text_command(
                         query='test',
-                        index_name='TestIndex',
+                        corpora=['TestIndex'],
                         filter_arg=None,
                         limit=10,
                         offset=0,
@@ -683,7 +683,7 @@ class TestNoResultsHandling:
                 with pytest.raises(SystemExit) as exc_info:
                     search_text_command(
                         query='nonexistentquery12345',
-                        index_name='TestIndex',
+                        corpora=['TestIndex'],
                         filter_arg=None,
                         limit=10,
                         offset=0,
@@ -725,7 +725,7 @@ class TestInteractionLogging:
                 with pytest.raises(SystemExit):
                     search_text_command(
                         query='test query',
-                        index_name='TestIndex',
+                        corpora=['TestIndex'],
                         filter_arg='language = python',
                         limit=10,
                         offset=0,
@@ -738,7 +738,7 @@ class TestInteractionLogging:
         call_args = mock_logger.start.call_args
         assert call_args[0][0] == 'search'  # command
         assert call_args[0][1] == 'text'    # subcommand
-        assert call_args[1]['index'] == 'TestIndex'
+        assert call_args[1]['corpora'] == ['TestIndex']
         assert call_args[1]['query'] == 'test query'
         assert call_args[1]['filters'] == 'language = python'
 
@@ -757,7 +757,7 @@ class TestInteractionLogging:
                 with pytest.raises(SystemExit):
                     search_text_command(
                         query='test',
-                        index_name='TestIndex',
+                        corpora=['TestIndex'],
                         filter_arg=None,
                         limit=10,
                         offset=0,
@@ -795,7 +795,7 @@ class TestComplexFilterExpressions:
                 with pytest.raises(SystemExit):
                     search_text_command(
                         query='test',
-                        index_name='TestIndex',
+                        corpora=['TestIndex'],
                         filter_arg='language = python AND git_branch = main',
                         limit=10,
                         offset=0,
@@ -814,7 +814,7 @@ class TestComplexFilterExpressions:
                 with pytest.raises(SystemExit):
                     search_text_command(
                         query='test',
-                        index_name='TestIndex',
+                        corpora=['TestIndex'],
                         filter_arg='programming_language IN [python, javascript, typescript]',
                         limit=10,
                         offset=0,
@@ -832,7 +832,7 @@ class TestComplexFilterExpressions:
                 with pytest.raises(SystemExit):
                     search_text_command(
                         query='test',
-                        index_name='TestIndex',
+                        corpora=['TestIndex'],
                         filter_arg='page_number > 5 AND page_number < 20',
                         limit=10,
                         offset=0,
@@ -850,7 +850,7 @@ class TestComplexFilterExpressions:
                 with pytest.raises(SystemExit):
                     search_text_command(
                         query='test',
-                        index_name='TestIndex',
+                        corpora=['TestIndex'],
                         filter_arg='file_path CONTAINS /src/auth/',
                         limit=10,
                         offset=0,
@@ -886,7 +886,7 @@ class TestHighlightingFormatting:
                 with pytest.raises(SystemExit):
                     search_text_command(
                         query='test',
-                        index_name='TestIndex',
+                        corpora=['TestIndex'],
                         filter_arg=None,
                         limit=10,
                         offset=0,
@@ -919,7 +919,7 @@ class TestHighlightingFormatting:
                 with pytest.raises(SystemExit):
                     search_text_command(
                         query='authenticate',
-                        index_name='TestIndex',
+                        corpora=['TestIndex'],
                         filter_arg=None,
                         limit=10,
                         offset=0,

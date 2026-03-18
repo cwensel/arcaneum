@@ -64,7 +64,7 @@ class TestQdrantIndexer:
         """Test initialization with default batch size."""
         indexer = QdrantIndexer(mock_qdrant)
 
-        assert indexer.batch_size == 150
+        assert indexer.batch_size == 512
 
     def test_delete_branch_chunks(self, indexer, mock_qdrant):
         """Test filter-based branch deletion."""
@@ -138,19 +138,19 @@ class TestQdrantIndexer:
         result = indexer.upload_chunks("test-collection", chunks)
 
         assert result == 100
-        # Should fit in one batch (default 150)
+        # 100 chunks fits in one batch (default batch_size=512)
         assert mock_qdrant.upsert.call_count == 1
 
     def test_upload_chunks_multiple_batches(self, indexer, mock_qdrant):
         """Test upload_chunks with multiple batches."""
-        # Create 300 chunks (should be 2 batches with batch_size=150)
-        chunks = [create_test_chunk() for _ in range(300)]
+        # Create 1100 chunks (should be 3 batches with default batch_size=512)
+        chunks = [create_test_chunk() for _ in range(1100)]
 
         result = indexer.upload_chunks("test-collection", chunks)
 
-        assert result == 300
-        # Should be 2 batches
-        assert mock_qdrant.upsert.call_count == 2
+        assert result == 1100
+        # Should be 3 batches (ceil(1100 / 512) = 3)
+        assert mock_qdrant.upsert.call_count == 3
 
     def test_upload_chunks_empty(self, indexer, mock_qdrant):
         """Test upload_chunks with empty list."""

@@ -5,6 +5,7 @@ import json
 import os
 import struct
 import tempfile
+import uuid
 from pathlib import Path
 
 import msgpack
@@ -91,7 +92,7 @@ def test_collection(qdrant_client):
         vec = np.random.rand(1024).astype(np.float32).tolist()
         points.append(
             PointStruct(
-                id=f"point-{i}",
+                id=str(uuid.uuid4()),  # UUID format for Qdrant
                 vector={"stella": vec},
                 payload={
                     "file_path": f"/Users/alice/docs/report-{i}.pdf",
@@ -148,12 +149,12 @@ def test_code_collection(qdrant_client):
         ("other-project", "develop"),
     ]
 
-    for repo_name, branch in repos:
+    for repo_idx, (repo_name, branch) in enumerate(repos):
         for i in range(5):
             vec = np.random.rand(896).astype(np.float32).tolist()
             points.append(
                 PointStruct(
-                    id=f"{repo_name}-{branch}-{i}",
+                    id=str(uuid.uuid4()),  # UUID format for Qdrant
                     vector={"jina-code-0.5b": vec},
                     payload={
                         "file_path": f"/Users/alice/repos/{repo_name}/src/file-{i}.py",

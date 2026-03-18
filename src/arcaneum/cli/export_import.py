@@ -240,11 +240,9 @@ def detect_root_prefix(file_paths: List[str]) -> Optional[str]:
         return None
 
     # Find common prefix
+    # os.path.commonpath always returns at a path component boundary,
+    # so it is already a valid directory prefix (no dirname needed).
     prefix = os.path.commonpath(abs_paths)
-
-    # Ensure prefix is a directory (not partial filename match)
-    if prefix and not prefix.endswith("/"):
-        prefix = os.path.dirname(prefix)
 
     return prefix if prefix and prefix != "/" else None
 

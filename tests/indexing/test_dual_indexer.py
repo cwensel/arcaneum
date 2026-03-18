@@ -29,6 +29,7 @@ class TestDualIndexer:
         client = Mock()
         client.add_documents = Mock()
         client.add_documents_sync = Mock()
+        client.add_documents_batch_parallel = Mock(return_value={"total_documents": 0, "task_count": 0})
         client.get_index_stats = Mock(return_value={"numberOfDocuments": 100})
         return client
 
@@ -124,8 +125,12 @@ class TestDualIndexer:
             dual_indexer.index_batch([doc])
 
     def test_index_batch_batches_meili_uploads(self, dual_indexer):
-        """Test that MeiliSearch uploads are batched."""
+        """Test that MeiliSearch uploads are batched using parallel upload."""
         dual_indexer.batch_size = 2  # Small batch for testing
+        # 5 docs / batch_size 2 = 3 batches → uses add_documents_batch_parallel
+        dual_indexer.meili.add_documents_batch_parallel.return_value = {
+            "total_documents": 5, "task_count": 3
+        }
 
         docs = [
             DualIndexDocument(
@@ -143,8 +148,8 @@ class TestDualIndexer:
 
         qdrant_count, meili_count = dual_indexer.index_batch(docs)
 
-        # Should be 3 batches: 2 + 2 + 1
-        assert dual_indexer.meili.add_documents_sync.call_count == 3
+        # Multiple batches use add_documents_batch_parallel (called once with all batches)
+        dual_indexer.meili.add_documents_batch_parallel.assert_called_once()
         assert qdrant_count == 5
         assert meili_count == 5
 

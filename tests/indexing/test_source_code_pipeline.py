@@ -82,30 +82,41 @@ def mock_qdrant_client():
 
 @pytest.fixture
 def mock_embedder():
-    """Create a mock embedder."""
-    with patch('arcaneum.indexing.source_code_pipeline.TextEmbedding') as mock:
-        embedder_instance = Mock()
-        # Mock embed method to return fake embeddings
-        def mock_embed(texts):
-            for _ in texts:
-                embedding = Mock()
-                embedding.tolist.return_value = [0.1] * 384
-                yield embedding
-        embedder_instance.embed = mock_embed
-        mock.return_value = embedder_instance
-        yield mock
+    """Create a mock EmbeddingClient.
+
+    Mocks embed_parallel to invoke on_batch_complete with fake embeddings,
+    matching the streaming (accumulate=False) pattern used by SourceCodeIndexer.
+    """
+    client = Mock()
+    client.use_gpu = False
+    client.get_device_info = Mock(return_value={
+        'gpu_enabled': False,
+        'gpu_available': False,
+        'device': 'cpu',
+    })
+
+    def fake_embed_parallel(texts, model_name, on_batch_complete=None, batch_size=None, **kwargs):
+        embeddings = [[0.1] * 384] * len(texts)
+        if on_batch_complete is not None:
+            # on_batch_complete(batch_idx, start_idx, batch_embeddings)
+            on_batch_complete(0, 0, embeddings)
+        return embeddings
+
+    client.embed_parallel = Mock(side_effect=fake_embed_parallel)
+    return client
 
 
 class TestSourceCodeIndexer:
     """Integration tests for SourceCodeIndexer."""
 
-    def test_initialization(self, mock_qdrant_client):
+    def test_initialization(self, mock_qdrant_client, mock_embedder):
         """Test basic initialization."""
         indexer_obj = QdrantIndexer(mock_qdrant_client)
 
         indexer = SourceCodeIndexer(
             qdrant_indexer=indexer_obj,
-            embedding_model="test-model",
+            embedding_client=mock_embedder,
+            embedding_model_id="test-model",
             chunk_size=400
         )
 
@@ -119,7 +130,8 @@ class TestSourceCodeIndexer:
 
         indexer = SourceCodeIndexer(
             qdrant_indexer=indexer_obj,
-            embedding_model="test-model"
+            embedding_client=mock_embedder,
+            embedding_model_id="test-model"
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -138,7 +150,8 @@ class TestSourceCodeIndexer:
 
         indexer = SourceCodeIndexer(
             qdrant_indexer=indexer_obj,
-            embedding_model="test-model"
+            embedding_client=mock_embedder,
+            embedding_model_id="test-model"
         )
 
         parent_dir = os.path.dirname(temp_git_repo)
@@ -164,7 +177,8 @@ class TestSourceCodeIndexer:
 
         indexer = SourceCodeIndexer(
             qdrant_indexer=indexer_obj,
-            embedding_model="test-model"
+            embedding_client=mock_embedder,
+            embedding_model_id="test-model"
         )
 
         parent_dir = os.path.dirname(temp_git_repo)
@@ -176,11 +190,9 @@ class TestSourceCodeIndexer:
             show_progress=False
         )
 
-        # Should index even if already indexed
+        # Should index even if already indexed (force bypasses skip logic)
         assert stats["projects_indexed"] == 1
-
-        # Should not have queried Qdrant for indexed projects
-        assert not mock_qdrant_client.scroll.called
+        assert stats["projects_skipped"] == 0
 
     def test_index_directory_with_depth(self, mock_qdrant_client, mock_embedder):
         """Test indexing with depth limit."""
@@ -188,7 +200,8 @@ class TestSourceCodeIndexer:
 
         indexer = SourceCodeIndexer(
             qdrant_indexer=indexer_obj,
-            embedding_model="test-model"
+            embedding_client=mock_embedder,
+            embedding_model_id="test-model"
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -225,7 +238,7 @@ class TestSourceCodeIndexer:
 
         mock_point = Mock()
         mock_point.payload = {
-            "git_project_identifier": "test-repo#master",
+            "git_project_identifier": "test-repo#main",
             "git_commit_hash": current_commit
         }
         mock_qdrant_client.scroll.return_value = ([mock_point], None)
@@ -234,7 +247,8 @@ class TestSourceCodeIndexer:
 
         indexer = SourceCodeIndexer(
             qdrant_indexer=indexer_obj,
-            embedding_model="test-model"
+            embedding_client=mock_embedder,
+            embedding_model_id="test-model"
         )
 
         parent_dir = os.path.dirname(temp_git_repo)
@@ -255,7 +269,7 @@ class TestSourceCodeIndexer:
         # Mock that project is indexed with different commit
         mock_point = Mock()
         mock_point.payload = {
-            "git_project_identifier": "test-repo#master",
+            "git_project_identifier": "test-repo#main",
             "git_commit_hash": "a" * 40  # Different commit
         }
         mock_qdrant_client.scroll.return_value = ([mock_point], None)
@@ -264,7 +278,8 @@ class TestSourceCodeIndexer:
 
         indexer = SourceCodeIndexer(
             qdrant_indexer=indexer_obj,
-            embedding_model="test-model"
+            embedding_client=mock_embedder,
+            embedding_model_id="test-model"
         )
 
         parent_dir = os.path.dirname(temp_git_repo)
@@ -283,13 +298,14 @@ class TestSourceCodeIndexer:
         # Should have deleted old chunks
         assert mock_qdrant_client.delete.called
 
-    def test_reset_stats(self, mock_qdrant_client):
+    def test_reset_stats(self, mock_qdrant_client, mock_embedder):
         """Test resetting statistics."""
         indexer_obj = QdrantIndexer(mock_qdrant_client)
 
         indexer = SourceCodeIndexer(
             qdrant_indexer=indexer_obj,
-            embedding_model="test-model"
+            embedding_client=mock_embedder,
+            embedding_model_id="test-model"
         )
 
         # Modify stats

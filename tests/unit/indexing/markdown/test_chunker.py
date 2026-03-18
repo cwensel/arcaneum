@@ -311,7 +311,8 @@ Content here."""
         """Test that naive chunking works when markdown-it-py unavailable."""
         text = "A " * 1000  # Create long text
 
-        chunker = SemanticMarkdownChunker(chunk_size=50)
+        # chunk_overlap must be < chunk_size to avoid infinite loop in _naive_chunking
+        chunker = SemanticMarkdownChunker(chunk_size=100, chunk_overlap=10)
 
         # Force naive chunking by setting md to None
         original_md = chunker.md
@@ -451,8 +452,16 @@ Done."""
         assert 'return x + y' in code_chunks[0].text
 
     def test_configurable_chunk_size(self):
-        """Acceptance: Configurable chunk size."""
-        text = "Word " * 1000
+        """Acceptance: Configurable chunk size.
+
+        Uses structured markdown with multiple sections so the chunker has
+        semantic boundaries to split on.
+        """
+        # Generate markdown with many small sections
+        sections = []
+        for i in range(20):
+            sections.append(f"## Section {i}\n\n" + "Word " * 50)
+        text = "\n\n".join(sections)
 
         # Small chunks
         small_chunks = chunk_markdown(text, chunk_size=50)

@@ -29,47 +29,55 @@ class TestGetGpuMemoryInfo:
         assert device_type == "cuda"
 
     def test_mps_available(self):
-        """Test MPS (Apple Silicon) GPU memory detection."""
+        """Test MPS (Apple Silicon) GPU memory detection.
+
+        MPS uses system available memory as proxy (unified memory architecture).
+        available = min(system_available, estimated_total)
+        """
         mock_torch = MagicMock()
         mock_torch.cuda.is_available.return_value = False
         mock_torch.backends.mps.is_available.return_value = True
-        mock_torch.mps.driver_allocated_memory.return_value = 10 * 1024**3  # 10GB allocated
+
+        system_available = 15 * 1024**3  # 15GB system available
 
         # Mock psutil
         with patch('arcaneum.utils.memory.psutil') as mock_psutil:
             mock_memory = Mock()
             mock_memory.total = 32 * 1024**3  # 32GB RAM
+            mock_memory.available = system_available
             mock_psutil.virtual_memory.return_value = mock_memory
 
             with patch.dict('sys.modules', {'torch': mock_torch}):
                 available, total, device_type = get_gpu_memory_info()
 
         expected_total = int(32 * 1024**3 * 0.7)  # 70% of RAM
-        expected_available = expected_total - 10 * 1024**3
+        expected_available = min(system_available, expected_total)
 
         assert available == expected_available
         assert total == expected_total
         assert device_type == "mps"
 
     def test_mps_fallback(self):
-        """Test MPS fallback when driver_allocated_memory fails."""
+        """Test MPS when system available memory is lower than estimated total."""
         mock_torch = MagicMock()
         mock_torch.cuda.is_available.return_value = False
         mock_torch.backends.mps.is_available.return_value = True
-        mock_torch.mps.driver_allocated_memory.side_effect = Exception("Not available")
+
+        system_available = 5 * 1024**3  # 5GB system available (low)
 
         # Mock psutil
         with patch('arcaneum.utils.memory.psutil') as mock_psutil:
             mock_memory = Mock()
             mock_memory.total = 32 * 1024**3  # 32GB RAM
+            mock_memory.available = system_available
             mock_psutil.virtual_memory.return_value = mock_memory
 
             with patch.dict('sys.modules', {'torch': mock_torch}):
                 available, total, device_type = get_gpu_memory_info()
 
         expected_total = int(32 * 1024**3 * 0.7)  # 70% of RAM
-
-        assert available == expected_total
+        # When system_available < estimated_total, available = system_available
+        assert available == system_available
         assert total == expected_total
         assert device_type == "mps"
 
@@ -202,10 +210,10 @@ class TestEstimateSafeBatchSizeV2:
         available_bytes = 10 * 1024**3  # 10GB
         batch_size = estimate_safe_batch_size_v2("stella", available_bytes)
 
-        # stella: 2.5GB model + 2GB pipeline = 4.5GB fixed
-        # Remaining: 5.5GB × 0.6 = 3.3GB usable
-        # At 8MB per item: 3.3GB / 8MB ≈ 420
-        assert 350 <= batch_size <= 500
+        # stella (CUDA): 2.5GB model + 0.3GB pipeline = 2.8GB fixed
+        # Remaining: 7.2GB × 0.6 = 4.32GB usable
+        # At 8MB per item: 4320MB / 8MB ≈ 540
+        assert 500 <= batch_size <= 600
 
     def test_jina_code_with_medium_memory(self):
         """Test jina-code model with 6GB available memory."""
@@ -214,16 +222,17 @@ class TestEstimateSafeBatchSizeV2:
         available_bytes = 6 * 1024**3  # 6GB
         batch_size = estimate_safe_batch_size_v2("jina-code", available_bytes)
 
-        # jina-code: 0.5GB model + 2GB pipeline = 2.5GB fixed
-        # Remaining: 3.5GB × 0.6 = 2.1GB usable
-        # At 5MB per item: 2.1GB / 5MB ≈ 430
-        assert 350 <= batch_size <= 550
+        # jina-code (CUDA): 0.5GB model + 0.3GB pipeline = 0.8GB fixed
+        # Remaining: 5.2GB × 0.6 = 3.12GB usable
+        # At 5MB per item: 3194MB / 5MB ≈ 638
+        assert 600 <= batch_size <= 700
 
     def test_insufficient_memory(self):
         """Test when available memory is too low."""
         from arcaneum.utils.memory import estimate_safe_batch_size_v2
 
-        available_bytes = 3 * 1024**3  # 3GB (less than stella model + pipeline)
+        # stella needs 2.5 + 0.3 = 2.8GB fixed; use 2GB to trigger fallback
+        available_bytes = 2 * 1024**3  # 2GB (less than stella model + pipeline overhead)
         batch_size = estimate_safe_batch_size_v2("stella", available_bytes)
 
         # Should return minimum fallback

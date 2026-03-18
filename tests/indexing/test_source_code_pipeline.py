@@ -243,10 +243,11 @@ class TestSourceCodeIndexer:
         # Mock that project is already indexed with same commit
         repo = git.Repo(temp_git_repo)
         current_commit = repo.head.commit.hexsha
+        current_branch = repo.active_branch.name
 
         mock_point = Mock()
         mock_point.payload = {
-            "git_project_identifier": "test-repo#main",
+            "git_project_identifier": f"test-repo#{current_branch}",
             "git_commit_hash": current_commit
         }
         mock_qdrant_client.scroll.return_value = ([mock_point], None)
@@ -275,9 +276,12 @@ class TestSourceCodeIndexer:
     def test_incremental_sync_reindexes_changed(self, temp_git_repo, mock_qdrant_client, mock_embedder):
         """Test that changed projects are re-indexed."""
         # Mock that project is indexed with different commit
+        repo = git.Repo(temp_git_repo)
+        current_branch = repo.active_branch.name
+
         mock_point = Mock()
         mock_point.payload = {
-            "git_project_identifier": "test-repo#main",
+            "git_project_identifier": f"test-repo#{current_branch}",
             "git_commit_hash": "a" * 40  # Different commit
         }
         mock_qdrant_client.scroll.return_value = ([mock_point], None)

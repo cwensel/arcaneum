@@ -39,6 +39,11 @@ sed -i.bak "s/\"version\": \".*\"/\"version\": \"$NEW_VERSION\"/" "$PROJECT_ROOT
 rm -f "$PROJECT_ROOT/.claude-plugin/marketplace.json.bak"
 echo "  ✓ .claude-plugin/marketplace.json"
 
+# 4. Update src/arcaneum/__init__.py
+sed -i.bak "s/__version__ = \".*\"/__version__ = \"$NEW_VERSION\"/" "$PROJECT_ROOT/src/arcaneum/__init__.py"
+rm -f "$PROJECT_ROOT/src/arcaneum/__init__.py.bak"
+echo "  ✓ src/arcaneum/__init__.py"
+
 echo ""
 echo "Version bumped to $NEW_VERSION in all files."
 echo ""

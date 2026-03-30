@@ -857,7 +857,9 @@ def sync_directory_command(
     git_update: bool = False,
     git_version: bool = False,
     skip_dir_prefixes: Tuple[str, ...] = ('_',),
-    dry_run: bool = False
+    dry_run: bool = False,
+    parity: bool = False,
+    repair: bool = False
 ):
     """Sync directories or files to both Qdrant and MeiliSearch.
 
@@ -884,6 +886,7 @@ def sync_directory_command(
         skip_dir_prefixes: Tuple of prefixes; directories starting with any are skipped.
                           Empty tuple disables prefix-based skipping. Default: ('_',)
         dry_run: If True, show what would be synced without making changes
+        repair: If True, verify collection integrity and re-index only incomplete files
     """
     # Calculate effective text workers
     if text_workers is None:
@@ -936,18 +939,22 @@ def sync_directory_command(
                 raise InvalidArgumentError(f"Not a file or directory: {path}")
 
         if not output_json:
-            source_info = " (from file)" if from_file else ""
-            if len(single_files) == 1 and not dir_paths:
-                print_info(f"Syncing file '{all_input_paths[0]}' to corpus '{corpus}'{source_info}")
-            elif len(dir_paths) == 1 and not single_files:
-                print_info(f"Syncing directory '{all_input_paths[0]}' to corpus '{corpus}'{source_info}")
+            if repair and not all_input_paths:
+                print_info(f"Repairing incomplete files in corpus '{corpus}'")
             else:
-                parts = []
-                if dir_paths:
-                    parts.append(f"{len(dir_paths)} director{'y' if len(dir_paths) == 1 else 'ies'}")
-                if single_files:
-                    parts.append(f"{len(single_files)} file{'s' if len(single_files) > 1 else ''}")
-                print_info(f"Syncing {' and '.join(parts)} to corpus '{corpus}'{source_info}")
+                source_info = " (from file)" if from_file else ""
+                if len(single_files) == 1 and not dir_paths:
+                    print_info(f"Syncing file '{all_input_paths[0]}' to corpus '{corpus}'{source_info}")
+                elif len(dir_paths) == 1 and not single_files:
+                    print_info(f"Syncing directory '{all_input_paths[0]}' to corpus '{corpus}'{source_info}")
+                else:
+                    parts = []
+                    if dir_paths:
+                        parts.append(f"{len(dir_paths)} director{'y' if len(dir_paths) == 1 else 'ies'}")
+                    if single_files:
+                        parts.append(f"{len(single_files)} file{'s' if len(single_files) > 1 else ''}")
+                    if parts:
+                        print_info(f"Syncing {' and '.join(parts)} to corpus '{corpus}'{source_info}")
 
         # Initialize clients
         qdrant = create_qdrant_client()
@@ -983,6 +990,74 @@ def sync_directory_command(
             corpus_type = 'pdf'  # Default
             logger.warning(f"Collection type not set, defaulting to {corpus_type}")
 
+        # Repair mode: verify collection and re-index only incomplete files
+        if repair:
+            from ..indexing.verify import CollectionVerifier
+
+            if not output_json:
+                console.print("[dim]Verifying collection integrity...[/dim]")
+
+            verifier = CollectionVerifier(qdrant)
+            verification_result = verifier.verify_collection(corpus, verbose=verbose)
+
+            if verification_result.is_healthy:
+                if not output_json:
+                    console.print(f"[green]✓ Collection is healthy - all {verification_result.complete_items} files complete, nothing to repair[/green]")
+                else:
+                    print_json("success", "Collection is healthy, nothing to repair", data={
+                        "total_files": verification_result.total_items,
+                        "complete_files": verification_result.complete_items,
+                        "repaired": 0,
+                    })
+                interaction_logger.finish(result_count=0)
+                return
+
+            incomplete_paths = verification_result.get_items_needing_repair()
+
+            # Filter to files that still exist on disk
+            existing_incomplete = [p for p in incomplete_paths if Path(p).exists()]
+            missing_from_disk = [p for p in incomplete_paths if not Path(p).exists()]
+
+            if missing_from_disk and not output_json:
+                console.print(f"[yellow]⚠ {len(missing_from_disk)} incomplete files no longer exist on disk (skipped)[/yellow]")
+                for p in missing_from_disk[:5]:
+                    console.print(f"  [dim]{p}[/dim]")
+                if len(missing_from_disk) > 5:
+                    console.print(f"  [dim]... and {len(missing_from_disk) - 5} more[/dim]")
+
+            if not existing_incomplete:
+                if not output_json:
+                    console.print("[yellow]No repairable files found (incomplete files no longer exist on disk)[/yellow]")
+                else:
+                    print_json("warning", "No repairable files found", data={
+                        "incomplete_files": len(incomplete_paths),
+                        "missing_from_disk": len(missing_from_disk),
+                        "repaired": 0,
+                    })
+                interaction_logger.finish(result_count=0)
+                return
+
+            if not output_json:
+                console.print(f"[blue]Found {len(existing_incomplete)} incomplete files to repair[/blue]")
+                for p in existing_incomplete:
+                    console.print(f"  [dim]{p}[/dim]")
+
+            if dry_run:
+                if not output_json:
+                    console.print("[dim]Dry run: would re-index the above files[/dim]")
+                else:
+                    print_json("success", "Dry run complete", data={
+                        "would_repair": len(existing_incomplete),
+                        "files": existing_incomplete,
+                    })
+                interaction_logger.finish(result_count=0)
+                return
+
+            # Set up for re-indexing: use incomplete files as single_files with force
+            single_files = [Path(p).resolve() for p in existing_incomplete]
+            dir_paths = []
+            force = True
+
         # Validate single file extensions against corpus type
         if single_files:
             valid_extensions = SUPPORTED_EXTENSIONS_BY_TYPE.get(corpus_type, set())
@@ -999,7 +1074,9 @@ def sync_directory_command(
             print_info(f"Models: {configured_models}")
             # Show sync mode for code corpora
             if corpus_type == 'code':
-                if force:
+                if repair:
+                    print_info("Sync mode: repair (re-index incomplete files)")
+                elif force:
                     print_info("Sync mode: force (reindex all files)")
                 elif git_update:
                     print_info("Sync mode: --git-update (skip repos with unchanged commit)")
@@ -1119,7 +1196,9 @@ def sync_directory_command(
         if force:
             if not output_json:
                 print_info("Force mode: reindexing all files")
-        else:
+        elif parity:
+            # Full parity check: scroll all paths from both systems (slower but thorough)
+            # Detects renames, stale paths, and cross-system backfill needs
             if not output_json:
                 print_info("Checking index parity between Qdrant and MeiliSearch...")
 
@@ -1259,6 +1338,24 @@ def sync_directory_command(
                     print_info(f"Processing {len(files_to_process)} new files")
 
             files = files_to_process
+        else:
+            # Fast metadata-based change detection (mtime+size check against Qdrant)
+            # For full parity checks, rename detection, and stale cleanup, use --parity or 'arc corpus parity'
+            sync_manager = MetadataBasedSync(qdrant)
+            files_to_process, already_indexed_files = sync_manager.get_unindexed_files(
+                corpus, files
+            )
+
+            already_indexed_count = len(already_indexed_files)
+            total_corpus_files = already_indexed_count + len(files_to_process)
+
+            if not output_json:
+                if already_indexed_count > 0:
+                    print_info(f"Corpus: {already_indexed_count}/{total_corpus_files} files indexed, processing {len(files_to_process)} new/modified files")
+                elif len(files_to_process) > 0:
+                    print_info(f"Processing {len(files_to_process)} new/modified files")
+
+            files = files_to_process
 
         # If no new files but there are files to backfill, continue
         # Also continue if renames or stale cleanup happened (to show summary)
@@ -1292,7 +1389,7 @@ def sync_directory_command(
                     "skipped": already_indexed_count
                 })
             else:
-                print_info("All files are already indexed in both systems (use --force to reindex)")
+                print_info("All files are already indexed (use --force to reindex, or --parity for cross-system checks)")
             interaction_logger.finish(result_count=0)
             return
 
@@ -1893,7 +1990,7 @@ def sync_directory_command(
                         console.print(f"  [yellow]{item}[/yellow]")
                     if len(incomplete) > 5:
                         console.print(f"  [dim]... and {len(incomplete) - 5} more[/dim]")
-                    console.print("[dim]Re-run with --force to repair incomplete files[/dim]")
+                    console.print("[dim]Re-run with --repair to re-index only incomplete files[/dim]")
 
             data["verification"] = {
                 "is_healthy": verification_result.is_healthy,

@@ -593,6 +593,7 @@ def delete_corpus(name, confirm, output_json):
 @click.option('--models', default='stella,jina', help='Embedding models (comma-separated)')
 @click.option('--file-types', help='File extensions to index (e.g., .py,.md)')
 @click.option('--force', is_flag=True, help='Force reindex all files (bypass change detection)')
+@click.option('--repair', is_flag=True, help='Verify and re-index only incomplete files (no paths needed)')
 @click.option('--dry-run', is_flag=True, help='Show what would be synced without making changes')
 @click.option('--verify', is_flag=True, help='Verify collection integrity after indexing')
 @click.option('--text-workers', type=int, default=None,
@@ -612,7 +613,9 @@ def delete_corpus(name, confirm, output_json):
               help='Skip directories starting with PREFIX (default: _). Repeatable.')
 @click.option('--no-skip-dir-prefix', is_flag=True,
               help='Disable all directory prefix skipping')
-def sync_directory(corpus, paths, from_file, models, file_types, force, dry_run, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, skip_dir_prefix, no_skip_dir_prefix):
+@click.option('--parity', is_flag=True,
+              help='Check cross-system parity, detect renames, and clean stale paths (slower)')
+def sync_directory(corpus, paths, from_file, models, file_types, force, repair, dry_run, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, skip_dir_prefix, no_skip_dir_prefix, parity):
     """Index to both vector and full-text.
 
     Examples:
@@ -622,13 +625,16 @@ def sync_directory(corpus, paths, from_file, models, file_types, force, dry_run,
         arc corpus sync MyCorpus notes.md /path/to/dir
         arc corpus sync MyCorpus --from-file paths.txt
         find . -name "*.pdf" | arc corpus sync MyCorpus --from-file -
+        arc corpus sync MyCorpus --repair
 
     Use --text-workers to parallelize AST chunking for code corpora.
     Use --no-gpu for CPU-only mode (avoids MPS instability with large models).
+    Use --parity to also check cross-system consistency (or use 'arc corpus parity').
+    Use --repair to verify and re-index only incomplete files (no paths needed).
     """
-    # Validate that at least one of paths or from_file is provided
-    if not paths and not from_file:
-        click.echo("Error: Either PATH(s) or --from-file must be provided", err=True)
+    # Validate that at least one of paths, from_file, or repair is provided
+    if not paths and not from_file and not repair:
+        click.echo("Error: Either PATH(s), --from-file, or --repair must be provided", err=True)
         raise SystemExit(1)
 
     # Validate mutually exclusive git flags
@@ -640,7 +646,7 @@ def sync_directory(corpus, paths, from_file, models, file_types, force, dry_run,
     effective_prefixes = () if no_skip_dir_prefix else skip_dir_prefix
 
     from arcaneum.cli.sync import sync_directory_command
-    sync_directory_command(corpus, paths, from_file, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, effective_prefixes, dry_run=dry_run)
+    sync_directory_command(corpus, paths, from_file, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, effective_prefixes, dry_run=dry_run, parity=parity, repair=repair)
 
 
 @corpus.command('parity')

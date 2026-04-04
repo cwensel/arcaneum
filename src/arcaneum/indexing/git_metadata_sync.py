@@ -92,7 +92,7 @@ class GitMetadataSync:
                     collection_name=collection_name,
                     with_payload=["git_project_identifier", "git_commit_hash"],
                     with_vectors=False,  # Don't fetch vectors (performance)
-                    limit=100,
+                    limit=10000,
                     offset=offset
                 )
 

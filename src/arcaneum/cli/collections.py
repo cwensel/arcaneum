@@ -352,7 +352,7 @@ def items_collection_command(name: str, output_json: bool):
 
             points, offset = client.scroll(
                 collection_name=name,
-                limit=100,
+                limit=10000,
                 offset=offset,
                 with_payload=payload_fields,
                 with_vectors=False

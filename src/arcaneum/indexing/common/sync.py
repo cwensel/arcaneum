@@ -1,6 +1,7 @@
 """Metadata-based sync for incremental indexing (RDR-004)."""
 
 import hashlib
+import multiprocessing as mp
 import os
 from pathlib import Path
 from typing import List, Set, Callable, Tuple, Dict
@@ -242,7 +243,7 @@ class MetadataBasedSync:
             while True:
                 points, offset = self.qdrant.scroll(
                     collection_name=collection_name,
-                    limit=100,
+                    limit=10000,
                     offset=offset,
                     with_payload=["file_path", "quick_hash", "file_quick_hashes", "file_paths"],
                     with_vectors=False
@@ -306,7 +307,7 @@ class MetadataBasedSync:
             while True:
                 points, offset = self.qdrant.scroll(
                     collection_name=collection_name,
-                    limit=100,
+                    limit=10000,
                     offset=offset,
                     with_payload=["file_path"],
                     with_vectors=False
@@ -346,7 +347,7 @@ class MetadataBasedSync:
             while True:
                 points, offset = self.qdrant.scroll(
                     collection_name=collection_name,
-                    limit=100,
+                    limit=10000,
                     offset=offset,
                     with_payload=["file_path"],
                     with_vectors=False
@@ -458,7 +459,7 @@ class MetadataBasedSync:
         except Exception as e:
             logger.warning(f"Error querying collection: {e}, "
                           "processing all files")
-            return (file_list, [], [])
+            return (file_list, [])
 
     def delete_chunks_by_file_hash(self, collection_name: str, file_hash: str) -> int:
         """Delete all chunks with a specific file_hash from collection.

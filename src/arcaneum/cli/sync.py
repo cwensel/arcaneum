@@ -1679,6 +1679,8 @@ def sync_directory_command(
                                         if git_root not in git_metadata_cache:
                                             git_meta = git_discovery.extract_metadata(git_root)
                                             git_metadata_cache[git_root] = git_meta
+                                            if verbose and not output_json and git_meta:
+                                                progress.console.print(f"[blue]Indexing repo: {git_meta.identifier} ({git_root})[/blue]")
                                         else:
                                             git_meta = git_metadata_cache[git_root]
 

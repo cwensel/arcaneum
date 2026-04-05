@@ -593,7 +593,9 @@ def delete_corpus(name, confirm, output_json):
 @click.option('--models', default='stella,jina', help='Embedding models (comma-separated)')
 @click.option('--file-types', help='File extensions to index (e.g., .py,.md)')
 @click.option('--force', is_flag=True, help='Force reindex all files (bypass change detection)')
-@click.option('--repair', is_flag=True, help='Verify and re-index only incomplete files (no paths needed)')
+@click.option('--repair', is_flag=True, help='Verify and re-index incomplete or garbled files (no paths needed)')
+@click.option('--quality-threshold', type=float, default=0.9,
+              help='Text quality threshold for --repair (0.0-1.0, default: 0.9)')
 @click.option('--dry-run', is_flag=True, help='Show what would be synced without making changes')
 @click.option('--verify', is_flag=True, help='Verify collection integrity after indexing')
 @click.option('--text-workers', type=int, default=None,
@@ -615,7 +617,7 @@ def delete_corpus(name, confirm, output_json):
               help='Disable all directory prefix skipping')
 @click.option('--parity', is_flag=True,
               help='Check cross-system parity, detect renames, and clean stale paths (slower)')
-def sync_directory(corpus, paths, from_file, models, file_types, force, repair, dry_run, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, skip_dir_prefix, no_skip_dir_prefix, parity):
+def sync_directory(corpus, paths, from_file, models, file_types, force, repair, quality_threshold, dry_run, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, skip_dir_prefix, no_skip_dir_prefix, parity):
     """Index to both vector and full-text.
 
     Examples:
@@ -646,7 +648,7 @@ def sync_directory(corpus, paths, from_file, models, file_types, force, repair, 
     effective_prefixes = () if no_skip_dir_prefix else skip_dir_prefix
 
     from arcaneum.cli.sync import sync_directory_command
-    sync_directory_command(corpus, paths, from_file, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, effective_prefixes, dry_run=dry_run, parity=parity, repair=repair)
+    sync_directory_command(corpus, paths, from_file, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, effective_prefixes, dry_run=dry_run, parity=parity, repair=repair, quality_threshold=quality_threshold)
 
 
 @corpus.command('parity')

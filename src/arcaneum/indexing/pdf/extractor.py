@@ -11,12 +11,15 @@ import sys
 import os
 import re
 
-# Optional: pymupdf-layout for enhanced layout detection
+# pymupdf-layout is now auto-initialized by pymupdf4llm >= 1.27.2
+# The Layout class was renamed to DocumentLayoutAnalyzer in 1.27.x
+# and pymupdf4llm handles layout internally, so we no longer need direct access
+HAS_PYMUPDF_LAYOUT = False
 try:
-    from pymupdf_layout import Layout
+    import pymupdf.layout
     HAS_PYMUPDF_LAYOUT = True
 except ImportError:
-    HAS_PYMUPDF_LAYOUT = False
+    pass
 
 # Suppress PyMuPDF warnings about invalid PDF values
 warnings.filterwarnings('ignore', message='.*Cannot set.*is an invalid.*')
@@ -39,6 +42,7 @@ class PDFExtractor:
         ignore_images: bool = True,
         preserve_images: bool = False,
         use_layout_analysis: bool = True,
+        use_ocr: bool = False,
     ):
         """Initialize PDF extractor.
 
@@ -49,12 +53,16 @@ class PDFExtractor:
             ignore_images: Skip image processing for performance (default: True, RDR-016)
             preserve_images: Extract images for multimodal search (default: False, RDR-016)
             use_layout_analysis: Use pymupdf-layout for enhanced layout detection (default: True)
+            use_ocr: Enable pymupdf4llm auto-OCR for garbled text (default: False).
+                     When False, OCR is handled by the repair/sync pipeline via quality scoring.
+                     Set True when re-extracting known-garbled files.
         """
         self.fallback_enabled = fallback_enabled
         self.table_validation = table_validation
         self.markdown_conversion = markdown_conversion
         self.ignore_images = ignore_images and not preserve_images
         self.preserve_images = preserve_images
+        self.use_ocr = use_ocr
         self.use_layout_analysis = use_layout_analysis and HAS_PYMUPDF_LAYOUT
 
     def extract(self, pdf_path: Path) -> Tuple[str, dict]:
@@ -178,29 +186,19 @@ class PDFExtractor:
             return False
 
     def _get_layout_analysis(self, pdf_path: Path) -> Optional[Dict[str, Any]]:
-        """Get layout analysis using pymupdf-layout for better structure detection.
+        """Get layout analysis metadata.
 
-        Returns layout information including:
-        - Text blocks and their bounding boxes
-        - Headers, footers, and sections
-        - Column layouts
-        - Element hierarchy for better semantic understanding
+        With pymupdf4llm >= 1.27.2, layout analysis is handled automatically
+        by the library when pymupdf-layout is installed. This method now only
+        reports whether layout support is available.
         """
         if not self.use_layout_analysis:
             return None
 
-        try:
-            layout = Layout(str(pdf_path))
-            return {
-                'layout_detected': True,
-                'has_pymupdf_layout': True,
-                'text_blocks': len(layout.text_block_rects) if hasattr(layout, 'text_block_rects') else 0,
-                'pages_analyzed': layout.num_pages if hasattr(layout, 'num_pages') else 0,
-            }
-        except Exception as e:
-            logger.debug(f"Layout analysis failed for {pdf_path.name}: {e}. "
-                        f"Will use standard extraction.")
-            return None
+        return {
+            'layout_detected': True,
+            'has_pymupdf_layout': HAS_PYMUPDF_LAYOUT,
+        }
 
     def _has_complex_tables(self, pdf_path: Path) -> bool:
         """Quick check if PDF has complex tables (heuristic)."""
@@ -295,14 +293,23 @@ class PDFExtractor:
 
                 for page_num in range(page_count):
                     # Extract single page as markdown
-                    page_md = pymupdf4llm.to_markdown(
-                        str(pdf_path),
-                        pages=[page_num],
-                        ignore_images=self.ignore_images,
-                        write_images=self.preserve_images,
-                        force_text=True,
-                        table_strategy="lines_strict",
-                    )
+                    # Suppress pymupdf4llm's noisy stdout output
+                    # ("=== Document parser messages ===", "Using Tesseract...", "OCR on page...")
+                    old_stdout = sys.stdout
+                    sys.stdout = open(os.devnull, 'w')
+                    try:
+                        page_md = pymupdf4llm.to_markdown(
+                            str(pdf_path),
+                            pages=[page_num],
+                            ignore_images=self.ignore_images,
+                            write_images=self.preserve_images,
+                            force_text=True,
+                            table_strategy="lines_strict",
+                            use_ocr=self.use_ocr,
+                        )
+                    finally:
+                        sys.stdout.close()
+                        sys.stdout = old_stdout
 
                     # Normalize the page text
                     page_md = self._normalize_whitespace_edge_cases(page_md)

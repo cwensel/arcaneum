@@ -36,6 +36,8 @@ class FileVerificationResult:
     actual_chunks: int  # number of chunks found
     missing_indices: List[int] = field(default_factory=list)  # which chunk_indices are missing
     is_complete: bool = True
+    has_garbled_text: bool = False  # chunks contain unreadable garbage text
+    avg_quality_score: float = 1.0  # average text quality score (0.0-1.0)
 
     @property
     def completion_percentage(self) -> float:
@@ -80,18 +82,20 @@ class CollectionVerificationResult:
     total_items: int  # projects for code, files for pdf/markdown
     complete_items: int
     incomplete_items: int
-    is_healthy: bool
+    garbled_items: int = 0
+    is_healthy: bool = True
     # Detailed results by item
     projects: List[ProjectVerificationResult] = field(default_factory=list)  # for code
     files: List[FileVerificationResult] = field(default_factory=list)  # for pdf/markdown
     errors: List[str] = field(default_factory=list)
 
     def get_items_needing_repair(self) -> List[str]:
-        """Return list of items that need re-indexing."""
+        """Return list of items that need re-indexing (incomplete or garbled)."""
         if self.collection_type == "code":
             return [p.identifier for p in self.projects if not p.is_complete]
         else:
-            return [f.file_path for f in self.files if not f.is_complete]
+            return [f.file_path for f in self.files
+                    if not f.is_complete or f.has_garbled_text]
 
 
 class CollectionVerifier:
@@ -114,16 +118,24 @@ class CollectionVerifier:
         collection_name: str,
         project_filter: Optional[str] = None,
         verbose: bool = False,
+        check_quality: bool = False,
+        quality_threshold: float = 0.3,
     ) -> CollectionVerificationResult:
         """Verify a collection's integrity.
 
         Scans all chunks in the collection and verifies that each file
         has a complete set of chunks (chunk_index 0 to chunk_count-1).
 
+        When check_quality is True, also scores text content of PDF/markdown
+        chunks to detect garbled extractions (replacement characters, encoding
+        garbage) that need re-extraction with updated pymupdf4llm auto-OCR.
+
         Args:
             collection_name: Name of the Qdrant collection
             project_filter: Optional filter for specific project identifier (code only)
             verbose: Log verbose output
+            check_quality: Score text quality and flag garbled files
+            quality_threshold: Minimum quality score (default 0.3)
 
         Returns:
             CollectionVerificationResult with detailed verification data
@@ -140,7 +152,9 @@ class CollectionVerifier:
             )
         else:
             return self._verify_file_collection(
-                collection_name, collection_type, total_points, verbose
+                collection_name, collection_type, total_points, verbose,
+                check_quality=check_quality,
+                quality_threshold=quality_threshold,
             )
 
     def _verify_code_collection(
@@ -300,22 +314,31 @@ class CollectionVerifier:
         collection_type: Optional[str],
         total_points: int,
         verbose: bool = False,
+        check_quality: bool = False,
+        quality_threshold: float = 0.3,
     ) -> CollectionVerificationResult:
         """Verify a PDF or markdown collection.
 
         For each file, verifies that all chunk_indices exist.
+        When check_quality is True, also scores text content to detect
+        garbled extractions that need re-indexing.
         """
         logger.debug(f"Verifying {collection_type or 'file'} collection: {collection_name}")
 
-        # Collect chunk info: {file_path: {"indices": set, "chunk_count": int}}
+        if check_quality:
+            from .pdf.quality import score_text
+
+        # Collect chunk info: {file_path: {"indices": set, "chunk_count": int, "quality_scores": list}}
         file_chunks: Dict[str, Dict[str, any]] = defaultdict(
-            lambda: {"indices": set(), "chunk_count": 0}
+            lambda: {"indices": set(), "chunk_count": 0, "quality_scores": []}
         )
 
         # Scroll through all points
         offset = None
         batch_count = 0
         payload_fields = ["file_path", "chunk_index", "chunk_count"]
+        if check_quality:
+            payload_fields.append("text")
 
         while True:
             points, offset = self.qdrant.scroll(
@@ -362,6 +385,12 @@ class CollectionVerifier:
                     file_chunks[file_path]["indices"].add(len(file_chunks[file_path]["indices"]))
                     file_chunks[file_path]["chunk_count"] = len(file_chunks[file_path]["indices"])
 
+                # Score text quality if requested
+                if check_quality:
+                    text = payload.get("text", "")
+                    if text:
+                        file_chunks[file_path]["quality_scores"].append(score_text(text))
+
             if offset is None:
                 break
 
@@ -369,35 +398,48 @@ class CollectionVerifier:
         file_results: List[FileVerificationResult] = []
         complete_count = 0
         incomplete_count = 0
+        garbled_count = 0
 
         for file_path, file_data in file_chunks.items():
             indices = file_data["indices"]
             chunk_count = file_data["chunk_count"]
+            quality_scores = file_data["quality_scores"]
 
-            # If chunk_count is 0 or matches indices count, assume complete
+            # Check chunk completeness
             if chunk_count == 0 or chunk_count == len(indices):
-                file_results.append(
-                    FileVerificationResult(
-                        file_path=file_path,
-                        expected_chunks=len(indices),
-                        actual_chunks=len(indices),
-                        is_complete=True,
-                    )
-                )
-                complete_count += 1
+                is_complete = True
+                missing = []
             else:
                 expected_indices = set(range(chunk_count))
-                missing = expected_indices - indices
-                file_results.append(
-                    FileVerificationResult(
-                        file_path=file_path,
-                        expected_chunks=chunk_count,
-                        actual_chunks=len(indices),
-                        missing_indices=sorted(missing),
-                        is_complete=False,
-                    )
-                )
+                missing = sorted(expected_indices - indices)
+                is_complete = len(missing) == 0
+
+            # Check text quality
+            has_garbled = False
+            avg_quality = 1.0
+            if quality_scores:
+                avg_quality = sum(quality_scores) / len(quality_scores)
+                has_garbled = avg_quality < quality_threshold
+
+            if has_garbled:
+                garbled_count += 1
+
+            if is_complete and not has_garbled:
+                complete_count += 1
+            else:
                 incomplete_count += 1
+
+            file_results.append(
+                FileVerificationResult(
+                    file_path=file_path,
+                    expected_chunks=chunk_count if chunk_count else len(indices),
+                    actual_chunks=len(indices),
+                    missing_indices=missing,
+                    is_complete=is_complete and not has_garbled,
+                    has_garbled_text=has_garbled,
+                    avg_quality_score=round(avg_quality, 3),
+                )
+            )
 
         return CollectionVerificationResult(
             collection_name=collection_name,
@@ -406,7 +448,8 @@ class CollectionVerifier:
             total_items=len(file_results),
             complete_items=complete_count,
             incomplete_items=incomplete_count,
-            is_healthy=incomplete_count == 0,
+            garbled_items=garbled_count,
+            is_healthy=incomplete_count == 0 and garbled_count == 0,
             files=file_results,
         )
 

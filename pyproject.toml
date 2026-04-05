@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "arcaneum"
-version = "0.2.0"
+version = "0.3.0"
 description = "CLI tools for semantic and full-text search with Qdrant and MeiliSearch"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -47,9 +47,9 @@ dependencies = [
     "psutil>=6.1.0",  # CPU monitoring (RDR-013 Phase 1)
     "xxhash>=3.5.0",  # Fast non-cryptographic hashing for file deduplication
     # PDF indexing dependencies (RDR-004, RDR-016)
-    "pymupdf>=1.26.6",
-    "pymupdf4llm>=0.2.2",  # Updated from 0.1.7 to fix table extraction bugs
-    "pymupdf-layout>=0.1.0",  # Better page layout detection for improved semantic chunking
+    "pymupdf>=1.27.2",
+    "pymupdf4llm>=1.27.2",  # Auto-OCR for garbled text (>90% unreadable chars triggers Tesseract)
+    "pymupdf-layout>=1.27.2",  # Auto-initialized by pymupdf4llm for layout detection
     "pdfplumber>=0.11.7",
     "pytesseract>=0.3.13",
     "pdf2image>=1.17.0",

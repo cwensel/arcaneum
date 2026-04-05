@@ -280,8 +280,16 @@ class PDFBatchUploader:
             # Memory cleanup after PDF extraction (pymupdf4llm can hold large buffers)
             gc.collect()
 
-            # Stage 2: OCR (if needed)
-            if self.ocr_enabled and len(text) < self.ocr_threshold:
+            # Stage 2: OCR (if needed — empty extraction or garbled text)
+            run_ocr = self.ocr_enabled and len(text) < self.ocr_threshold
+            if not run_ocr and self.ocr_enabled and text:
+                from .pdf.quality import needs_ocr as check_needs_ocr
+                if check_needs_ocr(text):
+                    run_ocr = True
+                    if verbose:
+                        print(f"{timestamp()}   → garbled text detected, triggering OCR", flush=True)
+
+            if run_ocr:
                 import pymupdf as fitz
                 try:
                     temp_doc = fitz.open(pdf_path)

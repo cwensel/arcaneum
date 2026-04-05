@@ -10,7 +10,7 @@
       "name": "arc",
       "source": "./",
       "description": "CLI tools for semantic and full-text search with Qdrant and MeiliSearch",
-      "version": "0.2.0"
+      "version": "0.3.0"
     }
   ]
 }

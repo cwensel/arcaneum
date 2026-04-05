@@ -702,12 +702,13 @@ def _detect_stale_paths(
     return stale_paths
 
 
-def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any]) -> List[Dict[str, Any]]:
+def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool = False) -> List[Dict[str, Any]]:
     """Chunk a PDF file using existing PDF chunking logic.
 
     Args:
         file_path: Path to PDF file
         model_config: Model configuration with chunk_size, etc.
+        use_ocr: Enable pymupdf4llm auto-OCR for garbled text (default: False)
 
     Returns:
         List of chunk dicts with 'text' and 'metadata'
@@ -717,15 +718,35 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any]) -> List[Dict[s
     from ..indexing.pdf.ocr import OCREngine
 
     # Extract text from PDF using PDFExtractor class
-    extractor = PDFExtractor()
+    extractor = PDFExtractor(use_ocr=use_ocr)
     text, metadata = extractor.extract(file_path)
 
-    # OCR fallback for scanned/image PDFs (matches uploader.py threshold)
+    # OCR fallback: triggered for near-empty extractions (scanned/image PDFs)
+    # or garbled text (corrupt font mappings, encoding failures)
+    run_ocr = not text or len(text.strip()) < 100
+    if not run_ocr and not use_ocr:
+        from ..indexing.pdf.quality import needs_ocr as check_needs_ocr
+        if check_needs_ocr(text):
+            logger.info(f"Garbled text detected in {file_path.name}, re-extracting with OCR")
+            run_ocr = True
+
+    if run_ocr and not use_ocr:
+        # Re-extract with pymupdf4llm auto-OCR (handles garbled spans)
+        try:
+            ocr_extractor = PDFExtractor(use_ocr=True)
+            text, ocr_metadata = ocr_extractor.extract(file_path)
+            metadata.update(ocr_metadata)
+            metadata['ocr_triggered_by'] = 'quality'
+        except Exception as e:
+            logger.warning(f"OCR re-extraction failed for {file_path}: {e}")
+
+    # Final fallback: Tesseract OCR for completely empty extractions
     if not text or len(text.strip()) < 100:
         try:
             ocr_engine = OCREngine(engine='tesseract', language='eng')
             text, ocr_metadata = ocr_engine.process_pdf(file_path)
             metadata.update(ocr_metadata)
+            metadata['ocr_triggered_by'] = 'empty'
         except Exception as e:
             logger.warning(f"OCR failed for {file_path}: {e}")
 
@@ -859,7 +880,8 @@ def sync_directory_command(
     skip_dir_prefixes: Tuple[str, ...] = ('_',),
     dry_run: bool = False,
     parity: bool = False,
-    repair: bool = False
+    repair: bool = False,
+    quality_threshold: float = 0.9,
 ):
     """Sync directories or files to both Qdrant and MeiliSearch.
 
@@ -990,15 +1012,28 @@ def sync_directory_command(
             corpus_type = 'pdf'  # Default
             logger.warning(f"Collection type not set, defaulting to {corpus_type}")
 
-        # Repair mode: verify collection and re-index only incomplete files
+        # Old quality scores map: populated during repair for garbled file comparison
+        old_quality_scores = {}
+
+        # Repair mode: verify collection and re-index incomplete or garbled files
         if repair:
             from ..indexing.verify import CollectionVerifier
 
+            # Check text quality for PDF corpora to detect garbled extractions
+            is_pdf_corpus = corpus_type == 'pdf'
+
             if not output_json:
-                console.print("[dim]Verifying collection integrity...[/dim]")
+                if is_pdf_corpus:
+                    console.print("[dim]Verifying collection integrity and text quality...[/dim]")
+                else:
+                    console.print("[dim]Verifying collection integrity...[/dim]")
 
             verifier = CollectionVerifier(qdrant)
-            verification_result = verifier.verify_collection(corpus, verbose=verbose)
+            verification_result = verifier.verify_collection(
+                corpus, verbose=verbose,
+                check_quality=is_pdf_corpus,
+                quality_threshold=quality_threshold,
+            )
 
             if verification_result.is_healthy:
                 if not output_json:
@@ -1012,6 +1047,16 @@ def sync_directory_command(
                 interaction_logger.finish(result_count=0)
                 return
 
+            # Report garbled files separately from incomplete files
+            garbled_count = verification_result.garbled_items
+            if garbled_count > 0 and not output_json:
+                console.print(f"[yellow]⚠ Found {garbled_count} files with garbled/unreadable text[/yellow]")
+                garbled_files = [f for f in verification_result.files if f.has_garbled_text]
+                for f in garbled_files[:5]:
+                    console.print(f"  [dim]{f.file_path} (quality: {f.avg_quality_score:.2f})[/dim]")
+                if len(garbled_files) > 5:
+                    console.print(f"  [dim]... and {len(garbled_files) - 5} more[/dim]")
+
             incomplete_paths = verification_result.get_items_needing_repair()
 
             # Filter to files that still exist on disk
@@ -1019,7 +1064,7 @@ def sync_directory_command(
             missing_from_disk = [p for p in incomplete_paths if not Path(p).exists()]
 
             if missing_from_disk and not output_json:
-                console.print(f"[yellow]⚠ {len(missing_from_disk)} incomplete files no longer exist on disk (skipped)[/yellow]")
+                console.print(f"[yellow]⚠ {len(missing_from_disk)} files no longer exist on disk (skipped)[/yellow]")
                 for p in missing_from_disk[:5]:
                     console.print(f"  [dim]{p}[/dim]")
                 if len(missing_from_disk) > 5:
@@ -1027,10 +1072,11 @@ def sync_directory_command(
 
             if not existing_incomplete:
                 if not output_json:
-                    console.print("[yellow]No repairable files found (incomplete files no longer exist on disk)[/yellow]")
+                    console.print("[yellow]No repairable files found (files no longer exist on disk)[/yellow]")
                 else:
                     print_json("warning", "No repairable files found", data={
                         "incomplete_files": len(incomplete_paths),
+                        "garbled_files": garbled_count,
                         "missing_from_disk": len(missing_from_disk),
                         "repaired": 0,
                     })
@@ -1038,7 +1084,7 @@ def sync_directory_command(
                 return
 
             if not output_json:
-                console.print(f"[blue]Found {len(existing_incomplete)} incomplete files to repair[/blue]")
+                console.print(f"[blue]Found {len(existing_incomplete)} files to repair[/blue]")
                 for p in existing_incomplete:
                     console.print(f"  [dim]{p}[/dim]")
 
@@ -1048,10 +1094,18 @@ def sync_directory_command(
                 else:
                     print_json("success", "Dry run complete", data={
                         "would_repair": len(existing_incomplete),
+                        "garbled_files": garbled_count,
                         "files": existing_incomplete,
                     })
                 interaction_logger.finish(result_count=0)
                 return
+
+            # Build old quality score map for garbled files (used for comparison reporting)
+            old_quality_scores = {
+                f.file_path: f.avg_quality_score
+                for f in verification_result.files
+                if f.has_garbled_text
+            }
 
             # Set up for re-indexing: use incomplete files as single_files with force
             single_files = [Path(p).resolve() for p in existing_incomplete]
@@ -1524,12 +1578,16 @@ def sync_directory_command(
             ) as progress:
                 task = progress.add_task("Indexing...", total=total_corpus_files, completed=already_indexed_count)
 
+                # Track repair results for quality comparison reporting
+                repair_results = []  # (filename, old_score, new_score, action)
+
                 for file_path in files:
                     progress.update(task, description=f"Processing {file_path.name}...")
 
                     try:
-                        # Delete existing chunks when force=True to avoid duplicates
-                        if force:
+                        # In repair mode, extract BEFORE deleting so we can compare quality.
+                        # In normal force mode, delete first to avoid duplicates during indexing.
+                        if force and not repair:
                             file_path_str = str(file_path.absolute())
                             if verbose and not output_json:
                                 progress.console.print(f"[dim]Deleting existing chunks for {file_path.name}...[/dim]")
@@ -1561,6 +1619,9 @@ def sync_directory_command(
                                 continue
 
                         if corpus_type == 'pdf':
+                            # chunk_pdf_file handles OCR internally via needs_ocr() check:
+                            # extracts without OCR first, then re-extracts with OCR only
+                            # if garbled text (U+FFFD, encoding garbage) is detected
                             chunks = chunk_pdf_file(file_path, model_config)
                         elif corpus_type == 'markdown':
                             chunks = chunk_markdown_file(
@@ -1587,8 +1648,44 @@ def sync_directory_command(
                         if not chunks:
                             if verbose and not output_json:
                                 progress.console.print(f"[yellow]  No text extracted from {file_path.name}[/yellow]")
+                            if repair:
+                                repair_results.append((file_path.name, None, None, "no_text"))
                             progress.advance(task)
                             continue
+
+                        # Repair mode: score new chunks, compare to old, then delete old data
+                        if repair:
+                            file_path_str = str(file_path.absolute())
+                            old_score = old_quality_scores.get(file_path_str)
+
+                            if old_score is not None:
+                                from ..indexing.pdf.quality import score_chunks
+                                new_score = score_chunks(chunks)
+
+                                if new_score > old_score:
+                                    action = "improved"
+                                    if not output_json:
+                                        progress.console.print(
+                                            f"[green]  {file_path.name}: {old_score:.2f} → {new_score:.2f} (improved)[/green]")
+                                else:
+                                    action = "skipped"
+                                    if verbose and not output_json:
+                                        progress.console.print(
+                                            f"[yellow]  {file_path.name}: {old_score:.2f} → {new_score:.2f} (skipped, no improvement)[/yellow]")
+                                    repair_results.append((file_path.name, old_score, new_score, action))
+                                    progress.advance(task)
+                                    continue
+
+                                repair_results.append((file_path.name, old_score, new_score, action))
+                            else:
+                                # Incomplete file (not garbled) — always re-index
+                                repair_results.append((file_path.name, None, None, "incomplete"))
+
+                            # Now safe to delete old chunks before indexing
+                            if verbose and not output_json:
+                                progress.console.print(f"[dim]  Deleting old chunks for {file_path.name}...[/dim]")
+                            dual_indexer.delete_by_file_path(file_path_str)
+                            meili.delete_documents_by_file_paths(corpus, [file_path_str])
 
                         if verbose and not output_json:
                             progress.console.print(f"[dim]  Created {len(chunks)} chunks, generating embeddings...[/dim]")
@@ -1727,6 +1824,23 @@ def sync_directory_command(
                                 progress.console.print(f"[dim]  To re-index with CPU: {reindex_cmd}[/dim]")
 
                     progress.advance(task)
+
+        # Print repair summary if in repair mode
+        if repair and repair_results and not output_json:
+            improved = [(n, o, s) for n, o, s, a in repair_results if a == "improved"]
+            skipped = [(n, o, s) for n, o, s, a in repair_results if a == "skipped"]
+            incomplete = [n for n, _, _, a in repair_results if a == "incomplete"]
+            no_text = [n for n, _, _, a in repair_results if a == "no_text"]
+
+            console.print(f"\n[bold]Repair Summary[/bold]")
+            if improved:
+                console.print(f"  [green]{len(improved)} improved[/green]")
+            if skipped:
+                console.print(f"  [yellow]{len(skipped)} skipped (no improvement)[/yellow]")
+            if incomplete:
+                console.print(f"  [blue]{len(incomplete)} re-indexed (incomplete chunks)[/blue]")
+            if no_text:
+                console.print(f"  [yellow]{len(no_text)} no text extracted[/yellow]")
 
         # Backfill MeiliSearch for files already in Qdrant but missing from MeiliSearch
         meili_backfilled = 0
@@ -1926,6 +2040,19 @@ def sync_directory_command(
             "qdrant_backfilled_chunks": qdrant_backfill_chunks,
             "models": model_list,
         }
+
+        # Add repair results to JSON output
+        if repair and repair_results:
+            data["repair"] = {
+                "improved": len([r for r in repair_results if r[3] == "improved"]),
+                "skipped": len([r for r in repair_results if r[3] == "skipped"]),
+                "incomplete": len([r for r in repair_results if r[3] == "incomplete"]),
+                "no_text": len([r for r in repair_results if r[3] == "no_text"]),
+                "details": [
+                    {"file": n, "old_score": o, "new_score": s, "action": a}
+                    for n, o, s, a in repair_results
+                ],
+            }
 
         if output_json:
             print_json("success", f"Indexed {total_indexed} files ({total_chunks} chunks)", data=data)

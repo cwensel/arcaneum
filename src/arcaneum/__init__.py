@@ -1,6 +1,6 @@
 """Arcaneum: CLI tools for semantic and full-text search."""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 # Configure paths and environment variables early (before any model loading)
 from arcaneum import paths  # noqa: F401

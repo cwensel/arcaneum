@@ -28,6 +28,12 @@ arc corpus sync MyCorpus /path/to/files --verify            # Verify after sync
 arc corpus sync MyCorpus /path/to/files --verbose           # Show progress
 arc corpus sync MyCorpus /path/to/files --no-gpu            # CPU-only mode (stable on Apple Silicon)
 
+# Repair incomplete or garbled files
+arc corpus repair MyCorpus                            # Detect and fix quality issues
+arc corpus repair MyCorpus --dry-run                  # Preview what would be repaired
+arc corpus repair MyCorpus --quality-threshold 0.5    # More aggressive detection
+arc corpus repair MyCorpus --verbose                  # Show per-file quality scores
+
 # View corpus info (both systems)
 arc corpus info MyCorpus
 arc corpus info MyCorpus --json

@@ -29,6 +29,7 @@ providing both semantic and full-text search capabilities.
 arc corpus create <name> --type <type>        # Create both collection and index
 arc corpus list                               # List all corpora
 arc corpus sync <name> <path> [<path>...]     # Index to both systems
+arc corpus repair <name>                      # Re-index incomplete/garbled files
 arc corpus items <name>                       # List items with parity status
 arc corpus verify <name>                      # Verify corpus health
 arc corpus parity <name>                      # Check/restore parity
@@ -88,6 +89,7 @@ A "corpus" is a paired Qdrant collection and MeiliSearch index with the same nam
 arc corpus create <name> --type <type> --models <model>  # Create both
 arc corpus delete <name>                                 # Delete both
 arc corpus sync <name> <path> [<path>...]                # Index to both (multiple paths supported)
+arc corpus repair <name>                                 # Re-index incomplete/garbled files
 arc corpus info <name>                                   # Show corpus details
 arc corpus items <name>                                  # List indexed items with parity status
 arc corpus verify <name>                                 # Verify corpus health across both systems
@@ -139,6 +141,34 @@ arc corpus sync MyCorpus /path/to/repo --git-version       # Keep multiple versi
 | `--git-version`| Index each commit as separate version | Compare code across versions |
 
 **Note:** `--git-update` and `--git-version` are mutually exclusive. Use `--force` to override either mode.
+
+### Corpus Repair
+
+Detect and re-index files with incomplete chunks or garbled text extraction:
+
+```bash
+arc corpus repair MyCorpus                            # Detect and fix quality issues
+arc corpus repair MyCorpus --dry-run                  # Preview what would be repaired
+arc corpus repair MyCorpus --quality-threshold 0.5    # More aggressive detection
+arc corpus repair MyCorpus --verbose                  # Show per-file quality scores
+```
+
+**Options:**
+
+- `--quality-threshold`: Text quality score threshold (0.0-1.0, default: 0.9)
+- `--dry-run`: Show what would be repaired without making changes
+- `--no-gpu`: Disable GPU acceleration
+- `--max-embedding-batch`: Cap embedding batch size
+- `--verbose`: Show per-file old → new quality scores
+- `--json`: Output JSON format
+
+**How it works:**
+
+1. Scans all indexed chunks and scores text quality (stop word frequency, replacement characters, ASCII ratio)
+2. Identifies files with incomplete chunk sets or average quality below threshold
+3. Re-extracts affected files (with auto-OCR for garbled text from corrupt fonts)
+4. Compares new quality to old — only replaces if improved
+5. Reports per-file results (improved, skipped, incomplete)
 
 **GPU and Apple Silicon:**
 

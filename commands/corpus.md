@@ -1,6 +1,6 @@
 ---
 description: Manage dual-index corpora (recommended)
-argument-hint: <create|delete|sync|info|items|parity> <name> [paths...] [options]
+argument-hint: <create|delete|sync|repair|info|items|parity> <name> [paths...] [options]
 ---
 
 **Recommended for most users.** Manage corpora that combine both vector search (Qdrant) and
@@ -13,6 +13,7 @@ full-text search (MeiliSearch) for the same content.
 - `create`: Create both Qdrant collection and MeiliSearch index
 - `delete`: Delete both Qdrant collection and MeiliSearch index
 - `sync`: Index directory to both systems simultaneously
+- `repair`: Re-index incomplete or garbled files (text quality detection)
 - `info`: Show corpus details (both systems)
 - `items`: List indexed items with parity status
 - `parity`: Check and restore parity between systems
@@ -40,6 +41,15 @@ full-text search (MeiliSearch) for the same content.
 - --models: Embedding models (default: stella,jina)
 - --file-types: File extensions to index (e.g., .py,.md)
 
+**Repair Options:**
+
+- name: Corpus name (required)
+- --quality-threshold: Text quality threshold (0.0-1.0, default: 0.9)
+- --dry-run: Preview what would be repaired without making changes
+- --no-gpu: Disable GPU acceleration
+- --verbose: Show per-file quality scores and details
+- --json: Output in JSON format
+
 **Info/Items Options:**
 
 - name: Corpus name (required)
@@ -64,6 +74,9 @@ full-text search (MeiliSearch) for the same content.
 /corpus create CodeBase --type code
 /corpus sync CodeBase ~/projects --file-types .py,.js,.md
 /corpus sync CodeBase ~/project1 ~/project2 ~/project3
+/corpus repair PapersFast
+/corpus repair PapersFast --dry-run
+/corpus repair PapersFast --quality-threshold 0.5
 /corpus info MyDocs
 /corpus items CodeBase
 /corpus parity CodeBase --verify

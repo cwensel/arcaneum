@@ -1,7 +1,7 @@
 {
   "name": "arc",
-  "description": "CLI tools for semantic and full-text search across Qdrant and MeiliSearch. Use 'arc corpus' commands to create dual-indexed corpora for both search types. Index PDFs, markdown, and source code with AST-aware chunking, frontmatter extraction, and git awareness. Store agent-generated content for long-term memory with rich metadata. Agents using this plugin require Bash(arc:*) permission.",
-  "version": "0.3.0",
+  "description": "Semantic (vector) and full-text (keyword) search across indexed corpora via the arc CLI. Dual-indexes PDFs, markdown, and source code into Qdrant + MeiliSearch with AST-aware chunking, frontmatter, and git metadata. Use full-text for exact symbols/phrases and semantic for conceptual queries — both are first-class. Requires Bash(arc:*) permission.",
+  "version": "0.3.1",
   "author": {
     "name": "Arcaneum Contributors",
     "url": "https://github.com/cwensel/arcaneum"
@@ -9,9 +9,11 @@
   "repository": "https://github.com/cwensel/arcaneum",
   "license": "MIT",
   "homepage": "https://github.com/cwensel/arcaneum",
+  "skills": "./skills",
   "keywords": [
     "semantic-search",
     "full-text-search",
+    "hybrid-search",
     "qdrant",
     "meilisearch",
     "vector-database",
@@ -21,9 +23,8 @@
     "ast-chunking",
     "frontmatter",
     "git-aware",
-    "docker",
     "dual-indexing",
-    "cli-tools",
-    "agent-memory"
+    "agent-memory",
+    "cli-tools"
   ]
 }

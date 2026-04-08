@@ -1,6 +1,6 @@
 {
   "name": "arcaneum-marketplace",
-  "description": "Arcaneum semantic search tools marketplace",
+  "description": "Arcaneum semantic and full-text search tools marketplace",
   "owner": {
     "name": "Arcaneum Contributors",
     "url": "https://github.com/cwensel"
@@ -9,8 +9,24 @@
     {
       "name": "arc",
       "source": "./",
-      "description": "CLI tools for semantic and full-text search with Qdrant and MeiliSearch",
-      "version": "0.3.0"
+      "description": "Semantic (vector) and full-text (keyword) search across indexed corpora. Dual-indexes PDFs, markdown, and code into Qdrant + MeiliSearch.",
+      "version": "0.3.1",
+      "category": "search",
+      "author": {
+        "name": "Arcaneum Contributors",
+        "url": "https://github.com/cwensel/arcaneum"
+      },
+      "homepage": "https://github.com/cwensel/arcaneum",
+      "repository": "https://github.com/cwensel/arcaneum",
+      "license": "MIT",
+      "keywords": [
+        "semantic-search",
+        "full-text-search",
+        "hybrid-search",
+        "qdrant",
+        "meilisearch",
+        "agent-memory"
+      ]
     }
   ]
 }

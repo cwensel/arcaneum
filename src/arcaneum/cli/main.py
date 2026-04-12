@@ -614,7 +614,9 @@ def delete_corpus(name, confirm, output_json):
               help='Disable all directory prefix skipping')
 @click.option('--parity', is_flag=True,
               help='Check cross-system parity, detect renames, and clean stale paths (slower)')
-def sync_directory(corpus, paths, from_file, models, file_types, force, dry_run, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, skip_dir_prefix, no_skip_dir_prefix, parity):
+@click.option('--timeout', type=int, default=None,
+              help='Qdrant timeout in seconds (default: 120, increase for very large files)')
+def sync_directory(corpus, paths, from_file, models, file_types, force, dry_run, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, skip_dir_prefix, no_skip_dir_prefix, parity, timeout):
     """Index to both vector and full-text.
 
     Examples:
@@ -644,7 +646,7 @@ def sync_directory(corpus, paths, from_file, models, file_types, force, dry_run,
     effective_prefixes = () if no_skip_dir_prefix else skip_dir_prefix
 
     from arcaneum.cli.sync import sync_directory_command
-    sync_directory_command(corpus, paths, from_file, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, effective_prefixes, dry_run=dry_run, parity=parity)
+    sync_directory_command(corpus, paths, from_file, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, effective_prefixes, dry_run=dry_run, parity=parity, qdrant_timeout=timeout)
 
 
 @corpus.command('repair')

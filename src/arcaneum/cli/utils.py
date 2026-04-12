@@ -214,7 +214,7 @@ def create_qdrant_client(
         final_timeout = qdrant_config.search_timeout if for_search else qdrant_config.timeout
 
     if final_timeout is None:
-        final_timeout = 60 if for_search else 30
+        final_timeout = 60 if for_search else 120
 
     logger.debug(f"Creating QdrantClient: url={final_url}, timeout={final_timeout}s")
 

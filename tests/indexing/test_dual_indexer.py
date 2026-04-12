@@ -124,6 +124,30 @@ class TestDualIndexer:
         with pytest.raises(ValueError, match="missing vectors"):
             dual_indexer.index_batch([doc])
 
+    def test_index_batch_batches_qdrant_upserts(self, dual_indexer):
+        """Test that Qdrant upserts are batched when document count exceeds batch_size."""
+        dual_indexer.batch_size = 2  # Small batch for testing
+
+        docs = [
+            DualIndexDocument(
+                id=f"doc-{i}",
+                content=f"Content {i}",
+                file_path=f"/path/file{i}.py",
+                filename=f"file{i}.py",
+                file_extension=".py",
+                chunk_index=0,
+                chunk_count=1,
+                vectors={"model": [0.1]},
+            )
+            for i in range(5)
+        ]
+
+        qdrant_count, meili_count = dual_indexer.index_batch(docs)
+
+        # 5 docs / batch_size 2 = 3 Qdrant upsert calls (2 + 2 + 1)
+        assert dual_indexer.qdrant.upsert.call_count == 3
+        assert qdrant_count == 5
+
     def test_index_batch_batches_meili_uploads(self, dual_indexer):
         """Test that MeiliSearch uploads are batched using parallel upload."""
         dual_indexer.batch_size = 2  # Small batch for testing

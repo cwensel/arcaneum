@@ -21,7 +21,7 @@ class ModelConfig(BaseModel):
 class QdrantConfig(BaseModel):
     """Qdrant server configuration."""
     url: str = "http://localhost:6333"
-    timeout: int = 30  # General timeout for indexing operations
+    timeout: int = 120  # General timeout for indexing operations
     search_timeout: int = 60  # Timeout for search operations (can be longer)
 
 

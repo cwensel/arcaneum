@@ -882,6 +882,7 @@ def sync_directory_command(
     parity: bool = False,
     repair: bool = False,
     quality_threshold: float = 0.9,
+    qdrant_timeout: Optional[int] = None,
 ):
     """Sync directories or files to both Qdrant and MeiliSearch.
 
@@ -979,7 +980,7 @@ def sync_directory_command(
                         print_info(f"Syncing {' and '.join(parts)} to corpus '{corpus}'{source_info}")
 
         # Initialize clients
-        qdrant = create_qdrant_client()
+        qdrant = create_qdrant_client(timeout=qdrant_timeout)
         meili = get_meili_client()
 
         # Verify corpus exists in both systems

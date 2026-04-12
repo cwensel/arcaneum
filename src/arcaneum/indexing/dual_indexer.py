@@ -36,7 +36,7 @@ class DualIndexer:
         >>> indexer.index_batch(documents)
     """
 
-    DEFAULT_BATCH_SIZE = 100
+    DEFAULT_BATCH_SIZE = 300
 
     def __init__(
         self,
@@ -53,7 +53,7 @@ class DualIndexer:
             meili_client: Initialized MeiliSearch client
             collection_name: Qdrant collection name
             index_name: MeiliSearch index name
-            batch_size: Batch size for MeiliSearch uploads (default 100)
+            batch_size: Batch size for Qdrant and MeiliSearch uploads (default 100)
         """
         self.qdrant = qdrant_client
         self.meili = meili_client
@@ -96,14 +96,18 @@ class DualIndexer:
             if not doc.id:
                 doc.id = str(uuid4())
 
-        # Convert to Qdrant format and upload
+        # Convert to Qdrant format and upload in batches
+        # Batching prevents timeout on large documents (e.g., 2800+ chunks)
         qdrant_points = [to_qdrant_point(doc) for doc in documents]
-        self.qdrant.upsert(
-            collection_name=self.collection_name,
-            points=qdrant_points,
-            wait=wait
-        )
-        qdrant_count = len(qdrant_points)
+        qdrant_count = 0
+        for i in range(0, len(qdrant_points), self.batch_size):
+            batch = qdrant_points[i:i + self.batch_size]
+            self.qdrant.upsert(
+                collection_name=self.collection_name,
+                points=batch,
+                wait=wait
+            )
+            qdrant_count += len(batch)
         logger.debug(f"Indexed {qdrant_count} points to Qdrant")
 
         # Convert to MeiliSearch format and upload in batches

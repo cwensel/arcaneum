@@ -38,7 +38,8 @@ implementation.
 | 019 | [Package Distribution](RDR-019-package-distribution.md) | Recommendation | High |
 | 020 | [GPU Fallback Stability for Unattended Indexing](RDR-020-gpu-fallback-stability.md) | Final | High |
 | 021 | [Contextual Embedding Enrichment](RDR-021-contextual-embedding-enrichment.md) | Final | Medium |
-| 022 | [Advanced PDF Extraction for Complex Technical Documents](RDR-022-advanced-pdf-extraction.md) | Recommendation | High |
+| 022 | [Advanced PDF Extraction for Complex Technical Documents](RDR-022-advanced-pdf-extraction.md) | Superseded (by 023) | High |
+| 023 | [Advanced PDF Extraction Integration Strategy](RDR-023-advanced-pdf-integration.md) | Recommendation | High |
 
 ## Workflow
 

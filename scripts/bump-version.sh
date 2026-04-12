@@ -44,6 +44,11 @@ sed -i.bak "s/__version__ = \".*\"/__version__ = \"$NEW_VERSION\"/" "$PROJECT_RO
 rm -f "$PROJECT_ROOT/src/arcaneum/__init__.py.bak"
 echo "  ✓ src/arcaneum/__init__.py"
 
+# 5. Update README.md install URLs
+sed -i.bak -E "s|/download/v[0-9]+\.[0-9]+\.[0-9]+/arcaneum-[0-9]+\.[0-9]+\.[0-9]+|/download/v$NEW_VERSION/arcaneum-$NEW_VERSION|g" "$PROJECT_ROOT/README.md"
+rm -f "$PROJECT_ROOT/README.md.bak"
+echo "  ✓ README.md"
+
 echo ""
 echo "Version bumped to $NEW_VERSION in all files."
 echo ""

@@ -75,7 +75,7 @@ class TestQdrantConfig:
     def test_defaults(self):
         q = QdrantConfig()
         assert q.url == "http://localhost:6333"
-        assert q.timeout == 30
+        assert q.timeout == 120
         assert q.search_timeout == 60
 
     def test_custom_url(self):

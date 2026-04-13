@@ -6,7 +6,8 @@
 ## Metadata
 
 - **Date**: 2026-04-12
-- **Status**: Recommendation
+- **Status**: Implemented — awaiting upstream fix (MinerU attention mask
+  assertion with transformers 4.57.6; fallback to PyMuPDF4LLM works correctly)
 - **Type**: Enhancement
 - **Priority**: High
 - **Related Issues**: None

@@ -1,4 +1,4 @@
-"""PDF text extraction with PyMuPDF and pdfplumber fallback (RDR-004, RDR-016)."""
+"""PDF text extraction with PyMuPDF, pdfplumber fallback, and MinerU advanced extraction (RDR-004, RDR-016, RDR-022/023)."""
 
 import pymupdf
 import pymupdf4llm
@@ -6,6 +6,7 @@ import pdfplumber
 from pathlib import Path
 from typing import Tuple, Optional, Dict, Any
 import logging
+import tempfile
 import warnings
 import sys
 import os
@@ -19,6 +20,17 @@ try:
     import pymupdf.layout
     HAS_PYMUPDF_LAYOUT = True
 except ImportError:
+    pass
+
+# MinerU advanced PDF extraction (RDR-022/023)
+# Co-installed via [advanced-pdf] extras; DynamicCache shim resolves version conflict.
+# Check package availability without importing heavy deps (cv2, av) at module level
+# to avoid noisy objc warnings on macOS. Actual import happens in _extract_with_mineru().
+HAS_MINERU = False
+try:
+    import importlib.util
+    HAS_MINERU = importlib.util.find_spec("mineru") is not None
+except Exception:
     pass
 
 # Suppress PyMuPDF warnings about invalid PDF values
@@ -43,6 +55,7 @@ class PDFExtractor:
         preserve_images: bool = False,
         use_layout_analysis: bool = True,
         use_ocr: bool = False,
+        advanced_pdf: str = "off",
     ):
         """Initialize PDF extractor.
 
@@ -56,6 +69,10 @@ class PDFExtractor:
             use_ocr: Enable pymupdf4llm auto-OCR for garbled text (default: False).
                      When False, OCR is handled by the repair/sync pipeline via quality scoring.
                      Set True when re-extracting known-garbled files.
+            advanced_pdf: MinerU extraction mode (RDR-022/023).
+                     "auto" — detect per-file using column heuristic (default when MinerU installed)
+                     "on" — force MinerU for all PDFs
+                     "off" — disable, use pymupdf4llm only (default when MinerU not installed)
         """
         self.fallback_enabled = fallback_enabled
         self.table_validation = table_validation
@@ -64,21 +81,48 @@ class PDFExtractor:
         self.preserve_images = preserve_images
         self.use_ocr = use_ocr
         self.use_layout_analysis = use_layout_analysis and HAS_PYMUPDF_LAYOUT
+        self.advanced_pdf = advanced_pdf
 
     def extract(self, pdf_path: Path) -> Tuple[str, dict]:
         """Extract text from PDF with optional markdown conversion (RDR-016).
+
+        When advanced_pdf is enabled (RDR-022/023), routes to MinerU for
+        complex documents (multi-column, math-heavy) based on auto-detection
+        or forced mode.
 
         Returns:
             Tuple of (text, metadata)
             metadata includes: extraction_method, is_image_pdf, page_count, format
         """
         try:
+            # RDR-022/023: Check if MinerU should handle this PDF
+            if self.advanced_pdf == "on" and HAS_MINERU:
+                return self._extract_with_mineru(pdf_path)
+            elif self.advanced_pdf == "auto" and HAS_MINERU:
+                from arcaneum.indexing.pdf.quality import detect_multi_column
+                if detect_multi_column(pdf_path):
+                    logger.info(f"Multi-column layout detected in {pdf_path.name}, "
+                                f"using MinerU advanced extraction")
+                    return self._extract_with_mineru(pdf_path)
+
             # RDR-016: Use markdown conversion by default for quality-first approach
             if self.markdown_conversion:
-                return self._extract_with_markdown(pdf_path)
+                text, metadata = self._extract_with_markdown(pdf_path)
             else:
                 # Normalization-only mode for maximum token savings
-                return self._extract_with_pymupdf_normalized(pdf_path)
+                text, metadata = self._extract_with_pymupdf_normalized(pdf_path)
+
+            # RDR-022 Phase B: Post-extraction artifact detection.
+            # If geometry didn't trigger MinerU but extracted text shows
+            # column-interleaving artifacts, re-extract with MinerU.
+            if self.advanced_pdf == "auto" and HAS_MINERU and text:
+                from arcaneum.indexing.pdf.quality import has_column_interleaving_artifacts
+                if has_column_interleaving_artifacts(text):
+                    logger.info(f"Column-interleaving artifacts detected in {pdf_path.name}, "
+                                f"re-extracting with MinerU")
+                    return self._extract_with_mineru(pdf_path)
+
+            return text, metadata
 
         except Exception as e:
             logger.error(f"PDF extraction failed for {pdf_path}: {e}")
@@ -407,3 +451,114 @@ class PDFExtractor:
         }
 
         return text, metadata
+
+    def _extract_with_mineru(self, pdf_path: Path) -> Tuple[str, dict]:
+        """Extract text using MinerU ML-based extraction for complex documents (RDR-022/023).
+
+        MinerU handles dual-column layouts, mathematical formulas, and complex
+        table structures that PyMuPDF4LLM cannot parse correctly.
+
+        Uses MinerU's in-process Python API (do_parse). The DynamicCache shim
+        in embeddings/_compat.py resolves the transformers version conflict,
+        allowing MinerU to be co-installed as a normal dependency.
+
+        Falls back to PyMuPDF4LLM if MinerU fails.
+        """
+        pdf_path = Path(pdf_path).resolve()
+
+        with pymupdf.open(pdf_path) as doc:
+            page_count = len(doc)
+
+        pdf_bytes = pdf_path.read_bytes()
+
+        with tempfile.TemporaryDirectory(prefix="arcaneum_mineru_") as tmpdir:
+            logger.debug(f"Running MinerU in-process for {pdf_path.name}")
+
+            try:
+                # Suppress MinerU's noisy output: objc warnings on macOS (from cv2/av
+                # dylib conflicts), loguru pipeline messages, tqdm progress bars.
+                # objc runtime writes directly to fd 2, bypassing Python sys.stderr,
+                # so we must redirect at the OS file descriptor level.
+                import logging as _logging
+                old_stderr_fd = os.dup(2)
+                devnull_fd = os.open(os.devnull, os.O_WRONLY)
+                os.dup2(devnull_fd, 2)
+                os.close(devnull_fd)
+                old_stderr = sys.stderr
+                sys.stderr = open(os.devnull, 'w')
+
+                try:
+                    from loguru import logger as loguru_logger
+                    loguru_logger.disable("mineru")
+                except ImportError:
+                    loguru_logger = None
+
+                try:
+                    from mineru.cli.common import do_parse as _do_parse
+
+                    # Suppress any mineru stdlib loggers created during import
+                    for name in list(_logging.Logger.manager.loggerDict):
+                        if name.startswith("mineru"):
+                            _logging.getLogger(name).setLevel(_logging.CRITICAL)
+
+                    _do_parse(
+                        output_dir=tmpdir,
+                        pdf_file_names=[pdf_path.name],
+                        pdf_bytes_list=[pdf_bytes],
+                        p_lang_list=["en"],
+                        backend="pipeline",
+                        parse_method="auto",
+                        formula_enable=True,
+                        table_enable=True,
+                        f_draw_layout_bbox=False,
+                        f_draw_span_bbox=False,
+                        f_dump_md=True,
+                        f_dump_middle_json=False,
+                        f_dump_model_output=False,
+                        f_dump_orig_pdf=False,
+                        f_dump_content_list=False,
+                    )
+                finally:
+                    sys.stderr.close()
+                    sys.stderr = old_stderr
+                    os.dup2(old_stderr_fd, 2)
+                    os.close(old_stderr_fd)
+                    if loguru_logger is not None:
+                        loguru_logger.enable("mineru")
+            except Exception as e:
+                logger.warning(f"MinerU failed for {pdf_path.name}: {e}")
+                return self._extract_with_markdown(pdf_path)
+
+            # Find the generated markdown file
+            stem = pdf_path.stem
+            md_path = Path(tmpdir) / stem / "auto" / f"{stem}.md"
+            if not md_path.exists():
+                # Try alternative output paths
+                md_files = list(Path(tmpdir).rglob("*.md"))
+                if md_files:
+                    md_path = md_files[0]
+                else:
+                    logger.warning(f"MinerU output not found for {pdf_path.name}, "
+                                   f"falling back to PyMuPDF4LLM")
+                    return self._extract_with_markdown(pdf_path)
+
+            md_text = md_path.read_text(encoding="utf-8")
+
+            if not md_text.strip():
+                logger.warning(f"MinerU produced empty output for {pdf_path.name}, "
+                               f"falling back to PyMuPDF4LLM")
+                return self._extract_with_markdown(pdf_path)
+
+        # Normalize whitespace edge cases
+        md_text = self._normalize_whitespace_edge_cases(md_text)
+
+        metadata = {
+            'extraction_method': 'mineru_markdown',
+            'is_image_pdf': False,
+            'page_count': page_count,
+            'file_size': pdf_path.stat().st_size,
+            'format': 'markdown',
+            'page_boundaries': [],  # MinerU doesn't provide per-page boundaries
+        }
+
+        return md_text, metadata

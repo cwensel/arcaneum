@@ -1,14 +1,24 @@
-"""Text quality scoring for detecting garbled PDF extractions.
+"""Text quality scoring and layout detection for PDF extractions.
 
 Used by --repair to identify indexed chunks with unreadable text
 (replacement characters, encoding garbage, CID font mapping failures)
 that need re-extraction with the updated pymupdf4llm auto-OCR.
+
+Also provides multi-column layout detection for routing to advanced
+extractors (RDR-022/023).
 """
 
-import re
 import logging
+import re
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Cache for detect_multi_column results, keyed by (file_path, file_mtime).
+# Avoids repeated geometry analysis on the same file during a single process
+# (e.g., corpus repair scanning 148 PDFs). Reset on process restart.
+# See RDR-022 Component 2: "Detection results should be cached per-file."
+_column_detection_cache: dict = {}
 
 # High-frequency English stop words for readability detection
 STOP_WORDS = frozenset({
@@ -150,3 +160,230 @@ def needs_ocr(text: str) -> bool:
             return True
 
     return False
+
+
+def has_column_interleaving_artifacts(text: str) -> bool:
+    """Detect column-interleaving artifacts in extracted text (RDR-022 Phase B).
+
+    Post-extraction quality check that catches multi-column PDFs missed by
+    geometry-only detection. Checks for three specific artifact patterns
+    produced when PyMuPDF4LLM reads across column boundaries.
+
+    Args:
+        text: Extracted text to check
+
+    Returns:
+        True if column-interleaving artifacts are detected
+    """
+    if not text or len(text) < 200:
+        return False
+
+    orphaned = _count_orphaned_headers(text)
+    bracketed = _count_bracket_fragments(text)
+    page_nums = _count_page_number_insertions(text)
+
+    # Any single strong signal is sufficient
+    if orphaned >= 3:
+        logger.debug(f"Column artifact: {orphaned} orphaned single-letter headers")
+        return True
+    if bracketed >= 5:
+        logger.debug(f"Column artifact: {bracketed} bracket-fragmented sequences")
+        return True
+    if page_nums >= 2:
+        logger.debug(f"Column artifact: {page_nums} mid-sentence page number insertions")
+        return True
+
+    # Combined weak signals
+    total = orphaned + bracketed + page_nums
+    if total >= 4:
+        logger.debug(f"Column artifact: combined score {total} "
+                     f"(orphaned={orphaned}, brackets={bracketed}, page_nums={page_nums})")
+        return True
+
+    return False
+
+
+def _count_orphaned_headers(text: str) -> int:
+    """Count orphaned single-letter section headers mid-paragraph.
+
+    Detects patterns like "study the dynamic **A** Algorithm DC-Tree" where
+    a bold single letter from an adjacent column's article header is injected
+    between sentences.
+
+    Pattern: word(s) + bold/caps single letter + word(s) on the same line,
+    where the letter doesn't fit the sentence context.
+    """
+    # Match: lowercase word, then bold single uppercase letter, then lowercase word
+    # e.g., "dynamic **A** Algorithm" or "equilibrium **B** Binary"
+    pattern = r'[a-z]+\s+\*\*[A-Z]\*\*\s+[A-Z][a-z]'
+    return len(re.findall(pattern, text))
+
+
+def _count_bracket_fragments(text: str) -> int:
+    """Count bracket-fragmented text sequences.
+
+    Detects patterns like "[whose][property][is][that]" produced when
+    individual words near column boundaries are captured as separate
+    bracketed tokens.
+
+    Pattern: 3+ consecutive [word] tokens.
+    """
+    # Match sequences of 3+ bracketed single words
+    pattern = r'(?:\[[a-zA-Z]+\]){3,}'
+    return len(re.findall(pattern, text))
+
+
+def _count_page_number_insertions(text: str) -> int:
+    """Count abrupt page-number insertions mid-sentence.
+
+    Detects patterns where a page number and possibly a running header
+    appear in the middle of a sentence, like:
+    "study the dynamic 8 Adwords Pricing model's equilibrium"
+
+    Pattern: lowercase word + space + bare number + space + Capitalized words
+    + space + lowercase continuation, where the number is 1-4 digits.
+    """
+    # Match: lowercase word, bare number (1-4 digits), capitalized phrase, lowercase word
+    pattern = r'[a-z]+\s+\d{1,4}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\s+[a-z]+'
+    return len(re.findall(pattern, text))
+
+
+def detect_multi_column(pdf_path: Path, sample_pages: int = 10) -> bool:
+    """Detect if a PDF has multi-column layout using page geometry heuristics (RDR-022).
+
+    Samples up to `sample_pages` evenly-spaced pages and analyzes text block
+    bounding boxes to identify dual-column layouts. A page is classified as
+    dual-column when text blocks cluster into two distinct horizontal groups
+    with a gap between them.
+
+    Validated at 94% accuracy on a 17-PDF test set (RDR-022 spike).
+
+    Classification criteria per page:
+    - Both left and right groups have >= 2 text blocks
+    - Gap between columns is 0-15% of page width (median edges)
+    - Each column width is 25-55% of page width
+    - Column width ratio > 0.6 (columns are roughly equal)
+    - Blocks wider than 60% of page are excluded (spanning headers)
+
+    A PDF is classified as multi-column if >= 30% of sampled pages are dual-column.
+
+    Args:
+        pdf_path: Path to the PDF file
+        sample_pages: Number of pages to sample (default: 6)
+
+    Returns:
+        True if PDF appears to have multi-column layout
+    """
+    import pymupdf
+
+    # Check cache (keyed by resolved path + mtime to invalidate on file change)
+    try:
+        cache_key = (str(pdf_path.resolve()), pdf_path.stat().st_mtime)
+        if cache_key in _column_detection_cache:
+            return _column_detection_cache[cache_key]
+    except OSError:
+        cache_key = None
+
+    try:
+        with pymupdf.open(pdf_path) as doc:
+            page_count = len(doc)
+            if page_count == 0:
+                if cache_key:
+                    _column_detection_cache[cache_key] = False
+                return False
+
+            # Select evenly-spaced sample pages
+            if page_count <= sample_pages:
+                page_indices = list(range(page_count))
+            else:
+                step = page_count / sample_pages
+                page_indices = [int(i * step) for i in range(sample_pages)]
+
+            multi_column_pages = 0
+
+            for page_idx in page_indices:
+                page = doc[page_idx]
+                page_width = page.rect.width
+
+                if page_width <= 0:
+                    continue
+
+                # Get text blocks: (x0, y0, x1, y1, text, block_no, block_type)
+                blocks = page.get_text("blocks")
+
+                # Filter to text blocks (type 0) with meaningful content
+                # Exclude wide spanning blocks (>60% of page width) like headers,
+                # which straddle both columns and distort gap/width calculations
+                text_blocks = [
+                    b for b in blocks
+                    if b[6] == 0
+                    and len(b[4].strip()) > 20
+                    and (b[2] - b[0]) / page_width <= 0.60
+                ]
+
+                if len(text_blocks) < 4:
+                    continue
+
+                # Find the midpoint of the page
+                mid_x = page_width / 2
+
+                # Classify blocks into left and right groups
+                left_blocks = []
+                right_blocks = []
+                for b in text_blocks:
+                    x0, _, x1, _, _, _, _ = b
+                    center_x = (x0 + x1) / 2
+                    if center_x < mid_x:
+                        left_blocks.append(b)
+                    else:
+                        right_blocks.append(b)
+
+                # Need at least 2 blocks in each group
+                if len(left_blocks) < 2 or len(right_blocks) < 2:
+                    continue
+
+                # Use median right-edges and left-edges for robustness against outliers
+                left_right_edges = sorted(b[2] for b in left_blocks)
+                right_left_edges = sorted(b[0] for b in right_blocks)
+                left_max_x = left_right_edges[len(left_right_edges) // 2]  # median
+                right_min_x = right_left_edges[len(right_left_edges) // 2]  # median
+
+                # Gap between columns: 0-15% of page width
+                # Use >= 0 (not > 1%) since median edges handle outliers
+                gap = right_min_x - left_max_x
+                gap_ratio = gap / page_width
+                if gap_ratio < 0.0 or gap_ratio > 0.15:
+                    continue
+
+                # Column widths: 25-55% of page width each
+                left_min_x = min(b[0] for b in left_blocks)
+                right_max_x = max(b[2] for b in right_blocks)
+                left_width = (left_max_x - left_min_x) / page_width
+                right_width = (right_max_x - right_min_x) / page_width
+
+                if left_width < 0.25 or left_width > 0.55:
+                    continue
+                if right_width < 0.25 or right_width > 0.55:
+                    continue
+
+                # Width ratio > 0.6 (columns roughly equal)
+                width_ratio = min(left_width, right_width) / max(left_width, right_width)
+                if width_ratio < 0.6:
+                    continue
+
+                multi_column_pages += 1
+
+            # Classify as multi-column if >= 30% of sampled pages qualify.
+            # Lower threshold accounts for front matter, index, and single-column
+            # pages that appear in otherwise dual-column documents.
+            threshold = max(2, len(page_indices) * 0.3)
+            result = multi_column_pages >= threshold
+            if cache_key:
+                _column_detection_cache[cache_key] = result
+            return result
+
+    except Exception as e:
+        logger.debug(f"Column detection failed for {pdf_path}: {e}")
+        if cache_key:
+            _column_detection_cache[cache_key] = False
+        return False

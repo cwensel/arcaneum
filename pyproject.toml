@@ -37,7 +37,7 @@ dependencies = [
     "qdrant-client>=1.16.1",
     "fastembed>=0.7.3",
     "sentence-transformers>=5.2.0",  # 5.2.0 fixes compatibility with torch 2.9+
-    "transformers>=4.40.0,<4.54.0",  # 4.54+ has DynamicCache breaking change (see docs/DEPENDENCY_NOTES.md)
+    "transformers>=4.40.0",  # DynamicCache shim handles 4.54+ breaking change (RDR-023, see docs/DEPENDENCY_NOTES.md)
     "torch>=2.8.0",  # 2.9.x now works with sentence-transformers 5.2.0+
     "pyyaml>=6.0.3",
     "rich>=14.2.0",
@@ -80,6 +80,9 @@ dev = [
 ]
 ocr = [
     "easyocr>=1.7.2",
+]
+advanced-pdf = [
+    "mineru[pipeline]>=3.0.9",
 ]
 
 [project.scripts]

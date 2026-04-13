@@ -702,13 +702,14 @@ def _detect_stale_paths(
     return stale_paths
 
 
-def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool = False) -> List[Dict[str, Any]]:
+def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool = False, advanced_pdf: str = "off") -> List[Dict[str, Any]]:
     """Chunk a PDF file using existing PDF chunking logic.
 
     Args:
         file_path: Path to PDF file
         model_config: Model configuration with chunk_size, etc.
         use_ocr: Enable pymupdf4llm auto-OCR for garbled text (default: False)
+        advanced_pdf: MinerU extraction mode — "auto", "on", or "off" (RDR-022/023)
 
     Returns:
         List of chunk dicts with 'text' and 'metadata'
@@ -718,7 +719,7 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool 
     from ..indexing.pdf.ocr import OCREngine
 
     # Extract text from PDF using PDFExtractor class
-    extractor = PDFExtractor(use_ocr=use_ocr)
+    extractor = PDFExtractor(use_ocr=use_ocr, advanced_pdf=advanced_pdf)
     text, metadata = extractor.extract(file_path)
 
     # OCR fallback: triggered for near-empty extractions (scanned/image PDFs)
@@ -883,6 +884,7 @@ def sync_directory_command(
     repair: bool = False,
     quality_threshold: float = 0.9,
     qdrant_timeout: Optional[int] = None,
+    advanced_pdf: str = "off",
 ):
     """Sync directories or files to both Qdrant and MeiliSearch.
 
@@ -1030,10 +1032,15 @@ def sync_directory_command(
                     console.print("[dim]Verifying collection integrity...[/dim]")
 
             verifier = CollectionVerifier(qdrant)
+            # RDR-022/023: Also detect files needing MinerU when advanced_pdf is enabled
+            import importlib.util
+            has_mineru = importlib.util.find_spec("mineru") is not None
+            check_advanced = is_pdf_corpus and advanced_pdf != "off" and has_mineru
             verification_result = verifier.verify_collection(
                 corpus, verbose=verbose,
                 check_quality=is_pdf_corpus,
                 quality_threshold=quality_threshold,
+                check_advanced_extraction=check_advanced,
             )
 
             if verification_result.is_healthy:
@@ -1057,6 +1064,16 @@ def sync_directory_command(
                     console.print(f"  [dim]{f.file_path} (quality: {f.avg_quality_score:.2f})[/dim]")
                 if len(garbled_files) > 5:
                     console.print(f"  [dim]... and {len(garbled_files) - 5} more[/dim]")
+
+            # RDR-022/023: Report files needing advanced extraction
+            advanced_count = verification_result.advanced_extraction_candidates
+            if advanced_count > 0 and not output_json:
+                console.print(f"[blue]ℹ Found {advanced_count} files that would benefit from MinerU extraction[/blue]")
+                advanced_files = [f for f in verification_result.files if f.needs_advanced_extraction]
+                for f in advanced_files[:5]:
+                    console.print(f"  [dim]{f.file_path}[/dim]")
+                if len(advanced_files) > 5:
+                    console.print(f"  [dim]... and {len(advanced_files) - 5} more[/dim]")
 
             incomplete_paths = verification_result.get_items_needing_repair()
 
@@ -1598,9 +1615,6 @@ def sync_directory_command(
                             meili.delete_documents_by_file_paths(corpus, [file_path_str])
 
                         # Chunk file based on corpus type
-                        if verbose and not output_json:
-                            progress.console.print(f"[dim]Extracting text from {file_path.name}...[/dim]")
-
                         # Skip oversized code files before chunking — they are almost
                         # certainly generated/vendored and waste GPU time or cause OOM.
                         if corpus_type == 'code':
@@ -1623,7 +1637,7 @@ def sync_directory_command(
                             # chunk_pdf_file handles OCR internally via needs_ocr() check:
                             # extracts without OCR first, then re-extracts with OCR only
                             # if garbled text (U+FFFD, encoding garbage) is detected
-                            chunks = chunk_pdf_file(file_path, model_config)
+                            chunks = chunk_pdf_file(file_path, model_config, advanced_pdf=advanced_pdf)
                         elif corpus_type == 'markdown':
                             chunks = chunk_markdown_file(
                                 file_path,
@@ -1933,7 +1947,7 @@ def sync_directory_command(
                     try:
                         # Chunk file based on corpus type
                         if corpus_type == 'pdf':
-                            chunks = chunk_pdf_file(file_path, model_config)
+                            chunks = chunk_pdf_file(file_path, model_config, advanced_pdf=advanced_pdf)
                         elif corpus_type == 'markdown':
                             chunks = chunk_markdown_file(
                                 file_path,

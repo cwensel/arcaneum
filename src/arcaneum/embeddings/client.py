@@ -1,5 +1,7 @@
 """Embedding client utilities with FastEmbed (RDR-002)."""
 
+import arcaneum.embeddings._compat  # noqa: F401 — DynamicCache shim (RDR-023)
+
 from fastembed import TextEmbedding
 from typing import Dict, List, Optional
 import os

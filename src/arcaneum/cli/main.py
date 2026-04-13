@@ -616,7 +616,10 @@ def delete_corpus(name, confirm, output_json):
               help='Check cross-system parity, detect renames, and clean stale paths (slower)')
 @click.option('--timeout', type=int, default=None,
               help='Qdrant timeout in seconds (default: 120, increase for very large files)')
-def sync_directory(corpus, paths, from_file, models, file_types, force, dry_run, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, skip_dir_prefix, no_skip_dir_prefix, parity, timeout):
+@click.option('--advanced-pdf', type=click.Choice(['auto', 'on', 'off']), default=None,
+              help='MinerU extraction for complex PDFs (auto=detect per-file, on=force, off=disable). '
+                   'Default: auto when MinerU installed, off otherwise.')
+def sync_directory(corpus, paths, from_file, models, file_types, force, dry_run, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, skip_dir_prefix, no_skip_dir_prefix, parity, timeout, advanced_pdf):
     """Index to both vector and full-text.
 
     Examples:
@@ -645,8 +648,22 @@ def sync_directory(corpus, paths, from_file, models, file_types, force, dry_run,
     # Resolve skip prefixes: --no-skip-dir-prefix disables all, otherwise use provided prefixes
     effective_prefixes = () if no_skip_dir_prefix else skip_dir_prefix
 
+    # RDR-022/023: Resolve advanced_pdf default based on MinerU availability.
+    # Use find_spec to avoid importing extractor.py (and its heavy deps) for non-PDF corpora.
+    import importlib.util
+    has_mineru = importlib.util.find_spec("mineru") is not None
+    if advanced_pdf is None:
+        advanced_pdf = "auto" if has_mineru else "off"
+    if advanced_pdf in ("auto", "on") and not has_mineru:
+        click.echo(
+            "Error: --advanced-pdf requires mineru. "
+            "Install with: pip install \"arcaneum[advanced-pdf]\"",
+            err=True,
+        )
+        raise SystemExit(1)
+
     from arcaneum.cli.sync import sync_directory_command
-    sync_directory_command(corpus, paths, from_file, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, effective_prefixes, dry_run=dry_run, parity=parity, qdrant_timeout=timeout)
+    sync_directory_command(corpus, paths, from_file, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, effective_prefixes, dry_run=dry_run, parity=parity, qdrant_timeout=timeout, advanced_pdf=advanced_pdf)
 
 
 @corpus.command('repair')
@@ -672,6 +689,10 @@ def corpus_repair(corpus, quality_threshold, dry_run, no_gpu, max_embedding_batc
         arc corpus repair PapersFast --quality-threshold 0.5
         arc corpus repair PapersFast --verbose
     """
+    # RDR-022/023: Auto-enable advanced PDF for repair when MinerU is available
+    import importlib.util
+    advanced_pdf = "auto" if importlib.util.find_spec("mineru") is not None else "off"
+
     from arcaneum.cli.sync import sync_directory_command
     sync_directory_command(
         corpus, paths=(), from_file=None, models='stella,jina',
@@ -683,6 +704,7 @@ def corpus_repair(corpus, quality_threshold, dry_run, no_gpu, max_embedding_batc
         skip_dir_prefixes=('_',),
         dry_run=dry_run, parity=False,
         repair=True, quality_threshold=quality_threshold,
+        advanced_pdf=advanced_pdf,
     )
 
 

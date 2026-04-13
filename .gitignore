@@ -44,4 +44,5 @@ arcaneum.yaml
 # workspaces
 _*
 !__init__.py
+!_compat.py
 .beads

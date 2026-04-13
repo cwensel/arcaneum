@@ -38,6 +38,8 @@ class FileVerificationResult:
     is_complete: bool = True
     has_garbled_text: bool = False  # chunks contain unreadable garbage text
     avg_quality_score: float = 1.0  # average text quality score (0.0-1.0)
+    needs_advanced_extraction: bool = False  # would benefit from MinerU (RDR-022/023)
+    extraction_method: str = ""  # last seen extraction_method for this file
 
     @property
     def completion_percentage(self) -> float:
@@ -83,6 +85,7 @@ class CollectionVerificationResult:
     complete_items: int
     incomplete_items: int
     garbled_items: int = 0
+    advanced_extraction_candidates: int = 0  # files that would benefit from MinerU (RDR-022/023)
     is_healthy: bool = True
     # Detailed results by item
     projects: List[ProjectVerificationResult] = field(default_factory=list)  # for code
@@ -90,12 +93,12 @@ class CollectionVerificationResult:
     errors: List[str] = field(default_factory=list)
 
     def get_items_needing_repair(self) -> List[str]:
-        """Return list of items that need re-indexing (incomplete or garbled)."""
+        """Return list of items that need re-indexing (incomplete, garbled, or needing advanced extraction)."""
         if self.collection_type == "code":
             return [p.identifier for p in self.projects if not p.is_complete]
         else:
             return [f.file_path for f in self.files
-                    if not f.is_complete or f.has_garbled_text]
+                    if not f.is_complete or f.has_garbled_text or f.needs_advanced_extraction]
 
 
 class CollectionVerifier:
@@ -120,6 +123,7 @@ class CollectionVerifier:
         verbose: bool = False,
         check_quality: bool = False,
         quality_threshold: float = 0.3,
+        check_advanced_extraction: bool = False,
     ) -> CollectionVerificationResult:
         """Verify a collection's integrity.
 
@@ -130,12 +134,17 @@ class CollectionVerifier:
         chunks to detect garbled extractions (replacement characters, encoding
         garbage) that need re-extraction with updated pymupdf4llm auto-OCR.
 
+        When check_advanced_extraction is True, identifies files extracted with
+        pymupdf4llm that would benefit from MinerU re-extraction (multi-column
+        layout detection via page geometry). (RDR-022/023)
+
         Args:
             collection_name: Name of the Qdrant collection
             project_filter: Optional filter for specific project identifier (code only)
             verbose: Log verbose output
             check_quality: Score text quality and flag garbled files
             quality_threshold: Minimum quality score (default 0.3)
+            check_advanced_extraction: Detect files needing MinerU re-extraction (RDR-022/023)
 
         Returns:
             CollectionVerificationResult with detailed verification data
@@ -155,6 +164,7 @@ class CollectionVerifier:
                 collection_name, collection_type, total_points, verbose,
                 check_quality=check_quality,
                 quality_threshold=quality_threshold,
+                check_advanced_extraction=check_advanced_extraction,
             )
 
     def _verify_code_collection(
@@ -316,21 +326,24 @@ class CollectionVerifier:
         verbose: bool = False,
         check_quality: bool = False,
         quality_threshold: float = 0.3,
+        check_advanced_extraction: bool = False,
     ) -> CollectionVerificationResult:
         """Verify a PDF or markdown collection.
 
         For each file, verifies that all chunk_indices exist.
         When check_quality is True, also scores text content to detect
         garbled extractions that need re-indexing.
+        When check_advanced_extraction is True, tracks extraction_method
+        to identify files that would benefit from MinerU. (RDR-022/023)
         """
         logger.debug(f"Verifying {collection_type or 'file'} collection: {collection_name}")
 
         if check_quality:
             from .pdf.quality import score_text
 
-        # Collect chunk info: {file_path: {"indices": set, "chunk_count": int, "quality_scores": list}}
+        # Collect chunk info: {file_path: {"indices": set, "chunk_count": int, "quality_scores": list, "extraction_method": str}}
         file_chunks: Dict[str, Dict[str, any]] = defaultdict(
-            lambda: {"indices": set(), "chunk_count": 0, "quality_scores": []}
+            lambda: {"indices": set(), "chunk_count": 0, "quality_scores": [], "extraction_method": ""}
         )
 
         # Scroll through all points
@@ -339,6 +352,8 @@ class CollectionVerifier:
         payload_fields = ["file_path", "chunk_index", "chunk_count"]
         if check_quality:
             payload_fields.append("text")
+        # Note: extraction_method is not stored in Qdrant payloads (only MeiliSearch),
+        # so advanced extraction detection uses column heuristic on the file itself.
 
         while True:
             points, offset = self.qdrant.scroll(
@@ -391,14 +406,34 @@ class CollectionVerifier:
                     if text:
                         file_chunks[file_path]["quality_scores"].append(score_text(text))
 
+
             if offset is None:
                 break
+
+        # RDR-022/023: Run column detection on PDF files to find MinerU candidates.
+        # extraction_method is not stored in Qdrant payloads. MeiliSearch stores it
+        # but existing corpora predate the field, so we can't reliably pre-filter.
+        # Instead, run the geometry heuristic on every PDF file in the collection.
+        # Future optimization: when extraction_method is populated in MeiliSearch,
+        # pre-filter to only files with extraction_method != "mineru_markdown".
+        advanced_candidates = set()
+        if check_advanced_extraction:
+            from pathlib import Path
+
+            from .pdf.quality import detect_multi_column
+            for fp in file_chunks:
+                fp_path = Path(fp)
+                if fp_path.exists() and fp_path.suffix.lower() == ".pdf":
+                    if detect_multi_column(fp_path):
+                        advanced_candidates.add(fp)
+                        logger.debug(f"Advanced extraction candidate: {fp}")
 
         # Analyze results
         file_results: List[FileVerificationResult] = []
         complete_count = 0
         incomplete_count = 0
         garbled_count = 0
+        advanced_count = 0
 
         for file_path, file_data in file_chunks.items():
             indices = file_data["indices"]
@@ -424,7 +459,12 @@ class CollectionVerifier:
             if has_garbled:
                 garbled_count += 1
 
-            if is_complete and not has_garbled:
+            # RDR-022/023: Check if file is an advanced extraction candidate
+            needs_advanced = file_path in advanced_candidates
+            if needs_advanced:
+                advanced_count += 1
+
+            if is_complete and not has_garbled and not needs_advanced:
                 complete_count += 1
             else:
                 incomplete_count += 1
@@ -435,9 +475,11 @@ class CollectionVerifier:
                     expected_chunks=chunk_count if chunk_count else len(indices),
                     actual_chunks=len(indices),
                     missing_indices=missing,
-                    is_complete=is_complete and not has_garbled,
+                    is_complete=is_complete and not has_garbled and not needs_advanced,
                     has_garbled_text=has_garbled,
                     avg_quality_score=round(avg_quality, 3),
+                    needs_advanced_extraction=needs_advanced,
+                    extraction_method=file_data.get("extraction_method", ""),
                 )
             )
 
@@ -449,6 +491,7 @@ class CollectionVerifier:
             complete_items=complete_count,
             incomplete_items=incomplete_count,
             garbled_items=garbled_count,
+            advanced_extraction_candidates=advanced_count,
             is_healthy=incomplete_count == 0 and garbled_count == 0,
             files=file_results,
         )

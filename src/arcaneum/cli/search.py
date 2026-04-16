@@ -20,36 +20,10 @@ from ..search import (
 from ..paths import get_models_dir
 from .errors import InvalidArgumentError, ResourceNotFoundError
 from .interaction_logger import interaction_logger
-from .utils import create_qdrant_client
+from .utils import create_qdrant_client, resolve_corpora
 
 console = Console()
 logger = logging.getLogger(__name__)
-
-
-def resolve_corpora(corpora: tuple, legacy_option: str, option_name: str) -> List[str]:
-    """Resolve corpus targets with backwards compatibility.
-
-    Args:
-        corpora: Tuple of corpus names from --corpus option
-        legacy_option: Value from legacy --collection or --index option
-        option_name: Name of legacy option for error messages ('collection' or 'index')
-
-    Returns:
-        List of corpus names to search
-
-    Raises:
-        click.UsageError: If both options specified or neither specified
-    """
-    if corpora and legacy_option:
-        raise click.UsageError(f"Cannot use both --corpus and --{option_name}")
-
-    if legacy_option:
-        return [legacy_option]  # Silently accept legacy option
-
-    if not corpora:
-        raise click.UsageError("Missing required option: --corpus")
-
-    return list(corpora)
 
 
 def search_command(

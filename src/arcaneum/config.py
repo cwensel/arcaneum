@@ -116,11 +116,7 @@ def _build_default_models() -> Dict[str, ModelConfig]:
         # Calculate overlap (15% of chunk_size, rounded to nearest multiple of 23 for consistency)
         chunk_overlap = max(int(chunk_size * 0.15 / 23) * 23, 1)
 
-        # Determine char_to_token_ratio by backend
-        if backend == "sentence-transformers":
-            char_to_token_ratio = 3.3 if dimensions <= 768 else 3.3
-        else:
-            char_to_token_ratio = 3.3  # FastEmbed models
+        char_to_token_ratio = 3.3
 
         defaults[model_id] = ModelConfig(
             name=config["name"],

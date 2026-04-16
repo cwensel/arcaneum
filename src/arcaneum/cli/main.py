@@ -25,6 +25,7 @@ if sys.version_info < MIN_PYTHON:
 # (e.g. as a library) does not globally monkey-patch requests/httpx/ssl for the
 # whole process. The CLI entry point invokes configure_ssl_from_env() below.
 from arcaneum.ssl_config import configure_ssl_from_env
+from arcaneum.cli.utils import validate_path_or_from_file
 
 
 @click.group()
@@ -262,12 +263,7 @@ def index():
 def index_pdf(path, from_file, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, no_gpu, offline, randomize, verify, no_streaming, verbose, debug, output_json):
     """Index PDF files"""
     # Validate that exactly one of path or from_file is provided
-    if not path and not from_file:
-        click.echo("Error: Either PATH or --from-file must be provided", err=True)
-        raise click.Abort()
-    if path and from_file:
-        click.echo("Error: Cannot use both PATH and --from-file", err=True)
-        raise click.Abort()
+    validate_path_or_from_file(path, from_file)
 
     from arcaneum.cli.index_pdfs import index_pdfs_command
     streaming = not no_streaming  # Default is streaming=True (--no-streaming disables it)
@@ -296,12 +292,7 @@ def index_pdf(path, from_file, collection, model, embedding_batch_size, no_ocr, 
 def index_code(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, depth, process_priority, not_nice, force, no_gpu, verify, no_streaming, verbose, debug, profile, output_json):
     """Index source code"""
     # Validate that exactly one of path or from_file is provided
-    if not path and not from_file:
-        click.echo("Error: Either PATH or --from-file must be provided", err=True)
-        raise click.Abort()
-    if path and from_file:
-        click.echo("Error: Cannot use both PATH and --from-file", err=True)
-        raise click.Abort()
+    validate_path_or_from_file(path, from_file)
 
     from arcaneum.cli.index_source import index_source_command
     streaming = not no_streaming  # Default is streaming=True (--no-streaming disables it)
@@ -333,12 +324,7 @@ def index_code(path, from_file, collection, model, embedding_batch_size, chunk_s
 def index_markdown(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, no_gpu, offline, randomize, verify, no_streaming, verbose, debug, output_json):
     """Index markdown files"""
     # Validate that exactly one of path or from_file is provided
-    if not path and not from_file:
-        click.echo("Error: Either PATH or --from-file must be provided", err=True)
-        raise click.Abort()
-    if path and from_file:
-        click.echo("Error: Cannot use both PATH and --from-file", err=True)
-        raise click.Abort()
+    validate_path_or_from_file(path, from_file)
 
     from arcaneum.cli.index_markdown import index_markdown_command
     streaming = not no_streaming  # Default is streaming=True (--no-streaming disables it)
@@ -383,12 +369,7 @@ def index_text_code(path, from_file, index_name, recursive, depth, batch_size, w
     """
     from arcaneum.cli.index_text import index_text_code_command
     # Validate that exactly one of path or from_file is provided
-    if not path and not from_file:
-        click.echo("Error: Either PATH or --from-file must be provided", err=True)
-        raise click.Abort()
-    if path and from_file:
-        click.echo("Error: Cannot use both PATH and --from-file", err=True)
-        raise click.Abort()
+    validate_path_or_from_file(path, from_file)
 
     git_aware = not no_git
     index_text_code_command(path, from_file, index_name, recursive, batch_size, workers, force, verbose, output_json, depth, git_aware)
@@ -415,12 +396,7 @@ def index_text_markdown(path, from_file, index_name, recursive, batch_size, forc
     """
     from arcaneum.cli.index_text import index_text_markdown_command
     # Validate that exactly one of path or from_file is provided
-    if not path and not from_file:
-        click.echo("Error: Either PATH or --from-file must be provided", err=True)
-        raise click.Abort()
-    if path and from_file:
-        click.echo("Error: Cannot use both PATH and --from-file", err=True)
-        raise click.Abort()
+    validate_path_or_from_file(path, from_file)
 
     index_text_markdown_command(path, from_file, index_name, recursive, batch_size, force, verbose, output_json)
 
@@ -451,12 +427,7 @@ def index_text_pdf(path, from_file, index_name, recursive, no_ocr, ocr_language,
         arc index text pdf ./docs --index docs --no-ocr --force
     """
     # Validate that exactly one of path or from_file is provided
-    if not path and not from_file:
-        click.echo("Error: Either PATH or --from-file must be provided", err=True)
-        raise click.Abort()
-    if path and from_file:
-        click.echo("Error: Cannot use both PATH and --from-file", err=True)
-        raise click.Abort()
+    validate_path_or_from_file(path, from_file)
 
     from arcaneum.cli.index_text import index_text_pdf_command
     ocr_enabled = not no_ocr

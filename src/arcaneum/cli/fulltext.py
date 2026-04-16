@@ -15,36 +15,26 @@ from ..fulltext.indexes import get_index_settings, get_available_index_types
 from .output import print_json, print_error, print_info, print_success
 from .interaction_logger import interaction_logger
 from .errors import InvalidArgumentError, ResourceNotFoundError
-from .utils import create_meili_client
+from .utils import create_meili_client, resolve_corpora
 
 console = Console()
 logger = logging.getLogger(__name__)
 
 
-def resolve_corpora(corpora: tuple, legacy_option: str, option_name: str) -> List[str]:
-    """Resolve corpus targets with backwards compatibility.
+def _require_meili() -> FullTextClient:
+    """Create a MeiliSearch client and verify the server is reachable.
 
-    Args:
-        corpora: Tuple of corpus names from --corpus option
-        legacy_option: Value from legacy --collection or --index option
-        option_name: Name of legacy option for error messages ('collection' or 'index')
-
-    Returns:
-        List of corpus names to search
-
-    Raises:
-        click.UsageError: If both options specified or neither specified
+    Raises ResourceNotFoundError with a helpful message if the server is not
+    available. Keeps create_meili_client() a pure factory so tests can mock the
+    health-check behavior by patching this function.
     """
-    if corpora and legacy_option:
-        raise click.UsageError(f"Cannot use both --corpus and --{option_name}")
-
-    if legacy_option:
-        return [legacy_option]  # Silently accept legacy option
-
-    if not corpora:
-        raise click.UsageError("Missing required option: --corpus")
-
-    return list(corpora)
+    client = create_meili_client()
+    if not client.health_check():
+        raise ResourceNotFoundError(
+            "MeiliSearch server not available. "
+            "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
+        )
+    return client
 
 
 def format_location(hit: dict) -> str:
@@ -118,14 +108,7 @@ def search_text_command(
         logging.basicConfig(level=logging.WARNING, format='[%(levelname)s] %(message)s')
 
     try:
-        client = create_meili_client()
-
-        # Verify server is available
-        if not client.health_check():
-            raise ResourceNotFoundError(
-                "MeiliSearch server not available. "
-                "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
-            )
+        client = _require_meili()
 
         corpora_str = ", ".join(corpora)
         if verbose:
@@ -371,14 +354,7 @@ def fulltext():
 def create_index(name, index_type, output_json):
     """Create a new MeiliSearch index."""
     try:
-        client = create_meili_client()
-
-        # Verify server is available
-        if not client.health_check():
-            raise ResourceNotFoundError(
-                "MeiliSearch server not available. "
-                "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
-            )
+        client = _require_meili()
 
         # Check if index already exists
         if client.index_exists(name):
@@ -416,14 +392,7 @@ def create_index(name, index_type, output_json):
 def list_indexes(output_json):
     """List all MeiliSearch indexes."""
     try:
-        client = create_meili_client()
-
-        # Verify server is available
-        if not client.health_check():
-            raise ResourceNotFoundError(
-                "MeiliSearch server not available. "
-                "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
-            )
+        client = _require_meili()
 
         indexes = client.list_indexes()
 
@@ -483,14 +452,7 @@ def list_indexes(output_json):
 def index_info(name, output_json):
     """Show detailed information about an index."""
     try:
-        client = create_meili_client()
-
-        # Verify server is available
-        if not client.health_check():
-            raise ResourceNotFoundError(
-                "MeiliSearch server not available. "
-                "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
-            )
+        client = _require_meili()
 
         # Check if index exists
         if not client.index_exists(name):
@@ -559,14 +521,7 @@ def index_info(name, output_json):
 def delete_index(name, confirm, output_json):
     """Delete a MeiliSearch index."""
     try:
-        client = create_meili_client()
-
-        # Verify server is available
-        if not client.health_check():
-            raise ResourceNotFoundError(
-                "MeiliSearch server not available. "
-                "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
-            )
+        client = _require_meili()
 
         # Check if index exists
         if not client.index_exists(name):
@@ -598,14 +553,7 @@ def delete_index(name, confirm, output_json):
 def update_settings(name, index_type, output_json):
     """Update index settings from a preset type."""
     try:
-        client = create_meili_client()
-
-        # Verify server is available
-        if not client.health_check():
-            raise ResourceNotFoundError(
-                "MeiliSearch server not available. "
-                "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
-            )
+        client = _require_meili()
 
         # Check if index exists
         if not client.index_exists(name):
@@ -647,14 +595,7 @@ def verify_index(name, output_json):
     interaction_logger.start("indexes", "verify", index=name)
 
     try:
-        client = create_meili_client()
-
-        # Verify server is available
-        if not client.health_check():
-            raise ResourceNotFoundError(
-                "MeiliSearch server not available. "
-                "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
-            )
+        client = _require_meili()
 
         # Check if index exists
         if not client.index_exists(name):
@@ -791,14 +732,7 @@ def list_items(name, limit, offset, output_json):
     interaction_logger.start("indexes", "items", index=name, limit=limit, offset=offset)
 
     try:
-        client = create_meili_client()
-
-        # Verify server is available
-        if not client.health_check():
-            raise ResourceNotFoundError(
-                "MeiliSearch server not available. "
-                "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
-            )
+        client = _require_meili()
 
         # Check if index exists
         if not client.index_exists(name):
@@ -920,14 +854,7 @@ def export_index(name, output, output_json):
     interaction_logger.start("indexes", "export", index=name, output=output)
 
     try:
-        client = create_meili_client()
-
-        # Verify server is available
-        if not client.health_check():
-            raise ResourceNotFoundError(
-                "MeiliSearch server not available. "
-                "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
-            )
+        client = _require_meili()
 
         # Check if index exists
         if not client.index_exists(name):
@@ -1021,14 +948,7 @@ def list_projects(name, output_json):
     interaction_logger.start("indexes", "list-projects", index=name)
 
     try:
-        client = create_meili_client()
-
-        # Verify server is available
-        if not client.health_check():
-            raise ResourceNotFoundError(
-                "MeiliSearch server not available. "
-                "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
-            )
+        client = _require_meili()
 
         # Check if index exists
         if not client.index_exists(name):
@@ -1097,14 +1017,7 @@ def delete_project(identifier, index_name, confirm, output_json):
     interaction_logger.start("indexes", "delete-project", index=index_name, identifier=identifier)
 
     try:
-        client = create_meili_client()
-
-        # Verify server is available
-        if not client.health_check():
-            raise ResourceNotFoundError(
-                "MeiliSearch server not available. "
-                "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
-            )
+        client = _require_meili()
 
         # Check if index exists
         if not client.index_exists(index_name):
@@ -1182,14 +1095,7 @@ def import_index(file, target_name, output_json):
     interaction_logger.start("indexes", "import", source_file=file, target_name=target_name)
 
     try:
-        client = create_meili_client()
-
-        # Verify server is available
-        if not client.health_check():
-            raise ResourceNotFoundError(
-                "MeiliSearch server not available. "
-                "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
-            )
+        client = _require_meili()
 
         input_path = Path(file)
         metadata = None

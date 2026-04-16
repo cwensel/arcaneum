@@ -19,7 +19,7 @@ from arcaneum.indexing.collection_metadata import (
 from arcaneum.cli.errors import InvalidArgumentError, ResourceNotFoundError
 from arcaneum.cli.interaction_logger import interaction_logger
 from arcaneum.cli.output import print_json, print_error, print_success
-from arcaneum.cli.utils import create_qdrant_client, build_vectors_config, get_model_dimensions
+from arcaneum.cli.utils import create_qdrant_client, build_vectors_config, get_model_dimensions, extract_vectors_info
 
 console = Console()
 
@@ -153,19 +153,12 @@ def list_collections_command(verbose: bool, output_json: bool):
             for col in collections.collections:
                 col_info = client.get_collection(col.name)
                 metadata = get_collection_metadata(client, col.name)
-                vectors = {}
-                if hasattr(col_info.config.params, 'vectors') and isinstance(col_info.config.params.vectors, dict):
-                    for vector_name, vector_params in col_info.config.params.vectors.items():
-                        vectors[vector_name] = {
-                            "size": vector_params.size,
-                            "distance": str(vector_params.distance),
-                        }
                 result.append({
                     "name": col.name,
                     "model": metadata.get("model"),
                     "type": metadata.get("collection_type"),
                     "points_count": col_info.points_count,
-                    "vectors": vectors,
+                    "vectors": extract_vectors_info(col_info),
                 })
             print_json("success", f"Found {len(result)} collections", {"collections": result})
         else:
@@ -266,20 +259,13 @@ def info_collection_command(name: str, output_json: bool):
         model = metadata.get("model")
 
         if output_json:
-            vectors = {}
-            if hasattr(info.config.params, 'vectors') and isinstance(info.config.params.vectors, dict):
-                for vector_name, vector_params in info.config.params.vectors.items():
-                    vectors[vector_name] = {
-                        "size": vector_params.size,
-                        "distance": str(vector_params.distance),
-                    }
             data = {
                 "name": name,
                 "type": collection_type,
                 "model": model,
                 "points_count": info.points_count,
                 "status": str(info.status),
-                "vectors": vectors,
+                "vectors": extract_vectors_info(info),
                 "hnsw_config": {
                     "m": info.config.hnsw_config.m,
                     "ef_construct": info.config.hnsw_config.ef_construct,

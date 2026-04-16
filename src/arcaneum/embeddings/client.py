@@ -180,6 +180,14 @@ EMBEDDING_MODELS = {
 }
 
 
+def _unknown_model_error(model_name: str) -> ValueError:
+    """Build the canonical ValueError for an unknown embedding model."""
+    return ValueError(
+        f"Unknown model: {model_name}. "
+        f"Available models: {list(EMBEDDING_MODELS.keys())}"
+    )
+
+
 class EmbeddingClient:
     """Manages embedding model instances with caching and GPU acceleration (RDR-013 Phase 2)."""
 
@@ -514,10 +522,7 @@ class EmbeddingClient:
             ValueError: If model_name is not recognized
         """
         if model_name not in EMBEDDING_MODELS:
-            raise ValueError(
-                f"Unknown model: {model_name}. "
-                f"Available models: {list(EMBEDDING_MODELS.keys())}"
-            )
+            raise _unknown_model_error(model_name)
 
         # When GPU is poisoned, return CPU fallback for sentence-transformers models
         # instead of loading a new GPU model (RDR-020).
@@ -1670,10 +1675,7 @@ class EmbeddingClient:
             ValueError: If model_name is not recognized
         """
         if model_name not in EMBEDDING_MODELS:
-            raise ValueError(
-                f"Unknown model: {model_name}. "
-                f"Available models: {list(EMBEDDING_MODELS.keys())}"
-            )
+            raise _unknown_model_error(model_name)
         return EMBEDDING_MODELS[model_name]["dimensions"]
 
     def is_model_cached(self, model_name: str) -> bool:
@@ -1689,10 +1691,7 @@ class EmbeddingClient:
             ValueError: If model_name is not recognized
         """
         if model_name not in EMBEDDING_MODELS:
-            raise ValueError(
-                f"Unknown model: {model_name}. "
-                f"Available models: {list(EMBEDDING_MODELS.keys())}"
-            )
+            raise _unknown_model_error(model_name)
 
         config = EMBEDDING_MODELS[model_name]
         backend = config.get("backend", "fastembed")

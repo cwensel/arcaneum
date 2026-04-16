@@ -5,13 +5,70 @@ import sys
 import logging
 from typing import Optional, List, Set
 from pathlib import Path
+import click
 from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance
 
 from ..config import load_config, ArcaneumConfig, QdrantConfig
 from ..embeddings.client import EMBEDDING_MODELS
+from .errors import ResourceNotFoundError
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_corpora(corpora: tuple, legacy_option: str, option_name: str) -> List[str]:
+    """Resolve corpus targets with backwards compatibility.
+
+    Args:
+        corpora: Tuple of corpus names from --corpus option
+        legacy_option: Value from legacy --collection or --index option
+        option_name: Name of legacy option for error messages ('collection' or 'index')
+
+    Returns:
+        List of corpus names to search
+
+    Raises:
+        click.UsageError: If both options specified or neither specified
+    """
+    if corpora and legacy_option:
+        raise click.UsageError(f"Cannot use both --corpus and --{option_name}")
+
+    if legacy_option:
+        return [legacy_option]
+
+    if not corpora:
+        raise click.UsageError("Missing required option: --corpus")
+
+    return list(corpora)
+
+
+def validate_path_or_from_file(path: Optional[str], from_file: Optional[str]) -> None:
+    """Ensure exactly one of PATH or --from-file is provided.
+
+    Raises:
+        click.Abort: If neither or both are provided.
+    """
+    if not path and not from_file:
+        click.echo("Error: Either PATH or --from-file must be provided", err=True)
+        raise click.Abort()
+    if path and from_file:
+        click.echo("Error: Cannot use both PATH and --from-file", err=True)
+        raise click.Abort()
+
+
+def extract_vectors_info(collection_info) -> dict:
+    """Extract named-vector config from a Qdrant CollectionInfo.
+
+    Returns a mapping of {vector_name: {"size": int, "distance": str}} for
+    named-vector collections, or an empty dict if no named vectors are defined.
+    """
+    params = collection_info.config.params
+    if hasattr(params, 'vectors') and isinstance(params.vectors, dict):
+        return {
+            name: {"size": p.size, "distance": str(p.distance)}
+            for name, p in params.vectors.items()
+        }
+    return {}
 
 
 def read_file_list(
@@ -258,6 +315,14 @@ def create_meili_client(
     return FullTextClient(final_url, final_api_key)
 
 
+def _unknown_model_error(model_name: str) -> ValueError:
+    """Build the canonical ValueError for an unknown embedding model."""
+    return ValueError(
+        f"Unknown model: {model_name}. "
+        f"Available models: {list(EMBEDDING_MODELS.keys())}"
+    )
+
+
 def get_model_dimensions(model_name: str) -> int:
     """Get vector dimensions for an embedding model.
 
@@ -271,10 +336,7 @@ def get_model_dimensions(model_name: str) -> int:
         ValueError: If model is unknown
     """
     if model_name not in EMBEDDING_MODELS:
-        raise ValueError(
-            f"Unknown model: {model_name}. "
-            f"Available models: {list(EMBEDDING_MODELS.keys())}"
-        )
+        raise _unknown_model_error(model_name)
     return EMBEDDING_MODELS[model_name]["dimensions"]
 
 
@@ -289,10 +351,7 @@ def validate_models(model_list: List[str]) -> None:
     """
     for model in model_list:
         if model not in EMBEDDING_MODELS:
-            raise ValueError(
-                f"Unknown model: {model}. "
-                f"Available models: {list(EMBEDDING_MODELS.keys())}"
-            )
+            raise _unknown_model_error(model)
 
 
 def build_vectors_config(model_list: List[str]) -> dict:

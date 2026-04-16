@@ -10,7 +10,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance
 
 from ..config import load_config, ArcaneumConfig, QdrantConfig
-from ..embeddings.client import EMBEDDING_MODELS
+from ..embeddings.client import EMBEDDING_MODELS, _unknown_model_error
 from .errors import ResourceNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -313,14 +313,6 @@ def create_meili_client(
     logger.debug(f"Creating MeiliSearch client: url={final_url}")
 
     return FullTextClient(final_url, final_api_key)
-
-
-def _unknown_model_error(model_name: str) -> ValueError:
-    """Build the canonical ValueError for an unknown embedding model."""
-    return ValueError(
-        f"Unknown model: {model_name}. "
-        f"Available models: {list(EMBEDDING_MODELS.keys())}"
-    )
 
 
 def get_model_dimensions(model_name: str) -> int:

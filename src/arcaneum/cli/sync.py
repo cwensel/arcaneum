@@ -325,6 +325,12 @@ def _is_git_repo(directory: Path) -> bool:
 def _discover_git_tracked_files(directory: Path, extensions: set) -> List[Path]:
     """Discover files using git ls-files (respects .gitignore).
 
+    Opens the enclosing repo via ``search_parent_directories=True`` and runs
+    ``git ls-files`` against the repo root, then filters to files under
+    ``directory``. In a large monorepo this initial listing scans the whole
+    repo — callers targeting a single subdirectory of a huge repo should be
+    aware the listing cost is proportional to the repo, not the subdirectory.
+
     Args:
         directory: Directory to scan (must be in a git repo)
         extensions: Set of file extensions to filter
@@ -439,7 +445,13 @@ def _filter_excluded_files(files: List[Path], skip_dir_prefixes: Tuple[str, ...]
             excluded_count += 1
             continue
 
-        # Content-based minification detection for JS/CSS files
+        # Content-based minification detection for JS/CSS files.
+        # This reads up to _MINIFIED_CHECK_BYTES (64KB) from every .js/.css
+        # file during discovery. For code corpora with thousands of JS/CSS
+        # files this adds noticeable I/O before indexing starts; the check is
+        # still worth it because minified files would otherwise waste far more
+        # GPU time downstream. If this ever becomes a bottleneck, gate it
+        # behind an opt-in flag rather than removing it.
         if f.suffix.lower() in _MINIFIED_CHECK_EXTENSIONS:
             try:
                 with open(f, 'r', encoding='utf-8', errors='replace') as fh:

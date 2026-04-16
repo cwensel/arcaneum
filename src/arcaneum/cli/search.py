@@ -133,6 +133,16 @@ def search_command(
             all_results = []
             missing_corpora = []
 
+            # Per-corpus fetch size: when searching multiple corpora, one corpus's
+            # high-scoring results can be pushed out of the merged page by another
+            # corpus whose lower-scoring hits filled its slice. Over-fetch from each
+            # corpus so the post-merge top-N is stable even when score distributions
+            # differ. Single-corpus search doesn't need the extra headroom.
+            if len(corpora) > 1:
+                per_corpus_limit = (limit + offset) * 2
+            else:
+                per_corpus_limit = limit + offset
+
             for corpus_name in corpora:
                 try:
                     corpus_results = search_collection(
@@ -141,7 +151,7 @@ def search_command(
                         query=query,
                         collection_name=corpus_name,
                         vector_name=vector_name,
-                        limit=limit + offset,  # Get extra for merging
+                        limit=per_corpus_limit,
                         offset=0,  # Apply offset after merge
                         query_filter=query_filter,
                         score_threshold=score_threshold

@@ -324,6 +324,15 @@ class EmbeddingClient:
         thread is still running model.encode() on Metal, it will SIGSEGV trying to
         use the destroyed allocator. This handler waits for daemon threads to finish
         before Python's cleanup runs.
+
+        Tradeoff: the daemon thread holds a closure reference to the GPU model
+        (~3 GB), so GPU memory is not reclaimed until the thread completes. If the
+        Metal command buffer is permanently stuck, the 300s join timeout here will
+        still expire and we proceed to interpreter shutdown — which may then
+        SIGSEGV during allocator teardown. A stuck GPU thread is already a
+        terminal state for this process; the warning logged below is the signal
+        that shutdown may be noisy. We do not force-terminate because a clean
+        exit is preferable whenever the GPU does in fact drain within the window.
         """
         if not self._pending_gpu_cleanup:
             return

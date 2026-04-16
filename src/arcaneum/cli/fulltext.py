@@ -152,6 +152,16 @@ def search_text_command(
             total_processing_time = 0
             total_estimated_hits = 0
 
+            # Per-corpus fetch size: when searching multiple corpora, one
+            # corpus's high-ranking hits can be pushed out of the merged page
+            # by the interleaving step below. Over-fetch from each corpus so
+            # the post-merge top-N is stable even when corpora have different
+            # relevance distributions (mirrors semantic search behaviour).
+            if len(corpora) > 1:
+                per_corpus_limit = (limit + offset) * 2
+            else:
+                per_corpus_limit = limit + offset
+
             for corpus_name in corpora:
                 # Check if index exists
                 if not client.index_exists(corpus_name):
@@ -169,7 +179,7 @@ def search_text_command(
                     corpus_name,
                     query,
                     filter=filter_arg,
-                    limit=limit + offset,  # Get extra for merging
+                    limit=per_corpus_limit,
                     offset=0,  # Apply offset after merge
                     attributes_to_highlight=['content']
                 )
@@ -185,10 +195,13 @@ def search_text_command(
             if len(missing_corpora) == len(corpora):
                 raise ResourceNotFoundError(f"No matching corpora found: {', '.join(corpora)}")
 
-            # MeiliSearch doesn't return scores in the same way as Qdrant,
-            # but results are already ranked by relevance within each index.
-            # For multi-index search, interleave results (simple round-robin)
-            # then apply pagination.
+            # MeiliSearch doesn't return a normalized score comparable across
+            # indexes, but results are already ranked by relevance within each
+            # index. Multi-corpus merge uses positional round-robin rather
+            # than score-based ranking — this preserves within-corpus ordering
+            # but does not reflect true cross-corpus relevance. If future
+            # versions of MeiliSearch expose a normalized _rankingScore we
+            # should switch to score-based merging to match semantic search.
             if len(corpora) > 1 and len(corpora) != len(missing_corpora):
                 # Group hits by corpus for interleaving
                 hits_by_corpus = {}

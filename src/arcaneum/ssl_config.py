@@ -11,9 +11,16 @@ Usage:
     export ARC_SSL_VERIFY=true
     arc search semantic "query" --collection MyCollection
 
-Security Note:
-    SSL verification is disabled by default to support corporate environments.
-    Set ARC_SSL_VERIFY=true if you need strict certificate validation.
+Security Warning:
+    When SSL verification is disabled, this module globally monkey-patches
+    `requests.Session.request`, `httpx.Client.__init__`, and
+    `httpx.AsyncClient.__init__` so that ALL HTTP connections made by the
+    process skip certificate verification — including third-party libraries
+    unrelated to Qdrant/MeiliSearch. This creates a broad MITM attack surface
+    and should only be used on trusted networks (corporate VPNs, controlled
+    dev environments). To avoid this, callers should not import this module
+    from library code; disable_ssl_verification() should be invoked only from
+    the CLI entry point. Set ARC_SSL_VERIFY=true to keep strict validation.
 """
 
 import os

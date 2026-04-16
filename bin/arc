@@ -18,10 +18,10 @@ See docs/testing/offline-mode.md for details.
 import sys
 import os
 
-# Add src to path for development mode (bin/ is one level deep)
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src'))
-
-from arcaneum.cli.main import main
-
 if __name__ == '__main__':
+    # Only mutate sys.path when running as a script, so that importing this
+    # file as a module does not shadow an installed `arcaneum` package.
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src'))
+
+    from arcaneum.cli.main import main
     sys.exit(main())

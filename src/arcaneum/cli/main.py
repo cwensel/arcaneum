@@ -21,11 +21,10 @@ if sys.version_info < MIN_PYTHON:
     print(f"[ERROR] Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+ required")
     sys.exit(1)
 
-# SSL configuration (must happen BEFORE any embedding library imports)
-# Check for ARC_SSL_VERIFY=false to disable SSL certificate verification
-# This is needed for corporate proxies with self-signed certificates
+# SSL configuration is deferred to main() so that merely importing this module
+# (e.g. as a library) does not globally monkey-patch requests/httpx/ssl for the
+# whole process. The CLI entry point invokes configure_ssl_from_env() below.
 from arcaneum.ssl_config import configure_ssl_from_env
-configure_ssl_from_env()
 
 
 @click.group()
@@ -815,6 +814,10 @@ cli.add_command(indexes_group, name='indexes')
 
 def main():
     """Main CLI entry point with structured error handling (RDR-006)."""
+    # Configure SSL here (not at import time) so embedding libraries imported
+    # later in the CLI flow pick up the settings, while library consumers that
+    # import arcaneum.cli.main without invoking main() are not affected.
+    configure_ssl_from_env()
     try:
         cli()
         return EXIT_SUCCESS

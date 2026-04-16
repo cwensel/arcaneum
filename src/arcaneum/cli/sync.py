@@ -964,6 +964,10 @@ def sync_directory_command(
         if not output_json:
             if repair and not all_input_paths:
                 print_info(f"Repairing incomplete files in corpus '{corpus}'")
+            elif not all_input_paths:
+                # No paths and not repair mode — nothing to print here; upstream
+                # validation handles the empty-input error case.
+                pass
             else:
                 source_info = " (from file)" if from_file else ""
                 if len(single_files) == 1 and not dir_paths:
@@ -1622,8 +1626,14 @@ def sync_directory_command(
                         if corpus_type == 'pdf':
                             # chunk_pdf_file handles OCR internally via needs_ocr() check:
                             # extracts without OCR first, then re-extracts with OCR only
-                            # if garbled text (U+FFFD, encoding garbage) is detected
-                            chunks = chunk_pdf_file(file_path, model_config)
+                            # if garbled text (U+FFFD, encoding garbage) is detected.
+                            # In repair mode, force OCR for files previously flagged as garbled
+                            # so borderline cases that slip past needs_ocr() still get re-extracted.
+                            force_ocr = bool(
+                                repair
+                                and old_quality_scores.get(str(file_path.absolute())) is not None
+                            )
+                            chunks = chunk_pdf_file(file_path, model_config, use_ocr=force_ocr)
                         elif corpus_type == 'markdown':
                             chunks = chunk_markdown_file(
                                 file_path,

@@ -45,3 +45,4 @@ arcaneum.yaml
 _*
 !__init__.py
 .beads
+.roborev.toml

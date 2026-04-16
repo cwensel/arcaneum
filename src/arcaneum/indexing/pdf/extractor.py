@@ -5,21 +5,17 @@ import pymupdf4llm
 import pdfplumber
 from pathlib import Path
 from typing import Tuple, Optional, Dict, Any
+import contextlib
+import importlib.util
+import io
 import logging
 import warnings
-import sys
-import os
 import re
 
 # pymupdf-layout is now auto-initialized by pymupdf4llm >= 1.27.2
 # The Layout class was renamed to DocumentLayoutAnalyzer in 1.27.x
 # and pymupdf4llm handles layout internally, so we no longer need direct access
-HAS_PYMUPDF_LAYOUT = False
-try:
-    import pymupdf.layout
-    HAS_PYMUPDF_LAYOUT = True
-except ImportError:
-    pass
+HAS_PYMUPDF_LAYOUT = importlib.util.find_spec("pymupdf.layout") is not None
 
 # Suppress PyMuPDF warnings about invalid PDF values
 warnings.filterwarnings('ignore', message='.*Cannot set.*is an invalid.*')
@@ -295,9 +291,7 @@ class PDFExtractor:
                     # Extract single page as markdown
                     # Suppress pymupdf4llm's noisy stdout output
                     # ("=== Document parser messages ===", "Using Tesseract...", "OCR on page...")
-                    old_stdout = sys.stdout
-                    sys.stdout = open(os.devnull, 'w')
-                    try:
+                    with contextlib.redirect_stdout(io.StringIO()):
                         page_md = pymupdf4llm.to_markdown(
                             str(pdf_path),
                             pages=[page_num],
@@ -307,9 +301,6 @@ class PDFExtractor:
                             table_strategy="lines_strict",
                             use_ocr=self.use_ocr,
                         )
-                    finally:
-                        sys.stdout.close()
-                        sys.stdout = old_stdout
 
                     # Normalize the page text
                     page_md = self._normalize_whitespace_edge_cases(page_md)

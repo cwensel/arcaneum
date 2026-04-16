@@ -53,7 +53,7 @@ class DualIndexer:
             meili_client: Initialized MeiliSearch client
             collection_name: Qdrant collection name
             index_name: MeiliSearch index name
-            batch_size: Batch size for Qdrant and MeiliSearch uploads (default 100)
+            batch_size: Batch size for Qdrant and MeiliSearch uploads (default 300)
         """
         self.qdrant = qdrant_client
         self.meili = meili_client

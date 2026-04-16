@@ -119,7 +119,7 @@ class CollectionVerifier:
         project_filter: Optional[str] = None,
         verbose: bool = False,
         check_quality: bool = False,
-        quality_threshold: float = 0.3,
+        quality_threshold: float = 0.9,
     ) -> CollectionVerificationResult:
         """Verify a collection's integrity.
 
@@ -135,7 +135,7 @@ class CollectionVerifier:
             project_filter: Optional filter for specific project identifier (code only)
             verbose: Log verbose output
             check_quality: Score text quality and flag garbled files
-            quality_threshold: Minimum quality score (default 0.3)
+            quality_threshold: Minimum quality score (default 0.9, matches CLI/docs)
 
         Returns:
             CollectionVerificationResult with detailed verification data
@@ -315,7 +315,7 @@ class CollectionVerifier:
         total_points: int,
         verbose: bool = False,
         check_quality: bool = False,
-        quality_threshold: float = 0.3,
+        quality_threshold: float = 0.9,
     ) -> CollectionVerificationResult:
         """Verify a PDF or markdown collection.
 

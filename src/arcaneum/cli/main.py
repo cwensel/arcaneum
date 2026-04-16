@@ -673,8 +673,23 @@ def corpus_repair(corpus, quality_threshold, dry_run, no_gpu, max_embedding_batc
         arc corpus repair PapersFast --verbose
     """
     from arcaneum.cli.sync import sync_directory_command
+    from arcaneum.cli.utils import create_qdrant_client
+    from arcaneum.indexing.collection_metadata import get_collection_metadata
+
+    # Read configured models from corpus metadata instead of hardcoding.
+    # sync_directory_command also reads metadata and overrides `models`, but
+    # passing the right value up front avoids a misleading CLI log line and
+    # keeps behavior correct if metadata is ever missing for a repairable corpus.
+    try:
+        qdrant = create_qdrant_client()
+        corpus_metadata = get_collection_metadata(qdrant, corpus)
+        configured_models = corpus_metadata.get('model') if corpus_metadata else None
+    except Exception:
+        configured_models = None
+
     sync_directory_command(
-        corpus, paths=(), from_file=None, models='stella,jina',
+        corpus, paths=(), from_file=None,
+        models=configured_models or 'stella,jina',
         file_types=None, force=False, verify=False,
         text_workers=None, max_embedding_batch=max_embedding_batch,
         no_gpu=no_gpu, cpu_workers=None,

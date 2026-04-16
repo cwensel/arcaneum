@@ -243,7 +243,7 @@ class MetadataBasedSync:
             while True:
                 points, offset = self.qdrant.scroll(
                     collection_name=collection_name,
-                    limit=10000,
+                    limit=1000,
                     offset=offset,
                     with_payload=["file_path", "quick_hash", "file_quick_hashes", "file_paths"],
                     with_vectors=False
@@ -307,7 +307,7 @@ class MetadataBasedSync:
             while True:
                 points, offset = self.qdrant.scroll(
                     collection_name=collection_name,
-                    limit=10000,
+                    limit=1000,
                     offset=offset,
                     with_payload=["file_path"],
                     with_vectors=False
@@ -347,7 +347,7 @@ class MetadataBasedSync:
             while True:
                 points, offset = self.qdrant.scroll(
                     collection_name=collection_name,
-                    limit=10000,
+                    limit=1000,
                     offset=offset,
                     with_payload=["file_path"],
                     with_vectors=False

@@ -52,8 +52,8 @@ jobs:
 
           FORMULA="homebrew/Formula/arcaneum.rb"
 
-          sed -i "s|url \".*\"|url \"https://github.com/${{ github.repository }}/releases/download/${TAG}/arcaneum-${VERSION}.tar.gz\"|" "$FORMULA"
-          sed -i "s|sha256 \".*\"|sha256 \"${SHA256}\"|" "$FORMULA"
+          sed -i "s|^  url \".*\"$|  url \"https://github.com/${{ github.repository }}/releases/download/${TAG}/arcaneum-${VERSION}.tar.gz\"|" "$FORMULA"
+          sed -i "s|^  sha256 \".*\"$|  sha256 \"${SHA256}\"|" "$FORMULA"
 
           echo "Updated formula:"
           cat "$FORMULA"

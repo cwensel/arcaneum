@@ -143,10 +143,13 @@ def needs_ocr(text: str) -> bool:
         if printable_count / text_len < 0.1:
             return True
 
-    # Has some words but zero stop words in a large sample = likely garbled
-    if words and len(words) > 20:
+    # Very low stop word ratio in a large sample = likely garbled.
+    # Threshold raised (>100 words, ratio < 0.02) to avoid false positives on
+    # legitimate niche content that happens to lack short-list stop words —
+    # chemical compound tables, code identifiers, bibliography-only pages.
+    if words and len(words) > 100:
         stop_count = sum(1 for w in words if w in STOP_WORDS)
-        if stop_count == 0:
+        if stop_count / len(words) < 0.02:
             return True
 
     return False

@@ -10,7 +10,7 @@
       "name": "arc",
       "source": "./",
       "description": "Semantic (vector) and full-text (keyword) search across indexed corpora. Dual-indexes PDFs, markdown, and code into Qdrant + MeiliSearch.",
-      "version": "0.3.4",
+      "version": "0.4.0",
       "category": "search",
       "author": {
         "name": "Arcaneum Contributors",

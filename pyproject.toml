@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "arcaneum"
-version = "0.3.4"
+version = "0.4.0"
 description = "CLI tools for semantic and full-text search with Qdrant and MeiliSearch"
 readme = "README.md"
 requires-python = ">=3.12"

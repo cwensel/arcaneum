@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_call:
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   checks: write
@@ -12,9 +17,13 @@ permissions:
 
 jobs:
   unit-tests:
-    name: Unit Tests
+    name: Unit Tests (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
 
     services:
       meilisearch:
@@ -34,10 +43,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Cache ML models
@@ -46,9 +55,9 @@ jobs:
           path: |
             ~/.cache/arcaneum/models
             ~/.cache/fastembed
-          key: ml-models-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+          key: ml-models-${{ runner.os }}-py${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
           restore-keys: |
-            ml-models-${{ runner.os }}-
+            ml-models-${{ runner.os }}-py${{ matrix.python-version }}-
 
       - name: Install system dependencies
         run: |
@@ -74,28 +83,32 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: unit-test-results
+          name: unit-test-results-py${{ matrix.python-version }}
           path: test-results/unit.xml
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: unit-coverage
+          name: unit-coverage-py${{ matrix.python-version }}
           path: coverage/unit.xml
 
       - name: Report test summary
-        uses: dorny/test-reporter@v1
+        uses: dorny/test-reporter@3eeb9fc888e82e8be2fb356bbeec2750231672bc # v1
         if: always()
         with:
-          name: Unit Test Results
+          name: Unit Test Results (py${{ matrix.python-version }})
           path: test-results/unit.xml
           reporter: java-junit
 
   integration-tests:
-    name: Integration Tests
+    name: Integration Tests (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
 
     services:
       qdrant:
@@ -125,10 +138,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Install system dependencies
@@ -142,9 +155,9 @@ jobs:
           path: |
             ~/.cache/arcaneum/models
             ~/.cache/fastembed
-          key: ml-models-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+          key: ml-models-${{ runner.os }}-py${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
           restore-keys: |
-            ml-models-${{ runner.os }}-
+            ml-models-${{ runner.os }}-py${{ matrix.python-version }}-
 
       - name: Install package
         run: pip install -e ".[dev]"
@@ -166,28 +179,32 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: integration-test-results
+          name: integration-test-results-py${{ matrix.python-version }}
           path: test-results/integration.xml
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: integration-coverage
+          name: integration-coverage-py${{ matrix.python-version }}
           path: coverage/integration.xml
 
       - name: Report test summary
-        uses: dorny/test-reporter@v1
+        uses: dorny/test-reporter@3eeb9fc888e82e8be2fb356bbeec2750231672bc # v1
         if: always()
         with:
-          name: Integration Test Results
+          name: Integration Test Results (py${{ matrix.python-version }})
           path: test-results/integration.xml
           reporter: java-junit
 
   cli-tests:
-    name: CLI Tests
+    name: CLI Tests (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
 
     services:
       qdrant:
@@ -216,10 +233,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Install system dependencies
@@ -233,9 +250,9 @@ jobs:
           path: |
             ~/.cache/arcaneum/models
             ~/.cache/fastembed
-          key: ml-models-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+          key: ml-models-${{ runner.os }}-py${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
           restore-keys: |
-            ml-models-${{ runner.os }}-
+            ml-models-${{ runner.os }}-py${{ matrix.python-version }}-
 
       - name: Install package
         run: pip install -e ".[dev]"
@@ -256,20 +273,20 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: cli-test-results
+          name: cli-test-results-py${{ matrix.python-version }}
           path: test-results/cli.xml
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: cli-coverage
+          name: cli-coverage-py${{ matrix.python-version }}
           path: coverage/cli.xml
 
       - name: Report test summary
-        uses: dorny/test-reporter@v1
+        uses: dorny/test-reporter@3eeb9fc888e82e8be2fb356bbeec2750231672bc # v1
         if: always()
         with:
-          name: CLI Test Results
+          name: CLI Test Results (py${{ matrix.python-version }})
           path: test-results/cli.xml
           reporter: java-junit

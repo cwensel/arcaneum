@@ -7,10 +7,19 @@ on:
 
 permissions:
   contents: write
+  checks: write
 
 jobs:
+  tests:
+    name: Tests
+    uses: ./.github/workflows/test.yml
+    permissions:
+      contents: read
+      checks: write
+
   build:
     name: Build and Release
+    needs: tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -28,18 +37,46 @@ jobs:
       - name: Verify version matches tag
         run: |
           TAG_VERSION="${GITHUB_REF#refs/tags/v}"
-          PKG_VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "ERROR: Tag version ($TAG_VERSION) does not match pyproject.toml version ($PKG_VERSION)"
+          echo "Tag version: $TAG_VERSION"
+
+          fail=0
+          check() {
+            local label="$1" actual="$2"
+            if [ "$actual" != "$TAG_VERSION" ]; then
+              echo "ERROR: $label version ($actual) does not match tag ($TAG_VERSION)"
+              fail=1
+            else
+              echo "  ✓ $label: $actual"
+            fi
+          }
+
+          check "pyproject.toml" \
+            "$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
+          check "src/arcaneum/__init__.py" \
+            "$(python -c "import re; print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', open('src/arcaneum/__init__.py').read()).group(1))")"
+          check ".claude-plugin/plugin.json" \
+            "$(python -c "import json; print(json.load(open('.claude-plugin/plugin.json'))['version'])")"
+          check ".claude-plugin/marketplace.json" \
+            "$(python -c "import json; print(json.load(open('.claude-plugin/marketplace.json'))['version'])")"
+
+          # README install URLs should reference this tag
+          if ! grep -qF "/download/v${TAG_VERSION}/arcaneum-${TAG_VERSION}" README.md; then
+            echo "ERROR: README.md does not reference v${TAG_VERSION} download URLs"
+            fail=1
+          else
+            echo "  ✓ README.md references v${TAG_VERSION}"
+          fi
+
+          if [ "$fail" -ne 0 ]; then
             exit 1
           fi
-          echo "Version verified: $TAG_VERSION"
+          echo "All version references match tag: $TAG_VERSION"
 
       - name: Build package
         run: python -m build
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: |
             dist/*.whl

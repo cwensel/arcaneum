@@ -17,6 +17,9 @@ jobs:
     name: Update Homebrew Formula
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.release.draft == false && github.event.release.prerelease == false)
 
     steps:
       - uses: actions/checkout@v4
@@ -59,7 +62,7 @@ jobs:
           cat "$FORMULA"
 
       - name: Push to Homebrew tap repo
-        uses: cpina/github-action-push-to-another-repository@v1.7.2
+        uses: cpina/github-action-push-to-another-repository@07c4d7b3def0a8ebe788a8f2c843a4e1de4f6900 # v1.7.2
         env:
           API_TOKEN_GITHUB: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         with:

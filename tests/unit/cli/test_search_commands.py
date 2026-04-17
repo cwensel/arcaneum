@@ -286,10 +286,16 @@ class TestSearchSemantic:
         assert 'not found' in str(exc_info.value).lower()
 
     def test_interaction_logging(self, mock_qdrant_client, mock_embedder, sample_search_results):
-        """Test that interaction logging is called."""
+        """Test that interaction logging is called via the track() context manager."""
         from arcaneum.cli.search import search_command
 
         mock_logger = MagicMock()
+        # track() is a contextmanager — its __enter__ yields the mutable result
+        # dict that the command updates with result_count/extras.
+        track_ctx = MagicMock()
+        track_ctx.__enter__.return_value = {}
+        track_ctx.__exit__.return_value = False
+        mock_logger.track.return_value = track_ctx
 
         with patch('arcaneum.cli.search.create_qdrant_client', return_value=mock_qdrant_client):
             with patch('arcaneum.cli.search.SearchEmbedder', return_value=mock_embedder):
@@ -308,13 +314,15 @@ class TestSearchSemantic:
                                 verbose=False
                             )
 
-        # Verify logging was called
-        mock_logger.start.assert_called_once()
-        call_kwargs = mock_logger.start.call_args[1]
+        # Verify logging was called via track()
+        mock_logger.track.assert_called_once()
+        call_args = mock_logger.track.call_args
+        # First two positional args are (command, subcommand)
+        assert call_args[0][0] == 'search'
+        assert call_args[0][1] == 'semantic'
+        call_kwargs = call_args[1]
         assert call_kwargs['corpora'] == ['TestCollection']
         assert call_kwargs['query'] == 'test query'
-
-        mock_logger.finish.assert_called_once()
 
 
 class TestSearchNoResults:

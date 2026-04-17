@@ -20,6 +20,7 @@ from ..search import (
 from ..paths import get_models_dir
 from .errors import InvalidArgumentError, ResourceNotFoundError
 from .interaction_logger import interaction_logger
+from .search_merge import fetch_from_corpora, per_corpus_limit
 from .utils import create_qdrant_client, resolve_corpora
 
 console = Console()
@@ -91,8 +92,7 @@ def search_command(
 
         start_time = time.time()
 
-        # Start interaction logging
-        interaction_logger.start(
+        with interaction_logger.track(
             "search", "semantic",
             corpora=corpora,
             query=query,
@@ -100,55 +100,31 @@ def search_command(
             offset=offset,
             filters=filter_arg if filter_arg else None,
             score_threshold=score_threshold,
-        )
+        ) as ctx:
+            fetch_limit = per_corpus_limit(corpora, limit, offset)
 
-        try:
-            # Search each corpus and merge results
-            all_results = []
-            missing_corpora = []
+            def _is_missing(exc: Exception) -> bool:
+                msg = str(exc).lower()
+                return "not found" in msg or "doesn't exist" in msg
 
-            # Per-corpus fetch size: when searching multiple corpora, one corpus's
-            # high-scoring results can be pushed out of the merged page by another
-            # corpus whose lower-scoring hits filled its slice. Over-fetch from each
-            # corpus so the post-merge top-N is stable even when score distributions
-            # differ. Single-corpus search doesn't need the extra headroom.
-            if len(corpora) > 1:
-                per_corpus_limit = (limit + offset) * 2
-            else:
-                per_corpus_limit = limit + offset
+            def _fetch(corpus_name: str):
+                return search_collection(
+                    client=client,
+                    embedder=embedder,
+                    query=query,
+                    collection_name=corpus_name,
+                    vector_name=vector_name,
+                    limit=fetch_limit,
+                    offset=0,  # Apply offset after merge
+                    query_filter=query_filter,
+                    score_threshold=score_threshold,
+                )
 
-            for corpus_name in corpora:
-                try:
-                    corpus_results = search_collection(
-                        client=client,
-                        embedder=embedder,
-                        query=query,
-                        collection_name=corpus_name,
-                        vector_name=vector_name,
-                        limit=per_corpus_limit,
-                        offset=0,  # Apply offset after merge
-                        query_filter=query_filter,
-                        score_threshold=score_threshold
-                    )
-                    # Results already have collection attribute set by search_collection
-                    all_results.extend(corpus_results)
-                except Exception as e:
-                    error_str = str(e).lower()
-                    if 'not found' in error_str or 'doesn\'t exist' in error_str:
-                        missing_corpora.append(corpus_name)
-                        if len(corpora) > 1:
-                            # Warn about missing corpus but continue with others
-                            if verbose:
-                                logger.warning(f"Corpus '{corpus_name}' not found, skipping")
-                        else:
-                            # Single corpus not found is an error
-                            raise ResourceNotFoundError(f"Corpus '{corpus_name}' not found")
-                    else:
-                        raise
+            per_corpus, missing_corpora = fetch_from_corpora(
+                corpora, _fetch, _is_missing, logger, verbose
+            )
 
-            # If all corpora are missing, error out
-            if len(missing_corpora) == len(corpora):
-                raise ResourceNotFoundError(f"No matching corpora found: {', '.join(corpora)}")
+            all_results = [hit for hits in per_corpus for hit in hits]
 
             # Sort merged results by score (descending) and apply pagination
             all_results.sort(key=lambda x: x.score, reverse=True)
@@ -161,12 +137,7 @@ def search_command(
                 if missing_corpora:
                     logger.warning(f"Missing corpora: {', '.join(missing_corpora)}")
 
-            # Log successful search
-            interaction_logger.finish(result_count=len(results))
-        except Exception as e:
-            # Log failed search
-            interaction_logger.finish(error=str(e))
-            raise
+            ctx["result_count"] = len(results)
 
         # Use first corpus name for backwards-compatible output format
         # (or combined name for multi-corpus)

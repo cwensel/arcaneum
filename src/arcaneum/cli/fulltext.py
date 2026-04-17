@@ -15,7 +15,9 @@ from ..fulltext.indexes import get_index_settings, get_available_index_types
 from .output import print_json, print_error, print_info, print_success
 from .interaction_logger import interaction_logger
 from .errors import InvalidArgumentError, ResourceNotFoundError
+from .search_merge import fetch_from_corpora, per_corpus_limit
 from .utils import create_meili_client, resolve_corpora
+from ..utils.formatting import format_size
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -118,65 +120,52 @@ def search_text_command(
 
         start_time = time.time()
 
-        # Start interaction logging (RDR-018)
-        interaction_logger.start(
+        with interaction_logger.track(
             "search", "text",
             corpora=corpora,
             query=query,
             limit=limit,
             offset=offset,
             filters=filter_arg if filter_arg else None,
-        )
+        ) as ctx:
+            # MeiliSearch index_exists() is an upfront check — no exception to
+            # inspect — so we raise a sentinel and match on it. Keeps the
+            # shared helper free of MeiliSearch-specific logic.
+            class _MissingCorpus(Exception):
+                pass
 
-        try:
-            # Search each corpus and merge results
-            all_hits = []
-            missing_corpora = []
+            fetch_limit = per_corpus_limit(corpora, limit, offset)
             total_processing_time = 0
             total_estimated_hits = 0
 
-            # Per-corpus fetch size: when searching multiple corpora, one
-            # corpus's high-ranking hits can be pushed out of the merged page
-            # by the interleaving step below. Over-fetch from each corpus so
-            # the post-merge top-N is stable even when corpora have different
-            # relevance distributions (mirrors semantic search behaviour).
-            if len(corpora) > 1:
-                per_corpus_limit = (limit + offset) * 2
-            else:
-                per_corpus_limit = limit + offset
-
-            for corpus_name in corpora:
-                # Check if index exists
+            def _fetch(corpus_name: str) -> list:
                 if not client.index_exists(corpus_name):
-                    missing_corpora.append(corpus_name)
-                    if len(corpora) > 1:
-                        # Warn about missing corpus but continue with others
-                        if verbose:
-                            logger.warning(f"Corpus '{corpus_name}' not found, skipping")
-                        continue
-                    else:
-                        # Single corpus not found is an error
-                        raise ResourceNotFoundError(f"Corpus '{corpus_name}' not found")
-
+                    raise _MissingCorpus(corpus_name)
                 results = client.search(
                     corpus_name,
                     query,
                     filter=filter_arg,
-                    limit=per_corpus_limit,
+                    limit=fetch_limit,
                     offset=0,  # Apply offset after merge
-                    attributes_to_highlight=['content']
+                    attributes_to_highlight=['content'],
                 )
-
-                # Tag hits with source corpus
-                for hit in results.get('hits', []):
+                hits = results.get('hits', [])
+                for hit in hits:
                     hit['_corpus'] = corpus_name
-                all_hits.extend(results.get('hits', []))
+                nonlocal total_processing_time, total_estimated_hits
                 total_processing_time += results.get('processingTimeMs', 0)
                 total_estimated_hits += results.get('estimatedTotalHits', 0)
+                return hits
 
-            # If all corpora are missing, error out
-            if len(missing_corpora) == len(corpora):
-                raise ResourceNotFoundError(f"No matching corpora found: {', '.join(corpora)}")
+            per_corpus_hits, missing_corpora = fetch_from_corpora(
+                corpora,
+                _fetch,
+                lambda exc: isinstance(exc, _MissingCorpus),
+                logger,
+                verbose,
+            )
+
+            all_hits = [hit for hits in per_corpus_hits for hit in hits]
 
             # MeiliSearch doesn't return a normalized score comparable across
             # indexes, but results are already ranked by relevance within each
@@ -214,12 +203,7 @@ def search_text_command(
                 if missing_corpora:
                     logger.warning(f"Missing corpora: {', '.join(missing_corpora)}")
 
-            # Log successful search
-            interaction_logger.finish(result_count=len(hits))
-        except Exception as e:
-            # Log failed search
-            interaction_logger.finish(error=str(e))
-            raise
+            ctx["result_count"] = len(hits)
 
         # Use first corpus name for backwards-compatible output format
         # (or combined name for multi-corpus)
@@ -591,125 +575,119 @@ def verify_index(name, output_json):
         arc indexes verify MyIndex
         arc indexes verify MyIndex --json
     """
-    # Start interaction logging (RDR-018)
-    interaction_logger.start("indexes", "verify", index=name)
-
-    try:
-        client = _require_meili()
-
-        # Check if index exists
-        if not client.index_exists(name):
-            raise ResourceNotFoundError(f"Index '{name}' not found")
-
-        # Get index details
-        stats = client.get_index_stats(name)
-        settings = client.get_index_settings(name)
-
-        # Perform health checks
-        issues = []
-        warnings = []
-
-        doc_count = stats.get('numberOfDocuments', 0)
-        is_indexing = stats.get('isIndexing', False)
-
-        # Check if index is currently processing
-        if is_indexing:
-            warnings.append("Index is currently processing documents")
-
-        # Check searchable attributes
-        searchable = settings.get('searchableAttributes', [])
-        if not searchable or searchable == ['*']:
-            warnings.append("Searchable attributes not explicitly defined (using wildcard)")
-
-        # Check filterable attributes
-        filterable = settings.get('filterableAttributes', [])
-        if not filterable:
-            warnings.append("No filterable attributes defined")
-
-        # Try to retrieve a sample document to verify accessibility
-        sample_accessible = False
+    with interaction_logger.track("indexes", "verify", index=name) as ctx:
         try:
-            sample_results = client.search(name, "", limit=1)
-            if sample_results.get('hits'):
-                sample_accessible = True
-        except Exception as e:
-            issues.append(f"Failed to retrieve sample document: {e}")
+            client = _require_meili()
 
-        is_healthy = len(issues) == 0
+            # Check if index exists
+            if not client.index_exists(name):
+                raise ResourceNotFoundError(f"Index '{name}' not found")
 
-        data = {
-            "name": name,
-            "is_healthy": is_healthy,
-            "document_count": doc_count,
-            "is_indexing": is_indexing,
-            "searchable_attributes": len(searchable) if searchable != ['*'] else "all",
-            "filterable_attributes": len(filterable),
-            "sample_accessible": sample_accessible,
-            "issues": issues,
-            "warnings": warnings,
-        }
+            # Get index details
+            stats = client.get_index_stats(name)
+            settings = client.get_index_settings(name)
 
-        if output_json:
-            status = "success" if is_healthy else "warning"
-            msg = f"Index '{name}' is healthy" if is_healthy else f"Index '{name}' has issues"
-            print_json(status, msg, data)
-        else:
-            console.print(f"\n[bold cyan]Index: {name}[/bold cyan]\n")
+            # Perform health checks
+            issues = []
+            warnings = []
 
-            # Status
-            if is_healthy:
-                console.print(f"[green]Status: Healthy[/green]")
-            else:
-                console.print(f"[red]Status: Issues detected[/red]")
+            doc_count = stats.get('numberOfDocuments', 0)
+            is_indexing = stats.get('isIndexing', False)
 
-            # Stats
-            console.print(f"Documents: {doc_count:,}")
+            # Check if index is currently processing
             if is_indexing:
-                console.print(f"[yellow]Currently indexing...[/yellow]")
+                warnings.append("Index is currently processing documents")
 
-            # Settings summary
-            if searchable == ['*']:
-                console.print(f"Searchable: All attributes")
+            # Check searchable attributes
+            searchable = settings.get('searchableAttributes', [])
+            if not searchable or searchable == ['*']:
+                warnings.append("Searchable attributes not explicitly defined (using wildcard)")
+
+            # Check filterable attributes
+            filterable = settings.get('filterableAttributes', [])
+            if not filterable:
+                warnings.append("No filterable attributes defined")
+
+            # Try to retrieve a sample document to verify accessibility
+            sample_accessible = False
+            try:
+                sample_results = client.search(name, "", limit=1)
+                if sample_results.get('hits'):
+                    sample_accessible = True
+            except Exception as e:
+                issues.append(f"Failed to retrieve sample document: {e}")
+
+            is_healthy = len(issues) == 0
+
+            data = {
+                "name": name,
+                "is_healthy": is_healthy,
+                "document_count": doc_count,
+                "is_indexing": is_indexing,
+                "searchable_attributes": len(searchable) if searchable != ['*'] else "all",
+                "filterable_attributes": len(filterable),
+                "sample_accessible": sample_accessible,
+                "issues": issues,
+                "warnings": warnings,
+            }
+
+            if output_json:
+                status = "success" if is_healthy else "warning"
+                msg = f"Index '{name}' is healthy" if is_healthy else f"Index '{name}' has issues"
+                print_json(status, msg, data)
             else:
-                console.print(f"Searchable: {len(searchable)} attributes")
-            console.print(f"Filterable: {len(filterable)} attributes")
+                console.print(f"\n[bold cyan]Index: {name}[/bold cyan]\n")
 
-            # Sample accessibility
-            if sample_accessible:
-                console.print(f"[green]Sample retrieval: OK[/green]")
-            elif doc_count > 0:
-                console.print(f"[red]Sample retrieval: Failed[/red]")
+                # Status
+                if is_healthy:
+                    console.print(f"[green]Status: Healthy[/green]")
+                else:
+                    console.print(f"[red]Status: Issues detected[/red]")
 
-            # Issues
-            if issues:
-                console.print(f"\n[red]Issues:[/red]")
-                for issue in issues:
-                    console.print(f"  [red]• {issue}[/red]")
+                # Stats
+                console.print(f"Documents: {doc_count:,}")
+                if is_indexing:
+                    console.print(f"[yellow]Currently indexing...[/yellow]")
 
-            # Warnings
-            if warnings:
-                console.print(f"\n[yellow]Warnings:[/yellow]")
-                for warning in warnings:
-                    console.print(f"  [yellow]• {warning}[/yellow]")
+                # Settings summary
+                if searchable == ['*']:
+                    console.print(f"Searchable: All attributes")
+                else:
+                    console.print(f"Searchable: {len(searchable)} attributes")
+                console.print(f"Filterable: {len(filterable)} attributes")
 
-            if is_healthy and not warnings:
-                console.print(f"\n[green]All checks passed[/green]")
+                # Sample accessibility
+                if sample_accessible:
+                    console.print(f"[green]Sample retrieval: OK[/green]")
+                elif doc_count > 0:
+                    console.print(f"[red]Sample retrieval: Failed[/red]")
 
-        # Log successful operation (RDR-018)
-        interaction_logger.finish(
-            is_healthy=is_healthy,
-            document_count=doc_count,
-            issues=len(issues),
-            warnings=len(warnings),
-        )
+                # Issues
+                if issues:
+                    console.print(f"\n[red]Issues:[/red]")
+                    for issue in issues:
+                        console.print(f"  [red]• {issue}[/red]")
 
-    except ResourceNotFoundError:
-        interaction_logger.finish(error="resource not found")
-        raise
-    except Exception as e:
-        interaction_logger.finish(error=str(e))
-        print_error(f"Failed to verify index: {e}", json_output=output_json)
-        sys.exit(1)
+                # Warnings
+                if warnings:
+                    console.print(f"\n[yellow]Warnings:[/yellow]")
+                    for warning in warnings:
+                        console.print(f"  [yellow]• {warning}[/yellow]")
+
+                if is_healthy and not warnings:
+                    console.print(f"\n[green]All checks passed[/green]")
+
+            ctx["is_healthy"] = is_healthy
+            ctx["document_count"] = doc_count
+            ctx["issues"] = len(issues)
+            ctx["warnings"] = len(warnings)
+
+        except ResourceNotFoundError:
+            raise  # track() records the error from the exception
+        except Exception as e:
+            ctx["error"] = str(e)
+            print_error(f"Failed to verify index: {e}", json_output=output_json)
+            sys.exit(1)
 
 
 @fulltext.command('items')
@@ -728,111 +706,110 @@ def list_items(name, limit, offset, output_json):
         arc indexes items MyIndex --limit 50
         arc indexes items MyIndex --json
     """
-    # Start interaction logging (RDR-018)
-    interaction_logger.start("indexes", "items", index=name, limit=limit, offset=offset)
+    with interaction_logger.track(
+        "indexes", "items", index=name, limit=limit, offset=offset
+    ) as ctx:
+        try:
+            client = _require_meili()
 
-    try:
-        client = _require_meili()
+            # Check if index exists
+            if not client.index_exists(name):
+                raise ResourceNotFoundError(f"Index '{name}' not found")
 
-        # Check if index exists
-        if not client.index_exists(name):
-            raise ResourceNotFoundError(f"Index '{name}' not found")
+            # Get all documents to find unique files
+            # MeiliSearch doesn't have direct aggregation, so we fetch and dedupe
+            items_by_path = {}
+            batch_offset = offset
+            batch_size = 1000  # Internal batch size for fetching
 
-        # Get all documents to find unique files
-        # MeiliSearch doesn't have direct aggregation, so we fetch and dedupe
-        items_by_path = {}
-        batch_offset = offset
-        batch_size = 1000  # Internal batch size for fetching
+            while True:
+                # Use search with empty query to get all documents
+                results = client.search(
+                    name,
+                    "",
+                    limit=batch_size,
+                    offset=batch_offset,
+                    attributes_to_retrieve=['file_path', 'filename', 'file_hash', 'page_number', 'language', 'project']
+                )
 
-        while True:
-            # Use search with empty query to get all documents
-            results = client.search(
-                name,
-                "",
-                limit=batch_size,
-                offset=batch_offset,
-                attributes_to_retrieve=['file_path', 'filename', 'file_hash', 'page_number', 'language', 'project']
-            )
+                hits = results.get('hits', [])
+                if not hits:
+                    break
 
-            hits = results.get('hits', [])
-            if not hits:
-                break
+                for hit in hits:
+                    file_path = hit.get('file_path') or hit.get('filename')
+                    if file_path and file_path not in items_by_path:
+                        items_by_path[file_path] = {
+                            'file_path': file_path,
+                            'filename': hit.get('filename'),
+                            'file_hash': hit.get('file_hash'),
+                            'language': hit.get('language'),
+                            'project': hit.get('project'),
+                            'chunk_count': 1,
+                        }
+                    elif file_path:
+                        items_by_path[file_path]['chunk_count'] += 1
 
-            for hit in hits:
-                file_path = hit.get('file_path') or hit.get('filename')
-                if file_path and file_path not in items_by_path:
-                    items_by_path[file_path] = {
-                        'file_path': file_path,
-                        'filename': hit.get('filename'),
-                        'file_hash': hit.get('file_hash'),
-                        'language': hit.get('language'),
-                        'project': hit.get('project'),
-                        'chunk_count': 1,
-                    }
-                elif file_path:
-                    items_by_path[file_path]['chunk_count'] += 1
+                batch_offset += len(hits)
 
-            batch_offset += len(hits)
+                # Stop if we've collected enough unique items
+                if len(items_by_path) >= limit + offset:
+                    break
 
-            # Stop if we've collected enough unique items
-            if len(items_by_path) >= limit + offset:
-                break
+                # Also stop if we got fewer results than requested (no more data)
+                if len(hits) < batch_size:
+                    break
 
-            # Also stop if we got fewer results than requested (no more data)
-            if len(hits) < batch_size:
-                break
+            # Convert to list and apply limit
+            items_list = list(items_by_path.values())
+            total_items = len(items_list)
+            items_list = items_list[:limit]
 
-        # Convert to list and apply limit
-        items_list = list(items_by_path.values())
-        total_items = len(items_list)
-        items_list = items_list[:limit]
-
-        if output_json:
-            data = {
-                "index": name,
-                "total_items": total_items,
-                "showing": len(items_list),
-                "offset": offset,
-                "items": items_list,
-            }
-            print_json("success", f"Found {total_items} unique items in index '{name}'", data)
-        else:
-            console.print(f"\n[bold cyan]Index: {name}[/bold cyan]")
-            console.print(f"Unique items: {total_items}\n")
-
-            if not items_list:
-                print_info("No items found")
+            if output_json:
+                data = {
+                    "index": name,
+                    "total_items": total_items,
+                    "showing": len(items_list),
+                    "offset": offset,
+                    "items": items_list,
+                }
+                print_json("success", f"Found {total_items} unique items in index '{name}'", data)
             else:
-                table = Table(title="Indexed Files")
-                table.add_column("File", style="cyan", no_wrap=False)
-                table.add_column("Language", style="green")
-                table.add_column("Project", style="yellow")
-                table.add_column("Chunks", style="magenta")
+                console.print(f"\n[bold cyan]Index: {name}[/bold cyan]")
+                console.print(f"Unique items: {total_items}\n")
 
-                for item in sorted(items_list, key=lambda x: x.get('filename') or x['file_path']):
-                    display_name = item.get('filename') or item['file_path']
-                    table.add_row(
-                        display_name,
-                        item.get('language') or '-',
-                        item.get('project') or '-',
-                        str(item['chunk_count']),
-                    )
+                if not items_list:
+                    print_info("No items found")
+                else:
+                    table = Table(title="Indexed Files")
+                    table.add_column("File", style="cyan", no_wrap=False)
+                    table.add_column("Language", style="green")
+                    table.add_column("Project", style="yellow")
+                    table.add_column("Chunks", style="magenta")
 
-                console.print(table)
+                    for item in sorted(items_list, key=lambda x: x.get('filename') or x['file_path']):
+                        display_name = item.get('filename') or item['file_path']
+                        table.add_row(
+                            display_name,
+                            item.get('language') or '-',
+                            item.get('project') or '-',
+                            str(item['chunk_count']),
+                        )
 
-                if total_items > limit:
-                    console.print(f"\n[dim]Showing {len(items_list)} of {total_items} items. Use --limit to see more.[/dim]")
+                    console.print(table)
 
-        # Log successful operation (RDR-018)
-        interaction_logger.finish(result_count=len(items_list), total_items=total_items)
+                    if total_items > limit:
+                        console.print(f"\n[dim]Showing {len(items_list)} of {total_items} items. Use --limit to see more.[/dim]")
 
-    except ResourceNotFoundError:
-        interaction_logger.finish(error="resource not found")
-        raise
-    except Exception as e:
-        interaction_logger.finish(error=str(e))
-        print_error(f"Failed to list index items: {e}", json_output=output_json)
-        sys.exit(1)
+            ctx["result_count"] = len(items_list)
+            ctx["total_items"] = total_items
+
+        except ResourceNotFoundError:
+            raise  # track() records the error from the exception
+        except Exception as e:
+            ctx["error"] = str(e)
+            print_error(f"Failed to list index items: {e}", json_output=output_json)
+            sys.exit(1)
 
 
 @fulltext.command('export')
@@ -850,85 +827,83 @@ def export_index(name, output, output_json):
     """
     from pathlib import Path
 
-    # Start interaction logging (RDR-018)
-    interaction_logger.start("indexes", "export", index=name, output=output)
+    with interaction_logger.track(
+        "indexes", "export", index=name, output=output
+    ) as ctx:
+        try:
+            client = _require_meili()
 
-    try:
-        client = _require_meili()
+            # Check if index exists
+            if not client.index_exists(name):
+                raise ResourceNotFoundError(f"Index '{name}' not found")
 
-        # Check if index exists
-        if not client.index_exists(name):
-            raise ResourceNotFoundError(f"Index '{name}' not found")
+            output_path = Path(output)
+            exported_count = 0
+            batch_size = 1000
+            batch_offset = 0
 
-        output_path = Path(output)
-        exported_count = 0
-        batch_size = 1000
-        batch_offset = 0
+            if not output_json:
+                console.print(f"Exporting index '{name}'...")
 
-        if not output_json:
-            console.print(f"Exporting index '{name}'...")
+            with open(output_path, 'w') as f:
+                # Write header with index metadata
+                stats = client.get_index_stats(name)
+                settings = client.get_index_settings(name)
+                index_obj = client.get_index(name)
 
-        with open(output_path, 'w') as f:
-            # Write header with index metadata
-            stats = client.get_index_stats(name)
-            settings = client.get_index_settings(name)
-            index_obj = client.get_index(name)
+                header = {
+                    '_type': 'index_metadata',
+                    'name': name,
+                    'primary_key': index_obj.primary_key,
+                    'settings': settings,
+                    'exported_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                }
+                f.write(json.dumps(header) + '\n')
 
-            header = {
-                '_type': 'index_metadata',
-                'name': name,
-                'primary_key': index_obj.primary_key,
-                'settings': settings,
-                'exported_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
-            }
-            f.write(json.dumps(header) + '\n')
+                # Export documents in batches
+                while True:
+                    results = client.search(name, "", limit=batch_size, offset=batch_offset)
+                    hits = results.get('hits', [])
 
-            # Export documents in batches
-            while True:
-                results = client.search(name, "", limit=batch_size, offset=batch_offset)
-                hits = results.get('hits', [])
+                    if not hits:
+                        break
 
-                if not hits:
-                    break
+                    for hit in hits:
+                        doc = {'_type': 'document', **hit}
+                        f.write(json.dumps(doc) + '\n')
+                        exported_count += 1
 
-                for hit in hits:
-                    doc = {'_type': 'document', **hit}
-                    f.write(json.dumps(doc) + '\n')
-                    exported_count += 1
+                    batch_offset += len(hits)
 
-                batch_offset += len(hits)
+                    if not output_json:
+                        console.print(f"  Exported {exported_count} documents...", end='\r')
 
-                if not output_json:
-                    console.print(f"  Exported {exported_count} documents...", end='\r')
+                    if len(hits) < batch_size:
+                        break
 
-                if len(hits) < batch_size:
-                    break
+            file_size = output_path.stat().st_size
 
-        file_size = output_path.stat().st_size
+            if output_json:
+                data = {
+                    "index": name,
+                    "output_path": str(output_path),
+                    "exported_count": exported_count,
+                    "file_size_bytes": file_size,
+                }
+                print_json("success", f"Exported {exported_count} documents", data)
+            else:
+                console.print(f"\n[green]Exported {exported_count} documents to {output_path}[/green]")
+                console.print(f"File size: {format_size(file_size)}")
 
-        if output_json:
-            data = {
-                "index": name,
-                "output_path": str(output_path),
-                "exported_count": exported_count,
-                "file_size_bytes": file_size,
-            }
-            print_json("success", f"Exported {exported_count} documents", data)
-        else:
-            size_mb = file_size / (1024 * 1024)
-            console.print(f"\n[green]Exported {exported_count} documents to {output_path}[/green]")
-            console.print(f"File size: {size_mb:.2f} MB")
+            ctx["exported_count"] = exported_count
+            ctx["file_size_bytes"] = file_size
 
-        # Log successful operation (RDR-018)
-        interaction_logger.finish(exported_count=exported_count, file_size_bytes=file_size)
-
-    except ResourceNotFoundError:
-        interaction_logger.finish(error="resource not found")
-        raise
-    except Exception as e:
-        interaction_logger.finish(error=str(e))
-        print_error(f"Failed to export index: {e}", json_output=output_json)
-        sys.exit(1)
+        except ResourceNotFoundError:
+            raise  # track() records the error from the exception
+        except Exception as e:
+            ctx["error"] = str(e)
+            print_error(f"Failed to export index: {e}", json_output=output_json)
+            sys.exit(1)
 
 
 @fulltext.command('list-projects')
@@ -944,58 +919,54 @@ def list_projects(name, output_json):
         arc indexes list-projects MyCode
         arc indexes list-projects MyCode --json
     """
-    # Start interaction logging (RDR-018)
-    interaction_logger.start("indexes", "list-projects", index=name)
+    with interaction_logger.track("indexes", "list-projects", index=name) as ctx:
+        try:
+            client = _require_meili()
 
-    try:
-        client = _require_meili()
+            # Check if index exists
+            if not client.index_exists(name):
+                raise ResourceNotFoundError(f"Index '{name}' not found")
 
-        # Check if index exists
-        if not client.index_exists(name):
-            raise ResourceNotFoundError(f"Index '{name}' not found")
+            # Query for unique projects
+            from ..indexing.fulltext.sync import GitCodeMetadataSync
+            sync = GitCodeMetadataSync(client)
+            indexed_projects = sync.get_indexed_projects(name)
 
-        # Query for unique projects
-        from ..indexing.fulltext.sync import GitCodeMetadataSync
-        sync = GitCodeMetadataSync(client)
-        indexed_projects = sync.get_indexed_projects(name)
-
-        if output_json:
-            data = {
-                "index": name,
-                "total_projects": len(indexed_projects),
-                "projects": [
-                    {"identifier": identifier, "commit_hash": commit}
-                    for identifier, commit in sorted(indexed_projects.items())
-                ]
-            }
-            print_json("success", f"Found {len(indexed_projects)} indexed projects", data)
-        else:
-            console.print(f"\n[bold cyan]Index: {name}[/bold cyan]")
-            console.print(f"Indexed Projects: {len(indexed_projects)}\n")
-
-            if not indexed_projects:
-                print_info("No git projects found in this index")
-                print_info("This index may use simple file-based indexing (not git-aware)")
+            if output_json:
+                data = {
+                    "index": name,
+                    "total_projects": len(indexed_projects),
+                    "projects": [
+                        {"identifier": identifier, "commit_hash": commit}
+                        for identifier, commit in sorted(indexed_projects.items())
+                    ]
+                }
+                print_json("success", f"Found {len(indexed_projects)} indexed projects", data)
             else:
-                table = Table(title="Git Projects")
-                table.add_column("Project Identifier", style="cyan")
-                table.add_column("Commit Hash", style="dim")
+                console.print(f"\n[bold cyan]Index: {name}[/bold cyan]")
+                console.print(f"Indexed Projects: {len(indexed_projects)}\n")
 
-                for identifier, commit in sorted(indexed_projects.items()):
-                    table.add_row(identifier, commit[:12] + "...")
+                if not indexed_projects:
+                    print_info("No git projects found in this index")
+                    print_info("This index may use simple file-based indexing (not git-aware)")
+                else:
+                    table = Table(title="Git Projects")
+                    table.add_column("Project Identifier", style="cyan")
+                    table.add_column("Commit Hash", style="dim")
 
-                console.print(table)
+                    for identifier, commit in sorted(indexed_projects.items()):
+                        table.add_row(identifier, commit[:12] + "...")
 
-        # Log successful operation (RDR-018)
-        interaction_logger.finish(result_count=len(indexed_projects))
+                    console.print(table)
 
-    except ResourceNotFoundError:
-        interaction_logger.finish(error="resource not found")
-        raise
-    except Exception as e:
-        interaction_logger.finish(error=str(e))
-        print_error(f"Failed to list projects: {e}", json_output=output_json)
-        sys.exit(1)
+            ctx["result_count"] = len(indexed_projects)
+
+        except ResourceNotFoundError:
+            raise  # track() records the error from the exception
+        except Exception as e:
+            ctx["error"] = str(e)
+            print_error(f"Failed to list projects: {e}", json_output=output_json)
+            sys.exit(1)
 
 
 @fulltext.command('delete-project')
@@ -1013,65 +984,63 @@ def delete_project(identifier, index_name, confirm, output_json):
         arc indexes delete-project arcaneum#main --index MyCode
         arc indexes delete-project myrepo#feature-x --index MyCode --confirm
     """
-    # Start interaction logging (RDR-018)
-    interaction_logger.start("indexes", "delete-project", index=index_name, identifier=identifier)
+    with interaction_logger.track(
+        "indexes", "delete-project", index=index_name, identifier=identifier
+    ) as ctx:
+        try:
+            client = _require_meili()
 
-    try:
-        client = _require_meili()
+            # Check if index exists
+            if not client.index_exists(index_name):
+                raise ResourceNotFoundError(f"Index '{index_name}' not found")
 
-        # Check if index exists
-        if not client.index_exists(index_name):
-            raise ResourceNotFoundError(f"Index '{index_name}' not found")
+            # Check how many documents will be deleted
+            from ..indexing.fulltext.sync import GitCodeMetadataSync
+            sync = GitCodeMetadataSync(client)
+            doc_count = sync.get_project_document_count(index_name, identifier)
 
-        # Check how many documents will be deleted
-        from ..indexing.fulltext.sync import GitCodeMetadataSync
-        sync = GitCodeMetadataSync(client)
-        doc_count = sync.get_project_document_count(index_name, identifier)
-
-        if doc_count == 0:
-            if output_json:
-                print_json("warning", f"No documents found for project '{identifier}'", {
-                    "index": index_name,
-                    "identifier": identifier,
-                    "deleted_count": 0
-                })
-            else:
-                print_info(f"No documents found for project '{identifier}' in index '{index_name}'")
-            interaction_logger.finish(deleted_count=0)
-            return
-
-        # Confirm deletion
-        if not confirm and not output_json:
-            if not click.confirm(
-                f"Delete {doc_count} documents for project '{identifier}' from index '{index_name}'? "
-                f"This cannot be undone."
-            ):
-                print_info("Cancelled.")
-                interaction_logger.finish(error="cancelled by user")
+            if doc_count == 0:
+                if output_json:
+                    print_json("warning", f"No documents found for project '{identifier}'", {
+                        "index": index_name,
+                        "identifier": identifier,
+                        "deleted_count": 0
+                    })
+                else:
+                    print_info(f"No documents found for project '{identifier}' in index '{index_name}'")
+                ctx["deleted_count"] = 0
                 return
 
-        # Delete documents
-        deleted_count = sync.delete_project_documents(index_name, identifier)
+            # Confirm deletion
+            if not confirm and not output_json:
+                if not click.confirm(
+                    f"Delete {doc_count} documents for project '{identifier}' from index '{index_name}'? "
+                    f"This cannot be undone."
+                ):
+                    print_info("Cancelled.")
+                    ctx["error"] = "cancelled by user"
+                    return
 
-        if output_json:
-            print_json("success", f"Deleted {deleted_count} documents", {
-                "index": index_name,
-                "identifier": identifier,
-                "deleted_count": deleted_count
-            })
-        else:
-            print_success(f"Deleted {deleted_count} documents for project '{identifier}'")
+            # Delete documents
+            deleted_count = sync.delete_project_documents(index_name, identifier)
 
-        # Log successful operation (RDR-018)
-        interaction_logger.finish(deleted_count=deleted_count)
+            if output_json:
+                print_json("success", f"Deleted {deleted_count} documents", {
+                    "index": index_name,
+                    "identifier": identifier,
+                    "deleted_count": deleted_count
+                })
+            else:
+                print_success(f"Deleted {deleted_count} documents for project '{identifier}'")
 
-    except ResourceNotFoundError:
-        interaction_logger.finish(error="resource not found")
-        raise
-    except Exception as e:
-        interaction_logger.finish(error=str(e))
-        print_error(f"Failed to delete project: {e}", json_output=output_json)
-        sys.exit(1)
+            ctx["deleted_count"] = deleted_count
+
+        except ResourceNotFoundError:
+            raise  # track() records the error from the exception
+        except Exception as e:
+            ctx["error"] = str(e)
+            print_error(f"Failed to delete project: {e}", json_output=output_json)
+            sys.exit(1)
 
 
 @fulltext.command('import')
@@ -1091,81 +1060,80 @@ def import_index(file, target_name, output_json):
     """
     from pathlib import Path
 
-    # Start interaction logging (RDR-018)
-    interaction_logger.start("indexes", "import", source_file=file, target_name=target_name)
+    with interaction_logger.track(
+        "indexes", "import", source_file=file, target_name=target_name
+    ) as ctx:
+        try:
+            client = _require_meili()
 
-    try:
-        client = _require_meili()
-
-        input_path = Path(file)
-        metadata = None
-        documents = []
-        imported_count = 0
-
-        if not output_json:
-            console.print(f"Reading export file...")
-
-        # Read the file
-        with open(input_path, 'r') as f:
-            for line in f:
-                if not line.strip():
-                    continue
-
-                record = json.loads(line)
-                record_type = record.pop('_type', 'document')
-
-                if record_type == 'index_metadata':
-                    metadata = record
-                elif record_type == 'document':
-                    documents.append(record)
-
-        if not metadata:
-            raise InvalidArgumentError("Export file missing index metadata header")
-
-        # Determine target index name
-        index_name = target_name or metadata['name']
-
-        # Create index if it doesn't exist
-        if not client.index_exists(index_name):
-            if not output_json:
-                console.print(f"Creating index '{index_name}'...")
-
-            client.create_index(
-                name=index_name,
-                primary_key=metadata.get('primary_key', 'id'),
-                settings=metadata.get('settings'),
-            )
-
-        # Import documents in batches
-        batch_size = 1000
-        if not output_json:
-            console.print(f"Importing {len(documents)} documents...")
-
-        for i in range(0, len(documents), batch_size):
-            batch = documents[i:i + batch_size]
-            client.add_documents(index_name, batch)
-            imported_count += len(batch)
+            input_path = Path(file)
+            metadata = None
+            documents = []
+            imported_count = 0
 
             if not output_json:
-                console.print(f"  Imported {imported_count} documents...", end='\r')
+                console.print(f"Reading export file...")
 
-        if output_json:
-            data = {
-                "index": index_name,
-                "imported_count": imported_count,
-                "source_file": str(input_path),
-            }
-            print_json("success", f"Imported {imported_count} documents into '{index_name}'", data)
-        else:
-            console.print(f"\n[green]Imported {imported_count} documents into '{index_name}'[/green]")
+            # Read the file
+            with open(input_path, 'r') as f:
+                for line in f:
+                    if not line.strip():
+                        continue
 
-        # Log successful operation (RDR-018)
-        interaction_logger.finish(imported_count=imported_count, index=index_name)
+                    record = json.loads(line)
+                    record_type = record.pop('_type', 'document')
 
-    except (InvalidArgumentError, ResourceNotFoundError):
-        interaction_logger.finish(error="invalid argument or resource not found")
-        raise
-    except Exception as e:
-        interaction_logger.finish(error=str(e))
-        print_error(f"Failed to import index: {e}", json_output=output_json)
-        sys.exit(1)
+                    if record_type == 'index_metadata':
+                        metadata = record
+                    elif record_type == 'document':
+                        documents.append(record)
+
+            if not metadata:
+                raise InvalidArgumentError("Export file missing index metadata header")
+
+            # Determine target index name
+            index_name = target_name or metadata['name']
+
+            # Create index if it doesn't exist
+            if not client.index_exists(index_name):
+                if not output_json:
+                    console.print(f"Creating index '{index_name}'...")
+
+                client.create_index(
+                    name=index_name,
+                    primary_key=metadata.get('primary_key', 'id'),
+                    settings=metadata.get('settings'),
+                )
+
+            # Import documents in batches
+            batch_size = 1000
+            if not output_json:
+                console.print(f"Importing {len(documents)} documents...")
+
+            for i in range(0, len(documents), batch_size):
+                batch = documents[i:i + batch_size]
+                client.add_documents(index_name, batch)
+                imported_count += len(batch)
+
+                if not output_json:
+                    console.print(f"  Imported {imported_count} documents...", end='\r')
+
+            if output_json:
+                data = {
+                    "index": index_name,
+                    "imported_count": imported_count,
+                    "source_file": str(input_path),
+                }
+                print_json("success", f"Imported {imported_count} documents into '{index_name}'", data)
+            else:
+                console.print(f"\n[green]Imported {imported_count} documents into '{index_name}'[/green]")
+
+            ctx["imported_count"] = imported_count
+            ctx["index"] = index_name
+
+        except (InvalidArgumentError, ResourceNotFoundError):
+            raise  # track() records the error from the exception
+        except Exception as e:
+            ctx["error"] = str(e)
+            print_error(f"Failed to import index: {e}", json_output=output_json)
+            sys.exit(1)

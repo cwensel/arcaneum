@@ -157,10 +157,17 @@ class InteractionLogger:
     def track(self, command: str, subcommand: Optional[str] = None, **kwargs):
         """Context manager for tracking interactions.
 
+        The yielded dict carries state out to ``finish()``:
+          - ``result_count`` and ``error`` are reserved keys
+          - any other keys are forwarded as extra fields on the log entry
+
         Usage:
-            with interaction_logger.track("search", "semantic", query="test") as result:
-                # ... perform operation ...
-                result["result_count"] = 10
+            with interaction_logger.track("collection", "export", name=name) as ctx:
+                ...
+                ctx["result_count"] = n_points
+                ctx["exported_count"] = n_points  # custom field
+                # setting ctx["error"] = "cancelled by user" is also supported
+                # for non-exception early-exit cases
 
         Args:
             command: The main command
@@ -168,16 +175,20 @@ class InteractionLogger:
             **kwargs: Additional context to log
         """
         self.start(command, subcommand, **kwargs)
-        result = {"result_count": None, "error": None}
+        result: dict[str, Any] = {"result_count": None, "error": None}
         try:
             yield result
         except Exception as e:
-            result["error"] = str(e)
+            if result.get("error") is None:
+                result["error"] = str(e)
             raise
         finally:
+            reserved = {"result_count", "error"}
+            extras = {k: v for k, v in result.items() if k not in reserved}
             self.finish(
                 result_count=result.get("result_count"),
-                error=result.get("error")
+                error=result.get("error"),
+                **extras,
             )
 
 

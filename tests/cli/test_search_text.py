@@ -719,6 +719,13 @@ class TestInteractionLogging:
     def test_interaction_logger_is_called_on_success(self, mock_client):
         """Test that interaction logger is called with correct parameters on success."""
         mock_logger = MagicMock()
+        # track() is a contextmanager — its __enter__ yields the mutable result
+        # dict that the command updates with result_count/extras.
+        track_ctx = MagicMock()
+        ctx_dict = {}
+        track_ctx.__enter__.return_value = ctx_dict
+        track_ctx.__exit__.return_value = False
+        mock_logger.track.return_value = track_ctx
 
         with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
             with patch('arcaneum.cli.fulltext.interaction_logger', mock_logger):
@@ -733,24 +740,35 @@ class TestInteractionLogging:
                         verbose=False
                     )
 
-        # Verify start was called with correct params
-        mock_logger.start.assert_called_once()
-        call_args = mock_logger.start.call_args
+        # Verify track() was called with correct params
+        mock_logger.track.assert_called_once()
+        call_args = mock_logger.track.call_args
         assert call_args[0][0] == 'search'  # command
         assert call_args[0][1] == 'text'    # subcommand
         assert call_args[1]['corpora'] == ['TestIndex']
         assert call_args[1]['query'] == 'test query'
         assert call_args[1]['filters'] == 'language = python'
 
-        # Verify finish was called with result count
-        mock_logger.finish.assert_called_once()
-        finish_args = mock_logger.finish.call_args
-        assert finish_args[1]['result_count'] == 1
+        # Verify result_count was recorded on the yielded context
+        assert ctx_dict.get('result_count') == 1
 
     def test_interaction_logger_captures_search_errors(self, mock_client):
         """Test that interaction logger captures search errors."""
         mock_client.search.side_effect = Exception("Search failed")
         mock_logger = MagicMock()
+        # Simulate track()'s real behavior: on exception, record the error on
+        # the yielded dict and propagate (returning False from __exit__).
+        ctx_dict = {}
+
+        def _exit(exc_type, exc, tb):
+            if exc is not None and ctx_dict.get('error') is None:
+                ctx_dict['error'] = str(exc)
+            return False
+
+        track_ctx = MagicMock()
+        track_ctx.__enter__.return_value = ctx_dict
+        track_ctx.__exit__.side_effect = _exit
+        mock_logger.track.return_value = track_ctx
 
         with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
             with patch('arcaneum.cli.fulltext.interaction_logger', mock_logger):
@@ -765,11 +783,9 @@ class TestInteractionLogging:
                         verbose=False
                     )
 
-        # Verify error was logged
-        mock_logger.finish.assert_called_once()
-        finish_args = mock_logger.finish.call_args
-        assert 'error' in finish_args[1]
-        assert 'Search failed' in finish_args[1]['error']
+        # Verify track() was used and the error propagated through __exit__
+        mock_logger.track.assert_called_once()
+        assert 'Search failed' in ctx_dict.get('error', '')
 
 
 class TestComplexFilterExpressions:

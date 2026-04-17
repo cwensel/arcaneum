@@ -70,7 +70,8 @@ class TestModelsList:
         # dimensions as row data.
         first_call_arg = mock_console.print.call_args_list[0].args[0]
         # Rich Table exposes columns via `.columns`
-        dim_column = next(c for c in first_call_arg.columns if c.header == 'Dims')
+        dim_column = next((c for c in first_call_arg.columns if c.header == 'Dims'), None)
+        assert dim_column is not None, "No 'Dims' column found"
         cells = list(dim_column.cells)
         assert '1024' in cells
         assert '768' in cells
@@ -89,7 +90,8 @@ class TestModelsList:
                 list_models_command(output_json=False)
 
         first_call_arg = mock_console.print.call_args_list[0].args[0]
-        desc_column = next(c for c in first_call_arg.columns if c.header == 'Description')
+        desc_column = next((c for c in first_call_arg.columns if c.header == 'Description'), None)
+        assert desc_column is not None, "No 'Description' column found"
         cells = list(desc_column.cells)
         assert 'General-purpose embedding model' in cells
 

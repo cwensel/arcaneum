@@ -373,11 +373,22 @@ class TestCollectionVerify:
                 verify_collection_command('TestCollection', project=None, verbose=False, output_json=True)
 
         # The JSON output should carry over the unhealthy state from the verifier.
-        # Rich console output may precede the JSON; find the JSON object in stdout.
+        # Rich console output may surround the JSON; use raw_decode from each
+        # '{' position to robustly extract the embedded JSON object.
         captured = capsys.readouterr()
-        json_start = captured.out.find('{')
-        assert json_start >= 0, f"No JSON found in output: {captured.out!r}"
-        output = json.loads(captured.out[json_start:])
+        decoder = json.JSONDecoder()
+        output = None
+        search_from = 0
+        while True:
+            brace = captured.out.find('{', search_from)
+            if brace < 0:
+                break
+            try:
+                output, _ = decoder.raw_decode(captured.out[brace:])
+                break
+            except json.JSONDecodeError:
+                search_from = brace + 1
+        assert output is not None, f"No JSON object found in output: {captured.out!r}"
         assert output['data']['is_healthy'] is False
         assert output['data']['incomplete_items'] == 2
         assert output['data']['complete_items'] == 8

@@ -570,11 +570,13 @@ class TestMultiCorpusSearch:
         """Test that search continues if one corpus is not found."""
         from arcaneum.cli.search import search_command
 
+        mock_qdrant_client.collection_exists.side_effect = (
+            lambda name: name != 'MissingCorpus'
+        )
+
         def search_side_effect(client, embedder, query, collection_name, **kwargs):
             if collection_name == 'Corpus1':
                 return corpus1_results
-            elif collection_name == 'MissingCorpus':
-                raise Exception("Collection 'MissingCorpus' doesn't exist")
             raise Exception(f"Unknown collection: {collection_name}")
 
         with patch('arcaneum.cli.search.create_qdrant_client', return_value=mock_qdrant_client):

@@ -282,7 +282,7 @@ def search_text_command(
     except Exception as e:
         error_str = str(e)
         # Check for MeiliSearch filter attribute error
-        if "is not filterable" in error_str or "invalid_search_filter" in error_str:
+        if ("is not filterable" in error_str or "invalid_search_filter" in error_str) and client is not None:
             import re
             attr_match = re.search(r"Attribute `(\w+)`", error_str)
             bad_attr = attr_match.group(1) if attr_match else None

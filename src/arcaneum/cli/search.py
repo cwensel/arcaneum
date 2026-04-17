@@ -27,6 +27,15 @@ console = Console()
 logger = logging.getLogger(__name__)
 
 
+class _MissingCollection(Exception):
+    """Sentinel raised by the per-corpus fetch closure when a collection is absent.
+
+    Avoids fragile string-matching on Qdrant error messages to detect missing
+    collections — we raise this sentinel and match on it inside
+    fetch_from_corpora's is_missing predicate.
+    """
+
+
 def search_command(
     query: str,
     corpora: List[str],
@@ -103,11 +112,9 @@ def search_command(
         ) as ctx:
             fetch_limit = per_corpus_limit(corpora, limit, offset)
 
-            def _is_missing(exc: Exception) -> bool:
-                msg = str(exc).lower()
-                return "not found" in msg or "doesn't exist" in msg
-
             def _fetch(corpus_name: str):
+                if not client.collection_exists(corpus_name):
+                    raise _MissingCollection(corpus_name)
                 return search_collection(
                     client=client,
                     embedder=embedder,
@@ -121,7 +128,11 @@ def search_command(
                 )
 
             per_corpus, missing_corpora = fetch_from_corpora(
-                corpora, _fetch, _is_missing, logger, verbose
+                corpora,
+                _fetch,
+                lambda exc: isinstance(exc, _MissingCollection),
+                logger,
+                verbose,
             )
 
             all_results = [hit for hits in per_corpus for hit in hits]

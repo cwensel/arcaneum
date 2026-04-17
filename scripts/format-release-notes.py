@@ -63,7 +63,7 @@ def main() -> int:
     if breaking_any:
         lines.append("## ⚠ Breaking Changes")
         lines.append("")
-        for type_key in CONVENTIONAL_TYPES:
+        for type_key, _ in TYPE_HEADINGS:
             for short, desc, scope, is_breaking in grouped[type_key]:
                 if is_breaking:
                     scope_s = f"**{scope}:** " if scope else ""

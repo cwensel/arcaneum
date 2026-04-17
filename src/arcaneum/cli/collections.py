@@ -271,9 +271,9 @@ def info_collection_command(name: str, output_json: bool):
                 console.print(f"Status: {info.status}")
                 console.print(f"\n[bold]Vectors:[/bold]")
 
-                if hasattr(info.config.params, 'vectors') and isinstance(info.config.params.vectors, dict):
-                    for vector_name, vector_params in info.config.params.vectors.items():
-                        console.print(f"  • {vector_name}: {vector_params.size}D ({vector_params.distance})")
+                vectors_info = extract_vectors_info(info)
+                for vector_name, vinfo in vectors_info.items():
+                    console.print(f"  • {vector_name}: {vinfo['size']}D ({vinfo['distance']})")
 
                 console.print(f"\n[bold]HNSW Config:[/bold]")
                 hnsw = info.config.hnsw_config

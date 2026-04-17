@@ -448,7 +448,6 @@ pytest tests/integration tests/indexing tests/cli -v
 We welcome contributions! See **[CONTRIBUTING.md](CONTRIBUTING.md)** for detailed guidelines on:
 
 - Development setup and workflow
-- Using beads for task tracking
 - When to create RDRs
 - Code and documentation standards
 - Pull request process

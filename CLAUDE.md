@@ -9,9 +9,6 @@ It provides Claude Code integration through slash commands and plugins.
 
 This repository uses Recommendation Decisioning Records (RDRs) for detailed technical planning before implementation.
 
-**Note**: This project uses [bd (beads)](https://github.com/steveyegge/beads) for issue tracking.
-Use `bd` commands instead of markdown TODOs. See @AGENTS.md for workflow details.
-
 ## Recommendation Decisioning Records (RDRs)
 
 RDRs are specification prompts built through iterative research and refinement. They evolve during

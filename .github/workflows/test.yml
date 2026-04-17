@@ -94,7 +94,7 @@ jobs:
           path: coverage/unit.xml
 
       - name: Report test summary
-        uses: dorny/test-reporter@3eeb9fc888e82e8be2fb356bbeec2750231672bc # v1
+        uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3
         if: always()
         with:
           name: Unit Test Results (py${{ matrix.python-version }})
@@ -190,7 +190,7 @@ jobs:
           path: coverage/integration.xml
 
       - name: Report test summary
-        uses: dorny/test-reporter@3eeb9fc888e82e8be2fb356bbeec2750231672bc # v1
+        uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3
         if: always()
         with:
           name: Integration Test Results (py${{ matrix.python-version }})
@@ -284,7 +284,7 @@ jobs:
           path: coverage/cli.xml
 
       - name: Report test summary
-        uses: dorny/test-reporter@3eeb9fc888e82e8be2fb356bbeec2750231672bc # v1
+        uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3
         if: always()
         with:
           name: CLI Test Results (py${{ matrix.python-version }})

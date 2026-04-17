@@ -23,6 +23,15 @@ console = Console()
 logger = logging.getLogger(__name__)
 
 
+class _MissingCorpus(Exception):
+    """Sentinel raised by the per-corpus fetch closure when an index is absent.
+
+    MeiliSearch's index_exists() is an upfront check, so there is no driver
+    exception to inspect — we raise this sentinel and match on it inside
+    fetch_from_corpora's is_missing predicate.
+    """
+
+
 def _require_meili() -> FullTextClient:
     """Create a MeiliSearch client and verify the server is reachable.
 
@@ -128,12 +137,6 @@ def search_text_command(
             offset=offset,
             filters=filter_arg if filter_arg else None,
         ) as ctx:
-            # MeiliSearch index_exists() is an upfront check — no exception to
-            # inspect — so we raise a sentinel and match on it. Keeps the
-            # shared helper free of MeiliSearch-specific logic.
-            class _MissingCorpus(Exception):
-                pass
-
             fetch_limit = per_corpus_limit(corpora, limit, offset)
             total_processing_time = 0
             total_estimated_hits = 0

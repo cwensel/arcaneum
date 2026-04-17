@@ -4,6 +4,7 @@ These tests require a running MeiliSearch server.
 Run with: pytest tests/fulltext/test_client.py -v
 """
 
+import functools
 import os
 import shutil
 import subprocess
@@ -16,6 +17,7 @@ from arcaneum.fulltext.indexes import SOURCE_CODE_SETTINGS
 MEILISEARCH_URL = os.environ.get("MEILISEARCH_URL", "http://localhost:7700")
 
 
+@functools.lru_cache(maxsize=1)
 def _discover_meilisearch_api_key() -> str | None:
     """Resolve the MeiliSearch master key for tests.
 
@@ -23,6 +25,10 @@ def _discover_meilisearch_api_key() -> str | None:
     MEILI_MASTER_KEY out of the local `meilisearch-arcaneum` container
     via `docker inspect`. MeiliSearch itself never prints the key to
     stdout, so the container's env is the only extractable source.
+
+    Cached so the Docker subprocess only runs once, and only when a test
+    in this module actually needs it — not during `pytest --collect-only`
+    or collection of unrelated test files.
     """
     env_key = os.environ.get("MEILISEARCH_API_KEY")
     if env_key:
@@ -51,20 +57,18 @@ def _discover_meilisearch_api_key() -> str | None:
     return None
 
 
-MEILISEARCH_API_KEY = _discover_meilisearch_api_key()
-
-
 @pytest.fixture
 def client():
     """Provide MeiliSearch client connected to test server."""
-    client = FullTextClient(url=MEILISEARCH_URL, api_key=MEILISEARCH_API_KEY)
+    api_key = _discover_meilisearch_api_key()
+    client = FullTextClient(url=MEILISEARCH_URL, api_key=api_key)
 
     # Skip tests if server not available
     if not client.health_check():
         pytest.skip("MeiliSearch server not available")
 
     # Skip if API key is not configured (server running but auth fails)
-    if MEILISEARCH_API_KEY is None:
+    if api_key is None:
         pytest.skip("MEILISEARCH_API_KEY not set; skipping auth-required tests")
 
     # Verify API key works by attempting a simple authenticated call
@@ -211,9 +215,9 @@ class TestDocumentOperations:
         result = client.add_documents_sync(index_name, documents)
         # wait_for_task may return a Task object or a dict depending on the
         # meilisearch-python version; accept either.
-        status = getattr(result, "status", None) or (
-            result.get("status") if isinstance(result, dict) else None
-        )
+        status = getattr(result, "status", None)
+        if status is None and isinstance(result, dict):
+            status = result.get("status")
         assert status == "succeeded"
 
         # Verify documents were added

@@ -24,7 +24,7 @@ jobs:
        startsWith(github.event.workflow_run.head_branch, 'v'))
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Get release info
         id: release
@@ -64,7 +64,7 @@ jobs:
           cat "$FORMULA"
 
       - name: Push to Homebrew tap repo
-        uses: cpina/github-action-push-to-another-repository@07c4d7b3def0a8ebe788a8f2c843a4e1de4f6900 # v1.7.2
+        uses: cpina/github-action-push-to-another-repository@55306faa4ed53b815ae49e564af8cfb359d32ae2 # v1.7.3
         env:
           API_TOKEN_GITHUB: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         with:

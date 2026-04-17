@@ -14,7 +14,11 @@ def embedding_client():
         client = EmbeddingClient(cache_dir='/tmp/models', use_gpu=True)
         # Override device detection for tests
         client._device = "mps"
-        return client
+        yield client
+        # Clear any mock threads left in _pending_gpu_cleanup so the atexit
+        # handler doesn't log "did not finish within 300s" warnings for the
+        # MagicMock threads these tests inject.
+        client._pending_gpu_cleanup.clear()
 
 
 class TestGetModelReturnsCPUWhenPoisoned:

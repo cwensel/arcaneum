@@ -75,10 +75,36 @@ jobs:
       - name: Build package
         run: python -m build
 
+      - name: Generate release notes
+        id: notes
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          # Fetch full history so the previous-tag lookup works
+          git fetch --tags --prune --unshallow 2>/dev/null || git fetch --tags --prune
+          PREV_TAG="$(git describe --tags --abbrev=0 --match='v*' "${TAG}^" 2>/dev/null || true)"
+
+          if [ -n "$PREV_TAG" ]; then
+            RANGE="${PREV_TAG}..${TAG}"
+            echo "Range: $RANGE"
+          else
+            RANGE="$TAG"
+            echo "No previous tag; including all commits up to $TAG"
+          fi
+
+          python3 scripts/format-release-notes.py "$RANGE" \
+            "${PREV_TAG:-}" "$TAG" \
+            "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            > release-notes.md
+
+          echo "--- Generated notes ---"
+          cat release-notes.md
+          echo "-----------------------"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
         with:
           files: |
             dist/*.whl
             dist/*.tar.gz
-          generate_release_notes: true
+          body_path: release-notes.md

@@ -304,7 +304,9 @@ Content here."""
         chunker = SemanticMarkdownChunker()
         chunks = chunker.chunk(text, {})
 
-        # Should not have 'semantic_chunking': False in metadata
+        # The naive fallback path tags chunks with semantic_chunking=False; the
+        # semantic path does not set the key at all. Verifying "not False"
+        # distinguishes the two paths correctly.
         assert chunks[0].metadata.get('semantic_chunking', True) is not False
 
     def test_naive_chunking_fallback(self):

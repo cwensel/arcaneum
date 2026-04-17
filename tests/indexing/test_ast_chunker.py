@@ -412,6 +412,8 @@ class TestChunkingAccuracy:
 
         chunks = chunker.chunk_code("test.py", PYTHON_CODE, force_line_based=True)
 
+        assert len(chunks) > 0
+
         # Combine chunks (remove overlap approximately)
         combined = ""
         for i, chunk in enumerate(chunks):
@@ -421,9 +423,9 @@ class TestChunkingAccuracy:
                 # For line-based, there might be overlap
                 combined += "\n" + chunk.content
 
-        # Should contain key elements from original
-        assert "hello_world" in combined or "hello_world" in PYTHON_CODE
-        assert "Calculator" in combined or "Calculator" in PYTHON_CODE
+        # Combined chunks must contain key identifiers from the source
+        assert "hello_world" in combined
+        assert "Calculator" in combined
 
     def test_chunk_boundaries_reasonable(self):
         """Test that chunk boundaries are at reasonable points."""
@@ -431,13 +433,15 @@ class TestChunkingAccuracy:
 
         chunks = chunker.chunk_code("test.py", PYTHON_CODE, force_line_based=True)
 
+        assert len(chunks) > 0
+
         for chunk in chunks:
             # Chunks should not be empty
             assert len(chunk.content.strip()) > 0
 
             # Chunks should end with complete lines (not mid-line)
             # This is important for code readability
-            assert not chunk.content or chunk.content[-1] in ['\n', ' ', '}', ')', ';', ':']
+            assert chunk.content[-1] in ['\n', ' ', '}', ')', ';', ':']
 
 
 class TestMinifiedCodeHandling:

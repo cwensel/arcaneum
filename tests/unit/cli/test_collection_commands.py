@@ -338,8 +338,8 @@ class TestCollectionVerify:
         # Verify that the function was called with correct params
         mock_verifier.verify_collection.assert_called_once_with('TestCollection', project_filter=None, verbose=False)
 
-    def test_incomplete_items(self, mock_qdrant_client, mock_interaction_logger):
-        """Test verifying a collection with incomplete items."""
+    def test_incomplete_items(self, mock_qdrant_client, mock_interaction_logger, capsys):
+        """Test verifying a collection with incomplete items reports unhealthy status."""
         from arcaneum.cli.collections import verify_collection_command
 
         mock_result = MagicMock()
@@ -372,11 +372,16 @@ class TestCollectionVerify:
 
                 verify_collection_command('TestCollection', project=None, verbose=False, output_json=True)
 
-        # Verify the command executed with correct params
-        mock_verifier.verify_collection.assert_called_once()
-        # The mock result was returned correctly
-        assert mock_result.is_healthy is False
-        assert mock_result.incomplete_items == 2
+        # The JSON output should carry over the unhealthy state from the verifier.
+        # Rich console output may precede the JSON; find the JSON object in stdout.
+        captured = capsys.readouterr()
+        json_start = captured.out.find('{')
+        assert json_start >= 0, f"No JSON found in output: {captured.out!r}"
+        output = json.loads(captured.out[json_start:])
+        assert output['data']['is_healthy'] is False
+        assert output['data']['incomplete_items'] == 2
+        assert output['data']['complete_items'] == 8
+        assert output['data']['total_items'] == 10
 
     def test_project_filter(self, mock_qdrant_client, mock_interaction_logger):
         """Test verifying with project filter."""

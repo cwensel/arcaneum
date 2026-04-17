@@ -910,8 +910,10 @@ class TestErrorHandling:
     """Tests for error handling in search workflow."""
 
     def test_search_nonexistent_index(self, meili_client):
-        """Test searching a non-existent index raises appropriate error."""
-        with pytest.raises(Exception):
+        """Test searching a non-existent index raises a MeilisearchApiError."""
+        import meilisearch.errors
+
+        with pytest.raises(meilisearch.errors.MeilisearchApiError):
             meili_client.search(
                 "nonexistent_index_xyz123",
                 "test query",
@@ -919,11 +921,12 @@ class TestErrorHandling:
             )
 
     def test_invalid_filter_syntax(self, meili_client, indexed_auth_project):
-        """Test that invalid filter syntax is handled gracefully."""
+        """Invalid filter syntax must raise a MeilisearchApiError."""
+        import meilisearch.errors
+
         index_name = indexed_auth_project['index_name']
 
-        # Invalid filter syntax should raise an error
-        with pytest.raises(Exception):
+        with pytest.raises(meilisearch.errors.MeilisearchApiError):
             meili_client.search(
                 index_name,
                 "test",

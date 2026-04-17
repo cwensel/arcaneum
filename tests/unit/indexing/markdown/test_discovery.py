@@ -203,6 +203,7 @@ class TestMarkdownDiscovery:
         assert metadata.author is None
         assert metadata.tags == []
 
+    @pytest.mark.skipif(not FRONTMATTER_AVAILABLE, reason="python-frontmatter not available")
     def test_extract_metadata_tags_formats(self, temp_dir):
         """Test that tags can be parsed from different formats."""
         # Array format
@@ -221,14 +222,13 @@ Content"""
 
         discovery = MarkdownDiscovery()
 
-        if FRONTMATTER_AVAILABLE:
-            meta1 = discovery.extract_metadata(temp_dir / "array.md")
-            assert len(meta1.tags) == 3
-            assert "tag1" in meta1.tags
+        meta1 = discovery.extract_metadata(temp_dir / "array.md")
+        assert len(meta1.tags) == 3
+        assert "tag1" in meta1.tags
 
-            meta2 = discovery.extract_metadata(temp_dir / "string.md")
-            assert len(meta2.tags) == 3
-            assert "tag1" in meta2.tags
+        meta2 = discovery.extract_metadata(temp_dir / "string.md")
+        assert len(meta2.tags) == 3
+        assert "tag1" in meta2.tags
 
     def test_extract_metadata_nonexistent_file(self):
         """Test extraction raises error for nonexistent file."""
@@ -276,15 +276,15 @@ Content"""
 
         assert meta1.content_hash != meta2.content_hash
 
+    @pytest.mark.skipif(not FRONTMATTER_AVAILABLE, reason="python-frontmatter not available")
     def test_read_file_content(self, sample_markdown_tree):
         """Test reading file content without frontmatter."""
         file_path = sample_markdown_tree / "docs" / "sample.md"
         content = MarkdownDiscovery.read_file_content(file_path)
 
-        # Should not include frontmatter
-        if FRONTMATTER_AVAILABLE:
-            assert '---' not in content  # Frontmatter stripped
-            assert '# Introduction' in content
+        # Frontmatter should be stripped when the library is available
+        assert '---' not in content
+        assert '# Introduction' in content
 
     def test_read_file_with_frontmatter(self, sample_markdown_tree):
         """Test reading file with frontmatter extraction."""

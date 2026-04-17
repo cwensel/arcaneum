@@ -115,9 +115,11 @@ def test_create_collection_with_indexes(qdrant_client):
         field_schema=PayloadSchemaType.KEYWORD,
     )
 
-    # Verify collection exists
+    # Verify collection exists with the payload indexes we just created
     info = qdrant_client.get_collection(collection_name)
-    assert info is not None
+    payload_schema = info.payload_schema or {}
+    assert "programming_language" in payload_schema
+    assert "file_extension" in payload_schema
 
 
 def test_hnsw_configuration(qdrant_client):
@@ -182,9 +184,9 @@ def test_delete_collection(qdrant_client):
         hnsw_config=HnswConfigDiff(m=16, ef_construct=100),
     )
 
-    # Verify it exists
+    # Sanity check that the collection was created before we delete it
     info = qdrant_client.get_collection(collection_name)
-    assert info is not None
+    assert info.config.params.vectors['stella'].size == 1024
 
     # Delete collection
     qdrant_client.delete_collection(collection_name)

@@ -13,26 +13,22 @@ import pytest
 
 
 class TestStoreCommandImports:
-    """Test store command imports."""
-
-    def test_store_command_exists(self):
-        """Test that store_command function exists."""
-        from arcaneum.cli.index_markdown import store_command
-        assert callable(store_command)
+    """Test store command surface."""
 
     def test_store_command_signature(self):
-        """Test store_command has expected parameters."""
+        """store_command must accept all documented parameters."""
         from arcaneum.cli.index_markdown import store_command
         import inspect
 
-        sig = inspect.signature(store_command)
-        param_names = list(sig.parameters.keys())
-
-        assert 'file' in param_names
-        assert 'collection' in param_names
-        assert 'model' in param_names
-        assert 'title' in param_names
-        assert 'tags' in param_names
+        params = set(inspect.signature(store_command).parameters)
+        required = {
+            'file', 'collection', 'model', 'title',
+            'category', 'tags', 'metadata',
+            'chunk_size', 'chunk_overlap',
+            'verbose', 'output_json',
+        }
+        missing = required - params
+        assert not missing, f"store_command missing required params: {missing}"
 
 
 class TestStoreCommandValidation:
@@ -149,53 +145,50 @@ class TestStoreTagsParsing:
     """Test tag parsing for store command."""
 
     def test_parses_comma_separated_tags(self, temp_dir):
-        """Test that comma-separated tags are parsed correctly."""
+        """Test that comma-separated tags are split and stripped before use."""
         from arcaneum.cli.index_markdown import store_command
 
         test_file = temp_dir / "test.md"
         test_file.write_text("# Test\n\nContent")
 
-        # We can't easily test the tag parsing without mocking more,
-        # but we can verify the command accepts tags
+        mock_pipeline = MagicMock()
+        mock_pipeline.inject_content.return_value = {'chunks': 1, 'persisted': False}
+
         with patch('arcaneum.cli.index_markdown.interaction_logger'):
-            # Just verify the command accepts tags parameter
-            try:
-                store_command(
-                    file=str(test_file),
-                    collection='TestCollection',
-                    model='stella',
-                    title=None,
-                    category=None,
-                    tags='tag1, tag2, tag3',  # With spaces
-                    metadata=None,
-                    chunk_size=None,
-                    chunk_overlap=None,
-                    verbose=False,
-                    output_json=False
-                )
-            except SystemExit:
-                pass  # Expected - will fail on Qdrant connection
+            with patch('arcaneum.cli.index_markdown.create_qdrant_client'):
+                with patch('arcaneum.cli.index_markdown.get_cached_model'):
+                    with patch('arcaneum.cli.index_markdown.validate_collection_type'):
+                        with patch('arcaneum.cli.index_markdown.get_vector_names', return_value=None):
+                            with patch('arcaneum.cli.index_markdown.MarkdownIndexingPipeline', return_value=mock_pipeline):
+                                try:
+                                    store_command(
+                                        file=str(test_file),
+                                        collection='TestCollection',
+                                        model='stella',
+                                        title=None,
+                                        category=None,
+                                        tags='tag1, tag2, tag3',  # With spaces
+                                        metadata=None,
+                                        chunk_size=None,
+                                        chunk_overlap=None,
+                                        verbose=False,
+                                        output_json=False,
+                                    )
+                                except SystemExit:
+                                    pass  # sys.exit(0) on success path
 
-
-class TestStoreStdinSupport:
-    """Test stdin support for store command."""
-
-    def test_accepts_stdin_indicator(self):
-        """Test that '-' is accepted as file parameter for stdin."""
-        from arcaneum.cli.index_markdown import store_command
-        import inspect
-
-        # Just verify the command has file parameter that accepts '-'
-        sig = inspect.signature(store_command)
-        assert 'file' in sig.parameters
+        # inject_content must receive metadata with tags split and stripped
+        mock_pipeline.inject_content.assert_called_once()
+        call_kwargs = mock_pipeline.inject_content.call_args.kwargs
+        assert call_kwargs['metadata']['tags'] == ['tag1', 'tag2', 'tag3']
 
 
 class TestStoreDefaultModels:
     """Test default models configuration."""
 
-    def test_default_models_available(self):
-        """Test that DEFAULT_MODELS is available."""
+    def test_default_models_includes_stella(self):
+        """DEFAULT_MODELS must include the documented 'stella' alias."""
         from arcaneum.config import DEFAULT_MODELS
 
-        # Should have at least stella model
-        assert 'stella' in DEFAULT_MODELS or len(DEFAULT_MODELS) > 0
+        assert 'stella' in DEFAULT_MODELS, \
+            f"'stella' missing from DEFAULT_MODELS: {list(DEFAULT_MODELS)}"

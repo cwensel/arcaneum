@@ -234,24 +234,51 @@ class TestDualIndexer:
 
     def test_get_stats(self, dual_indexer):
         """Test getting stats from both systems."""
+        # Use different values per source so we catch a swapped-key bug.
+        dual_indexer.qdrant.get_collection = Mock(return_value=Mock(
+            points_count=42,
+            indexed_vectors_count=42,
+            status="green",
+        ))
+        dual_indexer.meili.get_index_stats = Mock(return_value={"numberOfDocuments": 7})
+
         stats = dual_indexer.get_stats()
 
-        assert "qdrant" in stats
-        assert "meilisearch" in stats
-        assert stats["qdrant"]["points_count"] == 100
-        assert stats["meilisearch"]["numberOfDocuments"] == 100
+        assert stats["qdrant"]["points_count"] == 42
+        assert stats["qdrant"]["indexed_vectors_count"] == 42
+        assert stats["qdrant"]["status"] == "green"
+        assert stats["meilisearch"]["numberOfDocuments"] == 7
+        # Meili stats must be queried for the configured index name
+        dual_indexer.meili.get_index_stats.assert_called_once_with("test-corpus")
 
     def test_delete_by_file_path(self, dual_indexer):
-        """Test deletion by file path."""
+        """Test deletion by file path sends a file_path filter to Qdrant."""
         dual_indexer.delete_by_file_path("/path/to/file.py")
 
         dual_indexer.qdrant.delete.assert_called_once()
+        call_kwargs = dual_indexer.qdrant.delete.call_args.kwargs
+        assert call_kwargs["collection_name"] == "test-corpus"
+
+        # The points_selector should be a Filter on file_path=/path/to/file.py
+        selector = call_kwargs["points_selector"]
+        conditions = selector.must
+        assert len(conditions) == 1
+        assert conditions[0].key == "file_path"
+        assert conditions[0].match.value == "/path/to/file.py"
 
     def test_delete_by_project_identifier(self, dual_indexer):
-        """Test deletion by project identifier."""
+        """Test deletion by project identifier filters on git_project_identifier."""
         dual_indexer.delete_by_project_identifier("myproject#main")
 
         dual_indexer.qdrant.delete.assert_called_once()
+        call_kwargs = dual_indexer.qdrant.delete.call_args.kwargs
+        assert call_kwargs["collection_name"] == "test-corpus"
+
+        selector = call_kwargs["points_selector"]
+        conditions = selector.must
+        assert len(conditions) == 1
+        assert conditions[0].key == "git_project_identifier"
+        assert conditions[0].match.value == "myproject#main"
 
 
 class TestDualIndexerWithMultipleModels:

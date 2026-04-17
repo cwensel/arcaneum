@@ -70,38 +70,24 @@ class TestWhitespaceNormalization:
 class TestMarkdownExtraction:
     """Test markdown extraction with PyMuPDF4LLM."""
 
-    def test_markdown_mode_enabled(self):
-        """Test extractor uses markdown conversion by default."""
-        extractor = PDFExtractor(markdown_conversion=True)
+    def test_markdown_conversion_default_is_true(self):
+        """Markdown conversion is the default extraction mode."""
+        extractor = PDFExtractor()
         assert extractor.markdown_conversion is True
 
     def test_normalization_only_mode(self):
-        """Test extractor can use normalization-only mode."""
+        """markdown_conversion=False switches to plain-text normalization."""
         extractor = PDFExtractor(markdown_conversion=False)
         assert extractor.markdown_conversion is False
 
     def test_preserve_images_disables_ignore(self):
-        """Test preserve_images overrides ignore_images."""
+        """preserve_images must force ignore_images to False, overriding it."""
         extractor = PDFExtractor(ignore_images=True, preserve_images=True)
         assert extractor.ignore_images is False
         assert extractor.preserve_images is True
 
     def test_ignore_images_default(self):
-        """Test ignore_images is True by default."""
+        """ignore_images defaults True and preserve_images defaults False."""
         extractor = PDFExtractor()
         assert extractor.ignore_images is True
         assert extractor.preserve_images is False
-
-
-class TestExtractionMetadata:
-    """Test extraction metadata includes correct format information."""
-
-    def test_metadata_structure(self):
-        """Test metadata includes required fields."""
-        # Note: This is a structural test, actual PDF processing
-        # would require fixture PDFs which we'll add in integration tests
-        extractor = PDFExtractor(markdown_conversion=True)
-        assert extractor.markdown_conversion is True
-
-        extractor_normalized = PDFExtractor(markdown_conversion=False)
-        assert extractor_normalized.markdown_conversion is False

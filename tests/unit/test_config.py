@@ -3,6 +3,7 @@
 import pytest
 import yaml
 from pathlib import Path
+from pydantic import ValidationError
 
 from arcaneum.config import (
     ArcaneumConfig,
@@ -59,7 +60,7 @@ class TestModelConfig:
         assert m.late_chunking is True
 
     def test_invalid_distance_rejected(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ModelConfig(
                 name="test/model",
                 dimensions=768,
@@ -94,7 +95,7 @@ class TestArcaneumConfig:
         assert cfg.collections == {}
 
     def test_missing_models_rejected(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ArcaneumConfig()  # models is required
 
 
@@ -123,7 +124,7 @@ class TestLoadConfig:
     def test_invalid_yaml_raises(self, tmp_path):
         path = tmp_path / "bad.yaml"
         path.write_text("models:\n  bad: {missing_required_fields: true}\n")
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             load_config(path)
 
 

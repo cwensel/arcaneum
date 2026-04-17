@@ -71,21 +71,18 @@ class TestIndexOperations:
     def test_create_index(self, client):
         """Test creating a basic index."""
         index_name = "test_create_basic"
-        index = client.create_index(index_name)
+        client.create_index(index_name)
 
-        assert index is not None
         assert client.index_exists(index_name)
 
     def test_create_index_with_settings(self, client):
         """Test creating an index with settings."""
         index_name = "test_create_with_settings"
-        index = client.create_index(
+        client.create_index(
             index_name,
             primary_key="id",
             settings=SOURCE_CODE_SETTINGS
         )
-
-        assert index is not None
 
         # Verify settings were applied
         settings = client.get_index_settings(index_name)

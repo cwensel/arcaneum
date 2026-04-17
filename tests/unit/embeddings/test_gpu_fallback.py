@@ -279,5 +279,10 @@ class TestAtexitJoinGpuThreads:
         thread.join.assert_not_called()
 
     def test_noop_when_no_pending(self, embedding_client):
-        """Should not raise when no pending cleanup."""
-        embedding_client._atexit_join_gpu_threads()  # No error
+        """Should not raise when no pending cleanup, and leave state untouched."""
+        embedding_client._pending_gpu_cleanup = {}
+
+        embedding_client._atexit_join_gpu_threads()
+
+        # Nothing to join, pending set remains empty
+        assert embedding_client._pending_gpu_cleanup == {}

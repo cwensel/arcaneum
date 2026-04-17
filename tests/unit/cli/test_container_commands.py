@@ -397,19 +397,28 @@ class TestHealthChecks:
 class TestGetComposeFile:
     """Test Docker Compose file discovery."""
 
-    def test_finds_compose_file_in_deploy(self, temp_dir):
+    def test_finds_compose_file_in_deploy(self, temp_dir, monkeypatch):
         """Test finding compose file in deploy directory."""
-        from arcaneum.cli.docker import get_compose_file
+        from arcaneum.cli import docker as docker_module
 
-        # Create mock repo structure
+        # Create a fake repo structure. get_compose_file walks up 4 parents from
+        # docker.py to reach repo root, so we emulate that by pointing __file__
+        # at a nested path whose parent.parent.parent.parent is temp_dir.
+        fake_source = temp_dir / "src" / "arcaneum" / "cli" / "docker.py"
+        fake_source.parent.mkdir(parents=True)
+        fake_source.touch()
+
         deploy_dir = temp_dir / "deploy"
         deploy_dir.mkdir()
         compose_file = deploy_dir / "docker-compose.yml"
         compose_file.touch()
 
-        # The function looks for the compose file relative to its own path
-        # Since we can't easily mock that, we verify the file structure is correct
-        assert compose_file.exists()
+        monkeypatch.setattr(docker_module, '__file__', str(fake_source))
+
+        result = docker_module.get_compose_file()
+
+        assert result is not None
+        assert Path(result).resolve() == compose_file.resolve()
 
     def test_compose_file_not_found(self, temp_dir, capsys):
         """Test error when compose file not found."""

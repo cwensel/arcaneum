@@ -56,8 +56,8 @@ jobs:
             "$(python -c "import re; print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', open('src/arcaneum/__init__.py').read()).group(1))")"
           check ".claude-plugin/plugin.json" \
             "$(python -c "import json; print(json.load(open('.claude-plugin/plugin.json'))['version'])")"
-          check ".claude-plugin/marketplace.json" \
-            "$(python -c "import json; print(json.load(open('.claude-plugin/marketplace.json'))['version'])")"
+          check ".claude-plugin/marketplace.json (plugins[0].version)" \
+            "$(python -c "import json; print(json.load(open('.claude-plugin/marketplace.json'))['plugins'][0]['version'])")"
 
           # README install URLs should reference this tag
           if ! grep -qF "/download/v${TAG_VERSION}/arcaneum-${TAG_VERSION}" README.md; then

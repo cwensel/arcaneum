@@ -172,10 +172,11 @@ def list_collections_command(verbose: bool, output_json: bool):
 
                     if verbose:
                         row.append(collection_type)
-                        vectors_str = ""
-                        if hasattr(col_info.config.params, 'vectors') and isinstance(col_info.config.params.vectors, dict):
-                            vectors_list = [f"{name}({params.size}D)" for name, params in col_info.config.params.vectors.items()]
-                            vectors_str = ", ".join(vectors_list)
+                        vectors_info = extract_vectors_info(col_info)
+                        vectors_str = ", ".join(
+                            f"{vname}({vinfo['size']}D)"
+                            for vname, vinfo in vectors_info.items()
+                        )
                         row.append(vectors_str)
 
                     table.add_row(*row)
@@ -584,6 +585,8 @@ def verify_collection_command(
             ctx["is_healthy"] = result.is_healthy
             ctx["incomplete_items"] = result.incomplete_items
 
+        except ResourceNotFoundError:
+            raise  # track() records the error from the exception
         except Exception as e:
             ctx["error"] = str(e)
             print_error(f"Failed to verify collection: {e}", output_json)

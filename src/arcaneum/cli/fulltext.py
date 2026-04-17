@@ -118,17 +118,8 @@ def search_text_command(
     else:
         logging.basicConfig(level=logging.WARNING, format='[%(levelname)s] %(message)s')
 
+    client = None
     try:
-        client = _require_meili()
-
-        corpora_str = ", ".join(corpora)
-        if verbose:
-            logger.info(f"Searching corpus '{corpora_str}' for: \"{query}\"")
-            if filter_arg:
-                logger.info(f"Filter: {filter_arg}")
-
-        start_time = time.time()
-
         with interaction_logger.track(
             "search", "text",
             corpora=corpora,
@@ -137,6 +128,15 @@ def search_text_command(
             offset=offset,
             filters=filter_arg if filter_arg else None,
         ) as ctx:
+            client = _require_meili()
+
+            corpora_str = ", ".join(corpora)
+            if verbose:
+                logger.info(f"Searching corpus '{corpora_str}' for: \"{query}\"")
+                if filter_arg:
+                    logger.info(f"Filter: {filter_arg}")
+
+            start_time = time.time()
             fetch_limit = per_corpus_limit(corpora, limit, offset)
             total_processing_time = 0
             total_estimated_hits = 0

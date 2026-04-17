@@ -16,6 +16,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
+    services:
+      meilisearch:
+        image: getmeili/meilisearch:v1.12
+        ports:
+          - 7700:7700
+        env:
+          MEILI_NO_ANALYTICS: "true"
+          MEILI_ENV: production
+          MEILI_MASTER_KEY: ci-test-master-key-change-me-please-32c
+        options: >-
+          --health-cmd "curl -sf http://localhost:7700/health"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
     steps:
       - uses: actions/checkout@v4
 
@@ -44,6 +59,9 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Run unit tests
+        env:
+          MEILISEARCH_URL: http://localhost:7700
+          MEILISEARCH_API_KEY: ci-test-master-key-change-me-please-32c
         run: |
           pytest tests/unit tests/fulltext tests/schema \
             --junit-xml=test-results/unit.xml \

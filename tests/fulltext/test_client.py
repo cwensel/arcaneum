@@ -4,14 +4,54 @@ These tests require a running MeiliSearch server.
 Run with: pytest tests/fulltext/test_client.py -v
 """
 
-import pytest
 import os
+import shutil
+import subprocess
+
+import pytest
 from arcaneum.fulltext.client import FullTextClient
 from arcaneum.fulltext.indexes import SOURCE_CODE_SETTINGS
 
 
 MEILISEARCH_URL = os.environ.get("MEILISEARCH_URL", "http://localhost:7700")
-MEILISEARCH_API_KEY = os.environ.get("MEILISEARCH_API_KEY")
+
+
+def _discover_meilisearch_api_key() -> str | None:
+    """Resolve the MeiliSearch master key for tests.
+
+    Checks env first (CI sets it explicitly); falls back to reading
+    MEILI_MASTER_KEY out of the local `meilisearch-arcaneum` container
+    via `docker inspect`. MeiliSearch itself never prints the key to
+    stdout, so the container's env is the only extractable source.
+    """
+    env_key = os.environ.get("MEILISEARCH_API_KEY")
+    if env_key:
+        return env_key
+
+    if shutil.which("docker") is None:
+        return None
+
+    try:
+        result = subprocess.run(
+            [
+                "docker", "inspect",
+                "--format", "{{range .Config.Env}}{{println .}}{{end}}",
+                "meilisearch-arcaneum",
+            ],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+
+    for line in result.stdout.splitlines():
+        if line.startswith("MEILI_MASTER_KEY="):
+            return line.split("=", 1)[1].strip() or None
+    return None
+
+
+MEILISEARCH_API_KEY = _discover_meilisearch_api_key()
 
 
 @pytest.fixture
@@ -169,7 +209,12 @@ class TestDocumentOperations:
         ]
 
         result = client.add_documents_sync(index_name, documents)
-        assert result["status"] == "succeeded"
+        # wait_for_task may return a Task object or a dict depending on the
+        # meilisearch-python version; accept either.
+        status = getattr(result, "status", None) or (
+            result.get("status") if isinstance(result, dict) else None
+        )
+        assert status == "succeeded"
 
         # Verify documents were added
         stats = client.get_index_stats(index_name)

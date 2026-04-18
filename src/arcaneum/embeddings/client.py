@@ -301,13 +301,46 @@ class EmbeddingClient:
     def _ensure_cpu_fallback_threading(self):
         """Constrain OMP/MKL/tokenizer threads before running a CPU encode.
 
-        _configure_cpu_threading() is only called in __init__ when use_gpu=False.
-        A client that started in GPU mode and fell back has no thread caps set,
-        so CPU encode runs with cpu_count() OMP threads + tokenizer fork
-        parallelism — which over-subscribes cores and inflates RSS during
-        attention allocations. Idempotent via the env-var presence check.
+        Two separate concerns:
+
+        1. _configure_cpu_threading() sets OMP/MKL env vars, but those are
+           only read by PyTorch at torch-import time. A GPU-started client
+           has already imported torch before this runs, so env-var changes
+           here are cosmetic for torch's own thread pool.
+        2. torch.set_num_threads() / set_num_interop_threads() mutate the
+           live thread pool and must be called here to actually get parallel
+           CPU encode. Without this, MPS-started processes can end up with
+           torch.get_num_threads() == 1, producing single-core CPU encodes
+           that run for minutes per file while the daemon thread still
+           holds MPS state.
+
+        Idempotent: env vars are only set if absent; torch setters are
+        cheap and the values are stable across calls.
         """
         self._configure_cpu_threading()
+
+        # Mutate torch's live thread pool directly — env vars alone are too
+        # late once torch is imported. cpu_count - 2 leaves headroom for
+        # the hung MPS daemon thread and the main process.
+        try:
+            import torch
+            available_cores = os.cpu_count() or 4
+            target_threads = max(1, available_cores - 2)
+            if self._cpu_workers > 1:
+                target_threads = max(1, available_cores // self._cpu_workers)
+            torch.set_num_threads(target_threads)
+            try:
+                torch.set_num_interop_threads(max(1, target_threads // 2))
+            except RuntimeError:
+                # set_num_interop_threads only accepted before parallel work begins;
+                # if torch has already dispatched inter-op work, this raises.
+                pass
+            logger.debug(
+                f"CPU fallback: torch.set_num_threads({target_threads}) "
+                f"for {available_cores} cores, cpu_workers={self._cpu_workers}"
+            )
+        except Exception as e:
+            logger.debug(f"Could not set torch thread count: {e}")
 
     def _encode_on_cpu_fallback(self, cpu_model, texts: List[str]):
         """Run model.encode on CPU with bounded memory.

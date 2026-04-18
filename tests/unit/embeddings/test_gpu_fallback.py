@@ -290,3 +290,92 @@ class TestAtexitJoinGpuThreads:
 
         # Nothing to join, pending set remains empty
         assert embedding_client._pending_gpu_cleanup == {}
+
+
+class TestCpuFallbackBounded:
+    """_encode_on_cpu_fallback chunks work + caps thread counts."""
+
+    def test_small_input_single_encode_call(self, embedding_client):
+        cpu_model = MagicMock()
+        cpu_model.encode.return_value = np.random.rand(2, 768).astype(np.float32)
+
+        embedding_client._encode_on_cpu_fallback(cpu_model, ["a", "b"])
+
+        assert cpu_model.encode.call_count == 1
+        kwargs = cpu_model.encode.call_args.kwargs
+        assert kwargs["batch_size"] == embedding_client._CPU_FALLBACK_INNER_BATCH
+
+    def test_large_input_split_into_outer_batches(self, embedding_client):
+        outer = embedding_client._CPU_FALLBACK_OUTER_BATCH
+        n = outer * 2 + 5  # forces 3 outer batches
+
+        cpu_model = MagicMock()
+        cpu_model.encode.side_effect = [
+            np.random.rand(outer, 768).astype(np.float32),
+            np.random.rand(outer, 768).astype(np.float32),
+            np.random.rand(5, 768).astype(np.float32),
+        ]
+
+        result = embedding_client._encode_on_cpu_fallback(
+            cpu_model, [f"t{i}" for i in range(n)]
+        )
+
+        assert cpu_model.encode.call_count == 3
+        assert result.shape == (n, 768)
+        # Each call uses the reduced inner batch size, not the historical 32
+        for call in cpu_model.encode.call_args_list:
+            assert call.kwargs["batch_size"] == embedding_client._CPU_FALLBACK_INNER_BATCH
+
+    def test_cpu_threading_configured_on_fallback(self, embedding_client):
+        """Client started in GPU mode has no thread caps; fallback must set them."""
+        cpu_model = MagicMock()
+        cpu_model.encode.return_value = np.random.rand(1, 768).astype(np.float32)
+
+        with patch.object(
+            embedding_client, '_configure_cpu_threading'
+        ) as mock_configure:
+            embedding_client._encode_on_cpu_fallback(cpu_model, ["a"])
+
+        mock_configure.assert_called_once()
+
+
+class TestCpuShortCircuit:
+    """_encode_with_oom_recovery on CPU device runs inline, no daemon thread."""
+
+    def test_cpu_device_skips_daemon_thread(self, embedding_client):
+        """On CPU, the encode must not spawn a timeout thread — legitimate slow
+        encodes trip the 120s timeout and spawn a second competing CPU encode."""
+        embedding_client._device = "cpu"
+
+        mock_model = MagicMock()
+        mock_model.encode.return_value = np.random.rand(3, 768).astype(np.float32)
+
+        with patch('threading.Thread') as mock_thread_ctor:
+            result = embedding_client._encode_with_oom_recovery(
+                mock_model,
+                ["a", "b", "c"],
+                internal_batch_size=256,
+                model_name="jina-code",
+            )
+
+        mock_thread_ctor.assert_not_called()
+        assert result.shape == (3, 768)
+        # Inner batch size must be the bounded CPU value, not the 256 passed in
+        assert mock_model.encode.call_args.kwargs["batch_size"] == \
+            embedding_client._CPU_FALLBACK_INNER_BATCH
+
+    def test_cpu_device_does_not_poison(self, embedding_client):
+        """Even if the underlying encode takes a long time, CPU path must never
+        set _gpu_poisoned — there is no GPU to poison."""
+        embedding_client._device = "cpu"
+
+        mock_model = MagicMock()
+        mock_model.encode.return_value = np.random.rand(1, 768).astype(np.float32)
+
+        embedding_client._encode_with_oom_recovery(
+            mock_model, ["a"],
+            internal_batch_size=256,
+            model_name="jina-code",
+        )
+
+        assert embedding_client._gpu_poisoned is False

@@ -291,6 +291,57 @@ class EmbeddingClient:
         self._cpu_fallback_models[model_name] = model
         return model
 
+    # CPU fallback encode sizing: keep peak memory bounded when a client that
+    # started in GPU mode transitions to CPU after poisoning. Full-file encode
+    # on a transformer with 8K max_seq_length at batch=32 with unbounded
+    # OMP/tokenizer threads can drive RSS into jetsam-kill territory on macOS.
+    _CPU_FALLBACK_OUTER_BATCH = 32
+    _CPU_FALLBACK_INNER_BATCH = 8
+
+    def _ensure_cpu_fallback_threading(self):
+        """Constrain OMP/MKL/tokenizer threads before running a CPU encode.
+
+        _configure_cpu_threading() is only called in __init__ when use_gpu=False.
+        A client that started in GPU mode and fell back has no thread caps set,
+        so CPU encode runs with cpu_count() OMP threads + tokenizer fork
+        parallelism — which over-subscribes cores and inflates RSS during
+        attention allocations. Idempotent via the env-var presence check.
+        """
+        self._configure_cpu_threading()
+
+    def _encode_on_cpu_fallback(self, cpu_model, texts: List[str]):
+        """Run model.encode on CPU with bounded memory.
+
+        Used in two paths: (1) explicit CPU mode (use_gpu=False or _device=="cpu"),
+        and (2) post-poisoning fallback when MPS/CUDA has been disabled mid-session.
+        Splits `texts` into outer batches and uses a small inner batch_size so peak
+        RSS stays bounded regardless of how many chunks the caller passes. Returns
+        a numpy array matching what a single cpu_model.encode() call would have
+        returned.
+        """
+        import numpy as np
+
+        self._ensure_cpu_fallback_threading()
+
+        if len(texts) <= self._CPU_FALLBACK_OUTER_BATCH:
+            return cpu_model.encode(
+                texts,
+                batch_size=self._CPU_FALLBACK_INNER_BATCH,
+                show_progress_bar=False,
+                convert_to_numpy=True,
+            )
+
+        chunks = []
+        for start in range(0, len(texts), self._CPU_FALLBACK_OUTER_BATCH):
+            end = min(start + self._CPU_FALLBACK_OUTER_BATCH, len(texts))
+            chunks.append(cpu_model.encode(
+                texts[start:end],
+                batch_size=self._CPU_FALLBACK_INNER_BATCH,
+                show_progress_bar=False,
+                convert_to_numpy=True,
+            ))
+        return np.concatenate(chunks, axis=0)
+
     def _try_deferred_gpu_cleanup(self) -> bool:
         """Reclaim GPU resources from completed daemon threads (RDR-020).
 
@@ -948,9 +999,15 @@ class EmbeddingClient:
         if self._gpu_poisoned:
             cpu_model = self._get_cpu_fallback_model(model_name)
             logger.info(f"GPU poisoned, falling back to CPU for {len(texts)} texts")
-            return cpu_model.encode(
-                texts, batch_size=32, show_progress_bar=False, convert_to_numpy=True
-            )
+            return self._encode_on_cpu_fallback(cpu_model, texts)
+
+        # CPU short-circuit: the daemon-thread + timeout + poisoning machinery below
+        # only makes sense for MPS/CUDA hangs at the Metal/CUDA C++ level. On CPU the
+        # 120s timeout misfires on legitimate slow encodes, and the "fallback" path
+        # would spawn a second CPU encode that competes with the still-running first
+        # one for OMP threads and RAM. Run inline with bounded batching instead.
+        if self._device == "cpu":
+            return self._encode_on_cpu_fallback(model, texts)
 
         import gc
         import sys
@@ -1029,9 +1086,7 @@ class EmbeddingClient:
 
                 # Fall back to CPU for these texts instead of raising
                 cpu_model = self._get_cpu_fallback_model(model_name)
-                return cpu_model.encode(
-                    texts, batch_size=32, show_progress_bar=False, convert_to_numpy=True
-                )
+                return self._encode_on_cpu_fallback(cpu_model, texts)
 
             # Thread completed - check for exceptions
             if container['error'] is not None:

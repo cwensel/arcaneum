@@ -85,10 +85,12 @@ def _mps_memory() -> tuple[Optional[int], Optional[int], Optional[int]]:
         return (None, None, None)
 
 
+_PROC = psutil.Process(os.getpid())
+
+
 def snapshot(embedding_client=None) -> MemorySnapshot:
     """Capture current memory + thread state. ~0.2ms on macOS."""
-    proc = psutil.Process(os.getpid())
-    mi = proc.memory_info()
+    mi = _PROC.memory_info()
     vm = psutil.virtual_memory()
     mps_current, mps_driver, mps_rec_max = _mps_memory()
 

@@ -1875,8 +1875,7 @@ def sync_directory_command(
                                 )
                             _mem_prev = _mem_now
                         except Exception:
-                            # Memory probing must never break the sync loop.
-                            pass
+                            logger.debug("memory probe failed", exc_info=True)
 
                     except Exception as e:
                         logger.error(f"Failed to process {file_path}: {e}")

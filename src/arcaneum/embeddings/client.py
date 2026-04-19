@@ -992,7 +992,7 @@ class EmbeddingClient:
             return all_embeddings
 
     def _encode_with_oom_recovery(self, model, texts: List[str], internal_batch_size: int, model_name: str,
-                                   encode_timeout: int = 600):
+                                   encode_timeout: int = 120):
         """Encode texts with OOM recovery for MPS/CUDA.
 
         Metal/MPS OOM errors can occur in two ways:
@@ -1002,20 +1002,12 @@ class EmbeddingClient:
 
         This method handles all three cases.
 
-        Timeout sizing: we used 120s historically, but on MPS with
-        max_seq_length=8192 a single file of 70–80 chunks at mps_max_batch=16
-        is ~5 batches of 8K-token attention — legitimately 2–3 minutes of
-        work, not a hang. The 120s threshold misfired on long files and
-        poisoned a working GPU. 600s is still a meaningful watchdog for an
-        actual driver wedge (a wedged Metal command buffer loops forever)
-        while tolerating slow-but-real encodes. See RDR-020.
-
         Args:
             model: SentenceTransformer model
             texts: List of texts to encode
             internal_batch_size: Batch size for model.encode()
             model_name: Model name for logging
-            encode_timeout: Maximum seconds to wait for a single encode call (default: 600)
+            encode_timeout: Maximum seconds to wait for a single encode call (default: 120)
 
         Returns:
             numpy array of embeddings
@@ -1088,22 +1080,8 @@ class EmbeddingClient:
                     container['error'] = e
 
             thread = threading.Thread(target=_run_encode, daemon=True)
-            encode_start = time.time()
             thread.start()
             thread.join(timeout=encode_timeout)
-            encode_elapsed = time.time() - encode_start
-
-            if thread.is_alive():
-                logger.info(
-                    f"model.encode did not complete within {encode_timeout}s "
-                    f"for {len(texts)} texts at batch_size={batch_size} on {self._device}. "
-                    f"Waited {encode_elapsed:.1f}s."
-                )
-            else:
-                logger.debug(
-                    f"model.encode completed in {encode_elapsed:.1f}s "
-                    f"for {len(texts)} texts at batch_size={batch_size} on {self._device}."
-                )
 
             if thread.is_alive():
                 # Thread is stuck - GPU is hanging.
@@ -1117,13 +1095,12 @@ class EmbeddingClient:
                 self._gpu_poisoned = True
                 logger.warning(
                     f"model.encode() timed out after {encode_timeout}s at batch_size={batch_size} "
-                    f"for {len(texts)} texts — assuming GPU is wedged. Disabling GPU for this "
-                    f"session and falling back to CPU. If your files legitimately need longer "
-                    f"than this, raise encode_timeout."
+                    f"for {len(texts)} texts — GPU likely hung on Metal OOM retry loop. "
+                    f"GPU is now disabled for this session, falling back to CPU."
                 )
                 import sys
                 print(
-                    f"  GPU encode exceeded {encode_timeout}s — falling back to CPU for remaining work.",
+                    f"  GPU encode timed out — falling back to CPU for remaining work.",
                     file=sys.stderr, flush=True
                 )
 

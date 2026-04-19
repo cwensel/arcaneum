@@ -1839,6 +1839,22 @@ def sync_directory_command(
 
                         total_indexed += 1
 
+                        # Periodic memory hygiene: the diagnostic showed RSS
+                        # grows in bursts on files with long dense chunks —
+                        # PyTorch's allocator holds pages between calls and
+                        # libc's malloc doesn't return them to the OS. A
+                        # gc.collect + GPU cache flush every N files gives
+                        # PyTorch a chance to trim its internal pools
+                        # without fighting the per-batch caching strategy.
+                        if total_indexed % 50 == 0:
+                            try:
+                                import gc as _gc
+                                _gc.collect()
+                                if hasattr(embedding_client, '_clear_gpu_cache'):
+                                    embedding_client._clear_gpu_cache()
+                            except Exception:
+                                pass
+
                         # Per-file memory probe — opt-in via verbose. Also always
                         # warn on suspicious single-file growth (>500MB) so leaks
                         # on unattended runs surface before jetsam kicks in.

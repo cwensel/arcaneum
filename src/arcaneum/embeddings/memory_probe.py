@@ -11,7 +11,7 @@ This module gives us observability without changing any behavior:
 
 - `snapshot()` captures RSS/VSZ, MPS allocator state, thread count, and
   Python object count in ~0.2ms.
-- `format_snapshot_diff()` renders a compact one-line delta suitable for
+- `format_snapshot_delta()` renders a compact one-line delta suitable for
   per-file verbose logging.
 - `install_dump_handler()` wires SIGUSR1 to dump a full snapshot plus
   thread stack traces to stderr. Use this during a suspected hang:

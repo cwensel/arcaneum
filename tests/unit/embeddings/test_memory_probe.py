@@ -59,11 +59,10 @@ def test_install_dump_handler_registers_sigusr1():
         assert callable(current)
         assert current is not prev or prev is None
     finally:
-        if prev is not None:
-            try:
-                signal.signal(signal.SIGUSR1, prev)
-            except Exception:
-                pass
+        try:
+            signal.signal(signal.SIGUSR1, prev)
+        except Exception:
+            pass
 
 
 def test_install_dump_handler_tolerates_missing_client():

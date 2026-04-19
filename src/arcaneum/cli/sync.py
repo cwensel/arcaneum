@@ -1850,8 +1850,7 @@ def sync_directory_command(
                             try:
                                 import gc as _gc
                                 _gc.collect()
-                                if hasattr(embedding_client, '_clear_gpu_cache'):
-                                    embedding_client._clear_gpu_cache()
+                                embedding_client._clear_gpu_cache()
                             except Exception:
                                 logger.debug("periodic gc/flush failed", exc_info=True)
 

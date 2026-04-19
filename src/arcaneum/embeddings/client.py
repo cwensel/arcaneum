@@ -322,6 +322,11 @@ class EmbeddingClient:
         # Mutate torch's live thread pool directly — env vars alone are too
         # late once torch is imported. cpu_count - 2 leaves headroom for
         # the hung MPS daemon thread and the main process.
+        #
+        # Note: torch.set_num_threads() is process-global, so if GPU were to
+        # recover after poisoning it would run with the reduced thread count.
+        # We accept this: post-poisoning GPU recovery is already a degraded
+        # path, and the _gpu_poisoned flag is sticky for the session anyway.
         try:
             import torch
             available_cores = os.cpu_count() or 4

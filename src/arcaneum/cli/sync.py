@@ -1853,7 +1853,7 @@ def sync_directory_command(
                                 if hasattr(embedding_client, '_clear_gpu_cache'):
                                     embedding_client._clear_gpu_cache()
                             except Exception:
-                                pass
+                                logger.debug("periodic gc/flush failed", exc_info=True)
 
                         # Per-file memory probe — opt-in via verbose. Also always
                         # warn on suspicious single-file growth (>500MB) so leaks

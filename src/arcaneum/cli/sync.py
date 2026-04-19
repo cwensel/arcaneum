@@ -1580,6 +1580,19 @@ def sync_directory_command(
                 if not output_json:
                     print_info(f"Pre-chunked {len(pre_chunked_code_files)} files")
 
+            # Install memory-diagnostic SIGUSR1 handler and take baseline snapshot.
+            # kill -USR1 <pid> during a suspected hang dumps mem + thread stacks.
+            from arcaneum.embeddings.memory_probe import (
+                install_dump_handler as _install_mem_dump,
+                snapshot as _mem_snapshot,
+                format_snapshot as _fmt_snap,
+                format_snapshot_delta as _fmt_snap_delta,
+            )
+            _install_mem_dump(embedding_client)
+            _mem_prev = _mem_snapshot(embedding_client)
+            if verbose and not output_json:
+                console.print(f"[dim]  mem-baseline: {_fmt_snap(_mem_prev)}[/dim]")
+
             with AdaptiveProgress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
@@ -1825,6 +1838,30 @@ def sync_directory_command(
                                 progress.console.print(f"[green]  ✓ {file_path.name} — {len(chunks)} chunks, {format_size(embedded_size)} embedded[/green]")
 
                         total_indexed += 1
+
+                        # Per-file memory probe — opt-in via verbose. Also always
+                        # warn on suspicious single-file growth (>500MB) so leaks
+                        # on unattended runs surface before jetsam kicks in.
+                        try:
+                            _mem_now = _mem_snapshot(embedding_client)
+                            _rss_delta = _mem_now.rss_bytes - _mem_prev.rss_bytes
+                            if verbose and not output_json:
+                                progress.console.print(
+                                    f"[dim]    mem: {_fmt_snap(_mem_now)} "
+                                    f"({_fmt_snap_delta(_mem_now, _mem_prev)})[/dim]"
+                                )
+                            if _rss_delta > 500 * 1024 * 1024 and not output_json:
+                                progress.console.print(
+                                    f"[yellow]    mem-warn: RSS grew by "
+                                    f"{_rss_delta / (1024**2):.0f}MB on this file "
+                                    f"(now {_mem_now.rss_bytes / (1024**3):.2f}GB). "
+                                    f"Possible leak — kill -USR1 {os.getpid()} for "
+                                    f"detailed dump.[/yellow]"
+                                )
+                            _mem_prev = _mem_now
+                        except Exception:
+                            # Memory probing must never break the sync loop.
+                            pass
 
                     except Exception as e:
                         logger.error(f"Failed to process {file_path}: {e}")

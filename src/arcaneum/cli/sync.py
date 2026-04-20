@@ -1865,7 +1865,13 @@ def sync_directory_command(
                                     f"[dim]    mem: {_fmt_snap(_mem_now)} "
                                     f"({_fmt_snap_delta(_mem_now, _mem_prev)})[/dim]"
                                 )
-                            if _rss_delta > 500 * 1024 * 1024 and not output_json:
+                            # Skip warn on first file: model load + PyTorch/MPS
+                            # context init always spikes RSS, not a leak signal.
+                            if (
+                                _rss_delta > 500 * 1024 * 1024
+                                and total_indexed > 1
+                                and not output_json
+                            ):
                                 progress.console.print(
                                     f"[yellow]    mem-warn: RSS grew by "
                                     f"{_rss_delta / (1024**2):.0f}MB on this file "

@@ -55,6 +55,7 @@ dependencies = [
     "pytesseract>=0.3.13",
     "pdf2image>=1.17.0",
     "opencv-python-headless>=4.10.0",
+    "Pillow>=10.0.0",  # Direct use in OCR image pipeline
     # Source code indexing dependencies (RDR-005)
     "tree-sitter-language-pack>=0.10.0",
     "llama-index-core>=0.14.6",
@@ -65,6 +66,8 @@ dependencies = [
     "pygments>=2.19.0",
     # SOCKS proxy support for httpx (required when running in Claude Code sandbox)
     "socksio>=1.0.0",
+    # Direct HTTP use (Docker daemon check in cli/docker.py)
+    "requests>=2.32.0",
     # Collection export/import (RDR-017)
     "msgpack>=1.1.0",
     "numpy>=1.26.0",

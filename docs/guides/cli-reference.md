@@ -20,6 +20,20 @@ arc <command> [options]
 
 ## Command Overview
 
+### Which Commands to Use
+
+**For general use, always prefer `arc corpus` commands.** They manage a paired
+Qdrant collection and MeiliSearch index together, which is the intended
+workflow for almost all cases.
+
+- **Use Corpus** (`arc corpus ...`): Both semantic (conceptual) and full-text
+  (exact phrase) search. Recommended for all new work.
+- **Use Collection** (`arc collection ...` / `arc index ...`): Qdrant-only,
+  semantic search only. Advanced — use only if you explicitly don't want
+  MeiliSearch.
+- **Use Indexes** (`arc indexes ...`): MeiliSearch-only, full-text search only.
+  Advanced — use only if you explicitly don't want Qdrant.
+
 ### Corpus Management (Recommended)
 
 A "corpus" is a paired Qdrant collection and MeiliSearch index with the same name,
@@ -71,9 +85,11 @@ arc indexes delete <name>                            # Delete index
 arc indexes update-settings <name> --type <type>    # Update index settings
 ```
 
-### Indexing Commands (Single-System)
+### Indexing Commands (Single-System, Advanced)
 
-For direct indexing to a single system:
+For direct indexing to a single system. **Prefer `arc corpus sync` for normal
+use** — these commands exist for workflows that deliberately need only one
+system.
 
 ```bash
 arc index pdf <path> --collection <name>      # Index PDFs to Qdrant (semantic)
@@ -104,12 +120,15 @@ use `corpus sync` directly - no need to run `corpus create` first.
 ```bash
 arc corpus sync MyCorpus /path/to/files                    # Basic sync (file-level change detection)
 arc corpus sync MyCorpus /path/one /path/two               # Multiple paths
+arc corpus sync MyCorpus /path --parity                    # Detect renames, remove files no longer on disk
+arc corpus sync MyCorpus /path --parity --dry-run          # Preview rename/remove changes
 arc corpus sync MyCorpus /path --force                     # Force reindex all
 arc corpus sync MyCorpus /path --verify                    # Verify after sync
 arc corpus sync MyCorpus /path --no-gpu                    # CPU-only mode
 arc corpus sync MyCorpus /path --models bge                # Use specific model
 arc corpus sync MyCorpus /path --max-embedding-batch 8     # Limit batch size (OOM recovery)
 arc corpus sync MyCorpus /path --verbose                   # Detailed progress
+arc corpus sync MyCorpus --from-file paths.txt             # Read paths from file (or "-" for stdin)
 ```
 
 **Git-Aware Sync Options (for code corpora):**
@@ -121,12 +140,25 @@ arc corpus sync MyCorpus /path/to/repo --git-version       # Keep multiple versi
 
 **Options:**
 
+- `--parity`: Check cross-system parity between Qdrant and MeiliSearch, detect
+  renamed/moved files by content hash, and **remove indexed entries for files
+  that no longer exist on disk** (scoped to the directories being synced).
+  Slower — scrolls the full index. For standalone cross-system repair without
+  indexing a directory, use [`arc corpus parity`](#corpus-parity) instead.
+- `--dry-run`: Show what would be synced, renamed, or removed without making
+  changes. Pairs well with `--parity` to preview cleanup.
 - `--force`: Force reindex all files (deletes existing chunks first)
 - `--verify`: Verify collection integrity after indexing
 - `--no-gpu`: Disable GPU acceleration (use CPU only, slower but stable)
+- `--cpu-workers`: Batch parallelization workers for `--no-gpu` mode (default: 1)
 - `--models`: Embedding models to use (comma-separated, default: stella,jina)
+- `--file-types`: Comma-separated extensions to index (e.g., `.py,.md`)
+- `--from-file`: Read paths from a file (one per line), or `-` for stdin
 - `--max-embedding-batch`: Cap embedding batch size (use 8-16 for OOM recovery)
 - `--text-workers`: Parallel workers for code AST chunking (default: auto)
+- `--skip-dir-prefix`: Skip directories starting with PREFIX (default: `_`, repeatable)
+- `--no-skip-dir-prefix`: Disable all directory prefix skipping
+- `--timeout`: Qdrant timeout in seconds (default: 120, increase for very large files)
 - `--verbose`: Show detailed progress (files, chunks, indexing)
 - `--json`: Output JSON format for scripting
 - `--git-update`: Skip repos with unchanged commit hash (git-aware fast path)

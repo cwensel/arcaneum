@@ -110,17 +110,20 @@ arc container status         # Check service health
 arc doctor                   # Verify setup
 
 # Corpus (Recommended - Dual Indexing to Both Systems)
-arc corpus create NAME --type TYPE       # pdf, code, or markdown
-arc corpus list                          # List all corpora
-arc corpus sync NAME PATH [PATH...]      # Sync one or more directories
-arc corpus items NAME                    # List items with parity status
-arc corpus parity NAME                   # Check/restore parity between systems
-arc corpus delete NAME                   # Delete both collection and index
+arc corpus create NAME --type TYPE              # pdf, code, or markdown
+arc corpus list                                 # List all corpora
+arc corpus sync NAME PATH [PATH...]             # Sync one or more directories
+arc corpus sync NAME PATH --parity              # Also detect renames, remove files no longer on disk
+arc corpus items NAME                           # List items with parity status
+arc corpus parity NAME                          # Check/restore parity between systems
+arc corpus delete NAME                          # Delete both collection and index
 
 # Search (Works with corpus, collection, or index)
 arc search semantic "query" --corpus NAME              # Conceptual similarity
-arc search semantic "query" --corpus N1 --corpus N2   # Multi-corpus
+arc search semantic "query" --corpus N1 --corpus N2    # Multi-corpus
 arc search text "query" --corpus NAME                  # Exact phrase matching
+
+# --- Advanced: single-system only (prefer `arc corpus` above for normal use) ---
 
 # Collections (Qdrant Only - Semantic Search)
 arc collection create NAME --type TYPE   # When you only need semantic search
@@ -199,7 +202,8 @@ arc search text "meeting notes" --corpus Notes
 
 ### Single-System Indexing (Advanced)
 
-Use collections or indexes directly when you only need one type of search:
+**Prefer `arc corpus sync` for normal use.** Use collections or indexes directly
+only when you explicitly need one type of search without the other:
 
 ```bash
 # Semantic search only (Qdrant collection)

@@ -174,7 +174,8 @@ arc container logs
 
 ### Single-System Indexing (Advanced)
 
-If you only need one type of search, use collections or indexes directly:
+**Prefer `arc corpus sync` for normal use.** Reach for these single-system
+commands only when you explicitly need one type of search without the other:
 
 ```bash
 # Semantic search only (Qdrant)
@@ -381,42 +382,46 @@ Arcaneum provides granular control over indexing performance for different workl
 
 ### Quick Start: Use Presets
 
-For better throughput on batch workloads:
+For better throughput on batch workloads, tune batch size and parallelism:
 
 ```bash
-# PDF indexing with larger batch size
-arc index pdf ~/Documents --collection MyDocs --embedding-batch-size 500
+# Dual-index sync (recommended) — cap embedding batch size, tune AST chunking
+arc corpus sync MyDocs ~/Documents --max-embedding-batch 500
+arc corpus sync MyCode ~/projects --max-embedding-batch 500 --text-workers 8
+```
 
-# Source code indexing with larger batch size
+If you only need single-system (Qdrant) indexing, the equivalent `arc index`
+commands use `--embedding-batch-size` instead:
+
+```bash
+arc index pdf ~/Documents --collection MyDocs --embedding-batch-size 500
 arc index code ~/projects --collection MyCode --embedding-batch-size 500
 ```
 
-Note: Worker parallelism flags were removed due to embedding lock serialization.
-Use --embedding-batch-size for throughput tuning.
-
 ### Advanced: Granular Control
 
-For fine-tuned control, use individual flags:
+For fine-tuned control with `arc corpus sync`:
 
 ```bash
-# Conservative: smaller batches, low priority
-arc index pdf ~/docs --collection MyDocs \
-  --embedding-batch-size 100 \
-  --process-priority low
+# Conservative: smaller batches
+arc corpus sync MyDocs ~/docs --max-embedding-batch 100
 
 # Balanced: default settings
-arc index pdf ~/docs --collection MyDocs
+arc corpus sync MyDocs ~/docs
 
-# Maximum throughput: large batches
-arc index pdf ~/docs --collection MyDocs \
-  --embedding-batch-size 500 \
-  --process-priority low
+# Maximum throughput: large batches, parallel AST chunking for code
+arc corpus sync MyCode ~/repos --max-embedding-batch 500 --text-workers 8
+
+# CPU-only mode (stable on Apple Silicon with large models)
+arc corpus sync MyDocs ~/docs --no-gpu --cpu-workers 2
 ```
 
-**Available Options:**
+**Available Options (`arc corpus sync`):**
 
-- `--embedding-batch-size N`: Batch size for embeddings (default: 200)
-- `--process-priority low|normal|high`: OS scheduling priority
+- `--max-embedding-batch N`: Cap embedding batch size (default: auto from GPU memory; use 8-16 for OOM recovery)
+- `--text-workers N`: Parallel workers for code AST chunking (default: auto=cpu/2, 0/1=sequential)
+- `--no-gpu`: Disable GPU acceleration (CPU only)
+- `--cpu-workers N`: Batch parallelization workers for `--no-gpu` mode (default: 1)
 
 See the [CLI Reference](cli-reference.md) for complete performance tuning documentation.
 
@@ -431,7 +436,8 @@ See the [CLI Reference](cli-reference.md) for complete performance tuning docume
 ### Advanced Features
 
 - **Multiple Models**: Index with different embedding models for different use cases
-- **Incremental Indexing**: Re-run `arc index code` to update only changed files
+- **Incremental Indexing**: Re-run `arc corpus sync` to update only changed files;
+  add `--parity` to also detect renames and remove files no longer on disk
 - **Branch Tracking**: Automatically track new branches in git repositories
 - **Filter Searches**: Use metadata filters to narrow results
 

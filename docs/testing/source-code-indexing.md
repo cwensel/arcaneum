@@ -1,10 +1,15 @@
 # Testing Source Code Indexing (RDR-005)
 
+**Note on recommended workflow:** For normal use, prefer `arc corpus sync`
+(dual-indexing to Qdrant + MeiliSearch) — see the
+[Corpus Workflow (Recommended)](#corpus-workflow-recommended) section below.
+The rest of this doc tests the single-system `arc index code` implementation
+from RDR-005; those sections are marked "Single-System (Advanced)".
+
 ## Prerequisites
 
-1. **Qdrant Server Running**
+1. **Qdrant and MeiliSearch Running**
    ```bash
-   # Start Qdrant
    arc container start
    ```
 
@@ -14,16 +19,44 @@
    arc --help
    ```
 
-## Quick Start
+## Corpus Workflow (Recommended)
+
+Dual-indexing source code to both Qdrant (semantic) and MeiliSearch (full-text):
+
+```bash
+# Create a corpus for source code
+arc corpus create code --type code
+
+# Index a single repository
+arc corpus sync code /path/to/your/repo
+
+# Index directory with multiple repositories
+arc corpus sync code ~/projects
+
+# Detect renames and remove indexed files no longer on disk
+arc corpus sync code ~/projects --parity
+
+# Force re-index all files
+arc corpus sync code /path/to/repo --force
+
+# Search
+arc search semantic "authentication middleware" --corpus code
+arc search text "async def handler" --corpus code
+```
+
+## Quick Start (Single-System, Advanced)
+
+The sections below test the `arc index code` single-system path (Qdrant only).
+Prefer the corpus workflow above for normal use.
 
 ### 1. Create a Typed Collection
 
 ```bash
-# Create a collection for source code (typed)
-arc collection create code --model stella --type code
+# Create a collection for source code (type inferred model)
+arc collection create code --type code
 
 # Or for PDFs (separate collection)
-arc collection create docs --model stella --type pdf
+arc collection create docs --type pdf
 ```
 
 **Important:** Collections are now typed (pdf or code). You cannot mix PDFs and source code in the same collection.
@@ -95,7 +128,7 @@ Result in Qdrant:
 
 ```bash
 # 1. Create typed collection
-arc collection create code --model stella --type code
+arc collection create code --type code
 
 # 2. Initial index
 arc index code ~/code --collection code
@@ -205,7 +238,7 @@ arc collection delete old-collection --confirm
 arc index code ~/projects --collection docs
 
 # Solution: Create separate typed collections
-arc collection create code --model stella --type code
+arc collection create code --type code
 arc index code ~/projects --collection code
 ```
 
@@ -213,9 +246,12 @@ arc index code ~/projects --collection code
 
 ### Custom Embedding Models
 
+The embedding model is set at collection creation time. Specify it with `--model`
+on `arc collection create`:
+
 ```bash
-# Use different model (when supported)
-arc index code /path --collection code --model jina-code
+arc collection create code --type code --model jina-code
+arc index code /path --collection code
 ```
 
 ### Branch-Specific Deletion

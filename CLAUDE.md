@@ -48,7 +48,29 @@ When creating or modifying markdown files in this project:
 
 ## Arc CLI Quick Reference
 
-When asked to search collections, use this exact syntax:
+**Prefer `arc corpus` over `arc index` / `arc collection` / `arc indexes`.**
+The `corpus` commands manage Qdrant and MeiliSearch together. The single-system
+commands exist for advanced workflows that need only one system; do not reach
+for them for general indexing or searching.
+
+### Adding or updating content
+
+```bash
+# Create a corpus once (creates both Qdrant collection and MeiliSearch index)
+arc corpus create MyCorpus --type pdf        # or: code, markdown
+
+# Add or update files (preferred command for indexing)
+arc corpus sync MyCorpus /path/to/files
+
+# Same, but also detect renames and remove indexed entries for files
+# that no longer exist on disk (scoped to the synced paths)
+arc corpus sync MyCorpus /path/to/files --parity
+
+# Preview parity changes without writing
+arc corpus sync MyCorpus /path/to/files --parity --dry-run
+```
+
+### Searching
 
 ```bash
 # Semantic search (most common)
@@ -60,8 +82,8 @@ arc search semantic "your query" --corpus Corp1 --corpus Corp2
 # Full-text search
 arc search text "your query" --corpus CorpusName
 
-# List available collections
-arc collection list
+# List available corpora
+arc corpus list
 ```
 
 **IMPORTANT:** The subcommand (`semantic` or `text`) must come BEFORE the query.

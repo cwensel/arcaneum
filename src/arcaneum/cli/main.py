@@ -583,7 +583,7 @@ def delete_corpus(name, confirm, output_json):
 @click.option('--no-skip-dir-prefix', is_flag=True,
               help='Disable all directory prefix skipping')
 @click.option('--parity', is_flag=True,
-              help='Check cross-system parity, detect renames, and clean stale paths (slower)')
+              help='Detect renames and remove indexed files no longer on disk; also checks cross-system parity (slower)')
 @click.option('--timeout', type=int, default=None,
               help='Qdrant timeout in seconds (default: 120, increase for very large files)')
 def sync_directory(corpus, paths, from_file, models, file_types, force, dry_run, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, skip_dir_prefix, no_skip_dir_prefix, parity, timeout):
@@ -599,7 +599,9 @@ def sync_directory(corpus, paths, from_file, models, file_types, force, dry_run,
 
     Use --text-workers to parallelize AST chunking for code corpora.
     Use --no-gpu for CPU-only mode (avoids MPS instability with large models).
-    Use --parity to also check cross-system consistency (or use 'arc corpus parity').
+    Use --parity to detect renames and remove files no longer on disk, and
+    to check cross-system consistency (or use 'arc corpus parity' for a
+    standalone parity check without indexing).
     Use 'arc corpus repair' to re-index incomplete or garbled files.
     """
     # Validate that at least one of paths or from_file is provided

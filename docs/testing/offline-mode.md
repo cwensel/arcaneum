@@ -7,15 +7,15 @@ that use self-signed certificates. This means arc commands work out of the box b
 
 ```bash
 # Just works - no configuration needed
-arc search semantic "query" --collection MyCollection
-arc index code ./code --collection code
+arc search semantic "query" --corpus MyCorpus
+arc corpus sync MyCorpus ./code
 ```
 
 To enable strict SSL verification (not recommended for corporate networks):
 
 ```bash
 export ARC_SSL_VERIFY=true
-arc search semantic "query" --collection MyCollection
+arc search semantic "query" --corpus MyCorpus
 ```
 
 ## For Offline Mode (Air-gapped Networks)
@@ -28,26 +28,19 @@ export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 
 # Then run (models must be pre-downloaded)
-arc index pdf ./pdfs --collection docs --model stella
-arc index code ./code --collection code --model jina-code
-```
-
-Or use the `--offline` flag:
-
-```bash
-arc index pdf ./pdfs --collection docs --model stella --offline
-arc index code ./code --collection code --model jina-code --offline
+arc corpus sync docs ./pdfs
+arc corpus sync code ./code
 ```
 
 ## When to Use Offline Mode
 
-Use `--offline` when:
+Use offline mode when:
 
 - Models are already downloaded
 - No internet connection (air-gapped)
 - Want to ensure no network calls
 
-Don't use `--offline` when:
+Don't use offline mode when:
 
 - Models not downloaded yet
 - Want to check for model updates
@@ -91,9 +84,11 @@ scp -r ~/.arcaneum/models/ corporate-machine:~/.arcaneum/
 
 ```bash
 # SSL bypass is automatic, models cached - just works!
-arc index pdf ./pdfs --collection docs --model stella
-arc index code ./code --collection code --model jina-code
-arc search semantic "query" --collection MyCollection
+arc corpus create docs --type pdf
+arc corpus sync docs ./pdfs
+arc corpus create code --type code
+arc corpus sync code ./code
+arc search semantic "query" --corpus docs
 ```
 
 For air-gapped networks (no internet at all), add offline mode:
@@ -107,8 +102,8 @@ export TRANSFORMERS_OFFLINE=1
 
 ## Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ARC_SSL_VERIFY` | `false` | Set to `true` to enable strict SSL verification |
-| `HF_HUB_OFFLINE` | `0` | Set to `1` for offline mode (no network calls) |
-| `TRANSFORMERS_OFFLINE` | `0` | Set to `1` for offline mode |
+| Variable               | Default | Description                                       |
+| ---------------------- | ------- | ------------------------------------------------- |
+| `ARC_SSL_VERIFY`       | `false` | Set to `true` to enable strict SSL verification   |
+| `HF_HUB_OFFLINE`       | `0`     | Set to `1` for offline mode (no network calls)    |
+| `TRANSFORMERS_OFFLINE` | `0`     | Set to `1` for offline mode                       |

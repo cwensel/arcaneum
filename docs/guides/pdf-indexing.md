@@ -44,9 +44,9 @@ docker compose up -d
 
 ## Quick Start
 
-### Using Corpus (Recommended)
-
-The recommended approach is to use corpus commands for dual indexing:
+**Use `arc corpus sync` for PDF indexing unless you explicitly need Qdrant-only
+(no MeiliSearch).** The `arc index pdf` command is a single-system advanced
+alternative documented further below.
 
 ```bash
 # Create corpus (creates both Qdrant collection and MeiliSearch index)
@@ -55,54 +55,76 @@ arc corpus create pdf-docs --type pdf
 # Sync PDFs to both systems
 arc corpus sync pdf-docs /path/to/pdfs
 
+# Also detect renames and remove indexed PDFs no longer on disk
+arc corpus sync pdf-docs /path/to/pdfs --parity
+
 # Search with semantic or full-text
 arc search semantic "machine learning concepts" --corpus pdf-docs
 arc search text '"specific phrase"' --corpus pdf-docs
 ```
 
-### Using Collection Only (Semantic Search Only)
+### PDFs with OCR disabled (if all PDFs are machine-generated text)
 
-If you only need semantic search:
+OCR is not tunable from `arc corpus sync` today — the corpus sync pipeline
+auto-detects and applies OCR as needed. If you need explicit OCR control
+(`--no-ocr`, `--ocr-language`, `--ocr-workers`), use the single-system
+`arc index pdf` command documented in
+[Single-System PDF Indexing](#single-system-pdf-indexing-advanced) below.
+
+### Common `arc corpus sync` options for PDFs
 
 ```bash
-arc collection create pdf-docs --type pdf
-arc index pdf /path/to/pdfs --collection pdf-docs
+# Force reindex all PDFs
+arc corpus sync pdf-docs /path/to/pdfs --force
+
+# Large batch size for throughput (cap if OOM)
+arc corpus sync pdf-docs /path/to/pdfs --max-embedding-batch 500
+
+# CPU-only mode (stable on Apple Silicon)
+arc corpus sync pdf-docs /path/to/pdfs --no-gpu
+
+# Verbose progress
+arc corpus sync pdf-docs /path/to/pdfs --verbose
+
+# JSON output for scripting
+arc corpus sync pdf-docs /path/to/pdfs --json > results.json
 ```
 
-### Index PDFs with OCR disabled (if all PDFs are machine-generated text)
+See [CLI Reference: Corpus Sync Options](cli-reference.md#corpus-sync-options)
+for the full option list.
 
-```bash
-arc corpus sync pdf-docs /path/to/text-pdfs --no-ocr
-# Or for collection-only:
-arc index pdf /path/to/text-pdfs --collection pdf-docs --no-ocr
-```
+## Single-System PDF Indexing (Advanced)
 
-**Note**: OCR is enabled by default to handle scanned PDFs automatically.
-
-## Usage
+`arc index pdf` indexes PDFs to a Qdrant collection only (no MeiliSearch).
+Prefer `arc corpus sync` unless you deliberately want Qdrant-only indexing,
+or you need fine-grained OCR control (`--no-ocr`, `--ocr-language`,
+`--ocr-workers`, `--normalize-only`).
 
 ### Basic Command
 
 ```bash
-arc index pdf <directory> --collection <name> --model <model>
+arc index pdf <directory> --collection <name>
 ```
+
+The embedding model is set at collection creation time via
+`arc collection create <name> --type pdf --model <model>`; the old `--model`
+flag on `arc index pdf` is deprecated.
 
 ### Options
 
 **Basic Options:**
 
 - `--collection`: Target Qdrant collection (required)
-- `--model`: Embedding model (stella, bge, modernbert, jina) [default: stella]
 - `--force`: Force reindex all files (bypass incremental sync)
 - `--no-gpu`: Disable GPU acceleration (GPU enabled by default for 1.5-3x speedup)
-- `--streaming`: Stream embeddings to Qdrant immediately (lower memory usage)
+- `--no-streaming`: Disable streaming mode (accumulate all embeddings before upload)
 - `--verbose`: Verbose output (show progress, suppress library warnings)
 - `--debug`: Debug mode (show all library warnings including transformers)
 - `--json`: Output JSON format
 
 **Performance Tuning:**
 
-- `--embedding-batch-size`: Batch size for embedding generation [default: 200]
+- `--embedding-batch-size`: Batch size for embedding generation (default: auto from GPU memory)
 - `--process-priority`: Process scheduling priority (low/normal/high) [default: normal]
 
 **OCR Options:**
@@ -110,16 +132,14 @@ arc index pdf <directory> --collection <name> --model <model>
 - `--no-ocr`: Disable OCR (enabled by default for scanned PDFs)
 - `--ocr-language`: OCR language code (eng, fra, spa, deu, etc.) [default: eng]
 - `--ocr-workers`: Number of parallel OCR workers for page processing [default: cpu_count]
+- `--normalize-only`: Skip markdown conversion, only normalize whitespace
 
 ### Examples
 
 **Index technical documentation:**
 
 ```bash
-arc index pdf ./docs \
-  --collection tech-docs \
-  --model stella \
-  --workers 8
+arc index pdf ./docs --collection tech-docs
 ```
 
 **Index scanned books (OCR enabled by default with parallel page processing):**
@@ -127,86 +147,65 @@ arc index pdf ./docs \
 ```bash
 arc index pdf ./books \
   --collection book-archive \
-  --model stella \
   --ocr-language eng \
-  --ocr-workers 8 \
-  --workers 4
+  --ocr-workers 8
 ```
 
 **Force reindex all PDFs:**
 
 ```bash
-arc index pdf ./pdfs \
-  --collection pdf-docs \
-  --model stella \
-  --force
+arc index pdf ./pdfs --collection pdf-docs --force
 ```
 
 **JSON output for scripting:**
 
 ```bash
-arc index pdf ./pdfs \
-  --collection pdf-docs \
-  --model stella \
-  --json > results.json
+arc index pdf ./pdfs --collection pdf-docs --json > results.json
 ```
 
 **Disable GPU for CPU-only mode:**
 
 ```bash
-arc index pdf ./pdfs \
-  --collection pdf-docs \
-  --model stella \
-  --no-gpu
+arc index pdf ./pdfs --collection pdf-docs --no-gpu
 ```
 
 **Debug mode (show all warnings):**
 
 ```bash
-arc index pdf ./pdfs \
-  --collection pdf-docs \
-  --model stella \
-  --debug
+arc index pdf ./pdfs --collection pdf-docs --debug
 ```
 
-**Maximum performance (use all CPU cores):**
+**Maximum performance (large batch, low priority):**
 
 ```bash
 arc index pdf ./pdfs \
   --collection pdf-docs \
-  --model stella \
   --embedding-batch-size 500 \
   --process-priority low
 ```
 
-**Streaming mode (lower memory for large collections):**
+**Non-streaming mode (accumulate all embeddings before upload):**
 
 ```bash
-arc index pdf ./pdfs \
-  --collection pdf-docs \
-  --model stella \
-  --streaming
+arc index pdf ./pdfs --collection pdf-docs --no-streaming
 ```
 
-**Conservative (25% of CPU, good for background processing):**
+**Conservative (low priority, good for background processing):**
 
 ```bash
-arc index pdf ./pdfs \
-  --collection pdf-docs \
-  --model stella \
-  --process-priority low
+arc index pdf ./pdfs --collection pdf-docs --process-priority low
 ```
 
 ## Simplified CLI Scripts
 
-For convenience, use the `bin/arc` wrapper:
+For convenience, use the `bin/arc` wrapper during development:
 
 ```bash
-# Direct CLI usage (development mode)
-bin/arc index pdf /path/to/pdfs --collection pdf-docs --model stella
+# Development mode (from repository root)
+bin/arc corpus sync pdf-docs /path/to/pdfs
 
 # After pip install
-arc index pdf /path/to/pdfs --collection pdf-docs --model stella
+arc corpus sync pdf-docs /path/to/pdfs
 
 # Full test script
 ./scripts/test-pdf-indexing.sh
@@ -219,6 +218,8 @@ The system automatically tracks indexed files using metadata queries:
 - **First run**: All PDFs are indexed
 - **Subsequent runs**: Only new or modified PDFs are processed
 - **Detection**: Based on file path and content hash (SHA256)
+- **Rename / removal**: Add `--parity` to `arc corpus sync` to detect
+  renamed/moved files and remove indexed entries for files no longer on disk
 
 To bypass incremental sync and reindex everything, use `--force`.
 
@@ -246,8 +247,11 @@ GPU acceleration is **enabled by default** for 1.5-3x faster embedding generatio
 - GPU busy with other tasks
 
 ```bash
-# Force CPU-only mode
-arc index pdf ./pdfs --collection docs --model stella --no-gpu
+# Force CPU-only mode (corpus sync, recommended)
+arc corpus sync docs ./pdfs --no-gpu
+
+# Same for single-system (Qdrant-only) indexing
+arc index pdf ./pdfs --collection docs --no-gpu
 ```
 
 ## Model Selection
@@ -459,9 +463,11 @@ arc search semantic "machine learning concepts" --corpus pdf-docs
 arc search text '"neural network"' --corpus pdf-docs
 ```
 
-### Quick Start (MeiliSearch Only)
+### Quick Start (MeiliSearch Only, Advanced)
 
-If you only need full-text search:
+**Prefer `arc corpus sync` for normal use** (see above) — it gives you both
+semantic and full-text search. Use the MeiliSearch-only path below only if
+you explicitly don't want Qdrant:
 
 ```bash
 # Create MeiliSearch index

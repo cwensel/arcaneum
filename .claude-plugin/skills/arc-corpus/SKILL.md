@@ -8,6 +8,10 @@ allowed-tools: Bash(arc:*), Read
 
 A corpus maintains both a Qdrant collection (semantic search) and a MeiliSearch index (full-text search) in sync.
 
+**For adding or updating content, always prefer `arc corpus sync` over `arc index`, `arc collection`, or `arc indexes`.**
+The `corpus` commands manage Qdrant and MeiliSearch together. Single-system commands
+(`arc index`, `arc collection`, `arc indexes`) are for advanced workflows that need one system without the other.
+
 ```bash
 # Create corpus (creates both collection and index)
 arc corpus create MyCorpus --type pdf
@@ -20,9 +24,11 @@ arc corpus delete MyCorpus              # With confirmation prompt
 arc corpus delete MyCorpus --confirm    # Skip confirmation
 arc corpus delete MyCorpus --confirm --json  # JSON output
 
-# Sync files to both systems
+# Sync files to both systems (preferred command for adding/updating content)
 arc corpus sync MyCorpus /path/to/files
 arc corpus sync MyCorpus /path/one /path/two /path/three    # Multiple directories
+arc corpus sync MyCorpus /path/to/files --parity            # Detect renames, remove files no longer on disk
+arc corpus sync MyCorpus /path/to/files --parity --dry-run  # Preview parity changes first
 arc corpus sync MyCorpus /path/to/files --force             # Force reindex
 arc corpus sync MyCorpus /path/to/files --verify            # Verify after sync
 arc corpus sync MyCorpus /path/to/files --verbose           # Show progress
@@ -67,7 +73,18 @@ arc corpus parity --create-missing --confirm   # Create and sync all
 
 ## Parity Behavior
 
-The `parity` command ensures both systems have the same content:
+The `--parity` flag on `arc corpus sync` and the standalone `arc corpus parity`
+command both ensure both systems hold the same content, but operate differently:
+
+- `arc corpus sync --parity <path>`: Runs during a sync. In addition to indexing
+  new/changed files in `<path>`, it detects renamed/moved files by content hash
+  and **removes indexed entries for files that no longer exist on disk** (scoped
+  to the directories being synced).
+- `arc corpus parity`: Standalone cross-system repair with no directory scan.
+  Backfills missing entries between Qdrant and MeiliSearch but does not remove
+  missing-from-disk files.
+
+Cross-system backfill direction (both commands):
 
 - **Qdrant -> MeiliSearch**: Copies metadata (fast, no file access needed)
 - **MeiliSearch -> Qdrant**: Re-chunks and embeds files (requires file access)

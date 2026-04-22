@@ -583,7 +583,7 @@ def delete_corpus(name, confirm, output_json):
 @click.option('--no-skip-dir-prefix', is_flag=True,
               help='Disable all directory prefix skipping')
 @click.option('--parity', is_flag=True,
-              help='Detect renames and remove indexed files no longer on disk; also checks cross-system parity (slower)')
+              help='Also detect renames, remove indexed files no longer on disk, and check cross-system parity (slower than default; default already re-indexes edited files via mtime+size)')
 @click.option('--timeout', type=int, default=None,
               help='Qdrant timeout in seconds (default: 120, increase for very large files)')
 def sync_directory(corpus, paths, from_file, models, file_types, force, dry_run, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, skip_dir_prefix, no_skip_dir_prefix, parity, timeout):

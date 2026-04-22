@@ -1389,20 +1389,44 @@ def sync_directory_command(
                     if not output_json:
                         print_info(f"Cleaned {stale_cleaned} stale paths from both indexes")
 
-            # Filter to only process new files (not in either system)
-            files_to_process = [f for f in files if str(f.absolute()) in new_file_paths]
+            # Files in both systems that survived rename/stale handling still need a
+            # mtime+size check so edited-but-not-renamed files don't silently get skipped.
+            unchanged_candidate_paths = (
+                (in_both_systems & discovered_file_paths)
+                - renamed_new_paths
+                - set(stale_paths)
+            )
+            unchanged_candidates = [
+                f for f in files
+                if str(f.absolute()) in unchanged_candidate_paths
+            ]
 
-            # Count files in both systems (truly skipped)
-            already_indexed_count = len(in_both_systems & discovered_file_paths)
+            modified_files: List[Path] = []
+            truly_unchanged: List[Path] = []
+            if unchanged_candidates:
+                modified_files, truly_unchanged = sync_manager.get_unindexed_files(
+                    corpus, unchanged_candidates
+                )
+
+            modified_file_set = {str(f.absolute()) for f in modified_files}
+
+            # New files (not in either system) + modified files (mtime+size changed)
+            files_to_process = [
+                f for f in files
+                if str(f.absolute()) in new_file_paths
+                or str(f.absolute()) in modified_file_set
+            ]
+
+            already_indexed_count = len(truly_unchanged)
 
             # Calculate total corpus size for progress display
             total_corpus_files = already_indexed_count + len(files_to_process)
 
             if not output_json:
                 if already_indexed_count > 0:
-                    print_info(f"Corpus: {already_indexed_count}/{total_corpus_files} files indexed, processing {len(files_to_process)} new files")
+                    print_info(f"Corpus: {already_indexed_count}/{total_corpus_files} files indexed, processing {len(files_to_process)} new/modified files")
                 elif len(files_to_process) > 0:
-                    print_info(f"Processing {len(files_to_process)} new files")
+                    print_info(f"Processing {len(files_to_process)} new/modified files")
 
             files = files_to_process
         else:

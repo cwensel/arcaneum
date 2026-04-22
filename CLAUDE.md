@@ -62,8 +62,9 @@ arc corpus create MyCorpus --type pdf        # or: code, markdown
 # Add or update files (preferred command for indexing)
 arc corpus sync MyCorpus /path/to/files
 
-# Same, but also detect renames and remove indexed entries for files
-# that no longer exist on disk (scoped to the synced paths)
+# Same, but also detect renames, remove indexed entries for files that
+# no longer exist on disk, and check Qdrant/MeiliSearch cross-system
+# parity (all modes pick up edited files via mtime+size)
 arc corpus sync MyCorpus /path/to/files --parity
 
 # Preview parity changes without writing

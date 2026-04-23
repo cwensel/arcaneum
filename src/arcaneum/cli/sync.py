@@ -818,7 +818,7 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool 
     base_metadata = {
         'file_path': str(file_path),
         'filename': file_path.name,
-        'page_count': page_count or metadata.get('page_count', 0),
+        'page_count': page_count,
         'page_boundaries': metadata.get('page_boundaries', []),
     }
     if extraction_floor:

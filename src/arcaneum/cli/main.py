@@ -119,6 +119,8 @@ def collection_verify(name, project, verbose, output_json):
     For PDF/markdown, verifies all file chunks are present.
 
     Examples:
+
+    \b
       arc collection verify MyCode
       arc collection verify MyCode --project myrepo#main
       arc collection verify MyPDFs --verbose
@@ -358,10 +360,13 @@ def index_text_code(path, from_file, index_name, recursive, depth, batch_size, w
     By default uses git-aware mode: discovers git repositories, extracts
     function/class definitions with line ranges, supports multi-branch.
 
+    \b
     Use --no-git for simple file-based indexing without git awareness.
     Use --workers to control parallel processing (default: auto=cpu/2, 0=sequential).
 
     Examples:
+
+    \b
         arc index text code ./repos --index code-index
         arc index text code ./src --index code-index --no-git
         arc index text code ./repos --index code-index --depth 2 --force
@@ -391,6 +396,8 @@ def index_text_markdown(path, from_file, index_name, recursive, batch_size, forc
     Complements semantic search via Qdrant (arc index markdown).
 
     Examples:
+
+    \b
         arc index text markdown ./docs --index docs-index
         arc index text markdown ./wiki --index wiki-index --force
     """
@@ -423,6 +430,8 @@ def index_text_pdf(path, from_file, index_name, recursive, no_ocr, ocr_language,
     and keyword search. Complements semantic search via Qdrant (arc index pdf).
 
     Examples:
+
+    \b
         arc index text pdf ./research-papers --index research-pdfs
         arc index text pdf ./docs --index docs --no-ocr --force
     """
@@ -456,9 +465,12 @@ def store(file, collection, model, title, category, tags, metadata, chunk_size, 
     Storage location: ~/.arcaneum/agent-memory/{collection}/
 
     Examples:
-      # Store from stdin (agent workflow)
-      echo "# Research\\n\\nFindings..." | arc store - --collection knowledge
 
+    \b
+      # Store from stdin (agent workflow)
+      echo "# Research..." | arc store - --collection knowledge
+
+    \b
       # Store from file with metadata
       arc store analysis.md --collection research \\
           --title "Security Findings" --category security --tags "audit,critical"
@@ -590,6 +602,8 @@ def sync_directory(corpus, paths, from_file, models, file_types, force, dry_run,
     """Index to both vector and full-text.
 
     Examples:
+
+    \b
         arc corpus sync MyCorpus /path/to/files
         arc corpus sync MyCorpus /path/one /path/two /path/three
         arc corpus sync MyCorpus document.pdf
@@ -598,10 +612,13 @@ def sync_directory(corpus, paths, from_file, models, file_types, force, dry_run,
         find . -name "*.pdf" | arc corpus sync MyCorpus --from-file -
 
     Use --text-workers to parallelize AST chunking for code corpora.
+
     Use --no-gpu for CPU-only mode (avoids MPS instability with large models).
+
     Use --parity to detect renames and remove files no longer on disk, and
     to check cross-system consistency (or use 'arc corpus parity' for a
     standalone parity check without indexing).
+
     Use 'arc corpus repair' to re-index incomplete or garbled files.
     """
     # Validate that at least one of paths or from_file is provided
@@ -639,6 +656,8 @@ def corpus_repair(corpus, quality_threshold, dry_run, no_gpu, max_embedding_batc
     affected files with OCR fallback and compares quality before replacing.
 
     Examples:
+
+    \b
         arc corpus repair PapersFast
         arc corpus repair PapersFast --dry-run
         arc corpus repair PapersFast --quality-threshold 0.5
@@ -693,6 +712,8 @@ def corpus_parity(name, dry_run, verify, repair_metadata, text_workers, timeout,
     discovers all corpora and shows a summary before proceeding.
 
     Compares indexed files in both systems and backfills missing entries:
+
+    \b
     - Qdrant -> MeiliSearch: Copies metadata (no file access needed)
     - MeiliSearch -> Qdrant: Re-chunks and embeds files (requires file access)
 
@@ -734,6 +755,8 @@ def corpus_items(name, output_json):
     with chunk counts from each system (Q and M columns).
 
     Examples:
+
+    \b
         arc corpus items MyCorpus
         arc corpus items MyCorpus --json
     """
@@ -753,6 +776,8 @@ def corpus_verify(name, project, verbose, output_json):
     collection/index health and parity status.
 
     Examples:
+
+    \b
         arc corpus verify MyCorpus
         arc corpus verify MyCorpus --verbose
         arc corpus verify MyCorpus --json

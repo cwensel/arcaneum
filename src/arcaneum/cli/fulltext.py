@@ -575,6 +575,8 @@ def verify_index(name, output_json):
     and settings are properly configured.
 
     Examples:
+
+    \b
         arc indexes verify MyIndex
         arc indexes verify MyIndex --json
     """
@@ -705,6 +707,8 @@ def list_items(name, limit, offset, output_json):
     similar to 'arc collection items' for Qdrant.
 
     Examples:
+
+    \b
         arc indexes items MyIndex
         arc indexes items MyIndex --limit 50
         arc indexes items MyIndex --json
@@ -825,6 +829,8 @@ def export_index(name, output, output_json):
     Exports all documents from a MeiliSearch index for backup or migration.
 
     Examples:
+
+    \b
         arc indexes export MyIndex -o backup.jsonl
         arc indexes export MyIndex -o backup.jsonl --json
     """
@@ -919,6 +925,8 @@ def list_projects(name, output_json):
     Only applicable for indexes with git-aware source code.
 
     Examples:
+
+    \b
         arc indexes list-projects MyCode
         arc indexes list-projects MyCode --json
     """
@@ -984,6 +992,8 @@ def delete_project(identifier, index_name, confirm, output_json):
     Other projects/branches in the same index are unaffected.
 
     Examples:
+
+    \b
         arc indexes delete-project arcaneum#main --index MyCode
         arc indexes delete-project myrepo#feature-x --index MyCode --confirm
     """
@@ -1057,6 +1067,8 @@ def import_index(file, target_name, output_json):
     Creates the index if it doesn't exist, using the exported settings.
 
     Examples:
+
+    \b
         arc indexes import backup.jsonl
         arc indexes import backup.jsonl --into NewIndex
         arc indexes import backup.jsonl --json

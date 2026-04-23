@@ -153,3 +153,33 @@ def needs_ocr(text: str) -> bool:
             return True
 
     return False
+
+
+def looks_like_dropout(
+    text: str,
+    page_count: int,
+    min_chars_per_page: int = 500,
+    min_pages: int = 2,
+) -> bool:
+    """Detect silent extraction dropout.
+
+    Catches the case where extraction produces clean, readable text but far
+    too little of it for the page count — e.g. a scanned PDF where
+    pymupdf4llm's OCR pass only reads a recurring watermark, yielding ~1 KB
+    of perfectly-scoring English that score_text()/needs_ocr() both pass.
+
+    Args:
+        text: Extracted text for the whole document
+        page_count: Authoritative page count from the PDF itself
+        min_chars_per_page: Below this density, suspect a dropout
+        min_pages: Only check documents with at least this many pages
+                   (avoids false positives on legitimate short PDFs)
+
+    Returns:
+        True if extracted length per page is implausibly low
+    """
+    if page_count < min_pages:
+        return False
+    if not text:
+        return True
+    return (len(text) / page_count) < min_chars_per_page

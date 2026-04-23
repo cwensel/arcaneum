@@ -76,6 +76,8 @@ class DualIndexDocument:
     title: Optional[str] = None
     author: Optional[str] = None
     document_type: Optional[str] = None
+    page_count: Optional[int] = None
+    extraction_floor: Optional[bool] = None
 
     # Markdown-specific
     headings: List[str] = field(default_factory=list)
@@ -162,6 +164,12 @@ def to_qdrant_point(doc: DualIndexDocument, point_id: Optional[int] = None):
 
     if doc.document_type:
         payload["document_type"] = doc.document_type
+
+    if doc.page_count is not None:
+        payload["page_count"] = doc.page_count
+
+    if doc.extraction_floor:
+        payload["extraction_floor"] = doc.extraction_floor
 
     if doc.headings:
         payload["headings"] = doc.headings

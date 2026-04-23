@@ -15,6 +15,7 @@ Usage:
 """
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 from collections import defaultdict
@@ -25,6 +26,24 @@ from qdrant_client.models import FieldCondition, Filter, MatchValue
 from arcaneum.indexing.collection_metadata import get_collection_type
 
 logger = logging.getLogger(__name__)
+
+
+def _page_count_from_disk(file_path: str) -> Optional[int]:
+    """Read PDF page count from disk without extracting text.
+
+    Used by dropout detection when page_count wasn't stored in the chunk
+    payload (older indexed data). Returns None if the file is missing or
+    unreadable — caller falls back to skipping the dropout check.
+    """
+    if not file_path or not os.path.exists(file_path):
+        return None
+    try:
+        import pymupdf
+        with pymupdf.open(file_path) as doc:
+            return doc.page_count
+    except Exception as e:
+        logger.debug(f"Could not read page count from {file_path}: {e}")
+        return None
 
 
 @dataclass
@@ -38,6 +57,9 @@ class FileVerificationResult:
     is_complete: bool = True
     has_garbled_text: bool = False  # chunks contain unreadable garbage text
     avg_quality_score: float = 1.0  # average text quality score (0.0-1.0)
+    suspected_dropout: bool = False  # extracted text implausibly small for page count
+    total_text_chars: int = 0  # sum of chunk text lengths (for dropout detection)
+    page_count: Optional[int] = None  # authoritative page count from PDF
 
     @property
     def completion_percentage(self) -> float:
@@ -83,6 +105,8 @@ class CollectionVerificationResult:
     complete_items: int
     incomplete_items: int
     garbled_items: int = 0
+    dropout_items: int = 0  # files with suspected extraction dropout
+    dropout_at_floor: int = 0  # dropout files already marked extraction_floor (skipped)
     is_healthy: bool = True
     # Detailed results by item
     projects: List[ProjectVerificationResult] = field(default_factory=list)  # for code
@@ -90,12 +114,12 @@ class CollectionVerificationResult:
     errors: List[str] = field(default_factory=list)
 
     def get_items_needing_repair(self) -> List[str]:
-        """Return list of items that need re-indexing (incomplete or garbled)."""
+        """Return list of items that need re-indexing (incomplete, garbled, or dropout)."""
         if self.collection_type == "code":
             return [p.identifier for p in self.projects if not p.is_complete]
         else:
             return [f.file_path for f in self.files
-                    if not f.is_complete or f.has_garbled_text]
+                    if not f.is_complete or f.has_garbled_text or f.suspected_dropout]
 
 
 class CollectionVerifier:
@@ -325,19 +349,33 @@ class CollectionVerifier:
         """
         logger.debug(f"Verifying {collection_type or 'file'} collection: {collection_name}")
 
+        check_dropout = collection_type == "pdf"
         if check_quality:
             from .pdf.quality import score_text
+        if check_dropout:
+            from .pdf.quality import looks_like_dropout
 
-        # Collect chunk info: {file_path: {"indices": set, "chunk_count": int, "quality_scores": list}}
+        # Collect chunk info per file. Text is always accumulated for dropout
+        # detection on PDF corpora (even when check_quality is False) since
+        # dropout uses total length / page_count, not per-chunk quality scoring.
         file_chunks: Dict[str, Dict[str, any]] = defaultdict(
-            lambda: {"indices": set(), "chunk_count": 0, "quality_scores": []}
+            lambda: {
+                "indices": set(),
+                "chunk_count": 0,
+                "quality_scores": [],
+                "total_text_chars": 0,
+                "page_count": None,
+                "extraction_floor": False,
+            }
         )
 
         # Scroll through all points
         offset = None
         batch_count = 0
         payload_fields = ["file_path", "chunk_index", "chunk_count"]
-        if check_quality:
+        if check_dropout:
+            payload_fields.extend(["page_count", "extraction_floor"])
+        if check_quality or check_dropout:
             payload_fields.append("text")
 
         while True:
@@ -385,11 +423,21 @@ class CollectionVerifier:
                     file_chunks[file_path]["indices"].add(len(file_chunks[file_path]["indices"]))
                     file_chunks[file_path]["chunk_count"] = len(file_chunks[file_path]["indices"])
 
+                text = payload.get("text", "") if (check_quality or check_dropout) else ""
+
                 # Score text quality if requested
-                if check_quality:
-                    text = payload.get("text", "")
+                if check_quality and text:
+                    file_chunks[file_path]["quality_scores"].append(score_text(text))
+
+                # Accumulate dropout signal (total text, page_count, floor marker)
+                if check_dropout:
                     if text:
-                        file_chunks[file_path]["quality_scores"].append(score_text(text))
+                        file_chunks[file_path]["total_text_chars"] += len(text)
+                    payload_page_count = payload.get("page_count")
+                    if payload_page_count and file_chunks[file_path]["page_count"] is None:
+                        file_chunks[file_path]["page_count"] = payload_page_count
+                    if payload.get("extraction_floor"):
+                        file_chunks[file_path]["extraction_floor"] = True
 
             if offset is None:
                 break
@@ -399,6 +447,8 @@ class CollectionVerifier:
         complete_count = 0
         incomplete_count = 0
         garbled_count = 0
+        dropout_count = 0
+        dropout_at_floor = 0
 
         for file_path, file_data in file_chunks.items():
             indices = file_data["indices"]
@@ -424,7 +474,30 @@ class CollectionVerifier:
             if has_garbled:
                 garbled_count += 1
 
-            if is_complete and not has_garbled:
+            # Check extraction dropout.
+            # page_count in payload is authoritative when present (newer indexes);
+            # fall back to reading from disk so pre-existing corpora are checked too.
+            suspected_dropout = False
+            total_text_chars = file_data["total_text_chars"]
+            page_count = file_data["page_count"]
+            if check_dropout:
+                if page_count is None:
+                    page_count = _page_count_from_disk(file_path)
+                if page_count and total_text_chars:
+                    if file_data["extraction_floor"]:
+                        # Already tried the bypass; don't flag for re-indexing
+                        if looks_like_dropout(
+                            "x" * total_text_chars, page_count
+                        ):
+                            dropout_at_floor += 1
+                    else:
+                        # Use a sentinel string of matching length — looks_like_dropout
+                        # only cares about char-count-per-page, not content.
+                        if looks_like_dropout("x" * total_text_chars, page_count):
+                            suspected_dropout = True
+                            dropout_count += 1
+
+            if is_complete and not has_garbled and not suspected_dropout:
                 complete_count += 1
             else:
                 incomplete_count += 1
@@ -435,9 +508,12 @@ class CollectionVerifier:
                     expected_chunks=chunk_count if chunk_count else len(indices),
                     actual_chunks=len(indices),
                     missing_indices=missing,
-                    is_complete=is_complete and not has_garbled,
+                    is_complete=is_complete and not has_garbled and not suspected_dropout,
                     has_garbled_text=has_garbled,
                     avg_quality_score=round(avg_quality, 3),
+                    suspected_dropout=suspected_dropout,
+                    total_text_chars=total_text_chars,
+                    page_count=page_count,
                 )
             )
 
@@ -449,7 +525,9 @@ class CollectionVerifier:
             complete_items=complete_count,
             incomplete_items=incomplete_count,
             garbled_items=garbled_count,
-            is_healthy=incomplete_count == 0 and garbled_count == 0,
+            dropout_items=dropout_count,
+            dropout_at_floor=dropout_at_floor,
+            is_healthy=incomplete_count == 0 and garbled_count == 0 and dropout_count == 0,
             files=file_results,
         )
 

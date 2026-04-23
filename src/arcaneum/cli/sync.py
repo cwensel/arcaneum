@@ -728,6 +728,7 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool 
     from ..indexing.pdf.chunker import PDFChunker
     from ..indexing.pdf.extractor import PDFExtractor
     from ..indexing.pdf.ocr import OCREngine
+    from ..indexing.pdf.quality import looks_like_dropout
 
     # Extract text from PDF using PDFExtractor class
     extractor = PDFExtractor(use_ocr=use_ocr)
@@ -738,9 +739,23 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool 
     run_ocr = not text or len(text.strip()) < 100
     if not run_ocr and not use_ocr:
         from ..indexing.pdf.quality import needs_ocr as check_needs_ocr
+        from ..indexing.pdf.quality import score_text
         if check_needs_ocr(text):
             logger.info(f"Garbled text detected in {file_path.name}, re-extracting with OCR")
             run_ocr = True
+        else:
+            # Conservative soft-quality gate: needs_ocr() only catches hard
+            # garbage (U+FFFD, no stop words). Files scoring 0.5-0.9 on
+            # score_text() — mis-mapped fonts that still yield *some* English
+            # — slip past needs_ocr() and get indexed as low-quality text,
+            # which repair later flags. Catch the worst of them here.
+            score = score_text(text)
+            if score < 0.7:
+                logger.info(
+                    f"Low text quality in {file_path.name} "
+                    f"(score {score:.2f}), re-extracting with OCR"
+                )
+                run_ocr = True
 
     if run_ocr and not use_ocr:
         # Re-extract with pymupdf4llm auto-OCR (handles garbled spans)
@@ -751,6 +766,36 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool 
             metadata['ocr_triggered_by'] = 'quality'
         except Exception as e:
             logger.warning(f"OCR re-extraction failed for {file_path}: {e}")
+
+    # Dropout fallback: the default extractor delegates to pymupdf4llm which
+    # can silently OCR scanned PDFs and return only the page watermark
+    # (clean text, so needs_ocr() passes). Compare against plain page.get_text()
+    # when the output is implausibly small for the page count.
+    page_count = metadata.get('page_count', 0) or 0
+    extraction_floor = False
+    if text and looks_like_dropout(text, page_count):
+        try:
+            fallback = PDFExtractor(markdown_conversion=False)
+            alt_text, alt_metadata = fallback.extract(file_path)
+            if len(alt_text) > len(text) * 2:
+                logger.info(
+                    f"Dropout detected in {file_path.name} "
+                    f"({len(text)} chars / {page_count}p); "
+                    f"using normalized extraction ({len(alt_text)} chars)"
+                )
+                text = alt_text
+                metadata.update(alt_metadata)
+                metadata['dropout_recovered'] = True
+            else:
+                # Bypass didn't help — mark chunks so repair doesn't loop on this file
+                extraction_floor = True
+                logger.info(
+                    f"Dropout suspected in {file_path.name} "
+                    f"({len(text)} chars / {page_count}p) but bypass yielded "
+                    f"{len(alt_text)} chars; marking extraction_floor"
+                )
+        except Exception as e:
+            logger.warning(f"Dropout fallback failed for {file_path}: {e}")
 
     # Final fallback: Tesseract OCR for completely empty extractions
     if not text or len(text.strip()) < 100:
@@ -771,8 +816,11 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool 
     base_metadata = {
         'file_path': str(file_path),
         'filename': file_path.name,
+        'page_count': page_count or metadata.get('page_count', 0),
         'page_boundaries': metadata.get('page_boundaries', []),
     }
+    if extraction_floor:
+        base_metadata['extraction_floor'] = True
 
     chunks = chunker.chunk(text, base_metadata)
 
@@ -1069,6 +1117,29 @@ def sync_directory_command(
                     console.print(f"  [dim]{f.file_path} (quality: {f.avg_quality_score:.2f})[/dim]")
                 if len(garbled_files) > 5:
                     console.print(f"  [dim]... and {len(garbled_files) - 5} more[/dim]")
+
+            # Report suspected dropout files (extraction produced clean text but far
+            # too little of it for the page count — typically scanned PDFs where
+            # pymupdf4llm's OCR only caught a recurring watermark)
+            dropout_count = verification_result.dropout_items
+            dropout_floor_count = verification_result.dropout_at_floor
+            if dropout_count > 0 and not output_json:
+                console.print(
+                    f"[yellow]⚠ Found {dropout_count} files with suspected extraction dropout[/yellow]"
+                )
+                dropout_files = [f for f in verification_result.files if f.suspected_dropout]
+                for f in dropout_files[:5]:
+                    console.print(
+                        f"  [dim]{f.file_path} "
+                        f"({f.total_text_chars} chars / {f.page_count}p)[/dim]"
+                    )
+                if len(dropout_files) > 5:
+                    console.print(f"  [dim]... and {len(dropout_files) - 5} more[/dim]")
+            if dropout_floor_count > 0 and not output_json:
+                console.print(
+                    f"[dim]ℹ {dropout_floor_count} dropout-suspect files already at "
+                    f"extraction floor — skipped[/dim]"
+                )
 
             incomplete_paths = verification_result.get_items_needing_repair()
 
@@ -1808,6 +1879,9 @@ def sync_directory_command(
 
                             if corpus_type == 'pdf':
                                 doc.page_number = chunk_meta.get('page_number')
+                                doc.page_count = chunk_meta.get('page_count')
+                                if chunk_meta.get('extraction_floor'):
+                                    doc.extraction_floor = True
                                 doc.document_type = 'pdf'
 
                             elif corpus_type == 'markdown':
@@ -2095,6 +2169,10 @@ def sync_directory_command(
                             if corpus_type == 'pdf':
                                 if chunk_meta.get('page_number'):
                                     payload["page_number"] = chunk_meta["page_number"]
+                                if chunk_meta.get('page_count'):
+                                    payload["page_count"] = chunk_meta["page_count"]
+                                if chunk_meta.get('extraction_floor'):
+                                    payload["extraction_floor"] = True
                                 payload["document_type"] = "pdf"
 
                             points.append(PointStruct(
@@ -3161,6 +3239,10 @@ def _backfill_meili_to_qdrant(
                 if corpus_type == 'pdf':
                     if chunk_meta.get('page_number'):
                         payload["page_number"] = chunk_meta["page_number"]
+                    if chunk_meta.get('page_count'):
+                        payload["page_count"] = chunk_meta["page_count"]
+                    if chunk_meta.get('extraction_floor'):
+                        payload["extraction_floor"] = True
                     payload["document_type"] = "pdf"
 
                 points.append(PointStruct(

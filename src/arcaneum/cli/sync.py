@@ -485,9 +485,10 @@ def discover_files(
 ) -> List[Path]:
     """Discover files to index based on corpus type and file filters.
 
-    For git repositories, uses 'git ls-files' to respect .gitignore and only
-    index tracked files. For non-git directories, uses rglob with exclusion
-    patterns.
+    For code corpora inside a git repository, uses 'git ls-files' to respect
+    .gitignore and only index tracked files. For markdown and pdf corpora,
+    and for non-git directories, uses rglob with exclusion patterns so
+    untracked research notes and downloaded documents are still discovered.
 
     Args:
         directory: Directory to scan
@@ -517,9 +518,12 @@ def discover_files(
         logger.warning(f"No file extensions defined for corpus type: {corpus_type}")
         return []
 
-    # Check if directory is a git repository
+    # Git-tracked discovery only applies to code corpora, where indexing what
+    # git sees matches developer intent. For markdown/pdf corpora users often
+    # index untracked research notes and downloaded documents, so use the
+    # filesystem directly and rely on skip_dir_prefixes for exclusions.
     files = []
-    if _is_git_repo(directory):
+    if corpus_type == 'code' and _is_git_repo(directory):
         logger.info(f"Git repository detected, using git ls-files for file discovery")
         files = _discover_git_tracked_files(directory, extensions)
         if not files:
@@ -529,9 +533,7 @@ def discover_files(
             logger.info(f"No tracked files found under {directory}, falling back to rglob")
 
     if not files:
-        # Non-git directory (or git fallback): use rglob with exclusion patterns
-        if not _is_git_repo(directory):
-            logger.info(f"Non-git directory, using rglob with exclusion patterns")
+        logger.info(f"Using rglob with exclusion patterns for file discovery")
         files = []
         for ext in extensions:
             pattern = f"*{ext}"  # rglob already handles recursive search

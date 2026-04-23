@@ -58,7 +58,7 @@ dependencies = [
     "Pillow>=10.0.0",  # Direct use in OCR image pipeline
     # Source code indexing dependencies (RDR-005)
     "tree-sitter>=0.24.0",  # Required at runtime; tree-sitter-language-pack 1.6.3 dropped it from deps
-    "tree-sitter-language-pack>=0.10.0",
+    "tree-sitter-language-pack>=0.10.0,!=1.6.3",  # 1.6.3 cp312 wheel ships no tree_sitter_language_pack package (only _native/)
     "llama-index-core>=0.14.6",
     "GitPython>=3.1.45",
     # Markdown indexing dependencies (RDR-014)

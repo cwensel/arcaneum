@@ -170,6 +170,7 @@ def _chunk_code_file_worker(
     chunk_size: int,
     chunk_overlap: int,
     hard_max_chars: Optional[int] = None,
+    max_ast_size: Optional[int] = None,
 ) -> Tuple[str, List[Dict[str, Any]], Optional[str]]:
     """Process a single code file: read and chunk using AST.
 
@@ -219,13 +220,18 @@ def _chunk_code_file_worker(
         }
         language = ext_to_lang.get(file_p.suffix.lower(), 'unknown')
 
+        # Large files skip tree-sitter to avoid OOM-killing the worker process;
+        # generated/vendored headers routinely exceed 256 KB.
+        ast_limit = max_ast_size if max_ast_size is not None else _MAX_AST_FILE_SIZE
+        force_line_based = file_size > ast_limit
+
         # Chunk using AST with hard limit to prevent embedding OOM
         chunker = ASTCodeChunker(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             hard_max_chars=hard_max_chars
         )
-        chunks = chunker.chunk_code(file_path, code)
+        chunks = chunker.chunk_code(file_path, code, force_line_based=force_line_based)
 
         # Convert to serializable dicts
         chunk_dicts = []
@@ -386,6 +392,11 @@ _MINIFIED_CHECK_BYTES = 65536
 # that escaped filename-pattern filtering.  Embedding them wastes GPU time and
 # can trigger OOM / timeouts.  PDFs and markdown have their own size handling.
 _MAX_CODE_FILE_SIZE = 1_000_000  # 1 MB
+
+# Files exceeding this bypass tree-sitter AST parsing and use line-based
+# chunking instead.  Large generated/vendored C headers can OOM-kill worker
+# processes inside tree-sitter even when they are below _MAX_CODE_FILE_SIZE.
+_MAX_AST_FILE_SIZE = 256_000  # 256 KB
 
 
 def _filter_excluded_files(files: List[Path], skip_dir_prefixes: Tuple[str, ...] = ('_',),

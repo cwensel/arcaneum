@@ -3121,6 +3121,7 @@ def _parallel_chunk_code_files(
         }
 
         for future in as_completed(futures):
+            fp = futures[future]
             try:
                 file_path_str, chunks, error = future.result()
                 if error:
@@ -3130,9 +3131,22 @@ def _parallel_chunk_code_files(
                 elif chunks:
                     chunked_files[file_path_str] = chunks
             except Exception as e:
-                fp = futures[future]
-                errors.append((fp, str(e)))
-                logger.error(f"Worker exception for {fp}: {e}")
+                # Worker process was killed (SIGSEGV/OOM in tree-sitter on macOS).
+                # Recover by re-chunking in-process with line-based splitting so
+                # the file is still indexed rather than silently dropped.
+                logger.warning(f"Worker crash for {fp}: {e} — retrying with line-based chunking")
+                try:
+                    file_path_str, chunks, error = _chunk_code_file_worker(
+                        fp, chunk_size, chunk_overlap, hard_max_chars,
+                        max_ast_size=0,  # force line-based for all files
+                    )
+                    if chunks:
+                        chunked_files[file_path_str] = chunks
+                    elif error:
+                        errors.append((file_path_str, error))
+                except Exception as retry_e:
+                    errors.append((fp, str(retry_e)))
+                    logger.error(f"Retry also failed for {fp}: {retry_e}")
 
         # Clean up
         del futures

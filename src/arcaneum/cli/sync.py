@@ -1713,23 +1713,9 @@ def sync_directory_command(
 
         # Only initialize embedding infrastructure if there are new files to process
         if files:
-            # Initialize embedding client
-            use_gpu = not no_gpu and not os.environ.get('ARC_NO_GPU', '').lower() in ('1', 'true')
-            embedding_client = EmbeddingClient(use_gpu=use_gpu, cpu_workers=cpu_workers)
-
-            # Initialize git discovery for code corpora
-            git_discovery = GitProjectDiscovery() if corpus_type == 'code' else None
-            git_metadata_cache: Dict[str, Any] = {}  # Cache by git root path
-
-            # Create dual indexer
-            dual_indexer = DualIndexer(
-                qdrant_client=qdrant,
-                meili_client=meili,
-                collection_name=corpus,
-                index_name=corpus
-            )
-
-            # Get model config for chunking
+            # Derive model config and chunk parameters first — these do not require
+            # loading any embedding model weights, so they are safe to compute before
+            # EmbeddingClient is initialized.
             first_model = model_list[0]
             if first_model in DEFAULT_MODELS:
                 model_config = DEFAULT_MODELS[first_model].__dict__
@@ -1747,7 +1733,13 @@ def sync_directory_command(
             max_seq_length = embedding_model_config.get('max_seq_length', 8192)
             hard_max_chars = max_seq_length * 2  # Conservative: assume 0.5 tokens/char worst case
 
-            # Pre-chunk code files in parallel if workers > 1
+            # Pre-chunk code files in parallel BEFORE initializing EmbeddingClient.
+            # EmbeddingClient loads PyTorch/ONNX Runtime, and forking after those
+            # libraries are loaded into the process corrupts their internal thread-pool
+            # and allocator state in the child, causing tree-sitter's C extension to
+            # crash with SIGSEGV or be killed by the OS memory manager.  By running
+            # the fork pool here — before any GPU/ONNX state exists — the children
+            # inherit a clean address space and tree-sitter runs safely.
             pre_chunked_code_files: Dict[str, List[Dict[str, Any]]] = {}
             if corpus_type == 'code' and effective_text_workers > 1:
                 if not output_json:
@@ -1764,6 +1756,23 @@ def sync_directory_command(
                 )
                 if not output_json:
                     print_info(f"Pre-chunked {len(pre_chunked_code_files)} files")
+
+            # Initialize embedding client after chunking so the fork pool above
+            # never inherits PyTorch/ONNX allocator state.
+            use_gpu = not no_gpu and not os.environ.get('ARC_NO_GPU', '').lower() in ('1', 'true')
+            embedding_client = EmbeddingClient(use_gpu=use_gpu, cpu_workers=cpu_workers)
+
+            # Initialize git discovery for code corpora
+            git_discovery = GitProjectDiscovery() if corpus_type == 'code' else None
+            git_metadata_cache: Dict[str, Any] = {}  # Cache by git root path
+
+            # Create dual indexer
+            dual_indexer = DualIndexer(
+                qdrant_client=qdrant,
+                meili_client=meili,
+                collection_name=corpus,
+                index_name=corpus
+            )
 
             # Install memory-diagnostic SIGUSR1 handler and take baseline snapshot.
             # kill -USR1 <pid> during a suspected hang dumps mem + thread stacks.

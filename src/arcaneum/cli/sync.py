@@ -492,24 +492,36 @@ def discover_files(
     directory: Path,
     file_types: Optional[str],
     corpus_type: str,
-    skip_dir_prefixes: Tuple[str, ...] = ('_',)
-) -> List[Path]:
+    skip_dir_prefixes: Tuple[str, ...] = ('_',),
+    skip_git_roots: Optional[Set[str]] = None,
+) -> Tuple[List[Path], List[str]]:
     """Discover files to index based on corpus type and file filters.
 
-    For code corpora inside a git repository, uses 'git ls-files' to respect
-    .gitignore and only index tracked files. For markdown and pdf corpora,
-    and for non-git directories, uses rglob with exclusion patterns so
+    For code corpora, git repos are treated atomically:
+    - If ``directory`` is itself a git repo, ``git ls-files`` is used for that
+      repo (respects .gitignore).
+    - If ``directory`` is a folder of repos (not itself a git repo), every
+      sub-repo found via ``GitProjectDiscovery.find_git_projects`` is processed
+      with ``git ls-files`` independently.
+    Repos whose root appears in ``skip_git_roots`` are excluded entirely.
+
+    For markdown and pdf corpora the filesystem is scanned directly (rglob) so
     untracked research notes and downloaded documents are still discovered.
 
     Args:
         directory: Directory to scan
         file_types: Comma-separated file extensions (e.g., ".py,.js")
         corpus_type: Type of corpus (pdf, code, markdown)
-        skip_dir_prefixes: Tuple of prefixes; directories starting with any are skipped.
-                          Empty tuple disables prefix-based skipping.
+        skip_dir_prefixes: Tuple of prefixes; directories starting with any are
+                          skipped.  Empty tuple disables prefix-based skipping.
+        skip_git_roots: Set of git-root paths (str) to exclude entirely (used
+                       by --git-update / --git-version).  Only meaningful for
+                       code corpora.
 
     Returns:
-        List of file paths to index
+        Tuple of (files, git_roots) where:
+        - files: sorted list of Path objects to index
+        - git_roots: list of git root paths (str) discovered; empty for non-code
     """
     # Determine extensions to look for
     if file_types:
@@ -527,30 +539,61 @@ def discover_files(
 
     if not extensions:
         logger.warning(f"No file extensions defined for corpus type: {corpus_type}")
-        return []
+        return [], []
 
-    # Git-tracked discovery only applies to code corpora, where indexing what
-    # git sees matches developer intent. For markdown/pdf corpora users often
-    # index untracked research notes and downloaded documents, so use the
-    # filesystem directly and rely on skip_dir_prefixes for exclusions.
-    files = []
-    if corpus_type == 'code' and _is_git_repo(directory):
-        logger.info(f"Git repository detected, using git ls-files for file discovery")
-        files = _discover_git_tracked_files(directory, extensions)
-        if not files:
-            # git ls-files returned nothing — the directory may be inside a parent
-            # git repo but contain untracked content (e.g., a folder of cloned repos).
-            # Fall back to rglob so the files are still discovered.
-            logger.info(f"No tracked files found under {directory}, falling back to rglob")
+    skip_roots = skip_git_roots or set()
+    files: List[Path] = []
+    git_roots: List[str] = []
 
-    if not files:
-        logger.info(f"Using rglob with exclusion patterns for file discovery")
-        files = []
+    if corpus_type == 'code':
+        git_discovery = GitProjectDiscovery()
+
+        if _is_git_repo(directory):
+            # The directory itself is a git repo — treat it as a single unit.
+            import git as gitlib
+            try:
+                repo = gitlib.Repo(str(directory), search_parent_directories=True)
+                root = repo.working_tree_dir
+            except Exception:
+                root = str(directory.absolute())
+
+            if root not in skip_roots:
+                git_roots.append(root)
+                logger.info(f"Git repository detected, using git ls-files for {root}")
+                tracked = git_discovery.get_tracked_files(root, list(extensions))
+                # Filter to files actually under the requested directory
+                dir_abs = directory.absolute()
+                for fp in tracked:
+                    p = Path(fp)
+                    try:
+                        p.relative_to(dir_abs)
+                        if p.is_file():
+                            files.append(p)
+                    except ValueError:
+                        pass
+            else:
+                logger.info(f"Skipping git repo (in skip list): {root}")
+        else:
+            # Folder-of-repos: discover every sub-repo and process each atomically.
+            sub_repos = git_discovery.find_git_projects(str(directory))
+            if sub_repos:
+                for root in sub_repos:
+                    if root in skip_roots:
+                        logger.info(f"Skipping git repo (in skip list): {root}")
+                        continue
+                    git_roots.append(root)
+                    logger.info(f"Found sub-repo, using git ls-files for {root}")
+                    tracked = git_discovery.get_tracked_files(root, list(extensions))
+                    files.extend(Path(fp) for fp in tracked if Path(fp).is_file())
+            else:
+                # No sub-repos found — non-git directory, fall back to rglob.
+                logger.info(f"No git repos found under {directory}, falling back to rglob")
+                for ext in extensions:
+                    files.extend(f for f in directory.rglob(f"*{ext}") if f.is_file())
+    else:
+        # pdf / markdown: always use rglob; git tracking is not relevant.
         for ext in extensions:
-            pattern = f"*{ext}"  # rglob already handles recursive search
-            # Filter to actual files only (directories can have extensions too)
-            found = [f for f in directory.rglob(pattern) if f.is_file()]
-            files.extend(found)
+            files.extend(f for f in directory.rglob(f"*{ext}") if f.is_file())
 
     # Filter out excluded files (minified, generated, etc.)
     # Pass the base directory so prefix filtering only applies to nested dirs,
@@ -558,9 +601,8 @@ def discover_files(
     files = _filter_excluded_files(files, skip_dir_prefixes=skip_dir_prefixes,
                                    base_directory=directory.absolute())
 
-    # Sort for consistent ordering
     files.sort()
-    return files
+    return files, git_roots
 
 
 def compute_file_hash(file_path: Path) -> str:
@@ -1247,24 +1289,53 @@ def sync_directory_command(
         skip_git_roots: Set[str] = set()
         version_identifiers: Dict[str, str] = {}  # git_root -> version_identifier
 
-        if (git_update or git_version) and not force:
-            # Group input paths by git root
-            all_paths = dir_paths + single_files
-            path_groups = _group_paths_by_git_root(all_paths)
+        # For code corpora, discover all git repos from the input directories up
+        # front.  This gives us the complete set of repo roots for both
+        # --git-update / --git-version commit-hash checks AND for file discovery,
+        # ensuring every repo is treated atomically regardless of whether the user
+        # pointed at a single repo or a folder-of-repos.
+        all_dir_git_roots: List[str] = []  # flattened, in dir_paths order
+        if corpus_type == 'code' and dir_paths:
+            _git_disc = GitProjectDiscovery()
+            for dp in dir_paths:
+                if _is_git_repo(dp):
+                    import git as _gitlib
+                    try:
+                        _r = _gitlib.Repo(str(dp), search_parent_directories=True)
+                        all_dir_git_roots.append(_r.working_tree_dir)
+                    except Exception:
+                        all_dir_git_roots.append(str(dp.absolute()))
+                else:
+                    all_dir_git_roots.extend(_git_disc.find_git_projects(str(dp)))
 
+        if (git_update or git_version) and not force:
+            # For code corpora use the already-discovered repo roots so that
+            # folder-of-repos directories are expanded to individual repos.
+            # For non-code corpora fall back to the old group-by-git-root approach.
             git_sync = GitMetadataSync(qdrant)
             git_discovery = GitProjectDiscovery()
+
+            if corpus_type == 'code':
+                repo_roots_to_check = all_dir_git_roots
+                # Also include git roots of any explicit single files
+                for sf in single_files:
+                    sf_root = _find_git_root(sf)
+                    if sf_root and sf_root not in repo_roots_to_check:
+                        repo_roots_to_check = list(repo_roots_to_check) + [sf_root]
+            else:
+                all_paths = dir_paths + single_files
+                path_groups = _group_paths_by_git_root(all_paths)
+                repo_roots_to_check = [r for r in path_groups if r is not None]
 
             if git_update:
                 # --git-update mode: skip repos with unchanged commit hash
                 indexed_projects = git_sync.get_indexed_projects(corpus)
 
-                for git_root, group_paths in path_groups.items():
-                    if git_root is None:
-                        if not output_json:
-                            print_info("Warning: --git-update specified but some paths are not in git repos")
-                        continue
+                if corpus_type != 'code' and None in _group_paths_by_git_root(dir_paths + single_files):
+                    if not output_json:
+                        print_info("Warning: --git-update specified but some paths are not in git repos")
 
+                for git_root in repo_roots_to_check:
                     meta = git_discovery.extract_metadata(git_root)
                     if meta and meta.identifier in indexed_projects:
                         if indexed_projects[meta.identifier].commit_hash == meta.commit_hash:
@@ -1280,12 +1351,11 @@ def sync_directory_command(
 
             elif git_version:
                 # --git-version mode: keep multiple versions indexed
-                for git_root, group_paths in path_groups.items():
-                    if git_root is None:
-                        if not output_json:
-                            print_error("--git-version requires git repos (non-git paths found)")
-                        continue
+                if corpus_type != 'code' and None in _group_paths_by_git_root(dir_paths + single_files):
+                    if not output_json:
+                        print_error("--git-version requires git repos (non-git paths found)")
 
+                for git_root in repo_roots_to_check:
                     meta = git_discovery.extract_metadata(git_root)
                     if meta:
                         version_id = meta.version_identifier
@@ -1298,16 +1368,19 @@ def sync_directory_command(
                             if not output_json:
                                 print_info(f"Will index new version: {version_id}")
 
-        # Discover files from all directories and include single files
-        # Filter out files from skipped git repos
+        # Discover files from all directories and include single files.
+        # For code corpora, discover_files handles skip_git_roots internally so
+        # each repo is excluded atomically.  For non-code corpora the set is empty.
         files = []
+        discovered_git_roots: List[str] = []
         for dir_path in dir_paths:
-            # Check if this directory is in a skipped git root
-            dir_git_root = _find_git_root(dir_path)
-            if dir_git_root in skip_git_roots:
-                continue
-            dir_files = discover_files(dir_path, file_types, corpus_type, skip_dir_prefixes=skip_dir_prefixes)
+            dir_files, dir_roots = discover_files(
+                dir_path, file_types, corpus_type,
+                skip_dir_prefixes=skip_dir_prefixes,
+                skip_git_roots=skip_git_roots,
+            )
             files.extend(dir_files)
+            discovered_git_roots.extend(dir_roots)
         # Add single files directly (already validated for extension)
         for single_file in single_files:
             file_git_root = _find_git_root(single_file)
@@ -1327,12 +1400,16 @@ def sync_directory_command(
             if single_files and not dir_paths:
                 print_info(f"Found {len(files)} file{'s' if len(files) > 1 else ''} to index")
             elif dir_paths:
-                dir_word = "directory" if len(dir_paths) == 1 else "directories"
                 total_from_dirs = len(files) - len(single_files)
-                if single_files:
-                    print_info(f"Found {total_from_dirs} files across {len(dir_paths)} {dir_word}, plus {len(single_files)} individual file{'s' if len(single_files) > 1 else ''}")
+                repo_count = len(discovered_git_roots)
+                if repo_count > 0:
+                    loc_word = f"{repo_count} repo{'s' if repo_count != 1 else ''}"
                 else:
-                    print_info(f"Found {len(files)} files across {len(dir_paths)} {dir_word}")
+                    loc_word = f"{len(dir_paths)} {'directory' if len(dir_paths) == 1 else 'directories'}"
+                if single_files:
+                    print_info(f"Found {total_from_dirs} files across {loc_word}, plus {len(single_files)} individual file{'s' if len(single_files) > 1 else ''}")
+                else:
+                    print_info(f"Found {len(files)} files across {loc_word}")
 
         # Apply change detection (skip already indexed files) unless --force
         already_indexed_count = 0

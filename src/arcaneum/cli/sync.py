@@ -2052,30 +2052,46 @@ def sync_directory_command(
                                 logger.debug("periodic gc/flush failed", exc_info=True)
 
                         # Per-file memory probe — opt-in via verbose. Also always
-                        # warn on suspicious single-file growth (>500MB) so leaks
-                        # on unattended runs surface before jetsam kicks in.
+                        # warn on suspicious single-file growth so leaks on
+                        # unattended runs surface before jetsam kicks in.
+                        # On Apple Silicon, MPS driver allocations are wired
+                        # memory not reflected in RSS — we must watch Δdrv
+                        # separately or the leak is invisible until SIGKILL.
                         try:
                             _mem_now = _mem_snapshot(embedding_client)
                             _rss_delta = _mem_now.rss_bytes - _mem_prev.rss_bytes
+                            _drv_delta = (
+                                _mem_now.mps_driver_bytes - _mem_prev.mps_driver_bytes
+                                if _mem_now.mps_driver_bytes is not None
+                                and _mem_prev.mps_driver_bytes is not None
+                                else 0
+                            )
                             if verbose and not output_json:
                                 progress.console.print(
                                     f"[dim]    mem: {_fmt_snap(_mem_now)} "
                                     f"({_fmt_snap_delta(_mem_now, _mem_prev)})[/dim]"
                                 )
                             # Skip warn on first file: model load + PyTorch/MPS
-                            # context init always spikes RSS, not a leak signal.
-                            if (
-                                _rss_delta > 500 * 1024 * 1024
-                                and total_indexed > 1
-                                and not output_json
-                            ):
-                                progress.console.print(
-                                    f"[yellow]    mem-warn: RSS grew by "
-                                    f"{_rss_delta / (1024**2):.0f}MB on this file "
-                                    f"(now {_mem_now.rss_bytes / (1024**3):.2f}GB). "
-                                    f"Possible leak — kill -USR1 {os.getpid()} for "
-                                    f"detailed dump.[/yellow]"
-                                )
+                            # context init always spikes memory, not a leak signal.
+                            if total_indexed > 1 and not output_json:
+                                if _rss_delta > 500 * 1024 * 1024:
+                                    progress.console.print(
+                                        f"[yellow]    mem-warn: RSS grew by "
+                                        f"{_rss_delta / (1024**2):.0f}MB on this file "
+                                        f"(now {_mem_now.rss_bytes / (1024**3):.2f}GB). "
+                                        f"Possible leak — kill -USR1 {os.getpid()} for "
+                                        f"detailed dump.[/yellow]"
+                                    )
+                                # 100MB/file driver growth = ~10GB across 100 files —
+                                # well within a single sync that hits jetsam.
+                                if _drv_delta > 100 * 1024 * 1024:
+                                    progress.console.print(
+                                        f"[yellow]    mem-warn: MPS driver grew by "
+                                        f"{_drv_delta / (1024**2):.0f}MB on this file "
+                                        f"(now {_mem_now.mps_driver_bytes / (1024**3):.2f}GB). "
+                                        f"Unified memory leak — kill -USR1 {os.getpid()} for "
+                                        f"detailed dump.[/yellow]"
+                                    )
                             _mem_prev = _mem_now
                         except Exception:
                             logger.debug("memory probe failed", exc_info=True)

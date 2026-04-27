@@ -52,6 +52,12 @@ class MemorySnapshot:
     pending_gpu_cleanup: int = 0  # from EmbeddingClient, if passed in
 
     def delta(self, prev: "MemorySnapshot") -> dict:
+        # Δdrv/Δsys_used are the actual leak signal on Apple Silicon — Metal
+        # driver allocations don't show up in rss, and sys_used jumping while
+        # rss is flat is the fingerprint of unified-memory pressure that
+        # culminates in jetsam SIGKILL.
+        sys_used_now = self.system_total_bytes - self.system_available_bytes
+        sys_used_prev = prev.system_total_bytes - prev.system_available_bytes
         return {
             "rss": self.rss_bytes - prev.rss_bytes,
             "vsz": self.vsz_bytes - prev.vsz_bytes,
@@ -61,6 +67,11 @@ class MemorySnapshot:
                 None if self.mps_current_bytes is None or prev.mps_current_bytes is None
                 else self.mps_current_bytes - prev.mps_current_bytes
             ),
+            "mps_driver": (
+                None if self.mps_driver_bytes is None or prev.mps_driver_bytes is None
+                else self.mps_driver_bytes - prev.mps_driver_bytes
+            ),
+            "sys_used": sys_used_now - sys_used_prev,
         }
 
 
@@ -150,6 +161,8 @@ def format_snapshot_delta(snap: MemorySnapshot, prev: MemorySnapshot) -> str:
     parts = [
         f"Δrss={_fmt_signed_mb(d['rss'])}",
         f"Δmps={_fmt_signed_mb(d['mps_current'])}",
+        f"Δdrv={_fmt_signed_mb(d['mps_driver'])}",
+        f"Δsys={_fmt_signed_mb(d['sys_used'])}",
         f"Δthreads={d['threads']:+d}",
         f"Δgc={d['gc']:+d}",
     ]

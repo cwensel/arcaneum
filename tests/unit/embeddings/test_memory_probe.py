@@ -46,8 +46,41 @@ def test_delta_signed_mb_and_handles_none():
     assert "Δrss=+300.0MB" in delta_str
     assert "Δthreads=+2" in delta_str
     assert "Δgc=+50" in delta_str
-    # MPS delta should render as n/a when either side is None
+    # MPS / driver deltas should render as n/a when either side is None
     assert "Δmps=n/a" in delta_str
+    assert "Δdrv=n/a" in delta_str
+
+
+def test_delta_includes_driver_and_sys_used():
+    # Driver bytes grew 200MB, system used grew 1500MB — these are the
+    # signals the per-file probe must surface so unified-memory leaks
+    # don't stay invisible on Apple Silicon.
+    a = MemorySnapshot(
+        rss_bytes=0,
+        vsz_bytes=0,
+        thread_count=1,
+        gc_objects=0,
+        mps_current_bytes=10 * 1024 * 1024,
+        mps_driver_bytes=1024 * 1024 * 1024,
+        system_total_bytes=64 * 1024 * 1024 * 1024,
+        system_available_bytes=32 * 1024 * 1024 * 1024,
+    )
+    b = MemorySnapshot(
+        rss_bytes=0,
+        vsz_bytes=0,
+        thread_count=1,
+        gc_objects=0,
+        mps_current_bytes=10 * 1024 * 1024,
+        mps_driver_bytes=(1024 + 200) * 1024 * 1024,
+        system_total_bytes=64 * 1024 * 1024 * 1024,
+        system_available_bytes=(32 - 1.5) * 1024 * 1024 * 1024,
+    )
+    d = b.delta(a)
+    assert d["mps_driver"] == 200 * 1024 * 1024
+    assert d["sys_used"] == int(1.5 * 1024 * 1024 * 1024)
+    delta_str = format_snapshot_delta(b, a)
+    assert "Δdrv=+200.0MB" in delta_str
+    assert "Δsys=+1536.0MB" in delta_str
 
 
 def test_install_dump_handler_registers_sigusr1():

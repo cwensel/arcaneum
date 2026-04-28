@@ -508,12 +508,18 @@ def discover_files(
     For markdown and pdf corpora the filesystem is scanned directly (rglob) so
     untracked research notes and downloaded documents are still discovered.
 
+    Note: ``skip_dir_prefixes`` (default ``('_',)``) is bypassed for files
+    sourced from ``git ls-files``.  Git is the source of truth for what belongs
+    to a repo, so tracked dotfiles and underscore-prefixed paths (e.g.,
+    ``.github/workflows/*``) are always included in code corpora.
+
     Args:
         directory: Directory to scan
         file_types: Comma-separated file extensions (e.g., ".py,.js")
         corpus_type: Type of corpus (pdf, code, markdown)
         skip_dir_prefixes: Tuple of prefixes; directories starting with any are
                           skipped.  Empty tuple disables prefix-based skipping.
+                          Ignored for git-tracked files in code corpora.
         skip_git_roots: Set of git-root paths (str) to exclude entirely (used
                        by --git-update / --git-version).  Only meaningful for
                        code corpora.
@@ -543,6 +549,7 @@ def discover_files(
 
     skip_roots = skip_git_roots or set()
     files: List[Path] = []
+    git_tracked_files: List[Path] = []
     git_roots: List[str] = []
 
     if corpus_type == 'code':
@@ -568,7 +575,7 @@ def discover_files(
                     try:
                         p.relative_to(dir_abs)
                         if p.is_file():
-                            files.append(p)
+                            git_tracked_files.append(p)
                     except ValueError:
                         pass
             else:
@@ -584,7 +591,7 @@ def discover_files(
                     git_roots.append(root)
                     logger.info(f"Found sub-repo, using git ls-files for {root}")
                     tracked = git_discovery.get_tracked_files(root, list(extensions))
-                    files.extend(Path(fp) for fp in tracked if Path(fp).is_file())
+                    git_tracked_files.extend(Path(fp) for fp in tracked if Path(fp).is_file())
             else:
                 # No sub-repos found — non-git directory, fall back to rglob.
                 logger.info(f"No git repos found under {directory}, falling back to rglob")
@@ -600,6 +607,18 @@ def discover_files(
     # not the directory the user explicitly provided on the command line.
     files = _filter_excluded_files(files, skip_dir_prefixes=skip_dir_prefixes,
                                    base_directory=directory.absolute())
+
+    # Git-tracked code files bypass the dot/underscore prefix filter:
+    # `git ls-files` is the source of truth for what belongs to the repo, so
+    # tracked dotfiles/underscore-prefixed files (e.g., .github/, _internal/)
+    # must be indexed.  Other content filters (excluded dirs, generated/minified
+    # patterns) still apply because git happily tracks generated artifacts too.
+    if git_tracked_files:
+        git_tracked_files = _filter_excluded_files(
+            git_tracked_files, skip_dir_prefixes=(),
+            base_directory=directory.absolute(),
+        )
+        files.extend(git_tracked_files)
 
     files.sort()
     return files, git_roots

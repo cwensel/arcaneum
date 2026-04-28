@@ -195,3 +195,35 @@ class TestDiscoverFilesCode:
         files, _ = discover_files(folder_of_repos, None, "code")
         names = {f.name for f in files}
         assert "ignored.py" not in names
+
+    def test_code_includes_git_tracked_dot_and_underscore_paths(self, git_repo_with_untracked):
+        """Code corpora include tracked files under dot/underscore directories.
+
+        git ls-files is the source of truth for code corpora, so the default
+        skip_dir_prefixes=('_',) and dot-prefix conventions must NOT drop
+        tracked paths like .github/workflows/ci.py or _internal/foo.py.
+        """
+        repo = git_repo_with_untracked
+        (repo / ".github").mkdir()
+        (repo / ".github" / "ci.py").write_text("ci = 1\n")
+        (repo / "_internal").mkdir()
+        (repo / "_internal" / "helper.py").write_text("h = 1\n")
+        _git(repo, "add", ".github/ci.py", "_internal/helper.py")
+        _git(repo, "commit", "-q", "-m", "add tracked dot/underscore dirs")
+
+        files, _ = discover_files(repo, None, "code")
+        names = {f.name for f in files}
+        assert "ci.py" in names
+        assert "helper.py" in names
+
+    def test_code_markdown_still_skips_underscore_dirs(self, git_repo_with_untracked):
+        """Non-code corpora keep the legacy underscore-prefix exclusion."""
+        repo = git_repo_with_untracked
+        (repo / "_internal").mkdir()
+        (repo / "_internal" / "notes.md").write_text("# notes\n")
+        _git(repo, "add", "_internal/notes.md")
+        _git(repo, "commit", "-q", "-m", "add tracked underscore dir")
+
+        files, _ = discover_files(repo, None, "markdown")
+        names = {f.name for f in files}
+        assert "notes.md" not in names

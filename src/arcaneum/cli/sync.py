@@ -111,6 +111,22 @@ DEFAULT_EXCLUDE_FILE_PATTERNS = {
     'generated.js',        # Common generated filename
 }
 
+# Supported file extensions per corpus type.  Used both for discovery defaults
+# (when the user passes no --file-types) and for validating any extensions the
+# user does provide.  Single source of truth so the two paths can't drift —
+# previously the discovery default was a narrower subset, which silently
+# dropped tracked YAML/MD/shell files (e.g., .github/workflows/*.yml).
+SUPPORTED_EXTENSIONS_BY_TYPE: Dict[str, Set[str]] = {
+    'pdf': {'.pdf'},
+    'markdown': {'.md', '.markdown'},
+    'code': {'.py', '.js', '.ts', '.tsx', '.jsx', '.java', '.go', '.rs', '.rb',
+             '.cpp', '.c', '.h', '.hpp', '.cs', '.swift', '.kt', '.scala',
+             '.php', '.pl', '.sh', '.bash', '.zsh', '.ps1', '.lua', '.r',
+             '.sql', '.graphql', '.proto', '.thrift', '.yaml', '.yml', '.json',
+             '.xml', '.html', '.css', '.scss', '.less', '.vue', '.svelte'},
+}
+
+
 # Directory names that should be excluded entirely
 # Any file under these directories will be skipped
 DEFAULT_EXCLUDE_DIRECTORIES = {
@@ -535,13 +551,7 @@ def discover_files(
         # Ensure extensions start with '.'
         extensions = set(e if e.startswith('.') else f'.{e}' for e in extensions)
     else:
-        # Default extensions based on corpus type
-        type_extensions = {
-            "pdf": {".pdf"},
-            "code": {".py", ".js", ".ts", ".java", ".go", ".rs", ".rb", ".cpp", ".c", ".h", ".hpp"},
-            "markdown": {".md", ".markdown"},
-        }
-        extensions = type_extensions.get(corpus_type, set())
+        extensions = set(SUPPORTED_EXTENSIONS_BY_TYPE.get(corpus_type, set()))
 
     if not extensions:
         logger.warning(f"No file extensions defined for corpus type: {corpus_type}")
@@ -1067,17 +1077,6 @@ def sync_directory_command(
         file_types=file_types,
         from_file=from_file,
     )
-
-    # Supported file extensions by corpus type
-    SUPPORTED_EXTENSIONS_BY_TYPE = {
-        'pdf': {'.pdf'},
-        'markdown': {'.md', '.markdown'},
-        'code': {'.py', '.js', '.ts', '.tsx', '.jsx', '.java', '.go', '.rs', '.rb',
-                 '.cpp', '.c', '.h', '.hpp', '.cs', '.swift', '.kt', '.scala',
-                 '.php', '.pl', '.sh', '.bash', '.zsh', '.ps1', '.lua', '.r',
-                 '.sql', '.graphql', '.proto', '.thrift', '.yaml', '.yml', '.json',
-                 '.xml', '.html', '.css', '.scss', '.less', '.vue', '.svelte'},
-    }
 
     try:
         # Validate and resolve all paths (directories or files)

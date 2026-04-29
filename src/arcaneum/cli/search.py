@@ -18,7 +18,8 @@ from ..search import (
     format_summary
 )
 from ..paths import get_models_dir
-from .errors import InvalidArgumentError, ResourceNotFoundError
+from .concurrency import acquire_embedder_slot
+from .errors import InvalidArgumentError, ResourceNotFoundError, SearchSlotUnavailable
 from .interaction_logger import interaction_logger
 from .search_merge import fetch_from_corpora, per_corpus_limit
 from .utils import create_qdrant_client, resolve_corpora
@@ -77,12 +78,7 @@ def search_command(
         # Initialize Qdrant client with proper timeout and retry configuration
         client = create_qdrant_client(for_search=True)
 
-        # Initialize embedder
-        # Use same cache directory as index commands for consistency
-        cache_dir = get_models_dir()
-        embedder = SearchEmbedder(cache_dir=cache_dir, verify_ssl=True)
-
-        # Parse metadata filter if provided
+        # Parse metadata filter if provided (cheap; do before grabbing the slot)
         query_filter = None
         filter_description = None
         if filter_arg:
@@ -110,30 +106,37 @@ def search_command(
             filters=filter_arg if filter_arg else None,
             score_threshold=score_threshold,
         ) as ctx:
-            fetch_limit = per_corpus_limit(corpora, limit, offset)
+            # Cap concurrent embedder loads (file-lock semaphore). Cold-loading
+            # the embedding model in N parallel processes thrashes RAM/swap on
+            # consumer hardware; ARCANEUM_SEARCH_CONCURRENCY tunes the cap.
+            with acquire_embedder_slot():
+                cache_dir = get_models_dir()
+                embedder = SearchEmbedder(cache_dir=cache_dir, verify_ssl=True)
 
-            def _fetch(corpus_name: str):
-                if not client.collection_exists(corpus_name):
-                    raise _MissingCollection(corpus_name)
-                return search_collection(
-                    client=client,
-                    embedder=embedder,
-                    query=query,
-                    collection_name=corpus_name,
-                    vector_name=vector_name,
-                    limit=fetch_limit,
-                    offset=0,  # Apply offset after merge
-                    query_filter=query_filter,
-                    score_threshold=score_threshold,
+                fetch_limit = per_corpus_limit(corpora, limit, offset)
+
+                def _fetch(corpus_name: str):
+                    if not client.collection_exists(corpus_name):
+                        raise _MissingCollection(corpus_name)
+                    return search_collection(
+                        client=client,
+                        embedder=embedder,
+                        query=query,
+                        collection_name=corpus_name,
+                        vector_name=vector_name,
+                        limit=fetch_limit,
+                        offset=0,  # Apply offset after merge
+                        query_filter=query_filter,
+                        score_threshold=score_threshold,
+                    )
+
+                per_corpus, missing_corpora = fetch_from_corpora(
+                    corpora,
+                    _fetch,
+                    lambda exc: isinstance(exc, _MissingCollection),
+                    logger,
+                    verbose,
                 )
-
-            per_corpus, missing_corpora = fetch_from_corpora(
-                corpora,
-                _fetch,
-                lambda exc: isinstance(exc, _MissingCollection),
-                logger,
-                verbose,
-            )
 
             all_results = [hit for hits in per_corpus for hit in hits]
 
@@ -194,7 +197,7 @@ def search_command(
         # Exit with success
         sys.exit(0)
 
-    except (InvalidArgumentError, ResourceNotFoundError):
+    except (InvalidArgumentError, ResourceNotFoundError, SearchSlotUnavailable):
         raise  # Re-raise our custom exceptions for main() to handle
     except ValueError as e:
         # Convert ValueError to InvalidArgumentError for consistency

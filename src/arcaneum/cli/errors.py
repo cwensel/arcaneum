@@ -70,6 +70,18 @@ class GitRepositoryNotFoundError(ResourceNotFoundError):
     pass
 
 
+class SearchSlotUnavailable(ArcaneumError):
+    """No embedder slot available within the wait timeout.
+
+    Raised when too many concurrent `arc search semantic` invocations are in
+    flight and the cap (ARCANEUM_SEARCH_CONCURRENCY) is exhausted. Loading the
+    embedding model in N parallel processes thrashes RAM/swap, so we serialize
+    via a file-lock semaphore and surface this error instead of letting the
+    machine grind.
+    """
+    exit_code = EXIT_ERROR
+
+
 # Custom Click classes for better error messages
 import click
 

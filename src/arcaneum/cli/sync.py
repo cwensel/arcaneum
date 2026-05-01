@@ -12,6 +12,21 @@ import os
 # Suppress tokenizers fork warning - must be set before any tokenizers import
 os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
 
+# Cap MPS allocator to a fraction of recommended_max_memory(). Without this
+# torch.mps grows the Metal driver allocation without bound until macOS
+# jetsam SIGKILLs the process — which is invisible at the Python level
+# (no exception, just sudden death). With a watermark, an over-budget
+# allocation raises a Python-level OOM that our existing _encode_with_oom_recovery
+# can catch and retry at smaller batches.
+#
+# Both LOW and HIGH must be set together with LOW <= HIGH (otherwise PyTorch
+# rejects with "invalid low watermark ratio"). PyTorch defaults are
+# LOW=1.4 / HIGH=1.7 relative to recommended_max_memory(); we scale both
+# down to leave headroom for the rest of the system (window server, IDE,
+# browsers) while preserving LOW < HIGH so the allocator can still cache.
+os.environ.setdefault('PYTORCH_MPS_LOW_WATERMARK_RATIO', '0.6')
+os.environ.setdefault('PYTORCH_MPS_HIGH_WATERMARK_RATIO', '0.8')
+
 import sys
 import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -571,7 +586,7 @@ def discover_files(
             try:
                 repo = gitlib.Repo(str(directory), search_parent_directories=True)
                 root = repo.working_tree_dir
-            except Exception:
+            except (gitlib.InvalidGitRepositoryError, gitlib.NoSuchPathError):
                 root = str(directory.absolute())
 
             if root not in skip_roots:
@@ -1321,7 +1336,7 @@ def sync_directory_command(
                     try:
                         _r = _gitlib.Repo(str(dp), search_parent_directories=True)
                         all_dir_git_roots.append(_r.working_tree_dir)
-                    except Exception:
+                    except (_gitlib.InvalidGitRepositoryError, _gitlib.NoSuchPathError):
                         all_dir_git_roots.append(str(dp.absolute()))
                 else:
                     all_dir_git_roots.extend(_git_disc.find_git_projects(str(dp)))
@@ -1333,6 +1348,7 @@ def sync_directory_command(
             git_sync = GitMetadataSync(qdrant)
             git_discovery = GitProjectDiscovery()
 
+            non_code_path_groups: Optional[Dict[Optional[str], List[Path]]] = None
             if corpus_type == 'code':
                 repo_roots_to_check = all_dir_git_roots
                 # Also include git roots of any explicit single files
@@ -1341,15 +1357,14 @@ def sync_directory_command(
                     if sf_root and sf_root not in repo_roots_to_check:
                         repo_roots_to_check = list(repo_roots_to_check) + [sf_root]
             else:
-                all_paths = dir_paths + single_files
-                path_groups = _group_paths_by_git_root(all_paths)
-                repo_roots_to_check = [r for r in path_groups if r is not None]
+                non_code_path_groups = _group_paths_by_git_root(dir_paths + single_files)
+                repo_roots_to_check = [r for r in non_code_path_groups if r is not None]
 
             if git_update:
                 # --git-update mode: skip repos with unchanged commit hash
                 indexed_projects = git_sync.get_indexed_projects(corpus)
 
-                if corpus_type != 'code' and None in _group_paths_by_git_root(dir_paths + single_files):
+                if non_code_path_groups is not None and None in non_code_path_groups:
                     if not output_json:
                         print_info("Warning: --git-update specified but some paths are not in git repos")
 
@@ -1369,7 +1384,7 @@ def sync_directory_command(
 
             elif git_version:
                 # --git-version mode: keep multiple versions indexed
-                if corpus_type != 'code' and None in _group_paths_by_git_root(dir_paths + single_files):
+                if non_code_path_groups is not None and None in non_code_path_groups:
                     if not output_json:
                         print_error("--git-version requires git repos (non-git paths found)")
 
@@ -1388,10 +1403,16 @@ def sync_directory_command(
 
         # Discover files from all directories and include single files.
         # For code corpora, discover_files handles skip_git_roots internally so
-        # each repo is excluded atomically.  For non-code corpora the set is empty.
+        # each repo is excluded atomically.  For non-code corpora discover_files
+        # ignores skip_git_roots, so apply it here at the directory level (the
+        # only granularity that's meaningful for rglob-based discovery).
         files = []
         discovered_git_roots: List[str] = []
         for dir_path in dir_paths:
+            if corpus_type != 'code' and skip_git_roots:
+                dir_git_root = _find_git_root(dir_path)
+                if dir_git_root in skip_git_roots:
+                    continue
             dir_files, dir_roots = discover_files(
                 dir_path, file_types, corpus_type,
                 skip_dir_prefixes=skip_dir_prefixes,
@@ -1877,11 +1898,13 @@ def sync_directory_command(
                                 model_config.get('chunk_overlap', 50)
                             )
                         elif corpus_type == 'code':
-                            # Use pre-chunked data if available
+                            # Use pre-chunked data if available. Pop (not get)
+                            # so the dict shrinks as the run progresses — on
+                            # large corpora this dict can hold GBs of chunk
+                            # text and we never need a chunk twice.
                             file_path_str = str(file_path)
-                            if file_path_str in pre_chunked_code_files:
-                                chunks = pre_chunked_code_files[file_path_str]
-                            else:
+                            chunks = pre_chunked_code_files.pop(file_path_str, None)
+                            if chunks is None:
                                 chunks = chunk_code_file(
                                     file_path,
                                     model_config.get('chunk_size', 400),
@@ -2100,16 +2123,34 @@ def sync_directory_command(
                                         f"Possible leak — kill -USR1 {os.getpid()} for "
                                         f"detailed dump.[/yellow]"
                                     )
-                                # 100MB/file driver growth = ~10GB across 100 files —
-                                # well within a single sync that hits jetsam.
-                                if _drv_delta > 100 * 1024 * 1024:
-                                    progress.console.print(
-                                        f"[yellow]    mem-warn: MPS driver grew by "
-                                        f"{_drv_delta / (1024**2):.0f}MB on this file "
-                                        f"(now {_mem_now.mps_driver_bytes / (1024**3):.2f}GB). "
-                                        f"Unified memory leak — kill -USR1 {os.getpid()} for "
-                                        f"detailed dump.[/yellow]"
-                                    )
+                                # Δdrv warn disabled now that
+                                # PYTORCH_MPS_HIGH_WATERMARK_RATIO bounds the
+                                # MPS allocator — single-file Δdrv spikes are
+                                # normal allocator cycles (allocate, peak,
+                                # release), not leaks. Re-enable if the
+                                # watermark stops doing its job:
+                                # if _drv_delta > 100 * 1024 * 1024:
+                                #     progress.console.print(
+                                #         f"[yellow]    mem-warn: MPS driver grew by "
+                                #         f"{_drv_delta / (1024**2):.0f}MB on this file "
+                                #         f"(now {_mem_now.mps_driver_bytes / (1024**3):.2f}GB). "
+                                #         f"Unified memory leak — kill -USR1 {os.getpid()} for "
+                                #         f"detailed dump.[/yellow]"
+                                #     )
+                            # Reactive cache flush: any time the driver grew
+                            # by >500MB on a single file, force an immediate
+                            # gc + empty_cache rather than waiting for the
+                            # every-50-files periodic flush. The flush won't
+                            # shrink the high-water mark but it lets Metal
+                            # reorganize cached pages before the next file's
+                            # encode demands a new buffer.
+                            if _drv_delta > 500 * 1024 * 1024:
+                                try:
+                                    import gc as _gc
+                                    _gc.collect()
+                                    embedding_client._clear_gpu_cache()
+                                except Exception:
+                                    logger.debug("reactive flush failed", exc_info=True)
                             _mem_prev = _mem_now
                         except Exception:
                             logger.debug("memory probe failed", exc_info=True)
@@ -3183,10 +3224,10 @@ def _parallel_chunk_code_files(
                         fp, chunk_size, chunk_overlap, hard_max_chars,
                         max_ast_size=0,  # force line-based for all files
                     )
-                    if chunks:
-                        chunked_files[file_path_str] = chunks
-                    elif error:
+                    if error:
                         errors.append((file_path_str, error))
+                    elif chunks:
+                        chunked_files[file_path_str] = chunks
                 except Exception as retry_e:
                     errors.append((fp, str(retry_e)))
                     logger.error(f"Retry also failed for {fp}: {retry_e}")

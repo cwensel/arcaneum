@@ -379,3 +379,82 @@ class TestCpuShortCircuit:
         )
 
         assert embedding_client._gpu_poisoned is False
+
+
+class TestEmbedSortsByLength:
+    """embed() sorts texts by length internally then unsorts results.
+
+    Length-sorted batches let SentenceTransformer's per-batch padding pad to
+    the longest sequence *in that batch* rather than the longest sequence in
+    the whole file. On MPS this is the difference between a 7GB driver
+    allocation spike on a mixed-length file and no spike at all.
+    """
+
+    def _stub_st_model(self, embedding_client):
+        """Wire up a SentenceTransformers-style mock model that the
+        SentenceTransformers branch in _embed_impl will use."""
+        from arcaneum.embeddings.client import EMBEDDING_MODELS  # noqa: F401
+        mock_model = MagicMock()
+        mock_model._backend = "sentence-transformers"
+        embedding_client._models["jina-code"] = mock_model
+        return mock_model
+
+    def test_sorted_input_to_encode(self, embedding_client):
+        """The texts handed to model.encode() are sorted shortest→longest."""
+        mock_model = self._stub_st_model(embedding_client)
+
+        # encode echoes the *input order* it was given as a 1-D float per item
+        def encode_side_effect(input_texts, **kwargs):
+            return np.array(
+                [[float(len(t))] * 768 for t in input_texts], dtype=np.float32
+            )
+
+        mock_model.encode.side_effect = encode_side_effect
+
+        # Mixed lengths in a deliberately scrambled order
+        texts = ["xxxxxxxxxx", "x", "xxxxx", "xx", "xxxxxxxx"]
+        # _encode_with_oom_recovery on MPS would spawn a daemon thread; bypass it
+        with patch.object(
+            embedding_client, '_encode_with_oom_recovery',
+            side_effect=lambda model, t, ibs, mn: encode_side_effect(t),
+        ) as mock_recover:
+            result = embedding_client.embed(texts, "jina-code")
+
+        # _encode_with_oom_recovery must have been handed length-sorted texts
+        sent_texts = mock_recover.call_args.args[1]
+        assert sent_texts == sorted(texts, key=len)
+
+        # And the result must be in the *original* (caller) order
+        assert result.shape == (5, 768)
+        for i, t in enumerate(texts):
+            # Each row's first value equals len(original_text_at_that_index)
+            assert result[i][0] == float(len(t)), (
+                f"Row {i} (text len {len(t)}) got value {result[i][0]} — "
+                f"unsort failed"
+            )
+
+    def test_unsort_preserves_unique_embeddings(self, embedding_client):
+        """No two texts of the same length must get crossed-up rows."""
+        mock_model = self._stub_st_model(embedding_client)
+
+        def encode_side_effect(input_texts, **kwargs):
+            # Encode = one-hot of the input order so we can detect any mix-up
+            n = len(input_texts)
+            arr = np.zeros((n, 768), dtype=np.float32)
+            for i in range(n):
+                arr[i][i % 768] = 1.0
+            return arr
+
+        # 3 texts, all length 4 (sort order is unstable on length alone — must
+        # rely on stable sort to keep ties in original order, then unsort)
+        texts = ["aaaa", "bbbb", "cccc"]
+
+        with patch.object(
+            embedding_client, '_encode_with_oom_recovery',
+            side_effect=lambda model, t, ibs, mn: encode_side_effect(t),
+        ):
+            result = embedding_client.embed(texts, "jina-code")
+
+        # Each row's argmax should equal its original index, not the sorted index
+        for i in range(3):
+            assert int(np.argmax(result[i])) == i

@@ -37,11 +37,17 @@ EMBEDDING_MODELS = {
         "name": "jinaai/jina-embeddings-v2-base-code",
         "dimensions": 768,
         "backend": "sentence-transformers",
-        "description": "Code-specific (768D, 8K context, legacy v2 model)",
+        "description": "Code-specific (768D, 2K effective context, legacy v2 model)",
         "available": True,
         "recommended_for": "code",
         "params_billions": 0.137,  # ~137M params
-        "max_seq_length": 8192,  # Limit attention memory: O(batch × seq_len²)
+        # Attention memory is O(batch × seq_len² × heads). 8192 was producing
+        # multi-GB Metal driver allocations on files with one long chunk in a
+        # mixed batch (jetsam SIGKILL territory). AST chunks max ~400 tokens;
+        # line-based fallback chunks max ~2000 tokens; truncating beyond 2048
+        # is wasted overhead and the 4× reduction here cuts attention memory
+        # 16× in the worst case.
+        "max_seq_length": 2048,
         "mps_max_batch": 16,  # MPS: conservative batch to handle files with many long chunks
     },
     "jina-code-0.5b": {
@@ -908,18 +914,27 @@ class EmbeddingClient:
             MAX_OUTER_BATCH = 128  # Process at most 128 texts per model.encode() call
             import numpy as np
 
-            if len(texts) > MAX_OUTER_BATCH:
+            # Sort by length so each internal batch pads to similar-length sequences,
+            # not to the longest sequence in a heterogenous mix. Without this, one
+            # near-max-length chunk in a batch of 16 inflates attention memory by
+            # the full padded shape (batch × max_seq² × heads). Files with mixed
+            # short and long chunks were the worst offenders for MPS driver growth.
+            # We unsort the results before returning so callers see original order.
+            sort_idx = sorted(range(len(texts)), key=lambda i: len(texts[i]))
+            sorted_texts = [texts[i] for i in sort_idx]
+
+            if len(sorted_texts) > MAX_OUTER_BATCH:
                 # Process in outer batches to avoid large buffer allocations
                 import gc
-                logger.debug(f"Large input ({len(texts)} texts), processing in {MAX_OUTER_BATCH}-text outer batches")
+                logger.debug(f"Large input ({len(sorted_texts)} texts), processing in {MAX_OUTER_BATCH}-text outer batches")
 
                 dim = self.get_dimensions(model_name)
-                all_embeddings = np.zeros((len(texts), dim), dtype=np.float32)
+                sorted_embeddings = np.zeros((len(sorted_texts), dim), dtype=np.float32)
                 offset = 0
 
-                for start_idx in range(0, len(texts), MAX_OUTER_BATCH):
-                    end_idx = min(start_idx + MAX_OUTER_BATCH, len(texts))
-                    batch_texts = texts[start_idx:end_idx]
+                for start_idx in range(0, len(sorted_texts), MAX_OUTER_BATCH):
+                    end_idx = min(start_idx + MAX_OUTER_BATCH, len(sorted_texts))
+                    batch_texts = sorted_texts[start_idx:end_idx]
 
                     # Clear cache before each outer batch to prevent fragmentation
                     if self._device in ("mps", "cuda") and not self._gpu_poisoned and start_idx > 0:
@@ -929,19 +944,23 @@ class EmbeddingClient:
                     batch_embeddings = self._encode_with_oom_recovery(
                         model, batch_texts, internal_batch_size, model_name
                     )
-                    all_embeddings[offset:offset + len(batch_texts)] = batch_embeddings
+                    sorted_embeddings[offset:offset + len(batch_texts)] = batch_embeddings
                     offset += len(batch_texts)
 
                     # Release batch references
                     del batch_embeddings
                     del batch_texts
-
-                embeddings = all_embeddings
             else:
                 # Small input - process all at once
-                embeddings = self._encode_with_oom_recovery(
-                    model, texts, internal_batch_size, model_name
+                sorted_embeddings = self._encode_with_oom_recovery(
+                    model, sorted_texts, internal_batch_size, model_name
                 )
+
+            # Unsort back to original order. sort_idx[i] = original index of
+            # sorted position i, so embeddings[sort_idx[i]] = sorted_embeddings[i].
+            embeddings = np.zeros_like(sorted_embeddings)
+            for sorted_pos, orig_pos in enumerate(sort_idx):
+                embeddings[orig_pos] = sorted_embeddings[sorted_pos]
 
             # Validate embeddings before returning - MPS OOM can corrupt results without raising
             # The Metal driver may print errors to stderr but return garbage embeddings

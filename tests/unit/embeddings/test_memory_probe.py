@@ -73,11 +73,12 @@ def test_delta_includes_driver_and_sys_used():
         mps_current_bytes=10 * 1024 * 1024,
         mps_driver_bytes=(1024 + 200) * 1024 * 1024,
         system_total_bytes=64 * 1024 * 1024 * 1024,
-        system_available_bytes=(32 - 1.5) * 1024 * 1024 * 1024,
+        system_available_bytes=32 * 1024**3 - 1536 * 1024**2,
     )
     d = b.delta(a)
     assert d["mps_driver"] == 200 * 1024 * 1024
-    assert d["sys_used"] == int(1.5 * 1024 * 1024 * 1024)
+    assert d["sys_used"] == 1536 * 1024 * 1024
+    assert isinstance(d["sys_used"], int)
     delta_str = format_snapshot_delta(b, a)
     assert "Δdrv=+200.0MB" in delta_str
     assert "Δsys=+1536.0MB" in delta_str

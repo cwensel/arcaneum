@@ -89,9 +89,12 @@ def _build_default_models() -> Dict[str, ModelConfig]:
     then adds PDF-specific chunking based on model backend and dimensions.
 
     Chunking strategy:
-    - SentenceTransformers models: Support late_chunking, use larger chunks (1024-1536)
-    - FastEmbed models: No late_chunking support, use conservative chunks (460 safe from 512 limit)
-    - Overlap: 15% of chunk_size for context continuity
+    - SentenceTransformers models: AST-aligned chunks at 512 (768d) or 768 (1024+d).
+      Smaller targets emit naturally clean function/struct-aligned chunks; larger
+      targets force the AST chunker to greedy-merge then resplit at character
+      boundaries (destroys AST alignment).
+    - FastEmbed models: 460 tokens, safe margin from the 512-token model limit.
+    - Overlap: 15% of chunk_size for context continuity.
     """
     defaults = {}
 
@@ -99,16 +102,27 @@ def _build_default_models() -> Dict[str, ModelConfig]:
         backend = config.get("backend", "fastembed")
         dimensions = config.get("dimensions", 768)
 
-        # Determine late_chunking support by backend
+        # late_chunking is wired in config but not implemented in the encode
+        # path — historical placeholder. We previously sized chunks larger to
+        # exploit it, paid the attention-memory cost, and got no benefit.
         supports_late_chunking = backend == "sentence-transformers"
 
-        # Determine chunk size based on backend and model characteristics
+        # Determine chunk size based on backend and model characteristics.
+        #
+        # Sweet spot for AST chunking is just above typical function size so
+        # the chunker emits AST-aligned chunks without resplitting. Sampling
+        # ~300 langref files at chunk_size=512 produced 0% mid-AST resplits
+        # and max chunk ~1800 chars — comfortably within jina-code's 2048-token
+        # max_seq_length and ~half the attention memory of larger targets.
+        # Larger chunk_size values force the AST chunker to greedily merge
+        # multiple functions/structs into one chunk, then the hard_max_chars
+        # re-splitter cuts them at character boundaries — destroying both AST
+        # alignment and embedding quality.
         if supports_late_chunking:
-            # SentenceTransformers models: can use larger chunks with late pooling
             if dimensions >= 1024:
-                chunk_size = 768  # stella, jina-v3
+                chunk_size = 768  # stella, codesage-large
             else:
-                chunk_size = 1536  # modernbert, jina-code, jina-v3
+                chunk_size = 512  # jina-code: AST-clean, no resplits, ~half attention memory vs 1024
         else:
             # FastEmbed models: limited by token budget, use conservative sizing
             chunk_size = 460  # Safe margin from 512 token limit

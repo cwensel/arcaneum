@@ -7,8 +7,9 @@ thrashes RAM/swap (observed: 5 concurrent runs took 115-121s each vs. the
 5-25s baseline, plus system-wide memory pressure).
 
 This module provides a counted, kernel-managed semaphore implemented via
-`fcntl.flock` over N lock files in ~/.cache/arcaneum/locks/. flock is held
-for the lifetime of the holding process, so kernel automatically releases
+`fcntl.flock` over N lock files under ``get_data_dir() / "locks"``
+(``~/.local/share/arcaneum/locks/`` by default). flock is held for the
+lifetime of the holding process, so the kernel automatically releases
 slots if a holder is killed mid-search — no stale-PID cleanup needed.
 """
 
@@ -110,6 +111,9 @@ def acquire_embedder_slot(
 
     locks_dir = _locks_dir()
     slot_paths = [locks_dir / f"{name}-slot-{i}.lock" for i in range(slot_count)]
+    # Shuffle so contenders don't all probe slot-0 first; this distributes
+    # contention across slots and complements the jittered backoff below.
+    random.shuffle(slot_paths)
 
     deadline = time.monotonic() + wait_budget
     acquired_fd: int | None = None
@@ -133,7 +137,7 @@ def acquire_embedder_slot(
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise SearchSlotUnavailable(
-                f"All {slot_count} embedder slots busy after waiting "
+                f"All {slot_count} {name} slots busy after waiting "
                 f"{wait_budget:.0f}s. Another `arc search semantic` is loading "
                 "the embedding model — retry shortly, or raise the cap with "
                 "ARCANEUM_SEARCH_CONCURRENCY=N (default 2)."
@@ -141,7 +145,7 @@ def acquire_embedder_slot(
 
         if not notice_emitted and (time.monotonic() - started) > _WAIT_NOTICE_THRESHOLD_S:
             print(
-                f"[INFO] waiting for embedder slot ({slot_count} in use, "
+                f"[INFO] waiting for {name} slot ({slot_count} in use, "
                 f"cap=ARCANEUM_SEARCH_CONCURRENCY)",
                 file=sys.stderr,
             )

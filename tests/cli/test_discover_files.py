@@ -216,7 +216,7 @@ class TestDiscoverFilesCode:
         assert "ci.py" in names
         assert "helper.py" in names
 
-    def test_code_markdown_still_skips_underscore_dirs(self, git_repo_with_untracked):
+    def test_markdown_still_skips_underscore_dirs(self, git_repo_with_untracked):
         """Non-code corpora keep the legacy underscore-prefix exclusion."""
         repo = git_repo_with_untracked
         (repo / "_internal").mkdir()

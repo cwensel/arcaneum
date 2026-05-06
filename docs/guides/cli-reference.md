@@ -163,6 +163,10 @@ arc corpus sync MyCorpus /path/to/repo --git-version       # Keep multiple versi
 - `--json`: Output JSON format for scripting
 - `--git-update`: Skip repos with unchanged commit hash (git-aware fast path)
 - `--git-version`: Keep multiple versions indexed (different commits coexist)
+- `--mem-probe-interval`: Seconds between background memory snapshots (default: 0=off).
+  Survives encode hangs that the per-file probe can't observe.
+- `--mem-probe-log`: JSONL output path for memory snapshots (default:
+  `~/.arcaneum/logs/arc-mem-<utc>-<pid>.jsonl`; pass `-` for stderr).
 
 **Git Sync Modes:**
 
@@ -207,6 +211,42 @@ arc corpus repair MyCorpus --verbose                  # Show per-file quality sc
 Large models like `stella` (1.5B params) may cause system instability on Macs with
 limited unified memory. If you experience lockups, use `--no-gpu` or switch to a
 smaller model like `bge` (0.3B params).
+
+**Memory Diagnostics:**
+
+The verbose output includes a `mem:` line per file with rss, MPS driver, and
+system pressure deltas. That probe only fires *after* a file completes — if the
+GPU hangs mid-encode (common on machines with high baseline memory pressure),
+no telemetry is captured. The `--mem-probe-interval` flag starts a background
+thread that writes JSONL snapshots on a fixed cadence and survives hostile
+encode loops:
+
+```bash
+# Snapshot every second to ~/.arcaneum/logs/arc-mem-<utc>-<pid>.jsonl
+arc corpus sync MyCorpus /path --mem-probe-interval 1 --verbose
+
+# Or via env var (no command change)
+ARC_MEM_PROBE_INTERVAL=1 arc corpus sync MyCorpus /path --verbose
+
+# Custom path / stderr
+arc corpus sync MyCorpus /path --mem-probe-interval 1 --mem-probe-log /tmp/mem.jsonl
+arc corpus sync MyCorpus /path --mem-probe-interval 1 --mem-probe-log -
+```
+
+Each line is a JSON object with `ts`, `phase` (e.g. `encoding:foo.pdf:stella`,
+`indexing:foo.pdf`), `rss`, `mps_current`, `mps_driver`, `sys_used_pct`, and
+related fields. The output file is line-buffered so partial data survives a
+SIGKILL from macOS jetsam.
+
+After a hang or crash, inspect the log to find when pressure ramped:
+
+```bash
+jq -r '[.ts, .phase, .rss, .sys_used_pct] | @tsv' \
+  ~/.arcaneum/logs/arc-mem-*.jsonl | tail -50
+```
+
+Mid-run, you can also send `kill -USR1 <pid>` to dump full memory state plus
+thread stacks to stderr (useful when a single encode call has hung).
 
 ### Corpus Parity
 

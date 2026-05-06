@@ -23,14 +23,16 @@ memory of its own — so it's safe to call in the hot loop.
 
 from __future__ import annotations
 
+import datetime
 import faulthandler
 import gc
+import json
 import os
 import signal
 import sys
 import threading
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
 import psutil
 
@@ -167,6 +169,143 @@ def format_snapshot_delta(snap: MemorySnapshot, prev: MemorySnapshot) -> str:
         f"Δgc={d['gc']:+d}",
     ]
     return " ".join(parts)
+
+
+# Module-level phase tracker. Single string assignment is atomic in CPython
+# under the GIL — racy reads from the probe thread are fine for telemetry.
+_current_phase: str = "startup"
+
+
+def set_phase(name: str) -> None:
+    """Update the current sync phase. Read by the periodic probe thread."""
+    global _current_phase
+    _current_phase = name
+
+
+def get_phase() -> str:
+    """Return the current sync phase."""
+    return _current_phase
+
+
+def format_snapshot_jsonl(snap: MemorySnapshot, phase: str = "") -> str:
+    """Render a snapshot as a single JSONL line for machine consumption.
+
+    Includes wallclock timestamp (UTC, ISO-8601 with Z suffix), phase string,
+    and all snapshot fields. Designed for grep/jq/plot post-mortem analysis
+    of memory growth across a sync run.
+    """
+    ts = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+    sys_used_pct = 0.0
+    if snap.system_total_bytes:
+        used = snap.system_total_bytes - snap.system_available_bytes
+        sys_used_pct = round(100.0 * used / snap.system_total_bytes, 2)
+    obj = {
+        "ts": ts,
+        "phase": phase,
+        "rss": snap.rss_bytes,
+        "vsz": snap.vsz_bytes,
+        "threads": snap.thread_count,
+        "gc_objs": snap.gc_objects,
+        "mps_current": snap.mps_current_bytes,
+        "mps_driver": snap.mps_driver_bytes,
+        "mps_recommended_max": snap.mps_recommended_max_bytes,
+        "sys_used_pct": sys_used_pct,
+        "sys_available": snap.system_available_bytes,
+        "sys_total": snap.system_total_bytes,
+        "pending_gpu_cleanup": snap.pending_gpu_cleanup,
+    }
+    return json.dumps(obj, separators=(",", ":"))
+
+
+def default_mem_probe_log_path() -> str:
+    """Default JSONL output path: ~/.arcaneum/logs/arc-mem-<utc>-<pid>.jsonl.
+
+    Mirrors the convention used by interaction_logger (~/.arcaneum/logs/) and
+    namespaces by start time + pid so concurrent or repeated syncs don't
+    overwrite each other.
+    """
+    from pathlib import Path
+    log_dir = Path.home() / ".arcaneum" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return str(log_dir / f"arc-mem-{ts}-{os.getpid()}.jsonl")
+
+
+def start_probe_thread(
+    interval: float,
+    log_path: Optional[str] = None,
+    embedding_client=None,
+) -> Callable[[], None]:
+    """Start a daemon thread that periodically writes JSONL snapshots.
+
+    Returns a stop() callable. The thread survives hostile encode loops that
+    don't yield to Python — that's the whole point. JSONL is line-buffered so
+    the file stays readable even if the process gets SIGKILLed.
+
+    Args:
+        interval: Seconds between snapshots. 0 disables the probe and returns
+            a no-op stop callable.
+        log_path: File path for JSONL output. None falls back to
+            ~/.arcaneum/logs/arc-mem-<utc>-<pid>.jsonl. Pass "-" to write to
+            stderr instead.
+        embedding_client: Optional client to surface pending_gpu_cleanup count.
+
+    Returns:
+        stop() callable that signals the thread to exit. Idempotent.
+    """
+    if interval <= 0:
+        def _noop_stop():
+            return None
+        return _noop_stop
+
+    stop_event = threading.Event()
+
+    if log_path == "-":
+        sink = sys.stderr
+        owns_sink = False
+        resolved_path = None
+    else:
+        if not log_path:
+            log_path = default_mem_probe_log_path()
+        # Line-buffered so partial output survives a SIGKILL during a hang.
+        sink = open(log_path, "a", buffering=1, encoding="utf-8")
+        owns_sink = True
+        resolved_path = log_path
+        try:
+            sys.stderr.write(f"mem-probe: writing JSONL to {log_path}\n")
+        except Exception:
+            pass
+
+    def _run():
+        try:
+            while not stop_event.is_set():
+                try:
+                    snap = snapshot(embedding_client)
+                    line = format_snapshot_jsonl(snap, phase=get_phase())
+                    sink.write(line + "\n")
+                    if not owns_sink:
+                        sink.flush()
+                except Exception as e:
+                    # Telemetry must never crash the run.
+                    try:
+                        sys.stderr.write(f"mem-probe error: {e}\n")
+                    except Exception:
+                        pass
+                stop_event.wait(interval)
+        finally:
+            if owns_sink:
+                try:
+                    sink.close()
+                except Exception:
+                    pass
+
+    thread = threading.Thread(target=_run, daemon=True, name="arc-mem-probe")
+    thread.start()
+
+    def _stop():
+        stop_event.set()
+
+    return _stop
 
 
 def install_dump_handler(embedding_client=None) -> None:

@@ -1042,6 +1042,8 @@ def sync_directory_command(
     repair: bool = False,
     quality_threshold: float = 0.9,
     qdrant_timeout: Optional[int] = None,
+    mem_probe_interval: float = 0.0,
+    mem_probe_log: Optional[str] = None,
 ):
     """Sync directories or files to both Qdrant and MeiliSearch.
 
@@ -1820,8 +1822,16 @@ def sync_directory_command(
                 snapshot as _mem_snapshot,
                 format_snapshot as _fmt_snap,
                 format_snapshot_delta as _fmt_snap_delta,
+                set_phase as _set_phase,
+                start_probe_thread as _start_probe_thread,
             )
             _install_mem_dump(embedding_client)
+            _set_phase("startup")
+            _stop_mem_probe = _start_probe_thread(
+                interval=mem_probe_interval,
+                log_path=mem_probe_log,
+                embedding_client=embedding_client,
+            )
             _mem_prev = _mem_snapshot(embedding_client)
             if verbose and not output_json:
                 console.print(f"[dim]  mem-baseline: {_fmt_snap(_mem_prev)}[/dim]")
@@ -1842,6 +1852,7 @@ def sync_directory_command(
 
                 for file_path in files:
                     progress.update(task, description=f"Processing {file_path.name}...")
+                    _set_phase(f"file:{file_path.name}")
 
                     try:
                         # In repair mode, extract BEFORE deleting so we can compare quality.
@@ -1982,6 +1993,7 @@ def sync_directory_command(
                         # Generate embeddings for all chunks at once, per model
                         model_embeddings = {}
                         for model in model_list:
+                            _set_phase(f"encoding:{file_path.name}:{model}")
                             all_embeddings = embedding_client.embed(
                                 chunk_texts, model, max_internal_batch=max_embedding_batch
                             )
@@ -2066,6 +2078,7 @@ def sync_directory_command(
                             if verbose and not output_json:
                                 progress.console.print(f"[dim]  Indexing {len(documents)} chunks to Qdrant + MeiliSearch...[/dim]")
 
+                            _set_phase(f"indexing:{file_path.name}")
                             qdrant_count, meili_count = dual_indexer.index_batch(documents)
                             total_chunks += len(documents)
                             total_qdrant += qdrant_count
@@ -2175,6 +2188,9 @@ def sync_directory_command(
                                 progress.console.print(f"[dim]  To re-index with CPU: {reindex_cmd}[/dim]")
 
                     progress.advance(task)
+                    _set_phase("idle")
+
+        _stop_mem_probe()
 
         # Print repair summary if in repair mode
         if repair and repair_results and not output_json:

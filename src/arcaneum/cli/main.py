@@ -598,7 +598,16 @@ def delete_corpus(name, confirm, output_json):
               help='Also detect renames, remove indexed files no longer on disk, and check cross-system parity (slower than default; default already re-indexes edited files via mtime+size)')
 @click.option('--timeout', type=int, default=None,
               help='Qdrant timeout in seconds (default: 120, increase for very large files)')
-def sync_directory(corpus, paths, from_file, models, file_types, force, dry_run, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, skip_dir_prefix, no_skip_dir_prefix, parity, timeout):
+@click.option('--mem-probe-interval', type=float, default=None,
+              help='Seconds between memory snapshots written as JSONL (default: 0=off; '
+                   'env: ARC_MEM_PROBE_INTERVAL). Survives encode hangs — use to diagnose '
+                   'runs where the per-file probe never prints.')
+@click.option('--mem-probe-log', type=click.Path(), default=None,
+              help='Path for JSONL memory snapshots (default: '
+                   '~/.arcaneum/logs/arc-mem-<utc>-<pid>.jsonl; pass "-" for stderr; '
+                   'env: ARC_MEM_PROBE_LOG). Line-buffered so partial output '
+                   'survives a SIGKILL.')
+def sync_directory(corpus, paths, from_file, models, file_types, force, dry_run, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, skip_dir_prefix, no_skip_dir_prefix, parity, timeout, mem_probe_interval, mem_probe_log):
     """Index to both vector and full-text.
 
     Examples:
@@ -634,8 +643,15 @@ def sync_directory(corpus, paths, from_file, models, file_types, force, dry_run,
     # Resolve skip prefixes: --no-skip-dir-prefix disables all, otherwise use provided prefixes
     effective_prefixes = () if no_skip_dir_prefix else skip_dir_prefix
 
+    # Memory probe: CLI flag takes precedence, then env var, then off.
+    if mem_probe_interval is None:
+        env_interval = os.environ.get("ARC_MEM_PROBE_INTERVAL")
+        mem_probe_interval = float(env_interval) if env_interval else 0.0
+    if mem_probe_log is None:
+        mem_probe_log = os.environ.get("ARC_MEM_PROBE_LOG")
+
     from arcaneum.cli.sync import sync_directory_command
-    sync_directory_command(corpus, paths, from_file, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, effective_prefixes, dry_run=dry_run, parity=parity, qdrant_timeout=timeout)
+    sync_directory_command(corpus, paths, from_file, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, effective_prefixes, dry_run=dry_run, parity=parity, qdrant_timeout=timeout, mem_probe_interval=mem_probe_interval, mem_probe_log=mem_probe_log)
 
 
 @corpus.command('repair')

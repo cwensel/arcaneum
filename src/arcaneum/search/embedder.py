@@ -1,6 +1,5 @@
 """Query embedding pipeline for semantic search (RDR-007)."""
 
-from functools import lru_cache
 from typing import Tuple, List
 from pathlib import Path
 from qdrant_client import QdrantClient
@@ -123,23 +122,3 @@ class SearchEmbedder:
             return (model_key, query_vector)
         else:
             raise ValueError(f"Unknown backend: {backend}")
-
-    def get_model_dimensions(self, model_key: str) -> int:
-        """Get embedding dimensions for a model.
-
-        Args:
-            model_key: Model identifier (e.g., "stella", "jina-code")
-
-        Returns:
-            Number of dimensions in embedding vectors
-
-        Raises:
-            ValueError: If model not configured
-        """
-        if model_key not in EMBEDDING_MODELS:
-            available = ", ".join(EMBEDDING_MODELS.keys())
-            raise ValueError(
-                f"Model '{model_key}' not configured.\n"
-                f"Available models: {available}"
-            )
-        return EMBEDDING_MODELS[model_key]["dimensions"]

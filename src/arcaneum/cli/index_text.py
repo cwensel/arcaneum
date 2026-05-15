@@ -14,9 +14,8 @@ import re
 import signal
 import sys
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Optional
 
-import click
 from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
@@ -25,7 +24,6 @@ from .interaction_logger import interaction_logger
 from .logging_config import setup_logging_default, setup_logging_verbose, setup_logging_debug
 from .utils import set_process_priority
 from .errors import InvalidArgumentError, ResourceNotFoundError
-from .output import print_error, print_success
 
 console = Console()
 logger = logging.getLogger(__name__)

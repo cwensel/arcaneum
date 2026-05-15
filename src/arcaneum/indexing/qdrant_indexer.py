@@ -8,7 +8,6 @@ for git-aware source code chunks (RDR-005).
 import logging
 import time
 from typing import List, Optional
-from uuid import uuid4
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -17,7 +16,6 @@ from qdrant_client.models import (
     Filter,
     MatchValue,
     OptimizersConfigDiff,
-    PointStruct,
     VectorParams,
 )
 from tenacity import (

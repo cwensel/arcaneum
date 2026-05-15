@@ -5,7 +5,6 @@ import pytest
 from unittest.mock import Mock, patch, MagicMock
 from arcaneum.utils.memory import (
     get_gpu_memory_info,
-    estimate_safe_batch_size,
     get_available_memory_gb,
     calculate_safe_workers
 )
@@ -116,73 +115,6 @@ class TestGetGpuMemoryInfo:
         assert available is None
         assert total is None
         assert device_type is None
-
-
-class TestEstimateSafeBatchSize:
-    """Tests for estimate_safe_batch_size function."""
-
-    def test_1024d_model_with_8gb(self):
-        """Test batch size estimation for 1024D model with 8GB free."""
-        available_bytes = 8 * 1024**3  # 8GB
-        model_dims = 1024
-
-        batch_size = estimate_safe_batch_size(model_dims, available_bytes)
-
-        # With safety factor 0.5: 4GB usable
-        # 1024D needs 10MB per item: 4GB / 10MB = ~400
-        assert 300 <= batch_size <= 500  # Reasonable range
-
-    def test_1024d_model_with_limited_memory(self):
-        """Test batch size estimation with limited memory."""
-        available_bytes = 500 * 1024**2  # 500MB
-        model_dims = 1024
-
-        batch_size = estimate_safe_batch_size(model_dims, available_bytes)
-
-        # With safety factor 0.5: 250MB usable
-        # 1024D needs 10MB per item: 250MB / 10MB = 25
-        assert 8 <= batch_size <= 50  # Should be floored at 8, but reasonably low
-
-    def test_384d_model_scales_proportionally(self):
-        """Test that smaller dimension models get proportionally larger batch sizes."""
-        available_bytes = 4 * 1024**3  # 4GB
-        model_dims_small = 384
-        model_dims_large = 1024
-
-        batch_size_small = estimate_safe_batch_size(model_dims_small, available_bytes)
-        batch_size_large = estimate_safe_batch_size(model_dims_large, available_bytes)
-
-        # Smaller model should allow larger batch size
-        assert batch_size_small > batch_size_large
-
-    def test_minimum_batch_size(self):
-        """Test that batch size is floored at 8."""
-        available_bytes = 10 * 1024**2  # 10MB (very small)
-        model_dims = 1024
-
-        batch_size = estimate_safe_batch_size(model_dims, available_bytes)
-
-        assert batch_size >= 8
-
-    def test_maximum_batch_size(self):
-        """Test that batch size is capped at 1024."""
-        available_bytes = 1000 * 1024**3  # 1TB (huge)
-        model_dims = 384
-
-        batch_size = estimate_safe_batch_size(model_dims, available_bytes)
-
-        assert batch_size <= 1024
-
-    def test_custom_safety_factor(self):
-        """Test with custom safety factor."""
-        available_bytes = 8 * 1024**3  # 8GB
-        model_dims = 1024
-
-        batch_size_conservative = estimate_safe_batch_size(model_dims, available_bytes, safety_factor=0.3)
-        batch_size_aggressive = estimate_safe_batch_size(model_dims, available_bytes, safety_factor=0.8)
-
-        # More conservative safety factor should give smaller batch size
-        assert batch_size_conservative < batch_size_aggressive
 
 
 class TestGetAvailableMemoryGb:

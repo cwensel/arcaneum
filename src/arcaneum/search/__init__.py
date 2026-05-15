@@ -2,7 +2,7 @@
 
 from .embedder import SearchEmbedder
 from .filters import parse_filter, build_filter_description
-from .searcher import SearchResult, search_collection, explain_search, format_location
+from .searcher import SearchResult, search_collection, format_location
 from .formatter import (
     format_text_results,
     format_json_results,
@@ -20,7 +20,6 @@ __all__ = [
     # Searcher
     "SearchResult",
     "search_collection",
-    "explain_search",
     "format_location",
     # Formatter
     "format_text_results",

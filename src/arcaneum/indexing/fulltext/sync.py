@@ -7,7 +7,7 @@ Extended in RDR-011 for git-aware source code indexing with branch support.
 import hashlib
 import logging
 from pathlib import Path
-from typing import Dict, Set, Optional, Tuple
+from typing import Dict, Set
 
 from ...fulltext.client import FullTextClient
 
@@ -30,49 +30,6 @@ def compute_file_hash(file_path: Path) -> str:
         for chunk in iter(lambda: f.read(8192), b''):
             sha256.update(chunk)
     return sha256.hexdigest()
-
-
-def get_indexed_files(
-    meili_client: FullTextClient,
-    index_name: str,
-    limit: int = 10000
-) -> Dict[str, str]:
-    """Get mapping of indexed file paths to their hashes.
-
-    Queries MeiliSearch for all indexed documents and returns
-    a mapping of file_path -> file_hash for change detection.
-
-    Args:
-        meili_client: MeiliSearch client instance
-        index_name: Index name to query
-        limit: Maximum documents to retrieve
-
-    Returns:
-        Dict mapping file_path to file_hash
-    """
-    indexed_files: Dict[str, str] = {}
-
-    try:
-        # Get all unique file paths and hashes
-        # MeiliSearch doesn't support GROUP BY, so we get all docs
-        results = meili_client.search(
-            index_name=index_name,
-            query='',
-            limit=limit
-        )
-
-        hits = results.get('hits', [])
-
-        for hit in hits:
-            file_path = hit.get('file_path')
-            file_hash = hit.get('file_hash')
-            if file_path and file_hash:
-                indexed_files[file_path] = file_hash
-
-    except Exception as e:
-        logger.warning(f"Failed to get indexed files: {e}")
-
-    return indexed_files
 
 
 def find_files_to_index(

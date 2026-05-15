@@ -86,28 +86,6 @@ def test_get_config_dir_custom_xdg(monkeypatch, tmp_path):
     assert config_dir.is_dir()
 
 
-# --- get_qdrant_data_dir / get_meilisearch_data_dir ---
-
-def test_get_qdrant_data_dir_is_subdirectory(isolate_env):
-    from arcaneum import paths as p
-    import importlib
-    importlib.reload(p)
-    qdrant_dir = p.get_qdrant_data_dir()
-    assert qdrant_dir.name == "qdrant"
-    assert qdrant_dir.parent == p.get_data_dir()
-    assert qdrant_dir.is_dir()
-
-
-def test_get_meilisearch_data_dir_is_subdirectory(isolate_env):
-    from arcaneum import paths as p
-    import importlib
-    importlib.reload(p)
-    ms_dir = p.get_meilisearch_data_dir()
-    assert ms_dir.name == "meilisearch"
-    assert ms_dir.parent == p.get_data_dir()
-    assert ms_dir.is_dir()
-
-
 # --- get_meilisearch_api_key ---
 
 def test_get_meilisearch_api_key_generates_and_caches(isolate_env):

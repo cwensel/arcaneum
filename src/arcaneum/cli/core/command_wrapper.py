@@ -17,7 +17,7 @@ Example:
 import sys
 import functools
 from contextlib import contextmanager
-from typing import Callable, Any, Optional
+from typing import Callable, Optional
 
 from ..interaction_logger import interaction_logger
 from ..output import print_error

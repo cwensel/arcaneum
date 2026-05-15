@@ -42,13 +42,10 @@ class CPUMonitor:
 
         self.process = psutil.Process()
         self.start_time: Optional[float] = None
-        self.start_cpu_times = None
 
     def start(self):
         """Begin monitoring CPU usage."""
         self.start_time = time.time()
-        # Get initial CPU times for process + all children/threads
-        self.start_cpu_times = self.process.cpu_times()
         logger.debug("CPU monitoring started")
 
     def get_stats(self) -> Dict[str, float]:
@@ -96,42 +93,6 @@ class CPUMonitor:
             f"Threads: {stats['num_threads']} | "
             f"Cores: {stats['num_cores']}"
         )
-
-    def get_performance_summary(self, files_processed: int, chunks_created: int) -> str:
-        """Get comprehensive performance summary.
-
-        Args:
-            files_processed: Number of files processed
-            chunks_created: Number of chunks created
-
-        Returns:
-            Multi-line formatted summary
-        """
-        stats = self.get_stats()
-        elapsed = stats['elapsed_time']
-
-        if elapsed > 0:
-            files_per_sec = files_processed / elapsed
-            chunks_per_sec = chunks_created / elapsed
-        else:
-            files_per_sec = 0
-            chunks_per_sec = 0
-
-        summary = [
-            "=" * 60,
-            "PERFORMANCE SUMMARY",
-            "=" * 60,
-            f"Files processed: {files_processed}",
-            f"Chunks created: {chunks_created}",
-            f"Elapsed time: {elapsed:.1f}s",
-            f"Throughput: {files_per_sec:.2f} files/sec, {chunks_per_sec:.1f} chunks/sec",
-            f"",
-            f"CPU utilization: {stats['cpu_percent']:.1f}% total ({stats['cpu_percent_per_core']:.1f}% per core)",
-            f"Threads: {stats['num_threads']} | Cores: {stats['num_cores']}",
-            "=" * 60
-        ]
-
-        return "\n".join(summary)
 
 
 def create_monitor() -> Optional[CPUMonitor]:

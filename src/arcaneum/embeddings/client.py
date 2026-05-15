@@ -228,11 +228,6 @@ class EmbeddingClient:
         os.environ["SENTENCE_TRANSFORMERS_HOME"] = self.cache_dir
         self._models: Dict[str, TextEmbedding] = {}
 
-        # GPU operations use single-threaded batching for optimal performance
-        # GPU models have built-in parallelism; ThreadPoolExecutor + locks cause serialization
-        # See: RDR-013 Phase 2, arcaneum-m7hg
-        self._gpu_lock = None  # Deprecated: no longer needed with single-threaded embedding
-
         # Set when a GPU encode times out — prevents further GPU use in this session.
         # After a timeout, a daemon thread is still running on the GPU; any new Metal
         # command buffers would conflict and cause a fatal assertion (SIGABRT).
@@ -1576,59 +1571,6 @@ class EmbeddingClient:
 
             return all_embeddings
 
-    def release_model(self, model_name: str):
-        """Release a specific model from memory to free resources.
-
-        Args:
-            model_name: Model identifier to release
-
-        Note:
-            After calling this, the model will be reloaded on next use.
-            GPU cache (CUDA/MPS) is cleared if GPU was enabled.
-        """
-        if model_name in self._models:
-            model = self._models[model_name]
-
-            # Delete the model object
-            del self._models[model_name]
-            del model
-
-            # Force garbage collection
-            import gc
-            gc.collect()
-
-            # Clear GPU cache if using GPU
-            if self.use_gpu and self._device != "cpu":
-                self._clear_gpu_cache()
-
-            logger.info(f"Released model: {model_name}")
-
-    def release_all_models(self):
-        """Release all loaded models from memory.
-
-        Note:
-            Models will be reloaded on next use.
-            GPU cache (CUDA/MPS) is cleared if GPU was enabled.
-        """
-        model_names = list(self._models.keys())
-
-        for model_name in model_names:
-            model = self._models[model_name]
-            del model
-
-        self._models.clear()
-
-        # Force garbage collection
-        import gc
-        gc.collect()
-
-        # Clear GPU cache if using GPU
-        if self.use_gpu and self._device != "cpu":
-            self._clear_gpu_cache()
-
-        if model_names:
-            logger.info(f"Released {len(model_names)} models: {', '.join(model_names)}")
-
     def _clear_gpu_cache(self):
         """Clear GPU memory cache (CUDA or MPS).
 
@@ -1671,7 +1613,7 @@ class EmbeddingClient:
                 torch.cuda.synchronize()
             elif self._device == "mps":
                 torch.mps.synchronize()
-        except Exception as e:
+        except Exception:
             # Re-raise as this might be a GPU OOM we need to catch
             raise
 
@@ -1766,14 +1708,6 @@ class EmbeddingClient:
             logger.debug(f"Embeddings validation failed with error: {e}")
             return False
 
-    def get_loaded_models(self) -> List[str]:
-        """Get list of currently loaded models.
-
-        Returns:
-            List of model names currently in memory
-        """
-        return list(self._models.keys())
-
     def get_dimensions(self, model_name: str) -> int:
         """Get vector dimensions for a model.
 
@@ -1857,9 +1791,6 @@ class EmbeddingClient:
         else:
             # FastEmbed uses HuggingFace cache structure with models-- prefix
             # The actual cached model name may differ from config (e.g., qdrant/bge-large-en-v1.5-onnx)
-            # So we check for any model directory that starts with the model base name
-            model_base = model_path.split("/")[-1].replace("-", "_")  # e.g., "bge_large_en_v1"
-
             # Check for exact match first (models--org--model format)
             safe_model_name = model_path.replace("/", "--")
             model_dir = os.path.join(self.cache_dir, f"models--{safe_model_name}")

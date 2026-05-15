@@ -1,6 +1,5 @@
 """CLI command for PDF indexing (RDR-004)."""
 
-import click
 from pathlib import Path
 from rich.console import Console
 from rich.table import Table
@@ -13,12 +12,10 @@ import signal
 from .interaction_logger import interaction_logger
 from .logging_config import setup_logging_default, setup_logging_verbose, setup_logging_debug
 from .utils import set_process_priority, create_qdrant_client
-from ..config import load_config, DEFAULT_MODELS
-from ..embeddings.client import EmbeddingClient
+from ..config import DEFAULT_MODELS
 from ..embeddings.model_cache import get_cached_model
 from ..indexing.uploader import PDFBatchUploader
 from ..indexing.collection_metadata import validate_collection_type, CollectionType
-from qdrant_client import QdrantClient
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -88,12 +85,10 @@ def index_pdfs_command(
     # Note: File workers is hardcoded to 1 due to embedding lock (arcaneum-6pvk)
     # Embedding generation is serialized when file_workers > 1 to prevent GPU conflicts
     actual_file_workers = 1  # Serialized by embedding lock (arcaneum-3fs3)
-    file_worker_source = "1 (auto, serialized by embedding lock)"
 
     # GPU models ignore embedding_workers (single-threaded is faster)
     # CPU models use ThreadPoolExecutor, but benefit is limited
     actual_embedding_workers = 1  # GPU: single-threaded optimal, CPU: ignored in lock
-    embedding_worker_source = "1 (auto, GPU uses internal parallelism)"
 
     # Enable offline mode if requested (blocks all HuggingFace network calls)
     if offline:
@@ -267,7 +262,6 @@ def index_pdfs_command(
             embedding_client=embeddings,
             batch_size=300,  # Optimized from 100 (arcaneum-6pvk: reduce upload rate)
             parallel_workers=2,  # Reduced from 4 (arcaneum-6pvk: reduce connection pressure)
-            max_retries=3,  # Reduced from 5 (arcaneum-6pvk: reduce retry overhead)
             ocr_enabled=ocr_enabled,
             ocr_engine='tesseract',
             ocr_language=ocr_language,

@@ -34,7 +34,6 @@ class PDFBatchUploader:
         embedding_client: EmbeddingClient,
         batch_size: int = 300,
         parallel_workers: int = 4,
-        max_retries: int = 5,
         ocr_enabled: bool = True,
         ocr_engine: str = 'tesseract',
         ocr_language: str = 'eng',
@@ -58,7 +57,6 @@ class PDFBatchUploader:
             embedding_client: Embedding client instance
             batch_size: Number of points per batch (default: 300, optimized from 100)
             parallel_workers: Number of parallel upload workers
-            max_retries: Maximum retry attempts for failed uploads
             ocr_enabled: Enable OCR for scanned PDFs (default: True)
             ocr_engine: OCR engine ('tesseract' or 'easyocr')
             ocr_language: OCR language code
@@ -78,10 +76,8 @@ class PDFBatchUploader:
                 Default: True for memory efficiency.
         """
         self.qdrant = qdrant_client
-        self.embeddings = embedding_client
         self.batch_size = batch_size
         self.parallel_workers = parallel_workers
-        self.max_retries = max_retries
         self.embedding_workers = embedding_workers
         self.embedding_batch_size = embedding_batch_size
         self.max_memory_gb = max_memory_gb
@@ -115,20 +111,8 @@ class PDFBatchUploader:
             logger.warning(warning)
             print(warning, flush=True)
 
-        # GPU + file workers now works efficiently
-        # Single-threaded embedding with larger batches (arcaneum-m7hg)
-        # No serialization penalty - GPU has internal parallelism per batch
-        if embedding_client.use_gpu and self.file_workers > 1 and False:  # Disabled: no longer a bottleneck
-            gpu_info = (
-                f"ℹ️  GPU acceleration with {self.file_workers} file workers: "
-                f"Efficient batching strategy (single-threaded per batch for internal GPU parallelism)"
-            )
-            logger.debug(gpu_info)
-
         # Initialize components (RDR-016: markdown conversion default)
         self.extractor = PDFExtractor(
-            fallback_enabled=True,
-            table_validation=True,
             markdown_conversion=markdown_conversion,
             preserve_images=preserve_images,
         )

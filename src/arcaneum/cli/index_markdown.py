@@ -1,6 +1,5 @@
 """CLI commands for markdown indexing (RDR-014)."""
 
-import click
 from pathlib import Path
 from rich.console import Console
 import logging
@@ -12,12 +11,10 @@ import signal
 from .interaction_logger import interaction_logger
 from .logging_config import setup_logging_default, setup_logging_verbose, setup_logging_debug
 from .utils import create_qdrant_client
-from ..config import load_config, DEFAULT_MODELS
-from ..embeddings.client import EmbeddingClient
+from ..config import DEFAULT_MODELS
 from ..embeddings.model_cache import get_cached_model
 from ..indexing.markdown.pipeline import MarkdownIndexingPipeline
 from ..indexing.collection_metadata import validate_collection_type, CollectionType, get_vector_names
-from qdrant_client import QdrantClient
 
 console = Console()
 logger = logging.getLogger(__name__)

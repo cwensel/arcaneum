@@ -19,7 +19,7 @@ import xxhash
 
 from ...embeddings.client import EmbeddingClient
 from ...utils.formatting import format_duration
-from ..common.sync import MetadataBasedSync, compute_text_file_hash, compute_file_hash, compute_quick_hash
+from ..common.sync import MetadataBasedSync, compute_file_hash, compute_quick_hash
 from .discovery import MarkdownDiscovery
 from .chunker import SemanticMarkdownChunker
 from ...cli.output import timestamp
@@ -613,7 +613,6 @@ class MarkdownIndexingPipeline:
         chunk_size: int = 512,
         chunk_overlap: int = 50,
         persist: bool = True,
-        persist_dir: Optional[Path] = None
     ) -> Dict:
         """Inject markdown content directly (for agent memory).
 
@@ -626,7 +625,6 @@ class MarkdownIndexingPipeline:
             chunk_size: Target chunk size in tokens
             chunk_overlap: Overlap between chunks
             persist: Whether to persist to disk
-            persist_dir: Directory to persist to (default: ~/.arcaneum/agent-memory)
 
         Returns:
             Statistics dict

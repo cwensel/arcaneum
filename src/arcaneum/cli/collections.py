@@ -1,14 +1,11 @@
 """Collection management CLI commands (RDR-003 with RDR-006, RDR-017 enhancements)."""
 
-import json
 import sys
 from pathlib import Path
 from rich.console import Console
 from rich.table import Table
-from qdrant_client import QdrantClient
 from qdrant_client.models import HnswConfigDiff
 
-from arcaneum.config import load_config, ArcaneumConfig, DEFAULT_MODELS
 from arcaneum.embeddings.client import EMBEDDING_MODELS
 from arcaneum.indexing.collection_metadata import (
     set_collection_metadata,
@@ -18,8 +15,8 @@ from arcaneum.indexing.collection_metadata import (
 )
 from arcaneum.cli.errors import InvalidArgumentError, ResourceNotFoundError
 from arcaneum.cli.interaction_logger import interaction_logger
-from arcaneum.cli.output import print_json, print_error, print_success
-from arcaneum.cli.utils import create_qdrant_client, build_vectors_config, get_model_dimensions, extract_vectors_info
+from arcaneum.cli.output import print_json, print_error
+from arcaneum.cli.utils import create_qdrant_client, build_vectors_config, extract_vectors_info
 from arcaneum.utils.formatting import format_size
 
 console = Console()

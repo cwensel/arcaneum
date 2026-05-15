@@ -31,7 +31,7 @@ import os
 import signal
 import sys
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Optional
 
 import psutil
@@ -263,14 +263,12 @@ def start_probe_thread(
     if log_path == "-":
         sink = sys.stderr
         owns_sink = False
-        resolved_path = None
     else:
         if not log_path:
             log_path = default_mem_probe_log_path()
         # Line-buffered so partial output survives a SIGKILL during a hang.
         sink = open(log_path, "a", buffering=1, encoding="utf-8")
         owns_sink = True
-        resolved_path = log_path
         try:
             sys.stderr.write(f"mem-probe: writing JSONL to {log_path}\n")
         except Exception:

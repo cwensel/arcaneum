@@ -15,7 +15,6 @@ from multiprocessing import cpu_count
 
 import sys
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 
 from .git_operations import GitProjectDiscovery
 from .common.multiprocessing import create_process_pool
@@ -31,42 +30,6 @@ from ..cli.output import timestamp
 
 logger = logging.getLogger(__name__)
 console = Console()
-
-
-class EmbeddingTimingCollector:
-    """Collects timing metrics during embedding batch processing."""
-
-    def __init__(self):
-        self.batch_times = []
-        self.start_time = None
-        self.total_batches = 0
-
-    def start(self, total_batches: int):
-        """Start timing collection."""
-        self.start_time = time.time()
-        self.total_batches = total_batches
-        self.batch_times = []
-
-    def record_batch(self, batch_idx: int, total_batches: int):
-        """Record completion of a batch."""
-        if self.start_time:
-            elapsed = time.time() - self.start_time
-            self.batch_times.append(elapsed)
-
-    def get_summary(self) -> dict:
-        """Get timing summary."""
-        if not self.batch_times:
-            return {"total_time": 0, "avg_per_batch": 0, "num_batches": 0}
-
-        total_time = self.batch_times[-1] if self.batch_times else 0
-        num_batches = len(self.batch_times)
-        avg_per_batch = total_time / num_batches if num_batches > 0 else 0
-
-        return {
-            "total_time": total_time,
-            "avg_per_batch": avg_per_batch,
-            "num_batches": num_batches
-        }
 
 
 def _process_file_worker(

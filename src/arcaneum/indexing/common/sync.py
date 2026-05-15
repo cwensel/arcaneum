@@ -1,12 +1,11 @@
 """Metadata-based sync for incremental indexing (RDR-004)."""
 
-import hashlib
 import multiprocessing as mp
 import os
 from pathlib import Path
-from typing import List, Set, Callable, Tuple, Dict
+from typing import List, Callable, Tuple, Dict
 from qdrant_client import QdrantClient
-from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchAny, FilterSelector
+from qdrant_client.models import Filter, FieldCondition, MatchValue, FilterSelector
 import logging
 import xxhash
 
@@ -235,9 +234,7 @@ class MetadataBasedSync:
         indexed_pairs = set()
         offset = None
         chunks_with_dict = 0
-        chunks_with_array = 0
         total_chunks = 0
-        dict_entries = 0
 
         try:
             while True:
@@ -245,7 +242,7 @@ class MetadataBasedSync:
                     collection_name=collection_name,
                     limit=1000,
                     offset=offset,
-                    with_payload=["file_path", "quick_hash", "file_quick_hashes", "file_paths"],
+                    with_payload=["file_path", "quick_hash", "file_quick_hashes"],
                     with_vectors=False
                 )
 
@@ -262,7 +259,6 @@ class MetadataBasedSync:
                             file_quick_hashes = point.payload.get("file_quick_hashes", {})
                             chunks_with_dict += 1
                             for dict_path, dict_quick_hash in file_quick_hashes.items():
-                                dict_entries += 1
                                 if dict_path and dict_quick_hash:
                                     indexed_pairs.add((dict_path, dict_quick_hash))
                         else:
@@ -271,11 +267,6 @@ class MetadataBasedSync:
                             quick_hash = point.payload.get("quick_hash")
                             if path and quick_hash:
                                 indexed_pairs.add((path, quick_hash))
-
-                        # Check if file_paths array exists
-                        file_paths = point.payload.get("file_paths", [])
-                        if file_paths:
-                            chunks_with_array += 1
 
                 if offset is None:
                     break
@@ -372,8 +363,7 @@ class MetadataBasedSync:
             return {}
 
     def get_unindexed_files(self, collection_name: str,
-                            file_list: List[Path],
-                            hash_fn=None) -> Tuple[List[Path], List[Path]]:
+                            file_list: List[Path]) -> Tuple[List[Path], List[Path]]:
         """Filter file list using fast metadata check to identify files needing processing.
 
         **Single-pass strategy** (deferred content hashing):
@@ -396,7 +386,6 @@ class MetadataBasedSync:
         Args:
             collection_name: Qdrant collection name
             file_list: List of file paths to check
-            hash_fn: Deprecated parameter, ignored (kept for backward compatibility)
 
         Returns:
             Tuple of:
@@ -495,7 +484,7 @@ class MetadataBasedSync:
                 return 0  # No chunks to delete
 
             # Delete all points with this file_hash
-            result = self.qdrant.delete(
+            self.qdrant.delete(
                 collection_name=collection_name,
                 points_selector=FilterSelector(
                     filter=Filter(
@@ -755,7 +744,7 @@ class MetadataBasedSync:
             if primary_path and primary_path in file_quick_hashes:
                 update_payload["quick_hash"] = file_quick_hashes[primary_path]
 
-            result = self.qdrant.set_payload(
+            self.qdrant.set_payload(
                 collection_name=collection_name,
                 payload=update_payload,
                 points=FilterSelector(

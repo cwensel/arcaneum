@@ -2,7 +2,6 @@
 
 import json
 import logging
-import os
 import sys
 import time
 import click
@@ -11,12 +10,12 @@ from rich.console import Console
 from rich.table import Table
 
 from ..fulltext.client import FullTextClient
-from ..fulltext.indexes import get_index_settings, get_available_index_types
+from ..fulltext.indexes import get_index_settings
 from .output import print_json, print_error, print_info, print_success
 from .interaction_logger import interaction_logger
 from .errors import InvalidArgumentError, ResourceNotFoundError
 from .search_merge import fetch_from_corpora, per_corpus_limit
-from .utils import create_meili_client, resolve_corpora
+from .utils import create_meili_client
 from ..utils.formatting import format_size
 
 console = Console()
@@ -856,7 +855,6 @@ def export_index(name, output, output_json):
 
             with open(output_path, 'w') as f:
                 # Write header with index metadata
-                stats = client.get_index_stats(name)
                 settings = client.get_index_settings(name)
                 index_obj = client.get_index(name)
 

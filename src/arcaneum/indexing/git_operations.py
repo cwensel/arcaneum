@@ -6,9 +6,7 @@ with robust error handling for edge cases (RDR-005).
 """
 
 import os
-import re
 import subprocess
-from pathlib import Path
 from typing import List, Optional
 from urllib.parse import urlparse, urlunparse
 import logging

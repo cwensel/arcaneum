@@ -5,7 +5,7 @@ Qdrant (vector search) and MeiliSearch (full-text search) with shared metadata.
 """
 
 import logging
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 from uuid import uuid4
 
 from qdrant_client import QdrantClient

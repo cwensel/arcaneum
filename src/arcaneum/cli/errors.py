@@ -55,21 +55,6 @@ class ResourceNotFoundError(ArcaneumError):
     exit_code = EXIT_NOT_FOUND
 
 
-class CollectionNotFoundError(ResourceNotFoundError):
-    """Specific case: Qdrant collection not found."""
-    pass
-
-
-class ModelNotFoundError(ResourceNotFoundError):
-    """Specific case: Embedding model not found or not downloaded."""
-    pass
-
-
-class GitRepositoryNotFoundError(ResourceNotFoundError):
-    """Specific case: Git repository not found at specified path."""
-    pass
-
-
 class SearchSlotUnavailable(ArcaneumError):
     """No embedder slot available within the wait timeout.
 

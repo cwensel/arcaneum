@@ -1,6 +1,6 @@
 """Configuration management for Arcaneum (RDR-003)."""
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field
 from pathlib import Path
 from typing import Dict, List, Literal
 import yaml

@@ -233,7 +233,6 @@ class OCREngine:
 
         for batch_start in range(1, total_pages + 1, self.page_batch_size):
             batch_end = min(batch_start + self.page_batch_size - 1, total_pages)
-            batch_size = batch_end - batch_start + 1
 
             if verbose:
                 print(f"  → OCR: Batch pages {batch_start}-{batch_end}...", flush=True)
@@ -380,82 +379,3 @@ class OCREngine:
         # temp_dir is automatically cleaned up here
 
         return batch_results
-
-    def _preprocess_image(self, image: Image.Image) -> np.ndarray:
-        """Preprocess image for better OCR accuracy."""
-        # Convert PIL Image to numpy array
-        img_array = np.array(image)
-
-        # Scale image (2x recommended for accuracy)
-        if self.image_scale != 1.0:
-            width = int(img_array.shape[1] * self.image_scale)
-            height = int(img_array.shape[0] * self.image_scale)
-            img_array = cv2.resize(img_array, (width, height), interpolation=cv2.INTER_CUBIC)
-
-        # Convert to grayscale
-        gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-
-        # Apply thresholding (Otsu's method)
-        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-        # Denoise
-        denoised = cv2.medianBlur(thresh, 3)
-
-        return denoised
-
-    def _ocr_tesseract(self, image: np.ndarray) -> Tuple[str, float]:
-        """Perform OCR with Tesseract."""
-        try:
-            # Get detailed data with confidence
-            data = pytesseract.image_to_data(
-                image,
-                lang=self.language,
-                config='--psm 3 --oem 1',  # Auto segmentation, LSTM engine
-                output_type=pytesseract.Output.DICT
-            )
-
-            # Extract text with confidence filtering
-            filtered_text = []
-            confidences = []
-
-            for i, conf in enumerate(data['conf']):
-                if conf == -1:  # No text detected
-                    continue
-                if conf >= self.confidence_threshold:
-                    text = data['text'][i]
-                    if text.strip():
-                        filtered_text.append(text)
-                        confidences.append(conf)
-
-            text = ' '.join(filtered_text)
-            avg_conf = sum(confidences) / len(confidences) if confidences else 0
-
-            return text, avg_conf
-
-        except Exception as e:
-            logger.error(f"Tesseract OCR failed: {e}")
-            raise
-
-    def _ocr_easyocr(self, image: np.ndarray) -> Tuple[str, float]:
-        """Perform OCR with EasyOCR."""
-        try:
-            # EasyOCR returns [(bbox, text, confidence), ...]
-            results = self.reader.readtext(image, detail=1)
-
-            # Filter by confidence and extract text
-            filtered_text = []
-            confidences = []
-
-            for bbox, text, conf in results:
-                if conf >= (self.confidence_threshold / 100.0):  # EasyOCR uses 0-1 scale
-                    filtered_text.append(text)
-                    confidences.append(conf * 100)  # Convert to percentage
-
-            text = ' '.join(filtered_text)
-            avg_conf = sum(confidences) / len(confidences) if confidences else 0
-
-            return text, avg_conf
-
-        except Exception as e:
-            logger.error(f"EasyOCR failed: {e}")
-            raise

@@ -9,9 +9,8 @@ import click
 from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance
 
-from ..config import load_config, ArcaneumConfig, QdrantConfig
+from ..config import load_config
 from ..embeddings.client import EMBEDDING_MODELS, _unknown_model_error
-from .errors import ResourceNotFoundError
 
 logger = logging.getLogger(__name__)
 

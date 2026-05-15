@@ -29,7 +29,7 @@ os.environ.setdefault('PYTORCH_MPS_HIGH_WATERMARK_RATIO', '0.8')
 
 import sys
 import hashlib
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from multiprocessing import cpu_count
 from pathlib import Path
 from typing import List, Optional, Set, Dict, Any, Tuple
@@ -77,7 +77,7 @@ from ..schema.document import DualIndexDocument
 from ..indexing.dual_indexer import DualIndexer
 from ..indexing.collection_metadata import get_collection_type, get_collection_metadata
 from ..indexing.common.sync import MetadataBasedSync, compute_quick_hash
-from ..indexing.common.multiprocessing import get_mp_context, worker_init, create_process_pool
+from ..indexing.common.multiprocessing import create_process_pool
 from ..indexing.git_operations import GitProjectDiscovery, apply_git_metadata
 from ..indexing.git_metadata_sync import GitMetadataSync
 from ..config import DEFAULT_MODELS
@@ -357,55 +357,6 @@ def _is_git_repo(directory: Path) -> bool:
         return True
     except Exception:
         return False
-
-
-def _discover_git_tracked_files(directory: Path, extensions: set) -> List[Path]:
-    """Discover files using git ls-files (respects .gitignore).
-
-    Opens the enclosing repo via ``search_parent_directories=True`` and runs
-    ``git ls-files`` against the repo root, then filters to files under
-    ``directory``. In a large monorepo this initial listing scans the whole
-    repo — callers targeting a single subdirectory of a huge repo should be
-    aware the listing cost is proportional to the repo, not the subdirectory.
-
-    Args:
-        directory: Directory to scan (must be in a git repo)
-        extensions: Set of file extensions to filter
-
-    Returns:
-        List of file paths to index
-    """
-    git_discovery = GitProjectDiscovery()
-
-    # Find git root
-    try:
-        import git
-        repo = git.Repo(directory, search_parent_directories=True)
-        git_root = repo.working_tree_dir
-    except Exception as e:
-        logger.warning(f"Could not find git root for {directory}: {e}")
-        return []
-
-    # Get tracked files with extensions filter
-    ext_list = list(extensions)
-    tracked_files = git_discovery.get_tracked_files(git_root, ext_list)
-
-    # Convert to Path objects and filter to only files under the target directory
-    directory_abs = directory.absolute()
-    files = []
-    for file_path in tracked_files:
-        p = Path(file_path)
-        # Only include actual files under the target directory
-        # (git ls-files can return paths that are directories on disk)
-        try:
-            p.relative_to(directory_abs)
-            if p.is_file():
-                files.append(p)
-        except ValueError:
-            # File is not under target directory, skip
-            continue
-
-    return files
 
 
 # Extensions that may contain minified content
@@ -2049,7 +2000,6 @@ def sync_directory_command(
                                 # Extract git metadata for code files
                                 if git_discovery:
                                     # Find git root for this file
-                                    file_abs = str(file_path.absolute())
                                     git_root = None
                                     for parent in [file_path.absolute()] + list(file_path.absolute().parents):
                                         if (parent / '.git').exists():
@@ -2522,95 +2472,6 @@ def sync_directory_command(
         sys.exit(1)
 
 
-def _fetch_qdrant_chunks_for_file(
-    qdrant,
-    corpus: str,
-    file_path_str: str,
-) -> Tuple[str, List[Dict[str, Any]], Optional[str]]:
-    """Fetch chunks for a single file from Qdrant.
-
-    Args:
-        qdrant: Qdrant client
-        corpus: Collection name
-        file_path_str: File path to fetch
-
-    Returns:
-        Tuple of (file_path, list of meili docs, error or None)
-    """
-    from qdrant_client.models import Filter, FieldCondition, MatchValue
-
-    try:
-        # Paginate through all points for this file
-        all_points = []
-        offset = None
-
-        while True:
-            points, next_offset = qdrant.scroll(
-                collection_name=corpus,
-                scroll_filter=Filter(
-                    must=[
-                        FieldCondition(
-                            key="file_path",
-                            match=MatchValue(value=file_path_str)
-                        )
-                    ]
-                ),
-                limit=1000,
-                offset=offset,
-                with_payload=True,
-                with_vectors=False
-            )
-
-            if points:
-                all_points.extend(points)
-
-            # Check if there are more results
-            if next_offset is None or not points:
-                break
-            offset = next_offset
-
-        if not all_points:
-            return (file_path_str, [], None)
-
-        # Convert Qdrant points to MeiliSearch documents
-        meili_docs = []
-        for point in all_points:
-            payload = point.payload
-            meili_doc = {
-                "id": str(point.id),
-                "content": payload.get("text", ""),
-                "file_path": payload.get("file_path", ""),
-                "filename": payload.get("filename", ""),
-                "file_extension": payload.get("file_extension", ""),
-                "chunk_index": payload.get("chunk_index", 0),
-            }
-
-            # Add optional fields
-            if payload.get("page_number"):
-                meili_doc["page_number"] = payload["page_number"]
-            if payload.get("programming_language"):
-                meili_doc["language"] = payload["programming_language"]
-            if payload.get("document_type"):
-                meili_doc["document_type"] = payload["document_type"]
-
-            # Add git metadata fields for code corpora
-            if payload.get("git_project_identifier"):
-                meili_doc["git_project_identifier"] = payload["git_project_identifier"]
-            if payload.get("git_project_name"):
-                meili_doc["git_project_name"] = payload["git_project_name"]
-            if payload.get("git_branch"):
-                meili_doc["git_branch"] = payload["git_branch"]
-            if payload.get("git_commit_hash"):
-                meili_doc["git_commit_hash"] = payload["git_commit_hash"]
-
-            meili_docs.append(meili_doc)
-
-        return (file_path_str, meili_docs, None)
-
-    except Exception as e:
-        return (file_path_str, [], str(e))
-
-
 def _fetch_chunks_for_files_bulk(
     qdrant,
     corpus: str,
@@ -2849,7 +2710,6 @@ def _repair_meili_metadata(
             # Get field values handling both dict and object
             if isinstance(doc, dict):
                 has_git_id = bool(doc.get('git_project_identifier'))
-                has_version_id = bool(doc.get('git_version_identifier'))
                 doc_id = doc.get('id')
                 file_path = doc.get('file_path')
                 chunk_index = doc.get('chunk_index', 0)
@@ -2858,7 +2718,6 @@ def _repair_meili_metadata(
                 commit_hash = doc.get('git_commit_hash')
             else:
                 has_git_id = bool(getattr(doc, 'git_project_identifier', None))
-                has_version_id = bool(getattr(doc, 'git_version_identifier', None))
                 doc_id = getattr(doc, 'id', None)
                 file_path = getattr(doc, 'file_path', None)
                 chunk_index = getattr(doc, 'chunk_index', 0)
@@ -3545,7 +3404,6 @@ def _discover_corpora_for_parity() -> List[Dict[str, Any]]:
         - to_meili: Number of files to backfill to MeiliSearch
         - to_qdrant: Number of files to backfill to Qdrant
     """
-    from ..fulltext.client import FullTextClient
 
     # Gather Qdrant collections
     qdrant_collections = {}

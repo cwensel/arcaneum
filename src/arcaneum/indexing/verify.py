@@ -17,7 +17,7 @@ Usage:
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional
 from collections import defaultdict
 
 from qdrant_client import QdrantClient
@@ -531,29 +531,3 @@ class CollectionVerifier:
             files=file_results,
         )
 
-    def get_incomplete_projects(
-        self, collection_name: str
-    ) -> List[Tuple[str, float]]:
-        """Get list of incomplete projects with completion percentage.
-
-        Convenience method for getting items that need repair.
-
-        Args:
-            collection_name: Name of collection to check
-
-        Returns:
-            List of (identifier, completion_percentage) tuples for incomplete items
-        """
-        result = self.verify_collection(collection_name)
-        incomplete = []
-
-        if result.collection_type == "code":
-            for project in result.projects:
-                if not project.is_complete:
-                    incomplete.append((project.identifier, project.completion_percentage))
-        else:
-            for file in result.files:
-                if not file.is_complete:
-                    incomplete.append((file.file_path, file.completion_percentage))
-
-        return sorted(incomplete, key=lambda x: x[1])  # Sort by completion %

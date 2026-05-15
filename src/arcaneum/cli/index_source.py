@@ -1,13 +1,11 @@
 """CLI command for source code indexing (RDR-005)."""
 
 import sys
-import os
 import logging
 import signal
 from typing import Optional
 
 from rich.console import Console
-from rich import print as rprint
 
 from .interaction_logger import interaction_logger
 from .logging_config import setup_logging_default, setup_logging_verbose, setup_logging_debug
@@ -20,7 +18,6 @@ from arcaneum.indexing.collection_metadata import (
     get_vector_names,
     CollectionType
 )
-from arcaneum.embeddings.client import EmbeddingClient
 from arcaneum.embeddings.model_cache import get_cached_model
 from arcaneum.paths import get_models_dir
 

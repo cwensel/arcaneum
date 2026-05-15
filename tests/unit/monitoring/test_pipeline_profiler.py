@@ -7,7 +7,6 @@ import pytest
 from arcaneum.monitoring.pipeline_profiler import (
     PipelineProfiler,
     StageMetrics,
-    create_profiler,
 )
 
 
@@ -258,11 +257,3 @@ class TestThreadSafety:
 
         assert errors == []
         assert len(profiler.stages) == 20
-
-
-# --- create_profiler factory ---
-
-def test_create_profiler_returns_instance():
-    profiler = create_profiler()
-    assert isinstance(profiler, PipelineProfiler)
-    assert profiler.stages == {}

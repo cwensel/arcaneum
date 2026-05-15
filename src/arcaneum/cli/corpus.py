@@ -5,19 +5,16 @@ collection and a MeiliSearch index in a single operation.
 """
 
 import sys
-from typing import Dict, Any
 
-import click
 from rich.console import Console
 from qdrant_client.models import HnswConfigDiff
 
-from ..cli.output import print_json, print_error, print_info, print_success
+from ..cli.output import print_json, print_error, print_info
 from ..cli.utils import create_qdrant_client, create_meili_client, get_model_dimensions, build_vectors_config
 from ..cli.interaction_logger import interaction_logger
 from ..cli.errors import InvalidArgumentError, ResourceNotFoundError
-from ..embeddings.client import EMBEDDING_MODELS
 from ..fulltext.indexes import get_index_settings
-from ..indexing.collection_metadata import set_collection_metadata, get_collection_metadata, CollectionType
+from ..indexing.collection_metadata import set_collection_metadata, get_collection_metadata
 
 console = Console()
 
@@ -1037,7 +1034,6 @@ def corpus_verify_command(
         verbose: Show detailed file-level results
         output_json: If True, output JSON format
     """
-    from rich.table import Table
     from arcaneum.indexing.verify import CollectionVerifier
 
     # Start interaction logging (RDR-018)
@@ -1130,12 +1126,6 @@ def corpus_verify_command(
             meili_healthy = meili_result["is_healthy"]
             overall_healthy = qdrant_healthy and meili_healthy
 
-            # Check parity (item counts match)
-            qdrant_items = qdrant_result.total_items
-            meili_items = meili_result["document_count"]
-            # Note: MeiliSearch doc_count is chunks, not unique items
-            # For detailed parity, we'd need to compare unique file counts
-            # For now, just report both counts
             parity_status = "needs_review"
         elif qdrant_result:
             overall_healthy = qdrant_result.is_healthy

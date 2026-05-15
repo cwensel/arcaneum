@@ -7,7 +7,7 @@ lists, tables) and preserve parent header context for better retrieval.
 """
 
 import logging
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 from dataclasses import dataclass
 
 try:

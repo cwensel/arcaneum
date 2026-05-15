@@ -15,19 +15,16 @@ Architecture:
 - Optional pre-warming on demand
 
 Usage:
-    from arcaneum.embeddings.model_cache import get_cached_model, warm_models
+    from arcaneum.embeddings.model_cache import get_cached_model
 
     # Within a CLI command:
     model = get_cached_model("stella", cache_dir=..., use_gpu=...)
     embeddings = model.encode(texts)
-
-    # Optional: pre-warm common models on startup
-    warm_models(["stella", "bge-large"], cache_dir=..., use_gpu=...)
 """
 
 import threading
-from typing import Dict, Optional, List
-from arcaneum.embeddings.client import EmbeddingClient, EMBEDDING_MODELS
+from typing import Dict
+from arcaneum.embeddings.client import EmbeddingClient
 
 # Global model cache with thread-safe access
 _model_cache: Dict[str, EmbeddingClient] = {}
@@ -109,64 +106,3 @@ def get_cached_model(
         return client
 
 
-def warm_models(
-    model_names: List[str],
-    cache_dir: str,
-    use_gpu: bool = False,
-    verify_ssl: bool = True,
-) -> None:
-    """Pre-load embedding models for faster first use.
-
-    Optional step to warm up the model cache at startup. Useful if you know
-    which models will be used frequently.
-
-    Args:
-        model_names: List of model identifiers to pre-load
-        cache_dir: Directory for cached model files
-        use_gpu: Enable GPU acceleration
-        verify_ssl: Whether to verify SSL certificates
-
-    Example:
-        warm_models(["stella", "bge-large"], cache_dir="~/.arcaneum/models", use_gpu=True)
-    """
-    for model_name in model_names:
-        if model_name not in EMBEDDING_MODELS:
-            print(f"⚠️  Unknown model: {model_name}. Skipping.")
-            continue
-
-        try:
-            get_cached_model(
-                model_name,
-                cache_dir=cache_dir,
-                use_gpu=use_gpu,
-                verify_ssl=verify_ssl,
-            )
-            print(f"✓ Warmed: {model_name}")
-        except Exception as e:
-            print(f"✗ Failed to warm {model_name}: {e}")
-
-
-def clear_cache() -> None:
-    """Clear all cached models from memory.
-
-    Useful for testing or freeing GPU memory. Models can be reloaded on demand
-    after clearing.
-    """
-    with _cache_lock:
-        _model_cache.clear()
-        _cache_config["cache_dir"] = None
-        _cache_config["use_gpu"] = None
-
-
-def get_cache_info() -> Dict:
-    """Get information about the current model cache.
-
-    Returns:
-        Dictionary with cache statistics (cached models, size, etc.)
-    """
-    with _cache_lock:
-        return {
-            "cached_models": list(_model_cache.keys()),
-            "model_count": len(_model_cache),
-            "config": _cache_config.copy(),
-        }

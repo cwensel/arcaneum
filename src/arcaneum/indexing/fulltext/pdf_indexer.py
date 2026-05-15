@@ -8,9 +8,9 @@ import hashlib
 import logging
 import re
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 
-from rich.progress import Progress, TaskID, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
 
 from ..pdf.extractor import PDFExtractor
 from ..pdf.ocr import OCREngine
@@ -65,8 +65,6 @@ class PDFFullTextIndexer:
 
         # Reuse RDR-004 extraction components
         self.pdf_extractor = PDFExtractor(
-            fallback_enabled=True,
-            table_validation=True,
             markdown_conversion=markdown_conversion,
         )
 

@@ -276,16 +276,6 @@ Content"""
 
         assert meta1.content_hash != meta2.content_hash
 
-    @pytest.mark.skipif(not FRONTMATTER_AVAILABLE, reason="python-frontmatter not available")
-    def test_read_file_content(self, sample_markdown_tree):
-        """Test reading file content without frontmatter."""
-        file_path = sample_markdown_tree / "docs" / "sample.md"
-        content = MarkdownDiscovery.read_file_content(file_path)
-
-        # Frontmatter should be stripped when the library is available
-        assert '---' not in content
-        assert '# Introduction' in content
-
     def test_read_file_with_frontmatter(self, sample_markdown_tree):
         """Test reading file with frontmatter extraction."""
         file_path = sample_markdown_tree / "docs" / "sample.md"

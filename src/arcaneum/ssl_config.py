@@ -36,15 +36,6 @@ warnings.filterwarnings("ignore", message=".*optimum is not installed.*")
 _SSL_DISABLED = False
 
 
-def is_ssl_verification_disabled() -> bool:
-    """Check if SSL verification is disabled.
-
-    Returns:
-        True if SSL verification has been disabled, False otherwise.
-    """
-    return _SSL_DISABLED
-
-
 def disable_ssl_verification(quiet: bool = False) -> bool:
     """Disable SSL certificate verification globally.
 
@@ -183,35 +174,3 @@ def configure_ssl_from_env() -> bool:
 
     # Default: disable SSL verification for corporate proxy compatibility
     return disable_ssl_verification(quiet=True)
-
-
-def check_and_configure_ssl() -> dict:
-    """Check and configure SSL, returning status information.
-
-    This is the recommended entry point for CLI commands. It checks the
-    environment variable and returns information about the SSL configuration.
-
-    SSL verification is DISABLED by default for corporate proxy compatibility.
-
-    Returns:
-        Dictionary with:
-            - ssl_verify: bool - Whether SSL verification is enabled
-            - configured_by: str - How SSL was configured ('environment', 'default')
-            - warning: str or None - Warning message if SSL is disabled
-    """
-    ssl_verify_env = os.environ.get("ARC_SSL_VERIFY", "false").lower()
-
-    if ssl_verify_env in ("true", "1", "yes", "on"):
-        return {
-            "ssl_verify": True,
-            "configured_by": "environment",
-            "warning": None
-        }
-
-    # Default: disable SSL verification
-    disable_ssl_verification(quiet=True)
-    return {
-        "ssl_verify": False,
-        "configured_by": "default",
-        "warning": None  # No warning since this is the default
-    }

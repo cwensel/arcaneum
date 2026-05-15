@@ -94,27 +94,11 @@ def score_chunks(chunks: list) -> float:
     return round(sum(scores) / len(scores), 3) if scores else 0.0
 
 
-def is_readable(text: str, threshold: float = 0.9) -> bool:
-    """Check if text is readable (above quality threshold).
-
-    Args:
-        text: Text to check
-        threshold: Minimum quality score (default 0.9)
-
-    Returns:
-        True if text scores above threshold
-    """
-    return score_text(text) >= threshold
-
-
 def needs_ocr(text: str) -> bool:
     """Check if text has garbled content that OCR could fix.
 
-    Distinct from is_readable(): a PDF with chart bullet characters (●●●)
-    scores low on readability but OCR won't help — the extraction is correct.
-    This function specifically checks for replacement characters (U+FFFD)
-    and near-zero stop word frequency, which indicate broken font mappings
-    that OCR can recover.
+    Checks for replacement characters (U+FFFD) and near-zero stop word
+    frequency, which indicate broken font mappings that OCR can recover.
 
     Args:
         text: Text to check

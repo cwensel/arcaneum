@@ -111,39 +111,6 @@ def get_gpu_memory_info() -> tuple[Optional[int], Optional[int], Optional[str]]:
         return (None, None, None)
 
 
-def estimate_safe_batch_size(
-    model_dimensions: int,
-    available_gpu_bytes: int,
-    safety_factor: float = 0.5
-) -> int:
-    """Estimate safe batch size based on available GPU memory.
-
-    DEPRECATED: Use estimate_safe_batch_size_v2() for more accurate estimates.
-    This function overestimates memory usage (~2000x) and is kept for backward compatibility.
-
-    Args:
-        model_dimensions: Embedding model output dimensions (e.g., 1024)
-        available_gpu_bytes: Available GPU memory in bytes
-        safety_factor: Fraction of available memory to use (default: 0.5 for conservative estimate)
-
-    Returns:
-        Recommended safe batch size
-    """
-    # Rough heuristic: Each embedded item needs ~10MB for 1024D models
-    # This includes model activations, gradients, and temporary buffers
-    # Scale proportionally with dimensions
-    bytes_per_item = (model_dimensions / 1024.0) * 10 * 1024 * 1024  # 10MB base for 1024D
-
-    # Apply safety factor
-    usable_memory = available_gpu_bytes * safety_factor
-
-    # Calculate batch size
-    estimated_batch = int(usable_memory / bytes_per_item)
-
-    # Floor at reasonable minimum (8) and cap at reasonable maximum (1024)
-    return max(8, min(estimated_batch, 1024))
-
-
 def estimate_safe_batch_size_v2(
     model_name: str,
     available_gpu_bytes: int,
@@ -345,7 +312,6 @@ def calculate_safe_workers(
     # Generate warning if we had to reduce workers
     warning = ""
     if safe_workers < requested_workers:
-        reduced_by = requested_workers - safe_workers
         warning = (
             f"⚠️  Reduced workers from {requested_workers} to {safe_workers} "
             f"due to memory constraints\n"

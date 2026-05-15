@@ -1,11 +1,9 @@
 """CLI command for semantic search (RDR-007 with RDR-006 enhancements)."""
 
-import click
 import logging
 import sys
 import time
-from pathlib import Path
-from typing import List, Tuple
+from typing import List
 from rich.console import Console
 
 from ..search import (
@@ -22,7 +20,7 @@ from .concurrency import acquire_embedder_slot
 from .errors import InvalidArgumentError, ResourceNotFoundError, SearchSlotUnavailable
 from .interaction_logger import interaction_logger
 from .search_merge import fetch_from_corpora, per_corpus_limit
-from .utils import create_qdrant_client, resolve_corpora
+from .utils import create_qdrant_client
 
 console = Console()
 logger = logging.getLogger(__name__)

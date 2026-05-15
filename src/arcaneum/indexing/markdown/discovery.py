@@ -13,7 +13,6 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Optional
 from dataclasses import dataclass, field
-from datetime import datetime
 
 from ..common.sync import compute_text_file_hash
 
@@ -233,32 +232,6 @@ class MarkdownDiscovery:
 
         logger.info(f"Extracted metadata from {len(metadata_list)}/{len(files)} files")
         return metadata_list
-
-    @staticmethod
-    def read_file_content(file_path: Path) -> str:
-        """Read markdown file content (without frontmatter if present).
-
-        Args:
-            file_path: Path to markdown file
-
-        Returns:
-            File content (body only if frontmatter present)
-        """
-        try:
-            content = file_path.read_text(encoding='utf-8')
-        except UnicodeDecodeError:
-            content = file_path.read_text(encoding='latin-1')
-
-        # Strip frontmatter if using frontmatter library
-        if FRONTMATTER_AVAILABLE:
-            try:
-                post = frontmatter.loads(content)
-                return post.content  # Return only body, not frontmatter
-            except Exception:
-                # Fallback to full content
-                pass
-
-        return content
 
     @staticmethod
     def read_file_with_frontmatter(file_path: Path) -> tuple[str, Dict]:

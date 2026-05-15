@@ -17,8 +17,8 @@ Usage:
 
 import time
 import threading
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from dataclasses import dataclass
+from typing import Dict, Optional
 from contextlib import contextmanager
 
 
@@ -239,12 +239,3 @@ class PipelineProfiler:
             self.stages.clear()
             self._start_time = None
             self._end_time = None
-
-
-def create_profiler() -> PipelineProfiler:
-    """Create a new pipeline profiler.
-
-    Returns:
-        Initialized PipelineProfiler instance
-    """
-    return PipelineProfiler()

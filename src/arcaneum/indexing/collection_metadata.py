@@ -8,10 +8,8 @@ ensuring PDFs, source code, and markdown are not mixed in the same collection.
 import logging
 from typing import Optional, Dict, Any
 from datetime import datetime
-from uuid import UUID
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import CollectionInfo
 
 logger = logging.getLogger(__name__)
 
@@ -224,26 +222,6 @@ def validate_collection_type(
         )
 
     logger.debug(f"Collection '{collection_name}' type validated: {actual_type}")
-
-
-def is_typed_collection(
-    client: QdrantClient,
-    collection_name: str
-) -> bool:
-    """Check if collection has a type set.
-
-    Args:
-        client: Qdrant client
-        collection_name: Name of collection
-
-    Returns:
-        True if collection has type metadata, False otherwise
-    """
-    try:
-        collection_type = get_collection_type(client, collection_name)
-        return collection_type is not None
-    except Exception:
-        return False
 
 
 def get_vector_names(

@@ -7,7 +7,6 @@ Handles migration from legacy ~/.arcaneum/ to XDG-compliant structure:
 
 import shutil
 import logging
-from pathlib import Path
 from typing import Tuple
 
 from .paths import get_legacy_arcaneum_dir, get_models_dir, get_data_dir

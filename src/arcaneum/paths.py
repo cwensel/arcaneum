@@ -57,32 +57,6 @@ def get_data_dir() -> Path:
     return data_dir
 
 
-def get_qdrant_data_dir() -> Path:
-    """Get the Qdrant data directory (XDG-compliant: ~/.local/share/arcaneum/qdrant).
-
-    Creates the directory if it doesn't exist.
-
-    Returns:
-        Path to ~/.local/share/arcaneum/qdrant directory
-    """
-    qdrant_dir = get_data_dir() / "qdrant"
-    qdrant_dir.mkdir(parents=True, exist_ok=True)
-    return qdrant_dir
-
-
-def get_meilisearch_data_dir() -> Path:
-    """Get the MeiliSearch data directory (XDG-compliant: ~/.local/share/arcaneum/meilisearch).
-
-    Creates the directory if it doesn't exist.
-
-    Returns:
-        Path to ~/.local/share/arcaneum/meilisearch directory
-    """
-    meilisearch_dir = get_data_dir() / "meilisearch"
-    meilisearch_dir.mkdir(parents=True, exist_ok=True)
-    return meilisearch_dir
-
-
 def get_config_dir() -> Path:
     """Get the config directory (XDG-compliant: ~/.config/arcaneum).
 

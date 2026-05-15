@@ -3,7 +3,7 @@
 import sys
 import os
 import importlib.util
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple
 from rich.console import Console
 from rich.table import Table
 
@@ -34,7 +34,7 @@ def check_dependency(package_name: str, import_name: str = None) -> Tuple[bool, 
             module = importlib.import_module(import_name)
             version = getattr(module, '__version__', 'unknown')
             return True, f"{package_name} {version}"
-        except Exception as e:
+        except Exception:
             return True, f"{package_name} (version unknown)"
     else:
         return False, f"{package_name} not installed"

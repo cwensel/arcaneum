@@ -13,7 +13,6 @@ Key features:
 """
 
 import gc
-import hashlib
 import logging
 import os
 import re

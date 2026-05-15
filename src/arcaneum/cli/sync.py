@@ -850,7 +850,7 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool 
     # Final fallback: Tesseract OCR for completely empty extractions
     if not text or len(text.strip()) < 100:
         try:
-            ocr_engine = OCREngine(engine='tesseract', language='eng')
+            ocr_engine = OCREngine(language='eng')
             text, ocr_metadata = ocr_engine.process_pdf(file_path)
             metadata.update(ocr_metadata)
             metadata['ocr_triggered_by'] = 'empty'
@@ -2658,7 +2658,6 @@ def _repair_meili_metadata(
     qdrant,
     meili: FullTextClient,
     corpus: str,
-    verbose: bool,
     output_json: bool,
     console,
 ) -> Tuple[int, int]:
@@ -2671,7 +2670,6 @@ def _repair_meili_metadata(
         qdrant: Qdrant client
         meili: MeiliSearch client
         corpus: Corpus name
-        verbose: Show verbose output
         output_json: JSON output mode
         console: Rich console for output
 
@@ -3486,7 +3484,6 @@ def _parity_all_corpora(
     dry_run: bool,
     verify: bool,
     repair_metadata: bool,
-    text_workers: Optional[int],
     qdrant_timeout: int,
     create_missing: bool,
     confirm: bool,
@@ -4044,7 +4041,7 @@ def _parity_single_corpus(
             if not output_json:
                 console.print(f"\n[blue]Repairing git metadata in MeiliSearch...[/blue]")
             metadata_repaired, metadata_repair_failed = _repair_meili_metadata(
-                qdrant, meili, corpus, verbose, output_json, console
+                qdrant, meili, corpus, output_json, console
             )
 
         # Output results
@@ -4177,7 +4174,6 @@ def parity_command(
             dry_run=dry_run,
             verify=verify,
             repair_metadata=repair_metadata,
-            text_workers=text_workers,
             qdrant_timeout=qdrant_timeout,
             create_missing=create_missing,
             confirm=confirm,

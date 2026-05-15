@@ -99,7 +99,7 @@ class PDFExtractor:
             logger.debug(f"Error checking fonts in {pdf_path.name}: {e}")
             return False
 
-    def _get_layout_analysis(self, pdf_path: Path) -> Optional[Dict[str, Any]]:
+    def _get_layout_analysis(self) -> Optional[Dict[str, Any]]:
         """Get layout analysis metadata.
 
         With pymupdf4llm >= 1.27.2, layout analysis is handled automatically
@@ -166,7 +166,7 @@ class PDFExtractor:
 
         try:
             # Get layout analysis for enhanced structure detection (optional)
-            layout_info = self._get_layout_analysis(pdf_path) if self.use_layout_analysis else None
+            layout_info = self._get_layout_analysis() if self.use_layout_analysis else None
 
             # Extract page-by-page to track page boundaries
             # pymupdf4llm.to_markdown with page_chunks gives us per-page text

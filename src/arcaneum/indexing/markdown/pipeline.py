@@ -11,7 +11,7 @@ This module orchestrates the complete markdown indexing workflow:
 import logging
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
@@ -80,7 +80,6 @@ class MarkdownIndexingPipeline:
         verbose: bool,
         file_idx: int,
         total_files: int,
-        scanned_files: Optional[Set[str]] = None
     ) -> Tuple[List[PointStruct], int, Optional[str]]:
         """Process a single markdown file: read, chunk, embed, create points.
 
@@ -402,10 +401,6 @@ class MarkdownIndexingPipeline:
             all_markdown_files = self.discovery.discover_files(markdown_dir, recursive=recursive)
             logger.info(f"Found {len(all_markdown_files)} total markdown files")
 
-        # Create set of ALL scanned file paths for duplicate/rename detection
-        # This must include BOTH files needing processing AND already indexed files
-        scanned_files = {str(p.absolute()) for p in all_markdown_files}
-
         # Filter to unindexed files (unless force_reindex)
         if verbose:
             print(f"{timestamp()} 🔍 Scanning collection for existing files...")
@@ -499,7 +494,6 @@ class MarkdownIndexingPipeline:
                             verbose,
                             file_idx,
                             total_files,
-                            scanned_files
                         )
                         future_to_file[future] = (file_idx, file_path)
 
@@ -551,7 +545,6 @@ class MarkdownIndexingPipeline:
                         verbose,
                         file_idx,
                         total_files,
-                        scanned_files
                     )
 
                     if error:

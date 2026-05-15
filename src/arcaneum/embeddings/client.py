@@ -197,19 +197,15 @@ def _unknown_model_error(model_name: str) -> ValueError:
 class EmbeddingClient:
     """Manages embedding model instances with caching and GPU acceleration (RDR-013 Phase 2)."""
 
-    def __init__(self, cache_dir: str = None, verify_ssl: bool = True, use_gpu: bool = False, cpu_workers: int = None):
+    def __init__(self, cache_dir: str = None, use_gpu: bool = False, cpu_workers: int = None):
         """Initialize embedding client.
 
         Args:
             cache_dir: Directory to cache downloaded models (defaults to ~/.arcaneum/models)
-            verify_ssl: Whether to verify SSL certificates (set False for self-signed certs)
             use_gpu: Enable GPU acceleration (MPS for Apple Silicon, CUDA for NVIDIA)
                      Default: False (CPU only for backward compatibility)
             cpu_workers: Number of batch workers for parallel embedding in CPU mode
                         Default: 1 (conservative, prevents system crashes from thread over-subscription)
-
-        Note: SSL configuration must be done before creating EmbeddingClient.
-              Use ssl_config.check_and_configure_ssl() or disable_ssl_verification() first.
 
         GPU Support (RDR-013):
             - SentenceTransformers models (stella, jina-code): MPS on Apple Silicon, CUDA on NVIDIA
@@ -222,7 +218,6 @@ class EmbeddingClient:
             Use --cpu-workers to increase if your system can handle more parallelism.
         """
         self.cache_dir = cache_dir or str(get_models_dir())
-        self.verify_ssl = verify_ssl
         self.use_gpu = use_gpu
         self._device = self._detect_device() if use_gpu else "cpu"
         os.environ["SENTENCE_TRANSFORMERS_HOME"] = self.cache_dir
@@ -260,7 +255,6 @@ class EmbeddingClient:
             self._cpu_workers = max(1, cpu_workers)
         else:
             self._cpu_workers = 1  # Conservative default to prevent system crashes
-        self._effective_cpu_workers = self._cpu_workers  # Store for embed_parallel
 
         # Configure thread environment for CPU mode
         if not use_gpu:
@@ -1507,7 +1501,7 @@ class EmbeddingClient:
 
             # Process batches in parallel for CPU models
             # Use explicit max_workers if provided, otherwise use configured cpu_workers
-            effective_workers = max_workers if max_workers is not None else self._effective_cpu_workers
+            effective_workers = max_workers if max_workers is not None else self._cpu_workers
             total_batches = len(batches)
             completed_batches = 0
             logger.debug(f"CPU mode: processing {total_batches} batches with {effective_workers} workers")
@@ -1607,15 +1601,11 @@ class EmbeddingClient:
         if not self.use_gpu or self._device == "cpu":
             return
 
-        try:
-            import torch
-            if self._device == "cuda":
-                torch.cuda.synchronize()
-            elif self._device == "mps":
-                torch.mps.synchronize()
-        except Exception:
-            # Re-raise as this might be a GPU OOM we need to catch
-            raise
+        import torch
+        if self._device == "cuda":
+            torch.cuda.synchronize()
+        elif self._device == "mps":
+            torch.mps.synchronize()
 
     def _validate_embeddings(self, embeddings, expected_count: int, model_name: str) -> bool:
         """Validate embeddings are not corrupted by GPU OOM.

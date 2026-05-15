@@ -9,7 +9,6 @@ from .searcher import SearchResult
 def format_text_results(
     query: str,
     results: List[SearchResult],
-    limit: int = 10,
     offset: int = 0,
     verbose: bool = False
 ) -> str:
@@ -28,7 +27,6 @@ def format_text_results(
     Args:
         query: Original search query
         results: List of SearchResult objects
-        limit: Maximum number of results requested
         offset: Number of results skipped (for pagination)
         verbose: If True, show more metadata and longer snippets
 

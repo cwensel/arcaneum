@@ -263,7 +263,6 @@ def index_pdfs_command(
             batch_size=300,  # Optimized from 100 (arcaneum-6pvk: reduce upload rate)
             parallel_workers=2,  # Reduced from 4 (arcaneum-6pvk: reduce connection pressure)
             ocr_enabled=ocr_enabled,
-            ocr_engine='tesseract',
             ocr_language=ocr_language,
             ocr_threshold=100,
             ocr_workers=ocr_workers,

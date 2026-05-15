@@ -34,7 +34,6 @@ _cache_lock = threading.Lock()
 _cache_config = {
     "cache_dir": None,
     "use_gpu": None,
-    "verify_ssl": True,
 }
 
 
@@ -47,7 +46,6 @@ def get_cached_model(
     model_name: str,
     cache_dir: str,
     use_gpu: bool = False,
-    verify_ssl: bool = True,
 ) -> EmbeddingClient:
     """Get or create a cached embedding model.
 
@@ -58,7 +56,6 @@ def get_cached_model(
         model_name: Model identifier (stella, bge-large, jina-v3, etc.)
         cache_dir: Directory for cached model files
         use_gpu: Enable GPU acceleration
-        verify_ssl: Whether to verify SSL certificates
 
     Returns:
         EmbeddingClient instance with model pre-loaded
@@ -76,7 +73,6 @@ def get_cached_model(
         # Create new client and load model
         client = EmbeddingClient(
             cache_dir=cache_dir,
-            verify_ssl=verify_ssl,
             use_gpu=use_gpu,
         )
         client.get_model(model_name)
@@ -85,11 +81,9 @@ def get_cached_model(
         if _cache_config["cache_dir"] is None:
             _cache_config["cache_dir"] = cache_dir
             _cache_config["use_gpu"] = use_gpu
-            _cache_config["verify_ssl"] = verify_ssl
         elif (
             _cache_config["cache_dir"] != cache_dir
             or _cache_config["use_gpu"] != use_gpu
-            or _cache_config["verify_ssl"] != verify_ssl
         ):
             # Warn if cache is being used with different settings
             import warnings

@@ -245,7 +245,7 @@ class SourceCodeFullTextIndexer:
 
                     # Index project
                     project_stats = self._index_project(
-                        project_root, git_metadata, identifier, verbose, progress
+                        project_root, git_metadata, identifier
                     )
 
                     stats['indexed_projects'] += 1
@@ -278,8 +278,6 @@ class SourceCodeFullTextIndexer:
         project_root: str,
         git_metadata: GitMetadata,
         identifier: str,
-        verbose: bool,
-        progress
     ) -> Dict[str, Any]:
         """Index all files in a git project.
 
@@ -289,8 +287,6 @@ class SourceCodeFullTextIndexer:
             project_root: Path to git repository root
             git_metadata: Git metadata for this project
             identifier: Composite identifier (project#branch)
-            verbose: Show detailed progress
-            progress: Rich progress instance for output
 
         Returns:
             Dict with project indexing statistics
@@ -312,11 +308,11 @@ class SourceCodeFullTextIndexer:
         # Choose processing method based on worker count
         if self.workers > 1 and len(code_files) > 1:
             documents, stats = self._process_files_parallel(
-                code_files, git_metadata, identifier, verbose, progress, stats
+                code_files, git_metadata, identifier, stats
             )
         else:
             documents, stats = self._process_files_sequential(
-                code_files, git_metadata, identifier, verbose, progress, stats
+                code_files, git_metadata, identifier, stats
             )
 
         # Upload remaining documents
@@ -330,8 +326,6 @@ class SourceCodeFullTextIndexer:
         code_files: List[str],
         git_metadata: GitMetadata,
         identifier: str,
-        verbose: bool,
-        progress,
         stats: Dict[str, Any]
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """Process files sequentially (original implementation).
@@ -340,8 +334,6 @@ class SourceCodeFullTextIndexer:
             code_files: List of file paths to process
             git_metadata: Git metadata for this project
             identifier: Composite identifier (project#branch)
-            verbose: Show detailed progress
-            progress: Rich progress instance for output
             stats: Statistics dict to update
 
         Returns:
@@ -386,8 +378,6 @@ class SourceCodeFullTextIndexer:
         code_files: List[str],
         git_metadata: GitMetadata,
         identifier: str,
-        verbose: bool,
-        progress,
         stats: Dict[str, Any]
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """Process files in parallel using ProcessPoolExecutor.
@@ -399,8 +389,6 @@ class SourceCodeFullTextIndexer:
             code_files: List of file paths to process
             git_metadata: Git metadata for this project
             identifier: Composite identifier (project#branch)
-            verbose: Show detailed progress
-            progress: Rich progress instance for output
             stats: Statistics dict to update
 
         Returns:
@@ -632,14 +620,9 @@ class SourceCodeFullTextIndexer:
                 self.sync.clear_cache()
 
             # Index project (without progress bar for single project)
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                transient=True,
-            ) as progress:
-                project_stats = self._index_project(
-                    project_root, git_metadata, identifier, verbose, progress
-                )
+            project_stats = self._index_project(
+                project_root, git_metadata, identifier
+            )
 
             stats['indexed_projects'] = 1
             stats['total_files'] = project_stats['total_files']

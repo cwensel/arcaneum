@@ -43,7 +43,7 @@ def check_dependency(package_name: str, import_name: str = None) -> Tuple[bool, 
 def check_qdrant_connection(verbose: bool = False) -> Tuple[bool, str]:
     """Check Qdrant server connectivity."""
     try:
-        from qdrant_client import QdrantClient
+        import qdrant_client  # noqa: F401
     except ImportError:
         return False, "qdrant-client not installed"
 
@@ -93,7 +93,7 @@ def check_meilisearch_connection(verbose: bool = False) -> Tuple[bool, str]:
 def check_embedding_models(verbose: bool = False) -> Tuple[bool, str]:
     """Check if embedding models can be loaded."""
     try:
-        from arcaneum.embeddings.client import EmbeddingClient, EMBEDDING_MODELS
+        from arcaneum.embeddings.client import EMBEDDING_MODELS
 
         # Get available models from the configuration
         available = [alias for alias, config in EMBEDDING_MODELS.items()

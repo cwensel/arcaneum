@@ -14,18 +14,14 @@ class SearchEmbedder:
     its named vectors, then generates query embeddings using that model.
     """
 
-    def __init__(self, cache_dir: Path, verify_ssl: bool = True):
+    def __init__(self, cache_dir: Path):
         """Initialize search embedder.
 
         Args:
             cache_dir: Directory to cache downloaded models
-            verify_ssl: Whether to verify SSL certificates
         """
-        self.cache_dir = cache_dir
-        self.verify_ssl = verify_ssl
         self._embedding_client = EmbeddingClient(
             cache_dir=str(cache_dir),
-            verify_ssl=verify_ssl
         )
 
     @staticmethod

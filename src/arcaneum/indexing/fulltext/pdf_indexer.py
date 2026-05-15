@@ -69,7 +69,6 @@ class PDFFullTextIndexer:
         )
 
         self.ocr_engine = OCREngine(
-            engine='tesseract',
             language=ocr_language,
             confidence_threshold=60.0,
             ocr_workers=ocr_workers,

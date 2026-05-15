@@ -3,7 +3,7 @@
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple, Set
+from typing import List, Dict, Optional, Tuple
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_not_exception_type
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 import gc
@@ -35,7 +35,6 @@ class PDFBatchUploader:
         batch_size: int = 300,
         parallel_workers: int = 4,
         ocr_enabled: bool = True,
-        ocr_engine: str = 'tesseract',
         ocr_language: str = 'eng',
         ocr_threshold: int = 100,
         ocr_workers: Optional[int] = None,
@@ -58,7 +57,6 @@ class PDFBatchUploader:
             batch_size: Number of points per batch (default: 300, optimized from 100)
             parallel_workers: Number of parallel upload workers
             ocr_enabled: Enable OCR for scanned PDFs (default: True)
-            ocr_engine: OCR engine ('tesseract' or 'easyocr')
             ocr_language: OCR language code
             ocr_threshold: Trigger OCR if text < N characters
             ocr_workers: Number of parallel OCR workers (None = cpu_count)
@@ -122,7 +120,6 @@ class PDFBatchUploader:
 
         if ocr_enabled:
             self.ocr = OCREngine(
-                engine=ocr_engine,
                 language=ocr_language,
                 confidence_threshold=60.0,
                 image_dpi=300,
@@ -145,14 +142,11 @@ class PDFBatchUploader:
         pdf_path: Path,
         collection_name: str,
         model_name: str,
-        model_config: Dict,
         chunker: 'PDFChunker',
         point_id_start: int,
         verbose: bool,
         pdf_idx: int,
         total_pdfs: int,
-        worker_id: int = 0,
-        scanned_files: Optional[Set[str]] = None,
         force_reindex: bool = False
     ) -> Tuple[List[PointStruct], int, Optional[str]]:
         """Process a single PDF: extract, OCR, chunk, embed, create points.
@@ -161,13 +155,11 @@ class PDFBatchUploader:
             pdf_path: Path to PDF file
             collection_name: Collection name (for upload)
             model_name: Embedding model name
-            model_config: Model configuration
             chunker: PDFChunker instance
             point_id_start: Starting point ID for this PDF
             verbose: Verbose output flag
             pdf_idx: Current PDF index (for progress)
             total_pdfs: Total number of PDFs (for progress)
-            worker_id: ID of worker processing this PDF (for per-worker embedding client)
             force_reindex: If True, skip content hash check and reindex even if already indexed
 
         Returns:
@@ -552,10 +544,6 @@ class PDFBatchUploader:
             all_pdf_files = sorted(pdf_dir.rglob("*.pdf"))
             logger.info(f"Found {len(all_pdf_files)} total PDF files")
 
-        # Create set of ALL scanned file paths for duplicate/rename detection
-        # This must include BOTH files needing processing AND already indexed files
-        scanned_files = {str(p.absolute()) for p in all_pdf_files}
-
         # Filter to unindexed files via metadata queries (unless force_reindex)
         logger.debug(f"force_reindex={force_reindex}")
 
@@ -619,21 +607,16 @@ class PDFBatchUploader:
                     # Submit all PDF processing jobs
                     future_to_pdf = {}
                     for pdf_idx, pdf_path in enumerate(pdf_files, 1):
-                        # Assign worker_id based on pdf_idx (round-robin among available workers)
-                        worker_id = (pdf_idx - 1) % self.file_workers
                         future = executor.submit(
                             self._process_single_pdf,
                             pdf_path,
                             collection_name,
                             model_name,
-                            model_config,
                             chunker,
                             point_id + (pdf_idx - 1) * point_id_step,
                             verbose,
                             pdf_idx,
                             total_pdfs,
-                            worker_id,
-                            scanned_files,
                             force_reindex
                         )
                         future_to_pdf[future] = (pdf_idx, pdf_path)
@@ -698,14 +681,11 @@ class PDFBatchUploader:
                         pdf_path,
                         collection_name,
                         model_name,
-                        model_config,
                         chunker,
                         point_id,
                         verbose,
                         pdf_idx,
                         total_pdfs,
-                        0,  # worker_id = 0 for sequential mode
-                        scanned_files,
                         force_reindex
                     )
 

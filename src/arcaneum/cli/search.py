@@ -109,7 +109,7 @@ def search_command(
             # consumer hardware; ARCANEUM_SEARCH_CONCURRENCY tunes the cap.
             with acquire_embedder_slot():
                 cache_dir = get_models_dir()
-                embedder = SearchEmbedder(cache_dir=cache_dir, verify_ssl=True)
+                embedder = SearchEmbedder(cache_dir=cache_dir)
 
                 fetch_limit = per_corpus_limit(corpora, limit, offset)
 
@@ -186,7 +186,6 @@ def search_command(
             output = format_text_results(
                 query=query,
                 results=results,
-                limit=limit,
                 offset=offset,
                 verbose=verbose
             )

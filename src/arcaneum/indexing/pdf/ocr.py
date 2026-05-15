@@ -1,4 +1,4 @@
-"""OCR engine supporting Tesseract and EasyOCR (RDR-004)."""
+"""OCR engine using Tesseract (RDR-004)."""
 
 import pytesseract
 from pdf2image import convert_from_path, pdfinfo_from_path
@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 def _ocr_single_page_worker(
     page_image_bytes: bytes,
     page_num: int,
-    engine: str,
     language: str,
     confidence_threshold: float,
     image_scale: float
@@ -33,7 +32,6 @@ def _ocr_single_page_worker(
     Args:
         page_image_bytes: PIL Image serialized as PNG bytes
         page_num: Page number (1-indexed)
-        engine: OCR engine ('tesseract' or 'easyocr')
         language: Language code
         confidence_threshold: Minimum confidence score
         image_scale: Scale factor for accuracy
@@ -54,7 +52,6 @@ def _ocr_single_page_worker(
     gray = None
     thresh = None
     denoised = None
-    reader = None
 
     try:
         # Disable OpenCV threading to prevent fork-related crashes on macOS (segfault in cv2.resize)
@@ -82,56 +79,34 @@ def _ocr_single_page_worker(
         # Denoise
         denoised = cv2.medianBlur(thresh, 3)
 
-        # Perform OCR based on engine
-        if engine == 'tesseract':
-            # Tesseract OCR
-            data = pytesseract.image_to_data(
-                denoised,
-                lang=language,
-                config='--psm 3 --oem 1',
-                output_type=pytesseract.Output.DICT
-            )
+        # Tesseract OCR
+        data = pytesseract.image_to_data(
+            denoised,
+            lang=language,
+            config='--psm 3 --oem 1',
+            output_type=pytesseract.Output.DICT
+        )
 
-            # Extract text with confidence filtering
-            filtered_text = []
-            confidences = []
+        # Extract text with confidence filtering
+        filtered_text = []
+        confidences = []
 
-            for i, conf in enumerate(data['conf']):
-                if conf == -1:
-                    continue
-                if conf >= confidence_threshold:
-                    text = data['text'][i]
-                    if text.strip():
-                        filtered_text.append(text)
-                        confidences.append(conf)
-
-            text = ' '.join(filtered_text)
-            avg_conf = sum(confidences) / len(confidences) if confidences else 0
-
-        else:  # easyocr
-            import easyocr
-            # Create reader per worker (can't pickle Reader)
-            reader = easyocr.Reader([language])
-            results = reader.readtext(denoised, detail=1)
-
-            # Filter by confidence
-            filtered_text = []
-            confidences = []
-
-            for bbox, text, conf in results:
-                if conf >= (confidence_threshold / 100.0):
+        for i, conf in enumerate(data['conf']):
+            if conf == -1:
+                continue
+            if conf >= confidence_threshold:
+                text = data['text'][i]
+                if text.strip():
                     filtered_text.append(text)
-                    confidences.append(conf * 100)
+                    confidences.append(conf)
 
-            text = ' '.join(filtered_text)
-            avg_conf = sum(confidences) / len(confidences) if confidences else 0
+        text = ' '.join(filtered_text)
+        avg_conf = sum(confidences) / len(confidences) if confidences else 0
 
         result = (page_num, text, avg_conf)
 
         # Explicit cleanup of large objects before return
         del image, img_array, gray, thresh, denoised
-        if reader is not None:
-            del reader
 
         return result
 
@@ -143,8 +118,6 @@ def _ocr_single_page_worker(
         # Ensure cleanup even on exception
         try:
             del image, img_array, gray, thresh, denoised
-            if reader is not None:
-                del reader
         except:
             pass
         # Force garbage collection in worker
@@ -152,11 +125,10 @@ def _ocr_single_page_worker(
 
 
 class OCREngine:
-    """OCR engine supporting Tesseract and EasyOCR."""
+    """OCR engine using Tesseract."""
 
     def __init__(
         self,
-        engine: str = 'tesseract',
         language: str = 'eng',
         confidence_threshold: float = 60.0,
         image_dpi: int = 300,
@@ -169,9 +141,8 @@ class OCREngine:
         """Initialize OCR engine.
 
         Args:
-            engine: OCR engine to use ('tesseract' or 'easyocr')
             language: Language code (e.g., 'eng', 'fra', 'spa')
-            confidence_threshold: Minimum confidence score (0-100 for Tesseract, 0-1 for EasyOCR)
+            confidence_threshold: Minimum confidence score (0-100 for Tesseract)
             image_dpi: DPI for PDF to image conversion
             image_scale: Scale factor for OCR accuracy (2x recommended)
             ocr_workers: Number of parallel workers for page processing (None = cpu_count)
@@ -179,7 +150,6 @@ class OCREngine:
             max_memory_gb: Maximum memory to use in GB (None = auto-calculate from available)
             page_timeout: Timeout in seconds for processing a single page (default: 60)
         """
-        self.engine = engine
         self.language = language
         self.confidence_threshold = confidence_threshold
         self.image_dpi = image_dpi
@@ -201,15 +171,6 @@ class OCREngine:
 
         if warning:
             logger.warning(f"OCR: {warning}")
-
-        # For easyocr, workers will create their own readers (can't pickle)
-        if engine == 'easyocr':
-            try:
-                import easyocr
-                # Just verify import works
-            except ImportError:
-                logger.error("EasyOCR not installed. Install with: pip install easyocr")
-                raise
 
     def process_pdf(self, pdf_path: Path, verbose: bool = False) -> Tuple[str, dict]:
         """Perform OCR on PDF with parallel page processing and memory-efficient batching.
@@ -261,7 +222,7 @@ class OCREngine:
         avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0
 
         metadata = {
-            'extraction_method': f'ocr_{self.engine}',
+            'extraction_method': 'ocr_tesseract',
             'is_image_pdf': True,
             'ocr_confidence': avg_confidence,
             'ocr_language': self.language,
@@ -343,7 +304,7 @@ class OCREngine:
                 for page_num, img_bytes in serialized_images:
                     async_result = pool.apply_async(
                         _ocr_single_page_worker,
-                        (img_bytes, page_num, self.engine, self.language,
+                        (img_bytes, page_num, self.language,
                          self.confidence_threshold, self.image_scale)
                     )
                     async_results.append((async_result, page_num))

@@ -11,11 +11,7 @@ import logging
 import time
 from typing import Dict, Optional
 
-try:
-    import psutil
-    PSUTIL_AVAILABLE = True
-except ImportError:
-    PSUTIL_AVAILABLE = False
+import psutil
 
 logger = logging.getLogger(__name__)
 
@@ -29,17 +25,7 @@ class CPUMonitor:
     """
 
     def __init__(self):
-        """Initialize CPU monitor.
-
-        Raises:
-            ImportError: If psutil is not installed
-        """
-        if not PSUTIL_AVAILABLE:
-            raise ImportError(
-                "psutil is required for CPU monitoring. "
-                "Install with: pip install psutil"
-            )
-
+        """Initialize CPU monitor."""
         self.process = psutil.Process()
         self.start_time: Optional[float] = None
 
@@ -96,15 +82,11 @@ class CPUMonitor:
 
 
 def create_monitor() -> Optional[CPUMonitor]:
-    """Create a CPU monitor if psutil is available.
+    """Create a CPU monitor.
 
     Returns:
-        CPUMonitor instance if available, None otherwise
+        CPUMonitor instance, or None if construction fails.
     """
-    if not PSUTIL_AVAILABLE:
-        logger.warning("psutil not available - CPU monitoring disabled")
-        return None
-
     try:
         return CPUMonitor()
     except Exception as e:

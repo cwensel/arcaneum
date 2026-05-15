@@ -98,13 +98,7 @@ def acquire_embedder_slot(
         yield
         return
 
-    try:
-        import fcntl
-    except ImportError:
-        # Defensive: any platform missing fcntl gets a no-op semaphore rather
-        # than a hard import error inside the search path.
-        yield
-        return
+    import fcntl
 
     slot_count = slots if slots is not None else get_search_concurrency()
     wait_budget = timeout if timeout is not None else get_search_wait_seconds()

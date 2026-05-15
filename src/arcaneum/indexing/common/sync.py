@@ -135,15 +135,13 @@ def _compute_hash_worker(args: Tuple[Path, Callable]) -> Tuple[Path, str]:
 
 def _compute_hashes_parallel(file_list: List[Path],
                              hash_fn: Callable,
-                             num_workers: int = None,
-                             show_progress: bool = True) -> dict:
+                             num_workers: int = None) -> dict:
     """Compute file hashes in parallel using all CPU cores at low priority.
 
     Args:
         file_list: List of file paths to hash
         hash_fn: Hash function to use (compute_file_hash or compute_text_file_hash)
         num_workers: Number of worker processes (defaults to CPU count)
-        show_progress: If True, show progress for large file sets (default: True)
 
     Returns:
         Dict mapping file_path to file_hash (absolute path as string)
@@ -153,9 +151,6 @@ def _compute_hashes_parallel(file_list: List[Path],
 
     total_files = len(file_list)
     file_hashes = {}
-
-    # Show progress for large file sets (unless explicitly disabled)
-    show_progress = show_progress and total_files > 100
 
     # Prepare work items
     work_items = [(f, hash_fn) for f in file_list]
@@ -172,24 +167,10 @@ def _compute_hashes_parallel(file_list: List[Path],
             processes=num_workers,
             initializer=worker_init
         )
-        if show_progress:
-            # Use imap for incremental results with progress tracking
-            results = pool.imap(_compute_hash_worker, work_items, chunksize=chunksize)
-
-            for idx, (file_path, file_hash) in enumerate(results, 1):
-                if file_hash is not None:
-                    file_hashes[str(file_path.absolute())] = file_hash
-
-                if idx % 100 == 0:
-                    print(f"\r  Computing hashes: {idx}/{total_files} files...", end="", flush=True)
-
-            print(f"\r  Computing hashes: {total_files}/{total_files} files... done")
-        else:
-            # No progress for small file sets
-            results = pool.map(_compute_hash_worker, work_items, chunksize=chunksize)
-            for file_path, file_hash in results:
-                if file_hash is not None:
-                    file_hashes[str(file_path.absolute())] = file_hash
+        results = pool.map(_compute_hash_worker, work_items, chunksize=chunksize)
+        for file_path, file_hash in results:
+            if file_hash is not None:
+                file_hashes[str(file_path.absolute())] = file_hash
 
     except KeyboardInterrupt:
         logger.warning("Interrupted - terminating hash workers...")
@@ -402,7 +383,7 @@ class MetadataBasedSync:
 
             # Pass 1: Metadata gate (mtime+size) - ultra fast
             pass1_start = time.time()
-            quick_hashes = _compute_hashes_parallel(file_list, compute_quick_hash, show_progress=False)
+            quick_hashes = _compute_hashes_parallel(file_list, compute_quick_hash)
             quick_hash_time = time.time() - pass1_start
 
             pass1_qdrant_start = time.time()

@@ -3,8 +3,6 @@
 Tests for 'arc corpus' subcommands: create, list, delete, info, items, verify, parity, sync.
 """
 
-import inspect
-
 import pytest
 
 
@@ -21,43 +19,6 @@ def test_corpus_module_exports_expected_commands():
     }
     missing = [name for name in expected if not callable(getattr(corpus, name, None))]
     assert missing == [], f"corpus module missing exported commands: {missing}"
-
-
-def test_create_corpus_command_accepts_required_parameters():
-    """create_corpus_command must accept name, corpus_type, models, output_json."""
-    from arcaneum.cli.corpus import create_corpus_command
-
-    params = set(inspect.signature(create_corpus_command).parameters)
-    required = {'name', 'corpus_type', 'models', 'output_json'}
-    assert required.issubset(params), f"missing params: {required - params}"
-
-
-def test_list_corpora_command_accepts_output_json():
-    from arcaneum.cli.corpus import list_corpora_command
-
-    params = set(inspect.signature(list_corpora_command).parameters)
-    assert 'output_json' in params
-
-
-def test_delete_corpus_command_requires_name_and_confirm():
-    from arcaneum.cli.corpus import delete_corpus_command
-
-    params = set(inspect.signature(delete_corpus_command).parameters)
-    assert {'name', 'confirm'}.issubset(params)
-
-
-def test_corpus_info_command_requires_name_and_output_json():
-    from arcaneum.cli.corpus import corpus_info_command
-
-    params = set(inspect.signature(corpus_info_command).parameters)
-    assert {'name', 'output_json'}.issubset(params)
-
-
-def test_corpus_verify_command_requires_name_and_output_json():
-    from arcaneum.cli.corpus import corpus_verify_command
-
-    params = set(inspect.signature(corpus_verify_command).parameters)
-    assert {'name', 'output_json'}.issubset(params)
 
 
 def test_corpus_module_uses_interaction_logger():

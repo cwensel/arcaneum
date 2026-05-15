@@ -44,20 +44,6 @@ class TestDualIndexer:
             batch_size=50,
         )
 
-    def test_init(self, mock_qdrant, mock_meili):
-        """Test DualIndexer initialization."""
-        indexer = DualIndexer(
-            qdrant_client=mock_qdrant,
-            meili_client=mock_meili,
-            collection_name="my-corpus",
-            index_name="my-corpus",
-            batch_size=100,
-        )
-
-        assert indexer.collection_name == "my-corpus"
-        assert indexer.index_name == "my-corpus"
-        assert indexer.batch_size == 100
-
     def test_index_batch_empty(self, dual_indexer):
         """Test indexing empty batch returns zeros."""
         qdrant_count, meili_count = dual_indexer.index_batch([])

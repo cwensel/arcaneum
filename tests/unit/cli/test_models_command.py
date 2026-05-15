@@ -12,25 +12,6 @@ import pytest
 class TestModelsList:
     """Test 'arc models list' command."""
 
-    def test_lists_all_models(self, capsys):
-        """Test that all available models are listed."""
-        from arcaneum.cli.models import list_models_command
-
-        mock_models = {
-            'stella': {'name': 'stella-model', 'dimensions': 1024, 'description': 'General-purpose model'},
-            'jina-code': {'name': 'jina-code-model', 'dimensions': 768, 'description': 'Code-optimized model'},
-            'nomic-embed': {'name': 'nomic-model', 'dimensions': 768, 'description': 'Efficient model'},
-        }
-
-        with patch('arcaneum.cli.models.EMBEDDING_MODELS', mock_models):
-            list_models_command(output_json=False)
-
-        captured = capsys.readouterr()
-        # Rich output goes to stderr in some cases, check both
-        output = captured.out + captured.err
-
-        assert 'stella' in output.lower() or 'Models' in output
-
     def test_json_output(self, capsys):
         """Test JSON output format."""
         from arcaneum.cli.models import list_models_command

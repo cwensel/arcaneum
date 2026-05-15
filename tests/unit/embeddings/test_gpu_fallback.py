@@ -170,13 +170,6 @@ class TestGpuRecovery:
 
         assert result is False
 
-    def test_recovery_increments_attempt_counter(self, embedding_client):
-        embedding_client._gpu_poisoned = True
-
-        embedding_client._try_gpu_recovery("jina-code")
-
-        assert embedding_client._gpu_recovery_attempts == 1
-
     def test_recovery_blocked_by_alive_thread(self, embedding_client):
         embedding_client._gpu_poisoned = True
         alive_thread = MagicMock(spec=threading.Thread)

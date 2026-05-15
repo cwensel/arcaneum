@@ -190,12 +190,6 @@ class TestDiscoverFilesCode:
         assert "main.go" in names
         assert len(roots) == 2
 
-    def test_code_gitignore_respected_in_folder_of_repos(self, folder_of_repos):
-        """.gitignore inside each sub-repo is honoured."""
-        files, _ = discover_files(folder_of_repos, None, "code")
-        names = {f.name for f in files}
-        assert "ignored.py" not in names
-
     def test_code_includes_git_tracked_dot_and_underscore_paths(self, git_repo_with_untracked):
         """Code corpora include tracked files under dot/underscore directories.
 

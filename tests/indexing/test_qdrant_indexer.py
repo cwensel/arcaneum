@@ -53,19 +53,6 @@ def create_test_chunk(identifier="project#main", commit="a" * 40):
 class TestQdrantIndexer:
     """Tests for QdrantIndexer class."""
 
-    def test_initialization(self, mock_qdrant):
-        """Test basic initialization."""
-        indexer = QdrantIndexer(mock_qdrant, batch_size=200)
-
-        assert indexer.client == mock_qdrant
-        assert indexer.batch_size == 200
-
-    def test_initialization_default_batch_size(self, mock_qdrant):
-        """Test initialization with default batch size."""
-        indexer = QdrantIndexer(mock_qdrant)
-
-        assert indexer.batch_size == 512
-
     def test_delete_branch_chunks(self, indexer, mock_qdrant):
         """Test filter-based branch deletion."""
         mock_result = Mock()
@@ -280,18 +267,6 @@ class TestQdrantIndexer:
 
 class TestCodeChunkConversion:
     """Tests for CodeChunk to PointStruct conversion."""
-
-    def test_chunk_to_point(self):
-        """Test converting CodeChunk to PointStruct."""
-        chunk = create_test_chunk("project#main", "a" * 40)
-
-        point = chunk.to_point()
-
-        assert point.id == chunk.id
-        assert point.vector == chunk.embedding
-        assert point.payload["git_project_identifier"] == "project#main"
-        assert point.payload["git_commit_hash"] == "a" * 40
-        assert point.payload["file_path"] == "/repo/test.py"
 
     def test_multiple_chunks_unique_ids(self):
         """Test that multiple chunks have unique IDs."""

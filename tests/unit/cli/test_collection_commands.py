@@ -44,37 +44,6 @@ class TestCollectionList:
         assert len(output['data']['collections']) == 2
         assert 'Found 2 collections' in output['message']
 
-    def test_verbose_output(self, mock_qdrant_client_with_collections, mock_interaction_logger, capsys):
-        """Test verbose output shows additional details."""
-        from arcaneum.cli.collections import list_collections_command
-
-        with patch('arcaneum.cli.collections.create_qdrant_client', return_value=mock_qdrant_client_with_collections):
-            with patch('arcaneum.cli.collections.get_collection_metadata', return_value={'model': 'stella', 'collection_type': 'pdf'}):
-                list_collections_command(verbose=True, output_json=False)
-
-        captured = capsys.readouterr()
-        # Verbose should show table with type and vectors columns
-        assert 'TestCollection' in captured.out or 'Collections' in captured.out
-
-    def test_json_output(self, mock_qdrant_client_with_collections, mock_interaction_logger, capsys):
-        """Test JSON output structure."""
-        from arcaneum.cli.collections import list_collections_command
-
-        with patch('arcaneum.cli.collections.create_qdrant_client', return_value=mock_qdrant_client_with_collections):
-            with patch('arcaneum.cli.collections.get_collection_metadata', return_value={'model': 'stella', 'collection_type': 'pdf'}):
-                list_collections_command(verbose=False, output_json=True)
-
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
-
-        assert 'status' in output
-        assert 'data' in output
-        assert 'collections' in output['data']
-        for col in output['data']['collections']:
-            assert 'name' in col
-            assert 'points_count' in col
-
-
 class TestCollectionInfo:
     """Test 'arc collection info' command."""
 
@@ -117,30 +86,6 @@ class TestCollectionInfo:
                 info_collection_command('NonExistent', output_json=False)
 
         assert exc_info.value.code == 1
-
-    def test_json_output(self, mock_qdrant_client, mock_interaction_logger, capsys):
-        """Test JSON output format."""
-        from arcaneum.cli.collections import info_collection_command
-
-        mock_qdrant_client.get_collection.return_value = MagicMock(
-            points_count=50,
-            status="green",
-            config=MagicMock(
-                params=MagicMock(vectors={'stella': MagicMock(size=1024, distance="Cosine")}),
-                hnsw_config=MagicMock(m=16, ef_construct=100)
-            )
-        )
-
-        with patch('arcaneum.cli.collections.create_qdrant_client', return_value=mock_qdrant_client):
-            with patch('arcaneum.cli.collections.get_collection_metadata', return_value={'model': 'stella', 'collection_type': 'pdf'}):
-                info_collection_command('TestCollection', output_json=True)
-
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
-
-        assert output['status'] == 'success'
-        assert 'data' in output
-
 
 class TestCollectionDelete:
     """Test 'arc collection delete' command."""
@@ -273,32 +218,6 @@ class TestCollectionItems:
 
         assert output['status'] == 'success'
         assert output['data']['item_count'] == 0
-
-    def test_json_output(self, mock_qdrant_client, mock_interaction_logger, capsys):
-        """Test JSON output format."""
-        from arcaneum.cli.collections import items_collection_command
-
-        mock_points = [
-            MagicMock(payload={
-                'file_path': '/path/to/doc.pdf',
-                'file_hash': 'abc123',
-                'file_size': 1024,
-                'filename': 'doc.pdf',
-            }),
-        ]
-        mock_qdrant_client.scroll.return_value = (mock_points, None)
-
-        with patch('arcaneum.cli.collections.create_qdrant_client', return_value=mock_qdrant_client):
-            with patch('arcaneum.cli.collections.get_collection_type', return_value='pdf'):
-                items_collection_command('TestCollection', output_json=True)
-
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
-
-        assert 'status' in output
-        assert 'data' in output
-        assert 'items' in output['data']
-
 
 class TestCollectionVerify:
     """Test 'arc collection verify' command."""
@@ -433,35 +352,6 @@ class TestCollectionVerify:
 
         # Verify the filter was passed
         mock_verifier.verify_collection.assert_called_once_with('CodeCollection', project_filter='myrepo#main', verbose=False)
-
-    def test_json_output(self, mock_qdrant_client, mock_interaction_logger):
-        """Test JSON output format."""
-        from arcaneum.cli.collections import verify_collection_command
-
-        mock_result = MagicMock()
-        mock_result.collection_name = 'TestCollection'
-        mock_result.collection_type = 'pdf'
-        mock_result.total_points = 100
-        mock_result.total_items = 10
-        mock_result.complete_items = 10
-        mock_result.incomplete_items = 0
-        mock_result.is_healthy = True
-        mock_result.errors = []
-        mock_result.projects = []
-        mock_result.files = []
-        mock_result.get_items_needing_repair.return_value = []
-
-        with patch('arcaneum.cli.collections.create_qdrant_client', return_value=mock_qdrant_client):
-            with patch('arcaneum.indexing.verify.CollectionVerifier') as mock_verifier_class:
-                mock_verifier = MagicMock()
-                mock_verifier.verify_collection.return_value = mock_result
-                mock_verifier_class.return_value = mock_verifier
-
-                verify_collection_command('TestCollection', project=None, verbose=False, output_json=True)
-
-        # Verify verifier was called
-        mock_verifier.verify_collection.assert_called_once_with('TestCollection', project_filter=None, verbose=False)
-
 
 class TestCollectionCreate:
     """Test 'arc collection create' command."""

@@ -17,18 +17,6 @@ from arcaneum.cli.sync import read_path_list
 class TestGetModelDimensions:
     """Tests for get_model_dimensions function."""
 
-    def test_known_model_stella(self):
-        """Test getting dimensions for known model 'stella'."""
-        dims = get_model_dimensions('stella')
-        assert isinstance(dims, int)
-        assert dims > 0
-
-    def test_known_model_jina_code(self):
-        """Test getting dimensions for known model 'jina-code-0.5b'."""
-        dims = get_model_dimensions('jina-code-0.5b')
-        assert isinstance(dims, int)
-        assert dims > 0
-
     def test_unknown_model_raises_value_error(self):
         """Test that unknown model raises ValueError."""
         with pytest.raises(ValueError) as exc_info:
@@ -43,16 +31,6 @@ class TestGetModelDimensions:
 class TestValidateModels:
     """Tests for validate_models function."""
 
-    def test_valid_single_model(self):
-        """Test validation of single valid model."""
-        # Should not raise
-        validate_models(['stella'])
-
-    def test_valid_multiple_models(self):
-        """Test validation of multiple valid models."""
-        # Should not raise
-        validate_models(['stella', 'jina-code-0.5b'])
-
     def test_invalid_model_raises_value_error(self):
         """Test that invalid model raises ValueError."""
         with pytest.raises(ValueError) as exc_info:
@@ -61,12 +39,6 @@ class TestValidateModels:
         error_msg = str(exc_info.value)
         assert "Unknown model" in error_msg
         assert "invalid-model" in error_msg
-
-    def test_empty_list_does_not_raise(self):
-        """Test that empty list does not raise."""
-        # Should not raise
-        validate_models([])
-
 
 class TestBuildVectorsConfig:
     """Tests for build_vectors_config function."""

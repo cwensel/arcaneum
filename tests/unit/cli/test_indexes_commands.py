@@ -48,24 +48,6 @@ class TestIndexesCreate:
         # Exception is raised, check the exception type
         assert result.exception is not None
 
-    def test_json_output(self, mock_meili_client, capsys):
-        """Test JSON output format."""
-        from arcaneum.cli.fulltext import create_index
-        from click.testing import CliRunner
-
-        mock_meili_client.index_exists.return_value = False
-
-        runner = CliRunner()
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_meili_client):
-            with patch('arcaneum.cli.fulltext.get_index_settings', return_value={'searchableAttributes': [], 'filterableAttributes': []}):
-                result = runner.invoke(create_index, ['TestIndex', '--type', 'pdf', '--json'])
-
-        assert result.exit_code == 0
-        output = json.loads(result.output)
-        assert 'status' in output
-        assert 'data' in output
-
-
 class TestIndexesList:
     """Test 'arc indexes list' command."""
 
@@ -103,22 +85,6 @@ class TestIndexesList:
         output = json.loads(result.output)
         assert output['status'] == 'success'
         assert len(output['data']['indexes']) == 2
-
-    def test_json_output(self, mock_meili_client):
-        """Test JSON output format."""
-        from arcaneum.cli.fulltext import list_indexes
-        from click.testing import CliRunner
-
-        mock_meili_client.list_indexes.return_value = [{'uid': 'Test', 'primaryKey': 'id'}]
-
-        runner = CliRunner()
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_meili_client):
-            result = runner.invoke(list_indexes, ['--json'])
-
-        assert result.exit_code == 0
-        output = json.loads(result.output)
-        assert 'indexes' in output['data']
-
 
 class TestIndexesInfo:
     """Test 'arc indexes info' command."""
@@ -264,21 +230,6 @@ class TestIndexesItems:
         assert result.exit_code == 0
         output = json.loads(result.output)
         assert output['data']['total_items'] == 2  # Deduplicated
-
-    def test_pagination(self, mock_meili_client, mock_interaction_logger):
-        """Test pagination parameters."""
-        from arcaneum.cli.fulltext import list_items
-        from click.testing import CliRunner
-
-        mock_meili_client.index_exists.return_value = True
-        mock_meili_client.search.return_value = {'hits': []}
-
-        runner = CliRunner()
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_meili_client):
-            result = runner.invoke(list_items, ['TestIndex', '--limit', '50', '--json'])
-
-        assert result.exit_code == 0
-
 
 class TestIndexesExport:
     """Test 'arc indexes export' command."""

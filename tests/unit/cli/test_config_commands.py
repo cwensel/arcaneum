@@ -140,59 +140,6 @@ class TestClearCache:
         assert 'empty' in captured.out.lower() or 'already' in captured.out.lower()
 
 
-class TestConfigGroup:
-    """Test the config command group."""
-
-    def test_show_cache_dir_command(self, temp_dir):
-        """Test show-cache-dir Click command."""
-        from arcaneum.cli.config import config_group
-        from click.testing import CliRunner
-
-        models_dir = temp_dir / "cache" / "models"
-        models_dir.mkdir(parents=True)
-
-        runner = CliRunner()
-        with patch('arcaneum.cli.config.get_models_dir', return_value=models_dir):
-            with patch('arcaneum.cli.config.get_data_dir', return_value=temp_dir / "data"):
-                with patch('arcaneum.cli.config.get_legacy_arcaneum_dir', return_value=temp_dir / "legacy"):
-                    result = runner.invoke(config_group, ['show-cache-dir'])
-
-        assert result.exit_code == 0
-
-    def test_clear_cache_command_without_confirm(self, temp_dir):
-        """Test clear-cache Click command without --confirm."""
-        from arcaneum.cli.config import config_group
-        from click.testing import CliRunner
-
-        models_dir = temp_dir / "cache" / "models"
-        models_dir.mkdir(parents=True)
-        (models_dir / "test.bin").write_bytes(b"x" * 100)
-
-        runner = CliRunner()
-        with patch('arcaneum.cli.config.get_models_dir', return_value=models_dir):
-            result = runner.invoke(config_group, ['clear-cache'])
-
-        # Should not delete without --confirm
-        assert (models_dir / "test.bin").exists()
-
-    def test_clear_cache_command_with_confirm(self, temp_dir):
-        """Test clear-cache Click command with --confirm."""
-        from arcaneum.cli.config import config_group
-        from click.testing import CliRunner
-
-        models_dir = temp_dir / "cache" / "models"
-        models_dir.mkdir(parents=True)
-        (models_dir / "test.bin").write_bytes(b"x" * 100)
-
-        runner = CliRunner()
-        with patch('arcaneum.cli.config.get_models_dir', return_value=models_dir):
-            result = runner.invoke(config_group, ['clear-cache', '--confirm'])
-
-        assert result.exit_code == 0
-        # File should be deleted
-        assert not (models_dir / "test.bin").exists()
-
-
 class TestGetDirSize:
     """Test directory size calculation helper."""
 

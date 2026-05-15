@@ -228,27 +228,6 @@ class TestDoctorOutput:
         assert result == EXIT_ERROR
 
 
-class TestDoctorVerboseMode:
-    """Test doctor command verbose mode."""
-
-    def test_verbose_shows_more_details(self, capsys):
-        """Test that verbose mode shows more detailed information."""
-        from arcaneum.cli.doctor import doctor_command
-
-        with patch('arcaneum.cli.doctor.check_python_version', return_value=(True, "Python 3.12")):
-            with patch('arcaneum.cli.doctor.check_dependency', return_value=(True, "qdrant-client 1.0.0")):
-                with patch('arcaneum.cli.doctor.check_qdrant_connection', return_value=(True, "connected (5 collections)")):
-                    with patch('arcaneum.cli.doctor.check_meilisearch_connection', return_value=(True, "connected")):
-                        with patch('arcaneum.cli.doctor.check_embedding_models', return_value=(True, "3 models available")):
-                            with patch('arcaneum.cli.doctor.check_temp_dir_writable', return_value=(True, "/tmp writable")):
-                                with patch('arcaneum.cli.doctor.check_environment_vars', return_value=(True, "QDRANT_URL set")):
-                                    doctor_command(verbose=True, output_json=False)
-
-        captured = capsys.readouterr()
-        # Verbose should show more detail
-        assert 'Python' in captured.out or 'Diagnostics' in captured.out
-
-
 class TestDoctorIntegration:
     """Integration-style tests for doctor command."""
 

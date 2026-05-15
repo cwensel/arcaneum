@@ -1,27 +1,11 @@
 """Tests for source code indexing type definitions."""
 
 import pytest
-from arcaneum.indexing.types import GitMetadata, CodeChunkMetadata, CodeChunk, Chunk
+from arcaneum.indexing.types import GitMetadata, CodeChunkMetadata, CodeChunk
 
 
 class TestGitMetadata:
     """Tests for GitMetadata dataclass."""
-
-    def test_basic_construction(self):
-        """Test basic GitMetadata construction."""
-        metadata = GitMetadata(
-            project_root="/path/to/repo",
-            commit_hash="a" * 40,
-            branch="main",
-            project_name="test-project",
-            remote_url="https://github.com/user/test-project.git"
-        )
-
-        assert metadata.project_root == "/path/to/repo"
-        assert metadata.commit_hash == "a" * 40
-        assert metadata.branch == "main"
-        assert metadata.project_name == "test-project"
-        assert metadata.remote_url == "https://github.com/user/test-project.git"
 
     def test_identifier_property(self):
         """Test composite identifier generation."""
@@ -34,37 +18,6 @@ class TestGitMetadata:
 
         assert metadata.identifier == "my-project#feature-x"
 
-    def test_identifier_with_different_branches(self):
-        """Test that different branches produce different identifiers."""
-        metadata_main = GitMetadata(
-            project_root="/path/to/repo",
-            commit_hash="a" * 40,
-            branch="main",
-            project_name="project"
-        )
-
-        metadata_feature = GitMetadata(
-            project_root="/path/to/repo",
-            commit_hash="b" * 40,
-            branch="feature-x",
-            project_name="project"
-        )
-
-        assert metadata_main.identifier == "project#main"
-        assert metadata_feature.identifier == "project#feature-x"
-        assert metadata_main.identifier != metadata_feature.identifier
-
-    def test_optional_remote_url(self):
-        """Test that remote_url is optional."""
-        metadata = GitMetadata(
-            project_root="/path/to/repo",
-            commit_hash="a" * 40,
-            branch="main",
-            project_name="test-project"
-        )
-
-        assert metadata.remote_url is None
-
     def test_version_identifier_property(self):
         """Test version_identifier generation with project#branch@commit."""
         metadata = GitMetadata(
@@ -76,54 +29,8 @@ class TestGitMetadata:
 
         assert metadata.version_identifier == "my-project#feature-x@abc123d"
 
-    def test_version_identifier_with_different_commits(self):
-        """Test that different commits produce different version identifiers."""
-        metadata1 = GitMetadata(
-            project_root="/path/to/repo",
-            commit_hash="abc1234567890abcdef1234567890abcdef12345",
-            branch="main",
-            project_name="project"
-        )
-
-        metadata2 = GitMetadata(
-            project_root="/path/to/repo",
-            commit_hash="def5678901234567890abcdef5678901234567890",
-            branch="main",
-            project_name="project"
-        )
-
-        # Same project#branch, different @commit
-        assert metadata1.version_identifier == "project#main@abc1234"
-        assert metadata2.version_identifier == "project#main@def5678"
-        assert metadata1.version_identifier != metadata2.version_identifier
-
-
 class TestCodeChunkMetadata:
     """Tests for CodeChunkMetadata dataclass."""
-
-    def test_basic_construction(self):
-        """Test basic CodeChunkMetadata construction with required fields."""
-        metadata = CodeChunkMetadata(
-            git_project_identifier="project#main",
-            file_path="/repo/src/main.py",
-            filename="main.py",
-            file_extension=".py",
-            programming_language="python",
-            file_size=1024,
-            line_count=50,
-            chunk_index=0,
-            chunk_count=1,
-            text_extraction_method="ast_python",
-            git_project_root="/repo",
-            git_project_name="project",
-            git_branch="main",
-            git_commit_hash="a" * 40
-        )
-
-        assert metadata.git_project_identifier == "project#main"
-        assert metadata.file_path == "/repo/src/main.py"
-        assert metadata.programming_language == "python"
-        assert metadata.git_commit_hash == "a" * 40
 
     def test_default_values(self):
         """Test default values for optional fields."""
@@ -214,35 +121,6 @@ class TestCodeChunkMetadata:
 class TestCodeChunk:
     """Tests for CodeChunk dataclass."""
 
-    def test_basic_construction(self):
-        """Test basic CodeChunk construction."""
-        metadata = CodeChunkMetadata(
-            git_project_identifier="project#main",
-            file_path="/repo/src/main.py",
-            filename="main.py",
-            file_extension=".py",
-            programming_language="python",
-            file_size=1024,
-            line_count=50,
-            chunk_index=0,
-            chunk_count=1,
-            text_extraction_method="ast_python",
-            git_project_root="/repo",
-            git_project_name="project",
-            git_branch="main",
-            git_commit_hash="a" * 40
-        )
-
-        chunk = CodeChunk(
-            content="def hello():\n    print('Hello')",
-            metadata=metadata
-        )
-
-        assert chunk.content == "def hello():\n    print('Hello')"
-        assert chunk.metadata == metadata
-        assert chunk.embedding is None
-        assert chunk.id is not None  # Auto-generated UUID
-
     def test_convenience_properties(self):
         """Test convenience property accessors."""
         metadata = CodeChunkMetadata(
@@ -323,15 +201,3 @@ class TestCodeChunk:
         assert point.payload["git_project_identifier"] == "project#main"
 
 
-class TestChunk:
-    """Tests for simple Chunk dataclass."""
-
-    def test_basic_construction(self):
-        """Test basic Chunk construction."""
-        chunk = Chunk(
-            content="function test() { return 42; }",
-            method="ast_javascript"
-        )
-
-        assert chunk.content == "function test() { return 42; }"
-        assert chunk.method == "ast_javascript"

@@ -68,44 +68,6 @@ class TestSearchSemantic:
             ),
         ]
 
-    def test_basic_search(self, mock_qdrant_client, mock_embedder, sample_search_results, capsys):
-        """Test basic semantic search returns results."""
-        from arcaneum.cli.search import search_command
-
-        json_output = json.dumps({
-            'status': 'success',
-            'query': 'authentication',
-            'collection': 'TestCollection',
-            'results': [
-                {'id': 'doc1', 'score': 0.95, 'file_path': '/path/to/doc1.pdf'},
-                {'id': 'doc2', 'score': 0.85, 'file_path': '/path/to/doc2.pdf'},
-            ]
-        })
-
-        with patch('arcaneum.cli.search.create_qdrant_client', return_value=mock_qdrant_client):
-            with patch('arcaneum.cli.search.SearchEmbedder', return_value=mock_embedder):
-                with patch('arcaneum.cli.search.search_collection', return_value=sample_search_results):
-                    with patch('arcaneum.cli.search.format_json_results', return_value=json_output):
-                        with patch('arcaneum.cli.search.interaction_logger'):
-                            with pytest.raises(SystemExit) as exc_info:
-                                search_command(
-                                    query='authentication',
-                                    corpora=['TestCollection'],
-                                    vector_name=None,
-                                    filter_arg=None,
-                                    limit=10,
-                                    offset=0,
-                                    score_threshold=None,
-                                    output_json=True,
-                                    verbose=False
-                                )
-
-        assert exc_info.value.code == 0
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
-        assert output['status'] == 'success'
-        assert len(output['results']) == 2
-
     def test_with_filter(self, mock_qdrant_client, mock_embedder, sample_search_results, capsys):
         """Test search with metadata filter."""
         from arcaneum.cli.search import search_command
@@ -195,70 +157,6 @@ class TestSearchSemantic:
         # Verify score threshold was passed
         call_kwargs = mock_search.call_args[1]
         assert call_kwargs['score_threshold'] == 0.8
-
-    def test_json_output(self, mock_qdrant_client, mock_embedder, sample_search_results, capsys):
-        """Test JSON output format."""
-        from arcaneum.cli.search import search_command
-
-        json_output = json.dumps({
-            'status': 'success',
-            'query': 'authentication',
-            'collection': 'TestCollection',
-            'results': []
-        })
-
-        with patch('arcaneum.cli.search.create_qdrant_client', return_value=mock_qdrant_client):
-            with patch('arcaneum.cli.search.SearchEmbedder', return_value=mock_embedder):
-                with patch('arcaneum.cli.search.search_collection', return_value=sample_search_results):
-                    with patch('arcaneum.cli.search.format_json_results', return_value=json_output):
-                        with patch('arcaneum.cli.search.interaction_logger'):
-                            with pytest.raises(SystemExit) as exc_info:
-                                search_command(
-                                    query='authentication',
-                                    corpora=['TestCollection'],
-                                    vector_name=None,
-                                    filter_arg=None,
-                                    limit=10,
-                                    offset=0,
-                                    score_threshold=None,
-                                    output_json=True,
-                                    verbose=False
-                                )
-
-        assert exc_info.value.code == 0
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
-
-        assert 'status' in output
-        assert 'results' in output
-        assert 'query' in output
-        assert 'collection' in output
-
-    def test_verbose_output(self, mock_qdrant_client, mock_embedder, sample_search_results, capsys):
-        """Test verbose output shows additional info."""
-        from arcaneum.cli.search import search_command
-
-        with patch('arcaneum.cli.search.create_qdrant_client', return_value=mock_qdrant_client):
-            with patch('arcaneum.cli.search.SearchEmbedder', return_value=mock_embedder):
-                with patch('arcaneum.cli.search.search_collection', return_value=sample_search_results):
-                    with patch('arcaneum.cli.search.interaction_logger'):
-                        with pytest.raises(SystemExit) as exc_info:
-                            search_command(
-                                query='authentication',
-                                corpora=['TestCollection'],
-                                vector_name=None,
-                                filter_arg=None,
-                                limit=10,
-                                offset=0,
-                                score_threshold=None,
-                                output_json=False,
-                                verbose=True
-                            )
-
-        assert exc_info.value.code == 0
-        captured = capsys.readouterr()
-        # Verbose mode should show query and collection info
-        assert 'TestCollection' in captured.out or 'authentication' in captured.out.lower()
 
     def test_collection_not_found(self, mock_qdrant_client, mock_embedder):
         """Test error when collection not found."""

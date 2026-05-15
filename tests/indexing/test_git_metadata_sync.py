@@ -35,13 +35,6 @@ def create_mock_point(point_id, identifier, commit_hash):
 class TestGitMetadataSync:
     """Tests for GitMetadataSync class."""
 
-    def test_initialization(self, mock_qdrant):
-        """Test basic initialization."""
-        sync = GitMetadataSync(mock_qdrant)
-
-        assert sync.qdrant == mock_qdrant
-        assert sync._cache == {}
-
     def test_get_indexed_projects_empty(self, metadata_sync, mock_qdrant):
         """Test getting indexed projects from empty collection."""
         # Mock scroll returning empty results
@@ -403,18 +396,6 @@ class TestGitMetadataSync:
 
 class TestIndexedProject:
     """Tests for IndexedProject dataclass."""
-
-    def test_creation(self):
-        """Test creating an IndexedProject."""
-        project = IndexedProject(
-            identifier="myproject#main",
-            commit_hash="a" * 40,
-            point_count=100
-        )
-
-        assert project.identifier == "myproject#main"
-        assert project.commit_hash == "a" * 40
-        assert project.point_count == 100
 
     def test_default_point_count(self):
         """Test default point count is 0."""

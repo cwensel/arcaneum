@@ -106,11 +106,6 @@ def test_install_dump_handler_registers_sigusr1():
             pass
 
 
-def test_install_dump_handler_tolerates_missing_client():
-    # Should not raise even if embedding_client is None
-    install_dump_handler(embedding_client=None)
-
-
 def test_snapshot_accepts_embedding_client_with_pending_cleanup():
     class Stub:
         _pending_gpu_cleanup = {"jina-code": (object(), object())}

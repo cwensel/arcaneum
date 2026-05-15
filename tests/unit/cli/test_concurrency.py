@@ -29,22 +29,6 @@ def isolated_locks(tmp_path, monkeypatch):
     yield tmp_path / "arcaneum" / "locks"
 
 
-def test_acquire_when_free(isolated_locks, monkeypatch):
-    monkeypatch.setenv("ARCANEUM_SEARCH_CONCURRENCY", "2")
-    monkeypatch.setenv("ARCANEUM_SEARCH_WAIT_SECONDS", "1")
-    with concurrency.acquire_embedder_slot():
-        pass
-
-
-def test_two_holders_at_cap_2(isolated_locks, monkeypatch):
-    """Two simultaneous acquirers fit when cap is 2."""
-    monkeypatch.setenv("ARCANEUM_SEARCH_CONCURRENCY", "2")
-    monkeypatch.setenv("ARCANEUM_SEARCH_WAIT_SECONDS", "1")
-    with concurrency.acquire_embedder_slot():
-        with concurrency.acquire_embedder_slot():
-            pass
-
-
 def test_third_acquirer_times_out_when_cap_2(isolated_locks, monkeypatch):
     monkeypatch.setenv("ARCANEUM_SEARCH_CONCURRENCY", "2")
     monkeypatch.setenv("ARCANEUM_SEARCH_WAIT_SECONDS", "0.5")

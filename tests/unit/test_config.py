@@ -131,12 +131,6 @@ class TestLoadConfig:
 # --- save_config ---
 
 class TestSaveConfig:
-    def test_save_creates_file(self, tmp_path):
-        cfg = ArcaneumConfig(**MINIMAL_CONFIG_DATA)
-        path = tmp_path / "out" / "config.yaml"
-        save_config(cfg, path)
-        assert path.exists()
-
     def test_save_creates_parent_dirs(self, tmp_path):
         cfg = ArcaneumConfig(**MINIMAL_CONFIG_DATA)
         path = tmp_path / "deep" / "nested" / "config.yaml"

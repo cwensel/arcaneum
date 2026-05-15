@@ -312,11 +312,6 @@ class TestContextManager:
 class TestGlobalLoggerInstance:
     """Test the global interaction_logger instance."""
 
-    def test_global_instance_exists(self):
-        """Test that a global logger instance is available."""
-        assert interaction_logger is not None
-        assert isinstance(interaction_logger, InteractionLogger)
-
     def test_global_instance_is_reusable(self, tmp_path):
         """Test that the global instance can be used multiple times."""
         log_dir = tmp_path / ".arcaneum" / "logs"

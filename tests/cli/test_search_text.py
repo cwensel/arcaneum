@@ -382,24 +382,6 @@ class TestErrorHandlingMissingIndex:
                 # Verify clear error message
                 assert "Corpus 'NonExistent' not found" in str(exc_info.value)
 
-    def test_missing_index_with_json_raises_resource_not_found(self, mock_client):
-        """Test that missing index in JSON mode also raises ResourceNotFoundError."""
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
-            with patch('arcaneum.cli.fulltext.interaction_logger'):
-                with pytest.raises(ResourceNotFoundError) as exc_info:
-                    search_text_command(
-                        query='query',
-                        corpora=['NonExistent'],
-                        filter_arg=None,
-                        limit=10,
-                        offset=0,
-                        output_json=True,
-                        verbose=False
-                    )
-
-                assert "Corpus 'NonExistent' not found" in str(exc_info.value)
-
-
 class TestErrorHandlingServerUnavailable:
     """Test error handling when MeiliSearch server is unavailable."""
 

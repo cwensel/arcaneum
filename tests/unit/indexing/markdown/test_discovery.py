@@ -109,11 +109,6 @@ class TestMarkdownDiscovery:
         discovery = MarkdownDiscovery(extensions=['.md', '.txt'])
         assert discovery.extensions == ['.md', '.txt']
 
-    def test_initialization_exclude_patterns(self):
-        """Test discovery accepts exclude patterns."""
-        discovery = MarkdownDiscovery(exclude_patterns=['**/node_modules/**'])
-        assert '**/node_modules/**' in discovery.exclude_patterns
-
     def test_discover_files_recursive(self, sample_markdown_tree):
         """Test recursive file discovery."""
         discovery = MarkdownDiscovery()

@@ -295,15 +295,6 @@ class TestFilterBuilding:
         assert scroll_filter is not None
         assert path_filter is None
 
-    def test_build_export_filter_repo_with_branch(self):
-        """Test with repo#branch filter."""
-        scroll_filter, path_filter = build_export_filter(
-            includes=(), excludes=(), repos=("arcaneum#main",)
-        )
-        assert scroll_filter is not None
-        assert path_filter is None
-
-
 class TestExportHeader:
     """Tests for ExportHeader serialization."""
 

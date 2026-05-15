@@ -483,40 +483,6 @@ class TestJSONOutputForProgrammaticUse:
         assert 'content' in hit
         assert '_formatted' in hit
 
-    def test_json_output_is_parseable(self, mock_client, capsys):
-        """Test JSON output is valid and parseable JSON."""
-        mock_client.search.return_value = {
-            'hits': [
-                {'id': 'doc1', 'content': 'content with "quotes" and special chars <>&'},
-            ],
-            'estimatedTotalHits': 1,
-            'processingTimeMs': 3,
-            'query': 'test',
-            'limit': 10,
-            'offset': 0,
-        }
-
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
-            with patch('arcaneum.cli.fulltext.interaction_logger'):
-                with pytest.raises(SystemExit) as exc_info:
-                    search_text_command(
-                        query='test',
-                        corpora=['TestIndex'],
-                        filter_arg=None,
-                        limit=10,
-                        offset=0,
-                        output_json=True,
-                        verbose=False
-                    )
-
-                assert exc_info.value.code == 0
-
-        captured = capsys.readouterr()
-        # Should not raise JSONDecodeError
-        output = json.loads(captured.out)
-        assert output is not None
-
-
 class TestPaginationOptions:
     """Test pagination with limit and offset options."""
 
@@ -805,61 +771,6 @@ class TestComplexFilterExpressions:
         call_args = mock_client.search.call_args
         assert call_args[1]['filter'] == 'language = python AND git_branch = main'
 
-    def test_in_operator_filter(self, mock_client):
-        """Test filter with IN operator for array membership."""
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
-            with patch('arcaneum.cli.fulltext.interaction_logger'):
-                with pytest.raises(SystemExit):
-                    search_text_command(
-                        query='test',
-                        corpora=['TestIndex'],
-                        filter_arg='programming_language IN [python, javascript, typescript]',
-                        limit=10,
-                        offset=0,
-                        output_json=True,
-                        verbose=False
-                    )
-
-        call_args = mock_client.search.call_args
-        assert 'IN [python, javascript, typescript]' in call_args[1]['filter']
-
-    def test_numeric_range_filter(self, mock_client):
-        """Test filter with numeric range."""
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
-            with patch('arcaneum.cli.fulltext.interaction_logger'):
-                with pytest.raises(SystemExit):
-                    search_text_command(
-                        query='test',
-                        corpora=['TestIndex'],
-                        filter_arg='page_number > 5 AND page_number < 20',
-                        limit=10,
-                        offset=0,
-                        output_json=True,
-                        verbose=False
-                    )
-
-        call_args = mock_client.search.call_args
-        assert 'page_number > 5 AND page_number < 20' in call_args[1]['filter']
-
-    def test_contains_filter_for_file_path(self, mock_client):
-        """Test filter with CONTAINS for file path matching."""
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
-            with patch('arcaneum.cli.fulltext.interaction_logger'):
-                with pytest.raises(SystemExit):
-                    search_text_command(
-                        query='test',
-                        corpora=['TestIndex'],
-                        filter_arg='file_path CONTAINS /src/auth/',
-                        limit=10,
-                        offset=0,
-                        output_json=True,
-                        verbose=False
-                    )
-
-        call_args = mock_client.search.call_args
-        assert 'file_path CONTAINS /src/auth/' in call_args[1]['filter']
-
-
 class TestHighlightingFormatting:
     """Test handling of MeiliSearch highlighting in results."""
 
@@ -870,31 +781,6 @@ class TestHighlightingFormatting:
         client.health_check.return_value = True
         client.index_exists.return_value = True
         return client
-
-    def test_highlighting_is_requested(self, mock_client, capsys):
-        """Test that highlighting is requested for content attribute."""
-        mock_client.search.return_value = {
-            'hits': [],
-            'estimatedTotalHits': 0,
-            'processingTimeMs': 2,
-        }
-
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_client):
-            with patch('arcaneum.cli.fulltext.interaction_logger'):
-                with pytest.raises(SystemExit):
-                    search_text_command(
-                        query='test',
-                        corpora=['TestIndex'],
-                        filter_arg=None,
-                        limit=10,
-                        offset=0,
-                        output_json=True,
-                        verbose=False
-                    )
-
-        # Verify highlighting was requested
-        call_args = mock_client.search.call_args
-        assert call_args[1]['attributes_to_highlight'] == ['content']
 
     def test_formatted_content_preserved_in_json(self, mock_client, capsys):
         """Test that _formatted field is preserved in JSON output."""

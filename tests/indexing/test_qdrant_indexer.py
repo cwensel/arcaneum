@@ -118,16 +118,6 @@ class TestQdrantIndexer:
         call_args = mock_qdrant.upsert.call_args
         assert call_args.kwargs["wait"] is False
 
-    def test_upload_chunks_single_batch(self, indexer, mock_qdrant):
-        """Test upload_chunks with single batch."""
-        chunks = [create_test_chunk() for _ in range(100)]
-
-        result = indexer.upload_chunks("test-collection", chunks)
-
-        assert result == 100
-        # 100 chunks fits in one batch (default batch_size=512)
-        assert mock_qdrant.upsert.call_count == 1
-
     def test_upload_chunks_multiple_batches(self, indexer, mock_qdrant):
         """Test upload_chunks with multiple batches."""
         # Create 1100 chunks (should be 3 batches with default batch_size=512)

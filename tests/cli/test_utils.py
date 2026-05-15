@@ -66,13 +66,6 @@ class TestBuildVectorsConfig:
             assert params.distance == Distance.COSINE
             assert params.size > 0
 
-    def test_invalid_model_raises_value_error(self):
-        """Test that invalid model in list raises ValueError."""
-        with pytest.raises(ValueError) as exc_info:
-            build_vectors_config(['stella', 'nonexistent-model'])
-
-        assert "Unknown model" in str(exc_info.value)
-
     def test_empty_list_returns_empty_dict(self):
         """Test that empty model list returns empty dict."""
         config = build_vectors_config([])

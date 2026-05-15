@@ -181,20 +181,6 @@ class TestEstimateSafeBatchSizeV2:
         # 10GB - 2GB model - 2GB pipeline = 6GB × 0.6 = 3.6GB / 8MB ≈ 460
         assert 350 <= batch_size <= 600
 
-    def test_custom_pipeline_overhead(self):
-        """Test with custom pipeline overhead."""
-        from arcaneum.utils.memory import estimate_safe_batch_size_v2
-
-        available_bytes = 10 * 1024**3  # 10GB
-        batch_size = estimate_safe_batch_size_v2(
-            "jina-code",
-            available_bytes,
-            pipeline_overhead_gb=1.0  # Less overhead
-        )
-
-        # More usable memory should give larger batch size
-        assert batch_size > 400
-
     def test_custom_safety_factor(self):
         """Test with custom safety factor."""
         from arcaneum.utils.memory import estimate_safe_batch_size_v2

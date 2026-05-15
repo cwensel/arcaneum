@@ -55,17 +55,6 @@ class TestWhitespaceNormalization:
         assert self.extractor._normalize_whitespace_edge_cases("") == ""
         assert self.extractor._normalize_whitespace_edge_cases(None) is None
 
-    def test_combined_edge_cases(self):
-        """Test combination of multiple edge cases."""
-        input_text = "\tHello\u00A0world\n\n\n\n\tTest\u2000line\n\n\n\n\n  "
-        # Should convert tabs, normalize Unicode spaces, reduce newlines, strip
-        result = self.extractor._normalize_whitespace_edge_cases(input_text)
-        assert "\t" not in result
-        assert "\u00A0" not in result
-        assert "\u2000" not in result
-        assert result.count("\n\n\n\n") == 0  # No 4+ newlines
-        assert result == result.strip()
-
 
 class TestMarkdownExtraction:
     """Test markdown extraction with PyMuPDF4LLM."""

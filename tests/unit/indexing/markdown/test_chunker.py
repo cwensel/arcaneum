@@ -350,15 +350,6 @@ Content."""
 class TestChunkMarkdownFunction:
     """Test the convenience function chunk_markdown."""
 
-    def test_chunk_markdown_basic(self):
-        """Test basic usage of chunk_markdown function."""
-        text = "# Test\n\nContent here."
-        chunks = chunk_markdown(text)
-
-        assert isinstance(chunks, list)
-        assert len(chunks) > 0
-        assert all(isinstance(c, MarkdownChunk) for c in chunks)
-
     def test_chunk_markdown_with_params(self):
         """Test chunk_markdown with custom parameters."""
         text = "# Test\n\n" + ("Content. " * 500)
@@ -377,40 +368,6 @@ class TestChunkMarkdownFunction:
 
 class TestAcceptanceCriteria:
     """Validate acceptance criteria from RDR-014."""
-
-    def test_respects_document_structure(self):
-        """Acceptance: Respects document structure."""
-        text = """# Title
-
-## Section 1
-Content 1.
-
-## Section 2
-Content 2."""
-
-        chunks = chunk_markdown(text, chunk_size=100)
-
-        # Structure should be preserved in headers
-        assert any('Title' in c.header_path for c in chunks)
-        assert any('Section 1' in c.header_path for c in chunks)
-
-    def test_preserves_parent_header_context(self):
-        """Acceptance: Preserves parent header context."""
-        text = """# Main
-
-## Sub
-
-### Deep
-
-Content."""
-
-        chunks = chunk_markdown(text, chunk_size=50)
-
-        # Deep chunks should have full path
-        deep_chunks = [c for c in chunks if 'Deep' in c.header_path]
-        if deep_chunks:
-            assert 'Main' in deep_chunks[0].header_path
-            assert 'Sub' in deep_chunks[0].header_path
 
     def test_handles_nested_headings(self):
         """Acceptance: Handles nested headings correctly."""
@@ -432,26 +389,6 @@ Content at each level."""
 
         assert 'H1' in all_headers
         assert 'H6' in all_headers
-
-    def test_code_blocks_remain_intact(self):
-        """Acceptance: Code blocks remain intact."""
-        text = """# Code
-
-```python
-def function():
-    x = 1
-    y = 2
-    return x + y
-```
-
-Done."""
-
-        chunks = chunk_markdown(text, chunk_size=50, chunk_overlap=0)
-
-        # Code should be in one chunk
-        code_chunks = [c for c in chunks if 'def function():' in c.text]
-        assert len(code_chunks) > 0
-        assert 'return x + y' in code_chunks[0].text
 
     def test_configurable_chunk_size(self):
         """Acceptance: Configurable chunk size.

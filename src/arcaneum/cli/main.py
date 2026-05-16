@@ -505,7 +505,8 @@ def search():
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 def search_semantic(query, corpora, legacy_collection, vector_name, filter_arg, limit, offset, score_threshold, output_json, verbose):
     """Vector-based semantic search"""
-    from arcaneum.cli.search import search_command, resolve_corpora
+    from arcaneum.cli.search import search_command
+    from arcaneum.cli.utils import resolve_corpora
     resolved_corpora = resolve_corpora(corpora, legacy_collection, 'collection')
     search_command(query, resolved_corpora, vector_name, filter_arg, limit, offset, score_threshold, output_json, verbose)
 
@@ -521,7 +522,8 @@ def search_semantic(query, corpora, legacy_collection, vector_name, filter_arg, 
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 def search_text(query, corpora, legacy_index, filter_arg, limit, offset, output_json, verbose):
     """Keyword-based full-text search"""
-    from arcaneum.cli.fulltext import search_text_command, resolve_corpora
+    from arcaneum.cli.fulltext import search_text_command
+    from arcaneum.cli.utils import resolve_corpora
     resolved_corpora = resolve_corpora(corpora, legacy_index, 'index')
     search_text_command(query, resolved_corpora, filter_arg, limit, offset, output_json, verbose)
 

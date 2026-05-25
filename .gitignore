@@ -42,6 +42,7 @@ arcaneum.yaml
 *~
 
 # workspaces
+/.worktrees/
 _*
 !__init__.py
 .beads

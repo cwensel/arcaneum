@@ -809,13 +809,14 @@ class EmbeddingClient:
                 if self._device == "mps" and params_billions >= 1.0:
                     logger.warning(
                         f"Loading {model_name} ({params_billions}B params) on MPS. "
-                        f"Large models may cause system lockups on Apple Silicon. "
-                        f"If unstable, use ARC_NO_GPU=1 for CPU mode or switch to a smaller model (e.g., bge)."
+                        "Large models can put heavy pressure on Apple unified memory. "
+                        "For the stable default, omit --gpu or use a smaller FastEmbed model "
+                        "(e.g., arctic-m)."
                     )
                     print(
-                        f"   ⚠ Warning: {model_name} is a large model ({params_billions}B params) that may cause "
-                        f"system instability on MPS.\n"
-                        f"     If you experience lockups, use: ARC_NO_GPU=1 arc corpus sync ...",
+                        f"   Warning: --gpu requested for {model_name} ({params_billions}B params) on MPS.\n"
+                        f"     This may put heavy pressure on Apple unified memory.\n"
+                        f"     For the stable default, omit --gpu or use --models arctic-m.",
                         flush=True, file=sys.stderr
                     )
 
@@ -1089,7 +1090,7 @@ class EmbeddingClient:
             if not self._validate_embeddings(embeddings, len(texts), model_name):
                 raise RuntimeError(
                     "GPU produced invalid embeddings (likely OOM corruption). "
-                    "Try running with ARC_NO_GPU=1 to use CPU instead."
+                    "Omit --gpu to use the stable CPU default."
                 )
 
             # Return numpy arrays directly - Qdrant Python client accepts numpy.ndarray natively
@@ -1316,8 +1317,8 @@ class EmbeddingClient:
 
         # Give up
         raise RuntimeError(
-            f"MPS GPU memory exhausted even at batch_size=1. "
-            f"Run with ARC_NO_GPU=1 to use CPU instead."
+            "MPS GPU memory exhausted even at batch_size=1. "
+            "Omit --gpu to use the stable CPU default."
         )
 
     def embed_parallel(
@@ -1563,9 +1564,9 @@ class EmbeddingClient:
                             raise RuntimeError(
                                 f"GPU out of memory even at minimum batch size ({min_batch_size}).\n\n"
                                 f"Suggestions:\n"
-                                f"  1. Use CPU instead: --no-gpu\n"
+                                f"  1. Use CPU instead: omit --gpu\n"
                                 f"  2. Close other GPU-intensive applications\n"
-                                f"  3. Try a smaller model (e.g., bge-small instead of jina-code)\n"
+                                f"  3. Try a smaller model (e.g., arctic-m or jina-code)\n"
                                 f"  4. Reduce chunk count by filtering files\n\n"
                                 f"Original error: {e}"
                             ) from e

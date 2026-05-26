@@ -314,12 +314,12 @@ class EmbeddingClient:
             "aarch64",
         }
         if is_apple_silicon and not self._experimental_coreml_enabled():
-            logger.info(
-                "Using CPUExecutionProvider for FastEmbed model '%s'; "
-                "CoreMLExecutionProvider is experimental and disabled by default. "
-                "Set ARC_EXPERIMENTAL_COREML=1 to opt in.",
-                model_name,
+            message = (
+                f"GPU requested, but FastEmbed/CoreML is experimental for '{model_name}'. "
+                "Using CPUExecutionProvider. Set ARC_EXPERIMENTAL_COREML=1 to opt in."
             )
+            logger.info(message)
+            print(f"   {message}", file=sys.stderr, flush=True)
             return ["CPUExecutionProvider"]
 
         try:

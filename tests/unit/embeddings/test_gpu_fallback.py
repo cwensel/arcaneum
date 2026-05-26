@@ -76,7 +76,7 @@ class TestFastEmbedCoreMLPolicy:
     """FastEmbed CoreML remains opt-in on Apple Silicon."""
 
     def test_fastembed_uses_cpu_provider_by_default_on_apple_silicon(
-        self, embedding_client, monkeypatch
+        self, embedding_client, monkeypatch, capsys
     ):
         monkeypatch.delenv("ARC_EXPERIMENTAL_COREML", raising=False)
 
@@ -85,6 +85,9 @@ class TestFastEmbedCoreMLPolicy:
                 providers = embedding_client._resolve_fastembed_providers("bge-large")
 
         assert providers == ["CPUExecutionProvider"]
+        captured = capsys.readouterr()
+        assert "GPU requested, but FastEmbed/CoreML is experimental" in captured.err
+        assert "ARC_EXPERIMENTAL_COREML=1" in captured.err
 
     def test_fastembed_uses_coreml_when_explicitly_enabled(self, embedding_client, monkeypatch):
         monkeypatch.setenv("ARC_EXPERIMENTAL_COREML", "1")

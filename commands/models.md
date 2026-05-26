@@ -42,16 +42,17 @@ The list command shows:
 
 **For Documents/PDFs:**
 
-- **stella** (1024D): Best for documents, PDFs, general text
-- **bge-large** (1024D): General purpose, high quality
-- **modernbert** (1024D): Newer general-purpose model
+- **arctic-m** (768D): **DEFAULT** - stable FastEmbed retrieval model
+- **stella** (1024D): Highest-quality opt-in document model
+- **mxbai-large** (1024D): High-quality FastEmbed document model
+- **bge-large** (1024D): Legacy BGE document model
 
 **For Source Code:**
 
-- **jina-code-0.5b** (896D): **RECOMMENDED** - SOTA Sept 2025, 32K context, fast (default)
+- **jina-code** (768D): **DEFAULT** - stable lightweight code model
+- **jina-code-0.5b** (896D): Higher-quality opt-in code model, 32K context
 - **jina-code-1.5b** (1536D): SOTA Sept 2025, 32K context, highest quality
 - **codesage-large** (1024D): CodeSage V2, Dec 2024, 9 languages
-- **jina-code** (768D): Legacy v2 model, 8K context
 - **nomic-code** (3584D): 7B params, 6 languages, slower but comprehensive
 
 **For General Use:**
@@ -62,9 +63,9 @@ The list command shows:
 **Model Selection Tips:**
 
 1. **Match content type:**
-   - PDFs/docs → stella or modernbert
-   - Source code → jina-code-0.5b (fast) or jina-code-1.5b (quality)
-   - Mixed → stella or bge
+   - PDFs/docs → arctic-m (stable default), stella (quality), or mxbai-large (FastEmbed quality)
+   - Source code → jina-code (stable default), jina-code-0.5b or jina-code-1.5b (quality)
+   - Mixed → arctic-m or mxbai-large
 
 2. **Consider dimensions:**
    - Higher dimensions (1024D) = better quality, more storage

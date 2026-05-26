@@ -25,7 +25,8 @@ search. Use `/arc:collection` when you only need semantic search.
 **Examples:**
 
 ```text
-/collection create MyDocs --model stella --type pdf
+/collection create MyDocs --type pdf
+/collection create MyDocsQuality --model stella --type pdf
 /collection list
 /collection info MyDocs
 /collection delete MyDocs --confirm
@@ -43,13 +44,15 @@ Collections should specify a type (pdf or code) to ensure content matches:
 
 - pdf: For document collections (PDFs, text files)
 - code: For source code repositories
+- markdown: For markdown/document collections
 
 **Available Models:**
 
-- stella: 1024D, best for documents and PDFs (default for pdfs)
-- jina-code: 768D, optimized for source code (default for code)
+- arctic-m: 768D, stable document/PDF/markdown default
+- stella: 1024D, high-quality opt-in document model
+- mxbai-large: 1024D, high-quality FastEmbed document model
+- jina-code: 768D, stable source-code default
 - bge: 1024D, general purpose
-- modernbert: 1024D, newer general-purpose model
 
 **Related Commands:**
 

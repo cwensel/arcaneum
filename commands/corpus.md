@@ -25,8 +25,8 @@ full-text search (MeiliSearch) for the same content.
 **Create Options:**
 
 - name: Corpus name (required)
-- --type: Corpus type - code or pdf (required)
-- --models: Embedding models, comma-separated (default: stella,jina)
+- --type: Corpus type - code, pdf, or markdown (required)
+- --models: Embedding models, comma-separated (default inferred from --type: arctic-m for pdf/markdown, jina-code for code)
 
 **Delete Options:**
 
@@ -38,15 +38,16 @@ full-text search (MeiliSearch) for the same content.
 
 - name: Corpus name (required, first positional argument)
 - directories: One or more directory paths to index (required)
-- --models: Embedding models (default: stella,jina)
+- --models: Embedding models (default: use corpus metadata)
 - --file-types: File extensions to index (e.g., .py,.md)
+- --gpu: Opt into accelerator embedding (CPU is the stable default)
 
 **Repair Options:**
 
 - name: Corpus name (required)
 - --quality-threshold: Text quality threshold (0.0-1.0, default: 0.9)
 - --dry-run: Preview what would be repaired without making changes
-- --no-gpu: Disable GPU acceleration
+- --gpu: Opt into accelerator embedding (CPU is the stable default)
 - --verbose: Show per-file quality scores and details
 - --json: Output in JSON format
 
@@ -69,7 +70,8 @@ full-text search (MeiliSearch) for the same content.
 **Examples:**
 
 ```text
-/corpus create MyDocs --type pdf --models stella
+/corpus create MyDocs --type pdf
+/corpus create MyDocsQuality --type pdf --models stella
 /corpus sync MyDocs ~/Documents
 /corpus create CodeBase --type code
 /corpus sync CodeBase ~/projects --file-types .py,.js,.md

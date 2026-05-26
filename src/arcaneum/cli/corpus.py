@@ -19,6 +19,24 @@ from ..indexing.collection_metadata import set_collection_metadata, get_collecti
 console = Console()
 
 
+DEFAULT_MODELS_BY_CORPUS_TYPE = {
+    # FastEmbed CPU defaults keep the common document pipeline stable on
+    # Apple Silicon while still using a modern retrieval model.
+    "pdf": "arctic-m",
+    "markdown": "arctic-m",
+    # Keep code default lightweight. Larger code models remain opt-in.
+    "code": "jina-code",
+}
+
+
+def default_models_for_type(corpus_type: str) -> str:
+    """Return the stable default embedding model list for a corpus type."""
+    try:
+        return DEFAULT_MODELS_BY_CORPUS_TYPE[corpus_type]
+    except KeyError as e:
+        raise InvalidArgumentError(f"Unknown corpus type: {corpus_type}") from e
+
+
 def map_corpus_type_to_canonical(corpus_type: str) -> str:
     """Map corpus type aliases to canonical names.
 
@@ -285,7 +303,7 @@ def delete_corpus_command(name: str, confirm: bool, output_json: bool):
 def create_corpus_command(
     name: str,
     corpus_type: str,
-    models: str,
+    models: str | None,
     output_json: bool
 ):
     """Create both Qdrant collection and MeiliSearch index.
@@ -297,9 +315,13 @@ def create_corpus_command(
     Args:
         name: Corpus name (used for both collection and index)
         corpus_type: Type of corpus (pdf, code, markdown)
-        models: Comma-separated list of embedding models
+        models: Comma-separated list of embedding models. If None, inferred
+            from corpus_type using stable defaults.
         output_json: If True, output JSON format
     """
+    if not models:
+        models = default_models_for_type(corpus_type)
+
     # Start interaction logging (RDR-018)
     interaction_logger.start(
         "corpus", "create",

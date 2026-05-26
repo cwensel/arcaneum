@@ -80,8 +80,8 @@ arc corpus sync pdf-docs /path/to/pdfs --force
 # Large batch size for throughput (cap if OOM)
 arc corpus sync pdf-docs /path/to/pdfs --max-embedding-batch 500
 
-# CPU-only mode (stable on Apple Silicon)
-arc corpus sync pdf-docs /path/to/pdfs --no-gpu
+# Opt into accelerator embedding
+arc corpus sync pdf-docs /path/to/pdfs --gpu
 
 # Verbose progress
 arc corpus sync pdf-docs /path/to/pdfs --verbose
@@ -116,7 +116,7 @@ flag on `arc index pdf` is deprecated.
 
 - `--collection`: Target Qdrant collection (required)
 - `--force`: Force reindex all files (bypass incremental sync)
-- `--no-gpu`: Disable GPU acceleration (GPU enabled by default for 1.5-3x speedup)
+- `--gpu`: Opt into accelerator embedding (CPU is the stable default)
 - `--no-streaming`: Disable streaming mode (accumulate all embeddings before upload)
 - `--verbose`: Verbose output (show progress, suppress library warnings)
 - `--debug`: Debug mode (show all library warnings including transformers)
@@ -225,33 +225,33 @@ To bypass incremental sync and reindex everything, use `--force`.
 
 ## GPU Acceleration
 
-GPU acceleration is **enabled by default** for 1.5-3x faster embedding generation:
+CPU embedding is the default for stable unattended indexing. GPU acceleration is
+available with `--gpu` for 1.5-3x faster embedding generation on supported models:
 
 - **Apple Silicon**: Uses MPS (Metal Performance Shaders) backend
 - **NVIDIA GPUs**: Uses CUDA backend
-- **CPU Fallback**: Automatic when GPU unavailable
-- **Disable**: Use `--no-gpu` flag for CPU-only mode
+- **FastEmbed/CoreML**: Experimental on Apple Silicon; set `ARC_EXPERIMENTAL_COREML=1`
 
 **Compatible Models** (verified with GPU support):
 
-- **stella** (recommended) - Full MPS support on Apple Silicon
+- **stella** (high-quality opt-in) - MPS support on Apple Silicon
 - **jina-code** - Full MPS support on Apple Silicon
-- **bge-small**, **bge-base** - CoreML support
+- **bge-small**, **bge-base** - experimental CoreML support
 
 **Performance**: 1.5-3x speedup with GPU compared to CPU-only mode.
 
-**When to disable GPU**:
+**When to enable GPU**:
 
-- Thermal concerns (laptop getting too hot)
-- Battery life (running on battery power)
-- GPU busy with other tasks
+- You need faster embedding throughput
+- You are using an MPS/CUDA-supported model such as stella or jina-code
+- You are comfortable falling back if memory pressure is detected
 
 ```bash
-# Force CPU-only mode (corpus sync, recommended)
-arc corpus sync docs ./pdfs --no-gpu
+# Opt into GPU for corpus sync
+arc corpus sync docs ./pdfs --gpu
 
 # Same for single-system (Qdrant-only) indexing
-arc index pdf ./pdfs --collection docs --no-gpu
+arc index pdf ./pdfs --collection docs --gpu
 ```
 
 ## Model Selection
@@ -260,10 +260,10 @@ Choose the embedding model based on your use case:
 
 | Model          | Best For                        | Chunk Size  | Late Chunking | GPU Support |
 | -------------- | ------------------------------- | ----------- | ------------- | ----------- |
-| **stella**     | Long documents, general purpose | 768 tokens  | Yes           | MPS         |
-| **bge**        | Precision, short documents      | 460 tokens  | No            | CoreML      |
-| **modernbert** | Long context, recent content    | 1536 tokens | Yes           | MPS         |
-| **jina**       | Code + text, multilingual       | 1536 tokens | Yes           | MPS         |
+| **arctic-m**   | Stable default for PDFs/docs    | 460 tokens  | No            | CPU/FastEmbed |
+| **stella**     | High-quality documents          | 768 tokens  | Yes           | MPS         |
+| **mxbai-large**| High-quality FastEmbed docs     | 460 tokens  | No            | CPU/FastEmbed |
+| **bge**        | Legacy BGE documents            | 460 tokens  | No            | Experimental CoreML |
 
 ## OCR Configuration
 
@@ -374,8 +374,8 @@ RuntimeError: MPS backend out of memory (MPS allocated: 12.25 GiB...)
 
 The system uses adaptive batch sizes based on model size, but if you still hit memory limits:
 
-1. **Use a smaller model**: Try `bge` or `minilm` instead of `stella`
-2. **Disable GPU**: `--no-gpu` forces CPU-only mode
+1. **Use the stable default**: `arctic-m` is the default for document corpora
+2. **Stay on CPU**: CPU mode is the default; omit `--gpu`
 3. **Close other apps**: Free up GPU memory used by other applications
 4. **Reduce batch size**: `--embedding-batch-size 100` (lower = less memory)
 

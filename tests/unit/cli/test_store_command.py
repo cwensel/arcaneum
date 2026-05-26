@@ -186,9 +186,9 @@ class TestStoreTagsParsing:
 class TestStoreDefaultModels:
     """Test default models configuration."""
 
-    def test_default_models_includes_stella(self):
-        """DEFAULT_MODELS must include the documented 'stella' alias."""
+    def test_default_models_includes_stable_document_default(self):
+        """DEFAULT_MODELS must include the documented document default."""
         from arcaneum.config import DEFAULT_MODELS
 
-        assert 'stella' in DEFAULT_MODELS, \
-            f"'stella' missing from DEFAULT_MODELS: {list(DEFAULT_MODELS)}"
+        assert 'arctic-m' in DEFAULT_MODELS, \
+            f"'arctic-m' missing from DEFAULT_MODELS: {list(DEFAULT_MODELS)}"

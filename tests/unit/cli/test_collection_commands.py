@@ -363,14 +363,14 @@ class TestCollectionCreate:
         # Mock get_collection to return proper info for metadata setting
         mock_qdrant_client.get_collection.return_value = MagicMock(
             config=MagicMock(
-                params=MagicMock(vectors={'stella': MagicMock(size=1024)})
+                params=MagicMock(vectors={'arctic-m': MagicMock(size=768)})
             )
         )
 
         with patch('arcaneum.cli.collections.create_qdrant_client', return_value=mock_qdrant_client):
             with patch('arcaneum.cli.collections.build_vectors_config', return_value={}):
                 with patch('arcaneum.cli.collections.set_collection_metadata'):
-                    with patch('arcaneum.cli.collections.EMBEDDING_MODELS', {'stella': {'dimensions': 1024}}):
+                    with patch('arcaneum.cli.collections.EMBEDDING_MODELS', {'arctic-m': {'dimensions': 768}}):
                         create_collection_command(
                             name='NewCollection',
                             model=None,

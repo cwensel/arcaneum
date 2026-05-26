@@ -39,3 +39,18 @@ class TestCorpusCollectionMetadata:
         values = set(CollectionType.values())
         assert {'pdf', 'code', 'markdown'}.issubset(values), \
             f"CollectionType missing required values: {values}"
+
+
+class TestCorpusDefaultModels:
+    """Stable model defaults are inferred from corpus type."""
+
+    def test_document_corpora_default_to_arctic_m(self):
+        from arcaneum.cli.corpus import default_models_for_type
+
+        assert default_models_for_type("pdf") == "arctic-m"
+        assert default_models_for_type("markdown") == "arctic-m"
+
+    def test_code_corpora_default_to_lightweight_code_model(self):
+        from arcaneum.cli.corpus import default_models_for_type
+
+        assert default_models_for_type("code") == "jina-code"

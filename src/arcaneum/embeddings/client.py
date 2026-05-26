@@ -1,14 +1,18 @@
 """Embedding client utilities with FastEmbed (RDR-002)."""
 
-from fastembed import TextEmbedding
-from typing import Dict, List, Optional
-import os
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
-from arcaneum.paths import get_models_dir
 import atexit
-import threading
 import logging
+import os
+import platform
+import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
+from typing import Dict, List, Optional
+
+from fastembed import TextEmbedding
+
+from arcaneum.paths import get_models_dir
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +161,22 @@ EMBEDDING_MODELS = {
         "description": "BGE Small (384D, fastest)",
         "available": True
     },
+    "arctic-m": {
+        "name": "snowflake/snowflake-arctic-embed-m",
+        "dimensions": 768,
+        "backend": "fastembed",
+        "description": "Snowflake Arctic Embed M (768D, stable retrieval default)",
+        "available": True,
+        "recommended_for": "docs",
+    },
+    "mxbai-large": {
+        "name": "mixedbread-ai/mxbai-embed-large-v1",
+        "dimensions": 1024,
+        "backend": "fastembed",
+        "description": "Mixedbread Embed Large (1024D, high-quality English retrieval)",
+        "available": True,
+        "recommended_for": "docs",
+    },
 
     # Additional general purpose models
     "minilm": {
@@ -259,6 +279,123 @@ class EmbeddingClient:
         # Configure thread environment for CPU mode
         if not use_gpu:
             self._configure_cpu_threading()
+
+    def _experimental_coreml_enabled(self) -> bool:
+        """Return True when the user explicitly opts into FastEmbed CoreML.
+
+        CoreMLExecutionProvider can be unstable for large transformer ONNX
+        models on Apple Silicon because ORT may split the graph into many
+        CoreML/CPU partitions and allocate large native unified-memory buffers
+        outside Python's normal accounting. GPU is opt-in for stability, and
+        this specific FastEmbed/CoreML provider pair requires an additional
+        explicit opt-in.
+        """
+        return os.environ.get("ARC_EXPERIMENTAL_COREML", "").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+    def _resolve_fastembed_providers(self, model_name: str):
+        """Choose ONNX Runtime providers for FastEmbed models.
+
+        FastEmbed uses ONNX Runtime rather than PyTorch. On macOS Apple Silicon,
+        the available GPU provider is CoreMLExecutionProvider, which is not
+        stable enough to enable automatically for transformer embedding models.
+        Returning CPUExecutionProvider here still allows the rest of the client
+        to keep GPU enabled for other model backends in the same run.
+        """
+        if not (self.use_gpu and self._device == "mps"):
+            return None
+
+        is_apple_silicon = sys.platform == "darwin" and platform.machine().lower() in {
+            "arm64",
+            "aarch64",
+        }
+        if is_apple_silicon and not self._experimental_coreml_enabled():
+            logger.info(
+                "Using CPUExecutionProvider for FastEmbed model '%s'; "
+                "CoreMLExecutionProvider is experimental and disabled by default. "
+                "Set ARC_EXPERIMENTAL_COREML=1 to opt in.",
+                model_name,
+            )
+            return ["CPUExecutionProvider"]
+
+        try:
+            import onnxruntime as ort
+            available_providers = ort.get_available_providers()
+            if "CoreMLExecutionProvider" in available_providers:
+                return ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+        except Exception:
+            logger.debug("CoreML provider detection failed for FastEmbed", exc_info=True)
+
+        return ["CPUExecutionProvider"]
+
+    def _system_memory_available_gb(self) -> Optional[float]:
+        """Return currently available system memory in GB, or None if unknown."""
+        try:
+            import psutil
+            return psutil.virtual_memory().available / (1024 ** 3)
+        except Exception:
+            return None
+
+    def _min_system_available_gb(self) -> float:
+        """Configured free-memory floor for accelerator work.
+
+        Apple Silicon uses unified memory: accelerator pressure can starve the
+        entire OS, not just the Python process. Default to a conservative floor
+        and allow power users to tune it without adding another CLI flag.
+        """
+        raw = os.environ.get("ARC_MIN_SYSTEM_AVAILABLE_GB", "4")
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            logger.warning("Invalid ARC_MIN_SYSTEM_AVAILABLE_GB=%r; using 4GB", raw)
+            return 4.0
+
+    def _maybe_disable_gpu_for_memory_pressure(self, model_name: str) -> bool:
+        """Disable further GPU work if system memory is already too low.
+
+        Returns True when GPU was newly disabled. This guard runs before a batch
+        starts so the process can fall back while the system is still responsive.
+        """
+        if not self.use_gpu or self._device == "cpu" or self._gpu_poisoned:
+            return False
+
+        available_gb = self._system_memory_available_gb()
+        min_available_gb = self._min_system_available_gb()
+        if available_gb is None or available_gb >= min_available_gb:
+            return False
+
+        self._gpu_poisoned = True
+        if model_name in self._models:
+            # Drop the active accelerator model reference so subsequent
+            # get_model() calls load the CPU fallback for SentenceTransformers.
+            # FastEmbed models already use CPUExecutionProvider by default on
+            # Apple Silicon, so this is mainly for PyTorch MPS/CUDA models.
+            self._models.pop(model_name, None)
+            try:
+                import gc
+                gc.collect()
+                self._clear_gpu_cache()
+            except Exception:
+                logger.debug("GPU cleanup after memory-pressure fallback failed", exc_info=True)
+
+        logger.warning(
+            "Disabling GPU for this session before embedding '%s': "
+            "system available memory %.2fGB is below floor %.2fGB",
+            model_name,
+            available_gb,
+            min_available_gb,
+        )
+        print(
+            f"  Low system memory ({available_gb:.1f}GB available) — "
+            f"falling back to CPU for remaining embedding work.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return True
 
     def _get_cpu_fallback_model(self, model_name: str):
         """Load a fresh SentenceTransformer on CPU for fallback after GPU poisoning.
@@ -629,17 +766,11 @@ class EmbeddingClient:
                 if not is_cached:
                     print("   Downloading model files...", flush=True, file=sys.stderr)
 
-                # Configure ONNX Runtime providers for GPU (RDR-013 Phase 2)
-                providers = None
-                if self.use_gpu and self._device == "mps":
-                    try:
-                        import onnxruntime as ort
-                        available_providers = ort.get_available_providers()
-                        if "CoreMLExecutionProvider" in available_providers:
-                            providers = ["CoreMLExecutionProvider", "CPUExecutionProvider"]
-                            # Note: Some models may show CoreML warnings but will run in hybrid mode
-                    except Exception:
-                        pass  # Fallback to CPU if CoreML setup fails
+                # Configure ONNX Runtime providers. GPU remains enabled by
+                # default for PyTorch-backed models, but FastEmbed/CoreML is
+                # opt-in because graph partitioning can exhaust Apple unified
+                # memory outside Python's RSS accounting.
+                providers = self._resolve_fastembed_providers(model_name)
 
                 # Use local_files_only if model is cached to prevent network calls
                 # This is the official FastEmbed parameter for offline mode
@@ -1333,6 +1464,8 @@ class EmbeddingClient:
                 logger.debug("Cleared GPU cache before first batch")
 
             for start_idx in range(0, len(texts), batch_size):
+                self._maybe_disable_gpu_for_memory_pressure(model_name)
+
                 # For memory-hungry models, clear cache BEFORE embedding to maximize
                 # available memory for attention allocations (arcaneum-mem-leak)
                 if clear_before_batch and batch_idx > 0:

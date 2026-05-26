@@ -272,7 +272,7 @@ class SourceCodeIndexer:
         if self.vector_name:
             console.print(f"  Vector: {self.vector_name}")
 
-        # Show device info (GPU enabled by default)
+        # Show device info (GPU is opt-in; CPU is the stable default)
         device_info = self.embedding_client.get_device_info()
         if not device_info['gpu_enabled']:
             console.print(f"  Device: CPU (GPU acceleration disabled)")

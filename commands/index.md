@@ -24,7 +24,7 @@ full-text search. Use `/arc:index` when you only need semantic search in a singl
 - --workers: Parallel workers (default: 4)
 - --force: Force reindex all files
 - --randomize: Randomize file processing order (useful for parallel indexing)
-- --no-gpu: Disable GPU acceleration (GPU enabled by default)
+- --gpu: Opt into accelerator embedding (CPU is the stable default)
 - --streaming: Stream embeddings to Qdrant immediately (lower memory usage)
 - --verbose: Show detailed progress (suppress library warnings)
 - --debug: Show all library warnings including transformers
@@ -56,9 +56,9 @@ full-text search. Use `/arc:index` when you only need semantic search in a singl
 **Examples:**
 
 ```text
-# Basic indexing (GPU enabled by default)
-/index pdf ~/Documents/Research --collection PDFs --model stella
-/index markdown ~/notes --collection Notes --model stella
+# Basic indexing (CPU-first stable defaults)
+/index pdf ~/Documents/Research --collection PDFs --model arctic-m
+/index markdown ~/notes --collection Notes --model arctic-m
 /index code ~/projects/myapp --collection MyCode --model jina-code
 
 # Index from file list
@@ -73,8 +73,8 @@ ls ~/notes/*.md | /index markdown --from-file - --collection Notes
 /index markdown ~/docs --collection Docs --chunk-size 512 --verbose
 /index pdf ~/scanned-docs --collection Scans --no-ocr --offline
 
-# Force CPU-only mode (disable GPU)
-/index pdf ~/Documents/Research --collection PDFs --model stella --no-gpu
+# Opt into accelerator embedding
+/index pdf ~/Documents/Research --collection PDFs --model stella --gpu
 
 # Streaming mode (lower memory for large collections)
 /index pdf ~/Documents/Research --collection PDFs --streaming
@@ -159,22 +159,22 @@ Features:
 - Source: 100-200 files/second (depends on file size)
 - Batch upload: 100-200 chunks per batch
 - Parallel workers: 4 (adjustable with --workers for PDF/source)
-- **GPU acceleration**: 1.5-3x speedup (enabled by default, use --no-gpu to disable)
+- **GPU acceleration**: opt-in with --gpu for faster embedding on supported models
 
 **GPU Acceleration:**
 
-GPU acceleration is **enabled by default** for faster embedding generation:
+CPU embedding is the default for stable unattended indexing. GPU acceleration is
+available with `--gpu`:
 
 - **Apple Silicon**: MPS (Metal Performance Shaders) backend
 - **NVIDIA GPUs**: CUDA backend
-- **CPU fallback**: Automatic if GPU unavailable
-- **Disable GPU**: Use --no-gpu flag (for thermal/battery concerns)
+- **FastEmbed/CoreML**: Experimental on Apple Silicon; set `ARC_EXPERIMENTAL_COREML=1`
 
 **Compatible models** (verified with GPU support):
 
-- stella (recommended for PDFs/markdown) - Full MPS support
-- jina-code (recommended for source code) - Full MPS support
-- bge-small, bge-base - CoreML support
+- stella (high-quality PDFs/markdown) - MPS support
+- jina-code (source code) - MPS support
+- bge-small, bge-base - experimental CoreML support
 
 **Offline Mode:**
 

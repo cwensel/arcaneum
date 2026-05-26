@@ -1,9 +1,10 @@
 """Unit tests for GPU fallback stability (RDR-020)."""
 
 import threading
+from unittest.mock import MagicMock, patch
+
 import numpy as np
 import pytest
-from unittest.mock import MagicMock, patch, PropertyMock
 
 
 @pytest.fixture
@@ -69,6 +70,86 @@ class TestGetModelReturnsCPUWhenPoisoned:
                 result = embedding_client.get_model("bge-small")
 
         assert result is mock_model
+
+
+class TestFastEmbedCoreMLPolicy:
+    """FastEmbed CoreML remains opt-in on Apple Silicon."""
+
+    def test_fastembed_uses_cpu_provider_by_default_on_apple_silicon(
+        self, embedding_client, monkeypatch
+    ):
+        monkeypatch.delenv("ARC_EXPERIMENTAL_COREML", raising=False)
+
+        with patch("arcaneum.embeddings.client.sys.platform", "darwin"):
+            with patch("arcaneum.embeddings.client.platform.machine", return_value="arm64"):
+                providers = embedding_client._resolve_fastembed_providers("bge-large")
+
+        assert providers == ["CPUExecutionProvider"]
+
+    def test_fastembed_uses_coreml_when_explicitly_enabled(self, embedding_client, monkeypatch):
+        monkeypatch.setenv("ARC_EXPERIMENTAL_COREML", "1")
+
+        mock_ort = MagicMock()
+        mock_ort.get_available_providers.return_value = [
+            "CoreMLExecutionProvider",
+            "CPUExecutionProvider",
+        ]
+
+        with patch("arcaneum.embeddings.client.sys.platform", "darwin"):
+            with patch("arcaneum.embeddings.client.platform.machine", return_value="arm64"):
+                with patch.dict("sys.modules", {"onnxruntime": mock_ort}):
+                    providers = embedding_client._resolve_fastembed_providers("bge-large")
+
+        assert providers == ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+
+    def test_get_model_passes_cpu_provider_for_fastembed_by_default(
+        self, embedding_client, monkeypatch
+    ):
+        monkeypatch.delenv("ARC_EXPERIMENTAL_COREML", raising=False)
+        mock_model = MagicMock()
+
+        with patch("arcaneum.embeddings.client.sys.platform", "darwin"):
+            with patch("arcaneum.embeddings.client.platform.machine", return_value="arm64"):
+                with patch(
+                    "arcaneum.embeddings.client.TextEmbedding",
+                    return_value=mock_model,
+                ) as mock_text_embedding:
+                    with patch.object(embedding_client, "is_model_cached", return_value=True):
+                        result = embedding_client.get_model("bge-large")
+
+        assert result is mock_model
+        assert mock_text_embedding.call_args.kwargs["providers"] == ["CPUExecutionProvider"]
+
+
+class TestSystemMemoryPressureGuard:
+    """Low system memory disables accelerator work before starting a batch."""
+
+    def test_low_available_memory_poisons_gpu_and_drops_model(self, embedding_client, monkeypatch):
+        monkeypatch.setenv("ARC_MIN_SYSTEM_AVAILABLE_GB", "4")
+        embedding_client._models["jina-code"] = MagicMock()
+
+        with patch.object(embedding_client, "_system_memory_available_gb", return_value=2.5):
+            disabled = embedding_client._maybe_disable_gpu_for_memory_pressure("jina-code")
+
+        assert disabled is True
+        assert embedding_client._gpu_poisoned is True
+        assert "jina-code" not in embedding_client._models
+
+    def test_healthy_available_memory_keeps_gpu_enabled(self, embedding_client, monkeypatch):
+        monkeypatch.setenv("ARC_MIN_SYSTEM_AVAILABLE_GB", "4")
+        embedding_client._models["jina-code"] = MagicMock()
+
+        with patch.object(embedding_client, "_system_memory_available_gb", return_value=8.0):
+            disabled = embedding_client._maybe_disable_gpu_for_memory_pressure("jina-code")
+
+        assert disabled is False
+        assert embedding_client._gpu_poisoned is False
+        assert "jina-code" in embedding_client._models
+
+    def test_invalid_memory_floor_uses_default(self, embedding_client, monkeypatch):
+        monkeypatch.setenv("ARC_MIN_SYSTEM_AVAILABLE_GB", "invalid")
+
+        assert embedding_client._min_system_available_gb() == 4.0
 
 
 class TestDeferredGpuCleanup:

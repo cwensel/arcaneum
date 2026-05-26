@@ -16,7 +16,7 @@ The stored content will be searchable via both `/arc:search semantic` and `/arc:
 **Options:**
 
 - --collection: Target collection (required)
-- --model: Embedding model (default: stella for documents)
+- --model: Embedding model (default: arctic-m for documents)
 - --title: Document title (added to frontmatter)
 - --category: Document category (e.g., research, security, analysis)
 - --tags: Comma-separated tags
@@ -44,7 +44,7 @@ arc store $ARGUMENTS
 1. Accept content from file or stdin (`-`)
 2. Extract/add rich metadata (title, category, tags, custom fields)
 3. Semantic chunking preserving document structure
-4. Generate embeddings (stella default: 1024D for documents)
+4. Generate embeddings (arctic-m default: 768D for stable document retrieval)
 5. Upload to Qdrant with metadata
 6. Persist to disk: `~/.local/share/arcaneum/agent-memory/{collection}/{date}_{agent}_{slug}.md`
 7. Generate YAML frontmatter with injection metadata (injection_id, injected_at, injected_by)
@@ -70,7 +70,7 @@ Content is always persisted for durability. This enables:
 
 **Default Model:**
 
-- stella (1024D, document-optimized)
+- arctic-m (768D, stable FastEmbed document retrieval)
 
 **Related Commands:**
 

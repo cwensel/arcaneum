@@ -57,7 +57,7 @@ def collection():
 
 @collection.command('create')
 @click.argument('name')
-@click.option('--model', default=None, help='Embedding model (stella, modernbert, bge, jina-code). If not specified, inferred from --type.')
+@click.option('--model', default=None, help='Embedding model (arctic-m, mxbai-large, bge, jina-code). If not specified, inferred from --type.')
 @click.option('--type', 'collection_type', type=click.Choice(['pdf', 'code', 'markdown']), help='Collection type (pdf, code, or markdown). Model will be inferred from type if not specified.')
 @click.option('--hnsw-m', type=int, default=16, help='HNSW index parameter m')
 @click.option('--hnsw-ef', type=int, default=100, help='HNSW index parameter ef_construct')
@@ -254,7 +254,7 @@ def index():
 @click.option('--process-priority', type=click.Choice(['low', 'normal', 'high']), default='normal', help='Process scheduling priority (default: normal). Use low for background indexing.')
 @click.option('--not-nice', is_flag=True, help='Disable process priority reduction for worker processes (use normal priority)')
 @click.option('--force', is_flag=True, help='Force reindex all files')
-@click.option('--no-gpu', is_flag=True, help='Disable GPU acceleration (use CPU only, 2-3x slower)')
+@click.option('--no-gpu/--gpu', default=True, help='Use CPU by default; pass --gpu to opt into accelerator embedding')
 @click.option('--offline', is_flag=True, help='Offline mode (use cached models only, no network)')
 @click.option('--randomize', is_flag=True, help='Randomize file processing order (useful for parallel indexing)')
 @click.option('--verify', is_flag=True, help='Verify collection integrity after indexing (fsck-like check)')
@@ -284,7 +284,7 @@ def index_pdf(path, from_file, collection, model, embedding_batch_size, no_ocr, 
 @click.option('--process-priority', type=click.Choice(['low', 'normal', 'high']), default='normal', help='Process scheduling priority (default: normal). Use low for background indexing.')
 @click.option('--not-nice', is_flag=True, help='Disable process priority reduction for worker processes (use normal priority)')
 @click.option('--force', is_flag=True, help='Force reindex all projects')
-@click.option('--no-gpu', is_flag=True, help='Disable GPU acceleration (use CPU only, 2-3x slower)')
+@click.option('--no-gpu/--gpu', default=True, help='Use CPU by default; pass --gpu to opt into accelerator embedding')
 @click.option('--verify', is_flag=True, help='Verify and repair incomplete items after indexing (fsck-like check)')
 @click.option('--no-streaming', is_flag=True, help='Disable streaming mode (accumulate all embeddings before upload, uses more memory)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
@@ -315,7 +315,7 @@ def index_code(path, from_file, collection, model, embedding_batch_size, chunk_s
 @click.option('--process-priority', type=click.Choice(['low', 'normal', 'high']), default='normal', help='Process scheduling priority (default: normal). Use low for background indexing.')
 @click.option('--not-nice', is_flag=True, help='Disable process priority reduction for worker processes (use normal priority)')
 @click.option('--force', is_flag=True, help='Force reindex all files')
-@click.option('--no-gpu', is_flag=True, help='Disable GPU acceleration (use CPU only, 2-3x slower)')
+@click.option('--no-gpu/--gpu', default=True, help='Use CPU by default; pass --gpu to opt into accelerator embedding')
 @click.option('--offline', is_flag=True, help='Offline mode (use cached models only, no network)')
 @click.option('--randomize', is_flag=True, help='Randomize file processing order (useful for parallel indexing)')
 @click.option('--verify', is_flag=True, help='Verify collection integrity after indexing (fsck-like check)')
@@ -446,7 +446,7 @@ def index_text_pdf(path, from_file, index_name, recursive, no_ocr, ocr_language,
 @cli.command('store')
 @click.argument('file', type=click.Path())
 @click.option('--collection', required=True, help='Target collection name')
-@click.option('--model', default='stella', help='Embedding model (default: stella for documents)')
+@click.option('--model', default='arctic-m', help='Embedding model (default: arctic-m for documents)')
 @click.option('--title', help='Document title')
 @click.option('--category', help='Document category')
 @click.option('--tags', help='Comma-separated tags')
@@ -552,7 +552,7 @@ def list_corpora(verbose, output_json):
 @corpus.command('create')
 @click.argument('name')
 @click.option('--type', 'corpus_type', type=click.Choice(['pdf', 'code', 'markdown']), required=True, help='Corpus type')
-@click.option('--models', default='stella,jina', help='Embedding models (comma-separated)')
+@click.option('--models', default=None, help='Embedding models (comma-separated; default inferred from --type)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
 def create_corpus(name, corpus_type, models, output_json):
     """Create both collection and index"""
@@ -574,7 +574,7 @@ def delete_corpus(name, confirm, output_json):
 @click.argument('corpus')
 @click.argument('paths', nargs=-1, type=click.Path(exists=True), required=False)
 @click.option('--from-file', help='Read paths from file (one per line, or "-" for stdin)')
-@click.option('--models', default='stella,jina', help='Embedding models (comma-separated)')
+@click.option('--models', default=None, help='Embedding models (comma-separated; default uses corpus metadata)')
 @click.option('--file-types', help='File extensions to index (e.g., .py,.md)')
 @click.option('--force', is_flag=True, help='Force reindex all files (bypass change detection)')
 @click.option('--dry-run', is_flag=True, help='Show what would be synced without making changes')
@@ -583,7 +583,7 @@ def delete_corpus(name, confirm, output_json):
               help='Parallel workers for code AST chunking (default: auto=cpu/2, 0=sequential)')
 @click.option('--max-embedding-batch', type=int, default=None,
               help='Cap embedding batch size (default: auto from GPU memory, use 8-16 for OOM)')
-@click.option('--no-gpu', is_flag=True, help='Disable GPU acceleration (use CPU only, slower but stable)')
+@click.option('--no-gpu/--gpu', default=True, help='Use CPU by default; pass --gpu to opt into accelerator embedding')
 @click.option('--cpu-workers', type=int, default=None,
               help='Batch parallelization workers for --no-gpu mode (default: 1, conservative to prevent system crashes)')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed progress (files, chunks, indexing)')
@@ -661,7 +661,7 @@ def sync_directory(corpus, paths, from_file, models, file_types, force, dry_run,
 @click.option('--quality-threshold', type=float, default=0.9,
               help='Text quality threshold (0.0-1.0, default: 0.9). Files scoring below are re-extracted.')
 @click.option('--dry-run', is_flag=True, help='Show what would be repaired without making changes')
-@click.option('--no-gpu', is_flag=True, help='Disable GPU acceleration (use CPU only)')
+@click.option('--no-gpu/--gpu', default=True, help='Use CPU by default; pass --gpu to opt into accelerator embedding')
 @click.option('--max-embedding-batch', type=int, default=None,
               help='Cap embedding batch size (default: auto from GPU memory)')
 @click.option('--verbose', '-v', is_flag=True, help='Show per-file quality scores and details')
@@ -698,7 +698,7 @@ def corpus_repair(corpus, quality_threshold, dry_run, no_gpu, max_embedding_batc
 
     sync_directory_command(
         corpus, paths=(), from_file=None,
-        models=configured_models or 'stella,jina',
+        models=configured_models or 'arctic-m',
         file_types=None, force=False, verify=False,
         text_workers=None, max_embedding_batch=max_embedding_batch,
         no_gpu=no_gpu, cpu_workers=None,

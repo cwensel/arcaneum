@@ -42,8 +42,11 @@ The system supports PDF documents and source code with git-aware, AST-based chun
 
 ### Multiple Embedding Models
 
-- **stella** (1024D) - High-quality general purpose embeddings, optimized for PDFs and documents
-- **jina-code-0.5b** (896D) - **RECOMMENDED** for code - SOTA Sept 2025, 32K context, fast (default)
+- **arctic-m** (768D) - **DEFAULT** for PDFs/markdown - stable FastEmbed retrieval model
+- **stella** (1024D) - High-quality opt-in document model
+- **mxbai-large** (1024D) - High-quality FastEmbed document model
+- **jina-code** (768D) - **DEFAULT** for code - stable lightweight code model
+- **jina-code-0.5b** (896D) - Higher-quality opt-in code model, 32K context
 - **jina-code-1.5b** (1536D) - Highest quality code embeddings, SOTA Sept 2025
 - **codesage-large** (1024D) - CodeSage V2, 9 programming languages
 - **bge-large** (1024D) - BGE large embeddings, balanced performance
@@ -55,10 +58,10 @@ See `arc models list` for complete model information and recommendations.
 
 ### GPU Acceleration
 
-- **Enabled by default** for 1.5-3x faster embedding generation
+- **CPU is the default** for the most stable indexing behavior
 - Supports Apple Silicon (MPS) and NVIDIA GPUs (CUDA)
-- Automatic CPU fallback when GPU unavailable
-- Use `--no-gpu` flag to force CPU-only mode
+- Use `--gpu` to opt into accelerator embedding
+- FastEmbed/CoreML on Apple Silicon is experimental and requires `ARC_EXPERIMENTAL_COREML=1`
 
 ### CLI-First Design
 

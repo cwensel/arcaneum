@@ -80,3 +80,58 @@ def test_search_text_entrypoint_dispatches():
     assert result.exit_code == 0, result.output
     assert called['query'] == 'hello world'
     assert called['corpora'] == ['MyCorpus']
+
+
+def test_corpus_create_models_default_is_inferred():
+    """`arc corpus create` leaves model selection to corpus-type defaults."""
+    called = {}
+
+    def fake_create_corpus_command(name, corpus_type, models, output_json):
+        called['name'] = name
+        called['corpus_type'] = corpus_type
+        called['models'] = models
+        raise SystemExit(0)
+
+    result = _run(
+        ['corpus', 'create', 'Docs', '--type', 'markdown'],
+        **{'arcaneum.cli.corpus.create_corpus_command': fake_create_corpus_command},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert called == {
+        'name': 'Docs',
+        'corpus_type': 'markdown',
+        'models': None,
+    }
+
+
+def test_corpus_sync_defaults_to_cpu_and_gpu_is_opt_in():
+    """`arc corpus sync` defaults to no_gpu=True but accepts --gpu."""
+    calls = []
+
+    def fake_sync_directory_command(
+        corpus, paths, from_file, models, file_types, force, verify,
+        text_workers, max_embedding_batch, no_gpu, *args, **kwargs
+    ):
+        calls.append({
+            'corpus': corpus,
+            'models': models,
+            'no_gpu': no_gpu,
+        })
+        raise SystemExit(0)
+
+    default_result = _run(
+        ['corpus', 'sync', 'Docs', '.'],
+        **{'arcaneum.cli.sync.sync_directory_command': fake_sync_directory_command},
+    )
+    gpu_result = _run(
+        ['corpus', 'sync', 'Docs', '.', '--gpu'],
+        **{'arcaneum.cli.sync.sync_directory_command': fake_sync_directory_command},
+    )
+
+    assert default_result.exit_code == 0, default_result.output
+    assert gpu_result.exit_code == 0, gpu_result.output
+    assert calls == [
+        {'corpus': 'Docs', 'models': None, 'no_gpu': True},
+        {'corpus': 'Docs', 'models': None, 'no_gpu': False},
+    ]

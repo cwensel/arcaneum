@@ -7,6 +7,7 @@ from rich.table import Table
 from qdrant_client.models import HnswConfigDiff
 
 from arcaneum.embeddings.client import EMBEDDING_MODELS
+from arcaneum.cli.corpus import DEFAULT_MODELS_BY_CORPUS_TYPE
 from arcaneum.indexing.collection_metadata import (
     set_collection_metadata,
     get_collection_metadata,
@@ -54,16 +55,12 @@ def create_collection_command(
                 if collection_type is None:
                     raise InvalidArgumentError(
                         "Either --model must be specified, or --type must be specified to infer the model. "
-                        "Model inference works with: --type pdf (stella), --type code (jina-code-0.5b), --type markdown (stella)"
+                        "Model inference works with: --type pdf (arctic-m), "
+                        "--type code (jina-code), --type markdown (arctic-m)"
                     )
 
                 # Map collection type to default model
-                type_to_model = {
-                    "pdf": "stella",
-                    "code": "jina-code-0.5b",  # Updated to SOTA Sept 2025 model (896D, 32K context)
-                    "markdown": "stella"
-                }
-                model = type_to_model.get(collection_type)
+                model = DEFAULT_MODELS_BY_CORPUS_TYPE.get(collection_type)
                 if model is None:
                     raise InvalidArgumentError(f"Unknown collection type: {collection_type}")
 

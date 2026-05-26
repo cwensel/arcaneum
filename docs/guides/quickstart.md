@@ -412,16 +412,16 @@ arc corpus sync MyDocs ~/docs
 # Maximum throughput: large batches, parallel AST chunking for code
 arc corpus sync MyCode ~/repos --max-embedding-batch 500 --text-workers 8
 
-# CPU-only mode (stable on Apple Silicon with large models)
-arc corpus sync MyDocs ~/docs --no-gpu --cpu-workers 2
+# Opt into accelerator embedding
+arc corpus sync MyDocs ~/docs --gpu
 ```
 
 **Available Options (`arc corpus sync`):**
 
-- `--max-embedding-batch N`: Cap embedding batch size (default: auto from GPU memory; use 8-16 for OOM recovery)
+- `--max-embedding-batch N`: Cap embedding batch size (use 8-16 for GPU OOM recovery)
 - `--text-workers N`: Parallel workers for code AST chunking (default: auto=cpu/2, 0/1=sequential)
-- `--no-gpu`: Disable GPU acceleration (CPU only)
-- `--cpu-workers N`: Batch parallelization workers for `--no-gpu` mode (default: 1)
+- `--gpu`: Opt into accelerator embedding (CPU is the stable default)
+- `--cpu-workers N`: Batch parallelization workers for CPU mode (default: 1)
 
 See the [CLI Reference](cli-reference.md) for complete performance tuning documentation.
 

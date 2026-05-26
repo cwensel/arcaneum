@@ -186,10 +186,10 @@ def index_source_command(
 
         qdrant_indexer = QdrantIndexer(qdrant_client)
 
-        # Create embedding client with GPU support and persistent model caching (RDR-013 Phase 2, arcaneum-pwd5)
+        # Create embedding client with persistent model caching (RDR-013 Phase 2, arcaneum-pwd5)
         # get_cached_model ensures models persist for the process lifetime,
         # saving 7-8 seconds on subsequent CLI invocations within the same session
-        # GPU enabled by default, disabled with --no-gpu flag
+        # CPU is the stable default; --gpu opts into accelerator embedding.
         embedding_client = get_cached_model(
             model_name=model,
             cache_dir=str(get_models_dir()),

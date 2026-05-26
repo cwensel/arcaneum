@@ -124,8 +124,8 @@ arc corpus sync MyCorpus /path --parity                    # Detect renames, rem
 arc corpus sync MyCorpus /path --parity --dry-run          # Preview rename/remove changes
 arc corpus sync MyCorpus /path --force                     # Force reindex all
 arc corpus sync MyCorpus /path --verify                    # Verify after sync
-arc corpus sync MyCorpus /path --no-gpu                    # CPU-only mode
-arc corpus sync MyCorpus /path --models bge                # Use specific model
+arc corpus sync MyCorpus /path --gpu                       # Opt into accelerator embedding
+arc corpus sync MyCorpus /path --models arctic-m           # Use specific model
 arc corpus sync MyCorpus /path --max-embedding-batch 8     # Limit batch size (OOM recovery)
 arc corpus sync MyCorpus /path --verbose                   # Detailed progress
 arc corpus sync MyCorpus --from-file paths.txt             # Read paths from file (or "-" for stdin)
@@ -149,9 +149,9 @@ arc corpus sync MyCorpus /path/to/repo --git-version       # Keep multiple versi
   changes. Pairs well with `--parity` to preview cleanup.
 - `--force`: Force reindex all files (deletes existing chunks first)
 - `--verify`: Verify collection integrity after indexing
-- `--no-gpu`: Disable GPU acceleration (use CPU only, slower but stable)
-- `--cpu-workers`: Batch parallelization workers for `--no-gpu` mode (default: 1)
-- `--models`: Embedding models to use (comma-separated, default: stella,jina)
+- `--gpu`: Opt into accelerator embedding. CPU is the stable default.
+- `--cpu-workers`: Batch parallelization workers for CPU mode (default: 1)
+- `--models`: Embedding models to use (comma-separated; default comes from corpus metadata)
 - `--file-types`: Comma-separated extensions to index (e.g., `.py,.md`)
 - `--from-file`: Read paths from a file (one per line), or `-` for stdin
 - `--max-embedding-batch`: Cap embedding batch size (use 8-16 for OOM recovery)
@@ -744,7 +744,7 @@ arc collection import backup.arcexp \
 ### Basic Usage
 
 ```bash
-# GPU acceleration enabled by default
+# CPU-first stable default
 # Model is automatically retrieved from collection metadata
 arc index pdf /path/to/pdfs --collection pdf-docs
 ```
@@ -891,35 +891,35 @@ arc search text '"neural network"' --corpus pdf-docs
 
 | Model        | Dimensions | Best For                        | Late Chunking |
 | ------------ | ---------- | ------------------------------- | ------------- |
-| `stella`     | 1024D      | Long documents, general purpose | Yes           |
-| `bge`        | 1024D      | Precision, short documents      | No            |
-| `modernbert` | 768D       | Long context, recent content    | Yes           |
-| `jina`       | 768D       | Code + text, multilingual       | Yes           |
+| `arctic-m`   | 768D       | Stable docs/PDFs/markdown       | No            |
+| `stella`     | 1024D      | High-quality documents          | Yes           |
+| `mxbai-large`| 1024D      | High-quality FastEmbed docs     | No            |
+| `bge`        | 1024D      | Legacy BGE documents            | No            |
 
 ### Code-Specific Models
 
-**Fastest: `jina-code-0.5b` (Recommended)**
+**Stable default: `jina-code`**
 
 For source code indexing, use specialized code models optimized for programming languages:
 
 | Model            | Dimensions | Context | Best For              | Notes                                    |
 | ---------------- | ---------- | ------- | --------------------- | ---------------------------------------- |
-| `jina-code-0.5b` | 896D       | 32K     | **Fastest, balanced** | SOTA Sept 2025, optimal speed/quality    |
+| `jina-code`      | 768D       | 8K      | Stable default        | Lower memory, good code retrieval        |
+| `jina-code-0.5b` | 896D       | 32K     | Higher quality        | SOTA Sept 2025, opt-in                   |
 | `jina-code-1.5b` | 1536D      | 32K     | Highest quality       | SOTA Sept 2025, slower but best accuracy |
-| `jina-code`      | 768D       | 8K      | Legacy                | v2 model, superseded by above            |
 | `codesage-large` | 1024D      | -       | 9 languages           | CodeSage V2, Dec 2024                    |
 | `nomic-code`     | 3584D      | -       | 6 languages           | 7B params, highest quality, slowest      |
 
-**Recommendation:** Use `jina-code-0.5b` for code collections. It provides the best balance of speed and quality
-with 32K context window support.
+**Recommendation:** Use `jina-code` for the most stable default. Use `jina-code-0.5b`
+or `jina-code-1.5b` when quality is more important than memory footprint.
 
 **Usage:**
 
 ```bash
-# Create code collection (uses jina-code-0.5b by default)
+# Create code collection (uses jina-code by default)
 arc collection create MyCode --type code
 
-# Or explicitly specify model
+# Or explicitly specify a higher-quality model
 arc collection create MyCode --type code --model jina-code-0.5b
 ```
 
@@ -995,7 +995,7 @@ Additional options for `arc index` commands:
 
 **Basic Options:**
 
-- `--no-gpu`: Disable GPU acceleration (GPU enabled by default for MPS/CUDA)
+- `--gpu`: Opt into accelerator embedding (CPU is the stable default)
 - `--workers N`: Number of parallel upload workers (default: 4)
 - `--force`: Force reindex all files (skip incremental sync)
 - `--offline`: Use cached models only (no network calls)
@@ -1022,25 +1022,26 @@ larger batches is actually more efficient. Use `--embedding-batch-size` for thro
 
 ### GPU Acceleration
 
-GPU acceleration is **enabled by default** for embedding generation:
+CPU embedding is the default for stable unattended indexing. GPU acceleration is
+available with `--gpu`:
 
 - **Apple Silicon**: Uses MPS (Metal Performance Shaders) backend
 - **NVIDIA GPUs**: Uses CUDA backend
-- **No GPU**: Automatically falls back to CPU
+- **FastEmbed/CoreML**: Experimental on Apple Silicon; set `ARC_EXPERIMENTAL_COREML=1`
 
-**Performance**: 1.5-3x speedup with GPU for embedding generation.
+**Performance**: 1.5-3x speedup with GPU for supported embedding models.
 
 **Compatible Models** (verified with GPU):
 
-- `stella` - Full MPS support (recommended for PDFs/markdown)
-- `jina-code` - Full MPS support (recommended for source code)
-- `bge-small` - CoreML support
-- `bge-base` - CoreML support
+- `stella` - MPS support for high-quality PDFs/markdown
+- `jina-code` - MPS support for source code
+- `bge-small` - experimental CoreML support
+- `bge-base` - experimental CoreML support
 
-**Disable GPU** if needed (thermal concerns, battery life, etc.):
+**Enable GPU** when speed is more important than maximum stability:
 
 ```bash
-arc index pdf /path/to/pdfs --collection docs --no-gpu
+arc index pdf /path/to/pdfs --collection docs --gpu
 ```
 
 ## Exit Codes

@@ -47,3 +47,6 @@ _*
 !__init__.py
 .beads
 .roborev.toml
+.kata.toml
+.kata.local.toml
+.agents

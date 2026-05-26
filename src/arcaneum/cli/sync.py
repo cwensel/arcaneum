@@ -877,13 +877,20 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool 
     return [{'text': c.text, 'metadata': c.metadata} for c in chunks]
 
 
-def chunk_markdown_file(file_path: Path, chunk_size: int, chunk_overlap: int) -> List[Dict[str, Any]]:
+def chunk_markdown_file(
+    file_path: Path,
+    chunk_size: int,
+    chunk_overlap: int,
+    hard_max_chars: Optional[int] = None,
+) -> List[Dict[str, Any]]:
     """Chunk a markdown file using semantic markdown chunking.
 
     Args:
         file_path: Path to markdown file
         chunk_size: Target chunk size in tokens
         chunk_overlap: Overlap between chunks in tokens
+        hard_max_chars: Absolute max chars per emitted chunk to prevent
+            embedding-time truncation.
 
     Returns:
         List of chunk dicts with 'text' and 'metadata'
@@ -896,7 +903,8 @@ def chunk_markdown_file(file_path: Path, chunk_size: int, chunk_overlap: int) ->
 
     chunker = SemanticMarkdownChunker(
         chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap
+        chunk_overlap=chunk_overlap,
+        hard_max_chars=hard_max_chars,
     )
 
     base_metadata = {
@@ -1857,7 +1865,8 @@ def sync_directory_command(
                             chunks = chunk_markdown_file(
                                 file_path,
                                 model_config.get('chunk_size', 512),
-                                model_config.get('chunk_overlap', 50)
+                                model_config.get('chunk_overlap', 50),
+                                hard_max_chars=hard_max_chars,
                             )
                         elif corpus_type == 'code':
                             # Use pre-chunked data if available. Pop (not get)
@@ -2254,7 +2263,8 @@ def sync_directory_command(
                             chunks = chunk_markdown_file(
                                 file_path,
                                 model_config.get('chunk_size', 512),
-                                model_config.get('chunk_overlap', 50)
+                                model_config.get('chunk_overlap', 50),
+                                hard_max_chars=hard_max_chars,
                             )
                         elif corpus_type == 'code':
                             # Use pre-chunked data if available
@@ -3247,7 +3257,8 @@ def _backfill_meili_to_qdrant(
                 chunks = chunk_markdown_file(
                     file_path,
                     model_config.get('chunk_size', 512),
-                    model_config.get('chunk_overlap', 50)
+                    model_config.get('chunk_overlap', 50),
+                    hard_max_chars=hard_max_chars,
                 )
             elif corpus_type == 'code':
                 # Sequential chunking for code (workers=1 or file not in pre-chunked)

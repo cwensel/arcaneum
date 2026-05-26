@@ -54,3 +54,26 @@ class TestCorpusDefaultModels:
         from arcaneum.cli.corpus import default_models_for_type
 
         assert default_models_for_type("code") == "jina-code"
+
+
+class TestCorpusMarkdownChunking:
+    """Corpus sync markdown chunking should avoid embedding-time truncation."""
+
+    def test_chunk_markdown_file_applies_hard_max_chars(self, tmp_path):
+        from arcaneum.cli.sync import chunk_markdown_file
+
+        marker = "TAIL_SENTINEL"
+        file_path = tmp_path / "large.md"
+        file_path.write_text("# Big\n\n" + ("A" * 900) + marker, encoding="utf-8")
+
+        chunks = chunk_markdown_file(
+            file_path,
+            chunk_size=1000,
+            chunk_overlap=10,
+            hard_max_chars=300,
+        )
+
+        assert len(chunks) > 1
+        assert all(len(chunk["text"]) <= 300 for chunk in chunks)
+        assert any(marker in chunk["text"] for chunk in chunks)
+        assert any(chunk["metadata"].get("hard_split") is True for chunk in chunks)

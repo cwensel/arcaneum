@@ -17,7 +17,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
 import xxhash
 
-from ...embeddings.client import EmbeddingClient
+from ...embeddings.client import EMBEDDING_MODELS, EmbeddingClient
 from ...utils.formatting import format_duration
 from ..common.sync import MetadataBasedSync, compute_file_hash, compute_quick_hash
 from .discovery import MarkdownDiscovery
@@ -68,6 +68,16 @@ class MarkdownIndexingPipeline:
             exclude_patterns = ['**/node_modules/**', '**/.git/**', '**/venv/**']
         self.discovery = MarkdownDiscovery(exclude_patterns=exclude_patterns)
         self.sync = MetadataBasedSync(qdrant_client)
+
+    def _hard_max_chars_for_model(self, model_name: str) -> int:
+        """Return the embedding safety bound used for markdown chunking.
+
+        This mirrors EmbeddingClient's last-resort bound so markdown chunks are
+        windowed before embedding instead of being clipped inside the embedder.
+        """
+        model_config = EMBEDDING_MODELS.get(model_name, {})
+        max_seq_length = model_config.get("max_seq_length", 8192)
+        return max_seq_length * 2
 
     def _process_single_markdown(
         self,
@@ -390,6 +400,7 @@ class MarkdownIndexingPipeline:
         chunker = SemanticMarkdownChunker(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
+            hard_max_chars=self._hard_max_chars_for_model(model_name),
             preserve_code_blocks=True
         )
 
@@ -625,7 +636,8 @@ class MarkdownIndexingPipeline:
         # Initialize chunker
         chunker = SemanticMarkdownChunker(
             chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap
+            chunk_overlap=chunk_overlap,
+            hard_max_chars=self._hard_max_chars_for_model(model_name),
         )
 
         # Build base metadata

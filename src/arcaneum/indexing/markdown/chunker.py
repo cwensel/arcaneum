@@ -51,6 +51,7 @@ class SemanticMarkdownChunker:
         chunk_size: int = 512,
         chunk_overlap: int = 50,
         max_chars: Optional[int] = None,
+        hard_max_chars: Optional[int] = None,
         preserve_code_blocks: bool = True
     ):
         """Initialize semantic markdown chunker.
@@ -62,11 +63,15 @@ class SemanticMarkdownChunker:
                        - 2048+ tokens for jina-embeddings-v2-base-en (8K context)
             chunk_overlap: Overlap between chunks in tokens (default ~10%)
             max_chars: Maximum characters per chunk (None = auto-calculate)
+            hard_max_chars: Absolute maximum characters per emitted chunk.
+                Oversized semantic chunks are split into overlapping windows
+                before embedding so no document tail is silently truncated.
             preserve_code_blocks: Keep code blocks intact (don't split mid-block)
         """
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.max_chars = max_chars or int(chunk_size * self.CHARS_PER_TOKEN)
+        self.hard_max_chars = hard_max_chars
         self.preserve_code_blocks = preserve_code_blocks
 
         if not MARKDOWN_IT_AVAILABLE:
@@ -94,13 +99,125 @@ class SemanticMarkdownChunker:
         # Try semantic chunking if available
         if MARKDOWN_IT_AVAILABLE and self.md:
             try:
-                return self._semantic_chunking(text, metadata)
+                return self._enforce_hard_max(self._semantic_chunking(text, metadata))
             except Exception as e:
                 logger.warning(f"Semantic chunking failed: {e}, falling back to naive chunking")
                 # Fall through to naive chunking
 
         # Fallback to naive token-based chunking
-        return self._naive_chunking(text, metadata)
+        return self._enforce_hard_max(self._naive_chunking(text, metadata))
+
+    def _hard_max_overlap_chars(self) -> int:
+        """Return overlap in chars for hard-max windowing.
+
+        Use the configured chunk overlap, but cap it to keep forward progress
+        even when callers choose a very large overlap relative to hard_max_chars.
+        """
+        if not self.hard_max_chars:
+            return 0
+        configured = int(self.chunk_overlap * self.CHARS_PER_TOKEN)
+        max_safe = max(0, self.hard_max_chars // 4)
+        return min(configured, max_safe)
+
+    def _split_text_windowed(self, text: str) -> List[tuple[str, int, int]]:
+        """Split text into hard-max windows with overlap.
+
+        Returns tuples of (window_text, start_char, end_char). The splitter
+        prefers paragraph or line boundaries near the window end, but it will
+        cut at hard_max_chars when a single paragraph/line is too large.
+        """
+        if not self.hard_max_chars or len(text) <= self.hard_max_chars:
+            return [(text, 0, len(text))]
+
+        windows = []
+        overlap = self._hard_max_overlap_chars()
+        start = 0
+
+        while start < len(text):
+            hard_end = min(start + self.hard_max_chars, len(text))
+            end = hard_end
+
+            if hard_end < len(text):
+                search_start = start + int(self.hard_max_chars * 0.75)
+                para_end = text.rfind('\n\n', search_start, hard_end)
+                line_end = text.rfind('\n', search_start, hard_end)
+                boundary = para_end if para_end != -1 else line_end
+                if boundary > start:
+                    end = boundary + (2 if boundary == para_end else 1)
+
+            window_text = text[start:end].strip()
+            if window_text:
+                windows.append((window_text, start, end))
+
+            if end >= len(text):
+                break
+
+            next_start = max(end - overlap, start + 1)
+            if next_start <= start:
+                next_start = end
+            start = next_start
+
+        return windows
+
+    def _enforce_hard_max(self, chunks: List[MarkdownChunk]) -> List[MarkdownChunk]:
+        """Split oversized chunks so embedding never has to truncate content."""
+        if not self.hard_max_chars:
+            return chunks
+
+        bounded = []
+        next_index = 0
+        split_count = 0
+
+        for chunk in chunks:
+            windows = self._split_text_windowed(chunk.text)
+            if len(windows) == 1:
+                bounded.append(self._copy_chunk_with_index(chunk, next_index))
+                next_index += 1
+                continue
+
+            split_count += 1
+            total_windows = len(windows)
+            for window_index, (window_text, start_char, end_char) in enumerate(windows):
+                metadata = {
+                    **chunk.metadata,
+                    'chunk_index': next_index,
+                    'hard_split': True,
+                    'hard_split_source_chunk': chunk.chunk_index,
+                    'hard_split_index': window_index,
+                    'hard_split_count': total_windows,
+                    'chunk_start_char': start_char,
+                    'chunk_end_char': end_char,
+                }
+                bounded.append(MarkdownChunk(
+                    text=window_text,
+                    chunk_index=next_index,
+                    token_count=int(len(window_text) / self.CHARS_PER_TOKEN),
+                    metadata=metadata,
+                    header_path=chunk.header_path,
+                ))
+                next_index += 1
+
+        if split_count:
+            logger.info(
+                "Split %d oversized markdown chunks into %d bounded chunks "
+                "(hard_max_chars=%d)",
+                split_count,
+                len(bounded),
+                self.hard_max_chars,
+            )
+
+        return bounded
+
+    def _copy_chunk_with_index(self, chunk: MarkdownChunk, chunk_index: int) -> MarkdownChunk:
+        """Copy a chunk while normalizing sequential chunk_index metadata."""
+        metadata = {**chunk.metadata, 'chunk_index': chunk_index}
+        return MarkdownChunk(
+            text=chunk.text,
+            chunk_index=chunk_index,
+            token_count=chunk.token_count,
+            metadata=metadata,
+            header_path=chunk.header_path,
+        )
 
     def _semantic_chunking(self, text: str, metadata: Dict) -> List[MarkdownChunk]:
         """Semantic chunking using markdown AST parsing.
@@ -443,7 +560,8 @@ def chunk_markdown(
     text: str,
     chunk_size: int = 512,
     chunk_overlap: int = 50,
-    metadata: Optional[Dict] = None
+    metadata: Optional[Dict] = None,
+    hard_max_chars: Optional[int] = None,
 ) -> List[MarkdownChunk]:
     """Convenience function to chunk markdown text.
 
@@ -452,12 +570,14 @@ def chunk_markdown(
         chunk_size: Target chunk size in tokens (default 512)
         chunk_overlap: Overlap between chunks in tokens (default 50)
         metadata: Optional base metadata dict
+        hard_max_chars: Absolute maximum characters per emitted chunk
 
     Returns:
         List of MarkdownChunk objects
     """
     chunker = SemanticMarkdownChunker(
         chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap
+        chunk_overlap=chunk_overlap,
+        hard_max_chars=hard_max_chars,
     )
     return chunker.chunk(text, metadata or {})

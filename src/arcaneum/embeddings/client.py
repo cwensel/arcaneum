@@ -973,8 +973,10 @@ class EmbeddingClient:
 
         if truncated_count > 0:
             logger.warning(
-                f"Truncated {truncated_count}/{len(texts)} texts exceeding "
-                f"{max_chars} chars (max_seq_length={max_seq_length})"
+                f"Embedding safety clipped {truncated_count}/{len(texts)} oversized texts before "
+                f"embedding; content beyond {max_chars} chars is not represented in vectors. "
+                f"This indicates upstream chunking should split smaller chunks "
+                f"(model={model_name}, max_seq_length={max_seq_length})."
             )
 
         texts = safe_texts

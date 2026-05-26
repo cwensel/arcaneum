@@ -36,11 +36,13 @@ class TestSemanticMarkdownChunker:
             chunk_size=1024,
             chunk_overlap=100,
             max_chars=5000,
+            hard_max_chars=8000,
             preserve_code_blocks=False
         )
         assert chunker.chunk_size == 1024
         assert chunker.chunk_overlap == 100
         assert chunker.max_chars == 5000
+        assert chunker.hard_max_chars == 8000
         assert chunker.preserve_code_blocks is False
 
     def test_empty_text(self):
@@ -198,6 +200,43 @@ More text."""
         # All chunks should have the header in their path
         for chunk in chunks:
             assert 'Large Section' in chunk.header_path
+
+    def test_hard_max_splits_oversized_semantic_chunk(self):
+        """Oversized markdown chunks are windowed instead of truncated."""
+        prefix = "A" * 450
+        middle = "B" * 450
+        tail = "TAIL_SENTINEL"
+        text = f"# Huge Paragraph\n\n{prefix}{middle}{tail}"
+
+        chunker = SemanticMarkdownChunker(
+            chunk_size=1000,
+            chunk_overlap=10,
+            hard_max_chars=300,
+        )
+        chunks = chunker.chunk(text, {})
+
+        assert len(chunks) > 1
+        assert all(len(chunk.text) <= 300 for chunk in chunks)
+        assert any(tail in chunk.text for chunk in chunks)
+        assert any(chunk.metadata.get('hard_split') is True for chunk in chunks)
+
+    def test_hard_max_windowing_uses_overlap(self):
+        """Hard-max windows preserve overlap so boundary context is retained."""
+        text = "# Huge Paragraph\n\n" + "".join(str(i % 10) for i in range(900))
+
+        chunker = SemanticMarkdownChunker(
+            chunk_size=1000,
+            chunk_overlap=30,
+            hard_max_chars=300,
+        )
+        chunks = chunker.chunk(text, {})
+
+        split_chunks = [chunk for chunk in chunks if chunk.metadata.get('hard_split')]
+        assert len(split_chunks) > 1
+
+        first = split_chunks[0]
+        second = split_chunks[1]
+        assert second.metadata['chunk_start_char'] < first.metadata['chunk_end_char']
 
     def test_chunk_indices(self):
         """Test that chunk indices are sequential."""
@@ -364,6 +403,19 @@ class TestChunkMarkdownFunction:
         chunks = chunk_markdown(text, metadata=metadata)
 
         assert chunks[0].metadata['file'] == 'test.md'
+
+    def test_chunk_markdown_accepts_hard_max_chars(self):
+        """Convenience wrapper forwards hard_max_chars."""
+        text = "# Test\n\n" + ("Content " * 200)
+        chunks = chunk_markdown(
+            text,
+            chunk_size=1000,
+            chunk_overlap=10,
+            hard_max_chars=200,
+        )
+
+        assert len(chunks) > 1
+        assert all(len(chunk.text) <= 200 for chunk in chunks)
 
 
 class TestAcceptanceCriteria:

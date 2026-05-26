@@ -50,3 +50,4 @@ _*
 .kata.toml
 .kata.local.toml
 .agents
+skills-lock.json

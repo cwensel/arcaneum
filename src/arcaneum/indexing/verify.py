@@ -18,6 +18,7 @@ import hashlib
 import logging
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional
 from collections import defaultdict
 
@@ -27,6 +28,35 @@ from qdrant_client.models import FieldCondition, Filter, MatchValue
 from arcaneum.indexing.collection_metadata import get_collection_type
 
 logger = logging.getLogger(__name__)
+
+
+def _source_hash_matches_disk(file_path: str, source_hash: str) -> bool:
+    """Return True when a stored source hash matches a known indexer format."""
+    sha256 = hashlib.sha256()
+    try:
+        import xxhash
+        xxh64 = xxhash.xxh64()
+    except ImportError:
+        xxh64 = None
+
+    try:
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(256 * 1024), b""):
+                sha256.update(chunk)
+                if xxh64 is not None:
+                    xxh64.update(chunk)
+    except OSError:
+        return True
+
+    candidates = {sha256.hexdigest()[:len(source_hash)]}
+    if xxh64 is not None:
+        candidates.add(xxh64.hexdigest())
+
+    if len(source_hash) == 32:
+        from arcaneum.indexing.common.sync import compute_text_file_hash
+        candidates.add(compute_text_file_hash(Path(file_path)))
+
+    return source_hash in candidates
 
 
 def _page_count_from_disk(file_path: str) -> Optional[int]:
@@ -566,17 +596,13 @@ class CollectionVerifier:
                 file_data["quality_manifest"] = manifest
 
             if source_hash and os.path.exists(file_path):
-                try:
-                    with open(file_path, "rb") as f:
-                        stale_source = hashlib.sha256(f.read()).hexdigest() != source_hash
-                    if stale_source:
-                        manifest = file_data["quality_manifest"] or {}
-                        warnings = set(manifest.get("quality_warnings", []))
-                        warnings.add("stale_source")
-                        manifest["quality_warnings"] = sorted(warnings)
-                        file_data["quality_manifest"] = manifest
-                except OSError:
-                    pass
+                stale_source = not _source_hash_matches_disk(file_path, source_hash)
+                if stale_source:
+                    manifest = file_data["quality_manifest"] or {}
+                    warnings = set(manifest.get("quality_warnings", []))
+                    warnings.add("stale_source")
+                    manifest["quality_warnings"] = sorted(warnings)
+                    file_data["quality_manifest"] = manifest
 
             # Check extraction dropout.
             # page_count in payload is authoritative when present (newer indexes);

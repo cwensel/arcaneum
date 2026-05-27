@@ -167,6 +167,84 @@ def test_quality_manifest_marks_stale_source(qdrant_client, tmp_path):
     assert "stale_source" in result.files[0].quality_manifest["quality_warnings"]
 
 
+def test_stale_source_accepts_sync_short_hash(qdrant_client, tmp_path):
+    current = tmp_path / "current.pdf"
+    current.write_bytes(b"current")
+    import hashlib
+    short_hash = hashlib.sha256(b"current").hexdigest()[:16]
+    qdrant_client.scroll.side_effect = _scroll_once([
+        _point({
+            "file_path": str(current),
+            "chunk_index": 0,
+            "chunk_count": 1,
+            "source_hash": short_hash,
+            "page_count": 1,
+            "text": "x" * 5000,
+        }),
+    ])
+
+    with patch.object(verify_mod, "get_collection_type", return_value="pdf"):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=1,
+        )
+
+    assert result.is_healthy is True
+    assert "stale_source" not in result.files[0].quality_manifest["quality_warnings"]
+
+
+def test_stale_source_accepts_xxhash_file_hash(qdrant_client, tmp_path):
+    import xxhash
+    current = tmp_path / "current.pdf"
+    current.write_bytes(b"current")
+    qdrant_client.scroll.side_effect = _scroll_once([
+        _point({
+            "file_path": str(current),
+            "chunk_index": 0,
+            "chunk_count": 1,
+            "source_hash": xxhash.xxh64(b"current").hexdigest(),
+            "page_count": 1,
+            "text": "x" * 5000,
+        }),
+    ])
+
+    with patch.object(verify_mod, "get_collection_type", return_value="pdf"):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=1,
+        )
+
+    assert result.is_healthy is True
+    assert "stale_source" not in result.files[0].quality_manifest["quality_warnings"]
+
+
+def test_stale_source_accepts_normalized_text_hash(qdrant_client, tmp_path):
+    from arcaneum.indexing.common.sync import compute_text_file_hash
+    current = tmp_path / "current.md"
+    current.write_bytes(b"# Title\r\nBody\r\n")
+    qdrant_client.scroll.side_effect = _scroll_once([
+        _point({
+            "file_path": str(current),
+            "chunk_index": 0,
+            "chunk_count": 1,
+            "source_hash": compute_text_file_hash(current),
+            "text": "# Title\nBody\n",
+        }),
+    ])
+
+    with patch.object(verify_mod, "get_collection_type", return_value="markdown"):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="markdown",
+            total_points=1,
+        )
+
+    assert result.is_healthy is True
+    assert "stale_source" not in result.files[0].quality_manifest["quality_warnings"]
+
+
 def test_quality_manifest_preserves_ocr_fallback(qdrant_client):
     qdrant_client.scroll.side_effect = _scroll_once([
         _point({

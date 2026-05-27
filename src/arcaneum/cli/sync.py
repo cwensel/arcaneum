@@ -333,6 +333,9 @@ def _build_quality_manifest(
         fallback_method = "normalized_bypass_no_improvement"
     else:
         fallback_method = None
+    ocr_reason = metadata.get("ocr_triggered_by")
+    if not ocr_reason and method and "ocr" in method:
+        ocr_reason = "forced"
 
     return {
         "schema_version": 1,
@@ -350,8 +353,8 @@ def _build_quality_manifest(
             "low_text_pages": low_text_pages,
         },
         "ocr": {
-            "triggered": bool(metadata.get("ocr_triggered_by")),
-            "reason": metadata.get("ocr_triggered_by"),
+            "triggered": bool(ocr_reason),
+            "reason": ocr_reason,
             "pages_processed": metadata.get("ocr_pages_processed"),
             "confidence": metadata.get("ocr_confidence"),
             "failures": metadata.get("ocr_pages_failed"),
@@ -979,7 +982,7 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool 
     base_metadata['quality_manifest'] = _build_quality_manifest(
         file_path=file_path,
         corpus_type='pdf',
-        source_hash=hashlib.sha256(file_path.read_bytes()).hexdigest(),
+        source_hash=compute_file_hash(file_path),
         chunk_count=0,
         metadata={**metadata, **base_metadata},
     )
@@ -2478,6 +2481,15 @@ def sync_directory_command(
                                     if chunk_meta.get(key) is not None:
                                         payload[key] = chunk_meta[key]
                                 payload["document_type"] = "pdf"
+                            elif corpus_type == 'code' and "quality_manifest" not in payload:
+                                payload["quality_manifest"] = _build_quality_manifest(
+                                    file_path=file_path,
+                                    corpus_type='code',
+                                    source_hash=file_hash,
+                                    chunk_count=len(chunks),
+                                    metadata=chunk_meta,
+                                    extraction_method=chunk_meta.get('method'),
+                                )
 
                             points.append(PointStruct(
                                 id=str(uuid4()),
@@ -2708,6 +2720,8 @@ def _fetch_chunks_for_files_bulk(
                         meili_doc["language"] = payload["programming_language"]
                     if payload.get("document_type"):
                         meili_doc["document_type"] = payload["document_type"]
+                    if payload.get("quality_manifest"):
+                        meili_doc["quality_manifest"] = payload["quality_manifest"]
                     for key in (
                         "ocr_confidence",
                         "ocr_language",
@@ -3497,6 +3511,15 @@ def _backfill_meili_to_qdrant(
                         if chunk_meta.get(key) is not None:
                             payload[key] = chunk_meta[key]
                     payload["document_type"] = "pdf"
+                elif corpus_type == 'code' and "quality_manifest" not in payload:
+                    payload["quality_manifest"] = _build_quality_manifest(
+                        file_path=file_path,
+                        corpus_type='code',
+                        source_hash=file_hash,
+                        chunk_count=len(chunks),
+                        metadata=chunk_meta,
+                        extraction_method=chunk_meta.get('method'),
+                    )
 
                 points.append(PointStruct(
                     id=str(uuid4()),

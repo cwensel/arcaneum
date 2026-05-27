@@ -312,3 +312,19 @@ def test_code_quality_manifest_distinguishes_ast_fallback(tmp_path):
     assert manifest["extraction_method"] == "line_based"
     assert manifest["fallback_method"] == "line_based"
     assert manifest["source_hash"] == "abc123"
+
+
+def test_quality_manifest_marks_forced_ocr(tmp_path):
+    source = tmp_path / "forced.pdf"
+    source.write_bytes(b"%PDF-1.4\n")
+
+    manifest = _build_quality_manifest(
+        file_path=source,
+        corpus_type="pdf",
+        source_hash="abc123",
+        chunk_count=1,
+        metadata={"extraction_method": "pymupdf4llm_ocr"},
+    )
+
+    assert manifest["ocr"]["triggered"] is True
+    assert manifest["ocr"]["reason"] == "forced"

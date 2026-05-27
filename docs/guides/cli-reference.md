@@ -1055,9 +1055,15 @@ Configure via environment or `.env` file:
 
 ```bash
 QDRANT_URL=http://localhost:6333
+QDRANT_API_KEY=your-qdrant-api-key  # Optional: for secured/hosted Qdrant
 MEILISEARCH_URL=http://localhost:7700
 MEILISEARCH_API_KEY=your-api-key  # Optional: auto-generated if not set
 ```
+
+Arcaneum also accepts `ARC_QDRANT_URL` and `ARC_QDRANT_API_KEY`; these take
+precedence over the unprefixed Qdrant variables when both are set. Qdrant
+credentials can also be stored in `~/.arcaneum/config.yaml` under
+`qdrant.api_key`.
 
 Note: `MEILISEARCH_API_KEY` is auto-generated on first `arc container start` and stored
 in `~/.config/arcaneum/meilisearch.key`. You only need to set it manually if you want

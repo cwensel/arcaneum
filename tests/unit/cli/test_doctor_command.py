@@ -142,6 +142,21 @@ class TestDoctorChecks:
         assert success is True
         assert 'QDRANT_URL' in message
 
+    def test_environment_vars_check_with_arc_qdrant_vars(self, clean_env):
+        """Test prefixed Qdrant environment variables are detected."""
+        from arcaneum.cli.doctor import check_environment_vars
+        import os
+
+        os.environ['ARC_QDRANT_URL'] = 'https://qdrant.example'
+        os.environ['ARC_QDRANT_API_KEY'] = 'secret-token'
+
+        success, message = check_environment_vars(verbose=True)
+
+        assert success is True
+        assert 'ARC_QDRANT_URL' in message
+        assert 'ARC_QDRANT_API_KEY' in message
+        assert 'secret-token' not in message
+
     def test_environment_vars_check_no_vars(self, clean_env):
         """Test environment variables check when no vars are set."""
         from arcaneum.cli.doctor import check_environment_vars

@@ -7,6 +7,7 @@ from unittest.mock import patch, MagicMock
 from qdrant_client.models import VectorParams, Distance
 
 from arcaneum.cli.utils import (
+    create_qdrant_client,
     get_model_dimensions,
     validate_models,
     build_vectors_config,
@@ -76,6 +77,113 @@ class TestBuildVectorsConfig:
         config = build_vectors_config(['stella'])
         expected_dims = get_model_dimensions('stella')
         assert config['stella'].size == expected_dims
+
+
+class TestCreateQdrantClient:
+    """Tests for create_qdrant_client function."""
+
+    @patch.dict('os.environ', {}, clear=True)
+    @patch('arcaneum.cli.utils.QdrantClient')
+    def test_defaults(self, mock_client_class):
+        """Test client creation with defaults."""
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+
+        result = create_qdrant_client(config_path=Path("/does/not/exist.yaml"))
+
+        mock_client_class.assert_called_once_with(
+            url="http://localhost:6333",
+            api_key=None,
+            timeout=120,
+        )
+        assert result == mock_client
+
+    @patch.dict('os.environ', {
+        'QDRANT_URL': 'https://qdrant.example',
+        'QDRANT_API_KEY': 'env-secret',
+    }, clear=True)
+    @patch('arcaneum.cli.utils.QdrantClient')
+    def test_unprefixed_env_configures_hosted_qdrant(self, mock_client_class):
+        """Test QDRANT_* environment variable support."""
+        create_qdrant_client(config_path=Path("/does/not/exist.yaml"))
+
+        mock_client_class.assert_called_once_with(
+            url="https://qdrant.example",
+            api_key="env-secret",
+            timeout=120,
+        )
+
+    @patch.dict('os.environ', {
+        'QDRANT_URL': 'https://qdrant.example',
+        'ARC_QDRANT_URL': 'https://arc-qdrant.example',
+        'QDRANT_API_KEY': 'env-secret',
+        'ARC_QDRANT_API_KEY': 'arc-secret',
+    }, clear=True)
+    @patch('arcaneum.cli.utils.QdrantClient')
+    def test_prefixed_env_takes_precedence(self, mock_client_class):
+        """Test ARC_QDRANT_* wins over QDRANT_*."""
+        create_qdrant_client(config_path=Path("/does/not/exist.yaml"))
+
+        mock_client_class.assert_called_once_with(
+            url="https://arc-qdrant.example",
+            api_key="arc-secret",
+            timeout=120,
+        )
+
+    @patch.dict('os.environ', {}, clear=True)
+    @patch('arcaneum.cli.utils.QdrantClient')
+    def test_config_file_credentials(self, mock_client_class, tmp_path):
+        """Test Qdrant API key can be loaded from config."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text("""
+models:
+  test-model:
+    name: test/model
+    dimensions: 768
+    chunk_size: 512
+    chunk_overlap: 64
+qdrant:
+  url: https://config-qdrant.example
+  api_key: config-secret
+  timeout: 90
+  search_timeout: 30
+""")
+
+        create_qdrant_client(config_path=config_path)
+
+        mock_client_class.assert_called_once_with(
+            url="https://config-qdrant.example",
+            api_key="config-secret",
+            timeout=90,
+        )
+
+    @patch.dict('os.environ', {
+        'ARC_QDRANT_URL': 'https://env-qdrant.example',
+        'ARC_QDRANT_API_KEY': 'env-secret',
+    }, clear=True)
+    @patch('arcaneum.cli.utils.QdrantClient')
+    def test_params_override_env(self, mock_client_class):
+        """Test explicit params override environment credentials."""
+        create_qdrant_client(
+            url="https://param-qdrant.example",
+            api_key="param-secret",
+            timeout=10,
+            config_path=Path("/does/not/exist.yaml"),
+        )
+
+        mock_client_class.assert_called_once_with(
+            url="https://param-qdrant.example",
+            api_key="param-secret",
+            timeout=10,
+        )
+
+    @patch.dict('os.environ', {'ARC_QDRANT_API_KEY': 'super-secret'}, clear=True)
+    @patch('arcaneum.cli.utils.QdrantClient')
+    def test_api_key_not_logged(self, mock_client_class, caplog):
+        """Test secret values are not written to logs."""
+        create_qdrant_client(config_path=Path("/does/not/exist.yaml"))
+
+        assert "super-secret" not in caplog.text
 
 
 class TestCreateMeiliClient:

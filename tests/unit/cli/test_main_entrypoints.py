@@ -135,3 +135,84 @@ def test_corpus_sync_defaults_to_cpu_and_gpu_is_opt_in():
         {'corpus': 'Docs', 'models': None, 'no_gpu': True},
         {'corpus': 'Docs', 'models': None, 'no_gpu': False},
     ]
+
+
+def test_index_markdown_qdrant_url_defaults_to_shared_resolution(tmp_path):
+    """`arc index markdown` must not force localhost before client creation."""
+    called = {}
+    docs = tmp_path / "docs"
+    docs.mkdir()
+
+    def fake_index_markdown_command(*args, **kwargs):
+        called['qdrant_url'] = args[9]
+        raise SystemExit(0)
+
+    result = _run(
+        ['index', 'markdown', str(docs), '--collection', 'Docs'],
+        **{'arcaneum.cli.index_markdown.index_markdown_command': fake_index_markdown_command},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert called['qdrant_url'] is None
+
+
+def test_index_markdown_explicit_qdrant_url_is_preserved(tmp_path):
+    """Explicit `--qdrant-url` remains an override."""
+    called = {}
+    docs = tmp_path / "docs"
+    docs.mkdir()
+
+    def fake_index_markdown_command(*args, **kwargs):
+        called['qdrant_url'] = args[9]
+        raise SystemExit(0)
+
+    result = _run(
+        [
+            'index', 'markdown', str(docs), '--collection', 'Docs',
+            '--qdrant-url', 'https://qdrant.example',
+        ],
+        **{'arcaneum.cli.index_markdown.index_markdown_command': fake_index_markdown_command},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert called['qdrant_url'] == 'https://qdrant.example'
+
+
+def test_index_source_uses_shared_qdrant_resolution(tmp_path):
+    """`arc index code` must not force localhost before client creation."""
+    from arcaneum.cli.index_source import index_source_command
+
+    with patch('arcaneum.cli.index_source.interaction_logger'):
+        with patch('arcaneum.cli.index_source.create_qdrant_client') as mock_create:
+            with patch(
+                'arcaneum.indexing.collection_metadata.get_collection_metadata',
+                return_value=None,
+            ):
+                result = None
+                try:
+                    index_source_command(
+                        path=str(tmp_path),
+                        from_file=None,
+                        collection='Code',
+                        model=None,
+                        embedding_batch_size=None,
+                        chunk_size=None,
+                        chunk_overlap=None,
+                        depth=None,
+                        process_priority='normal',
+                        not_nice=True,
+                        force=False,
+                        no_gpu=True,
+                        verify=False,
+                        streaming=True,
+                        verbose=False,
+                        debug=False,
+                        profile=False,
+                        output_json=True,
+                    )
+                except SystemExit as exc:
+                    result = exc
+
+    assert result is not None
+    assert result.code == 1
+    mock_create.assert_called_once_with()

@@ -285,7 +285,9 @@ def mock_services_healthy(mock_qdrant_health):
 def clean_env():
     """Provide a clean environment without Arcaneum env vars."""
     env_vars = [
-        'QDRANT_URL', 'QDRANT_API_KEY',
+        'QDRANT_URL', 'ARC_QDRANT_URL',
+        'ARC_QDRANT_TIMEOUT',
+        'QDRANT_API_KEY', 'ARC_QDRANT_API_KEY',
         'MEILISEARCH_URL', 'MEILISEARCH_API_KEY',
     ]
     old_values = {}

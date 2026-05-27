@@ -311,7 +311,7 @@ def index_code(path, from_file, collection, model, embedding_batch_size, chunk_s
 @click.option('--chunk-overlap', type=int, help='Overlap between chunks in tokens')
 @click.option('--recursive/--no-recursive', default=True, help='Search subdirectories recursively')
 @click.option('--exclude', multiple=True, help='Patterns to exclude (e.g., node_modules, .obsidian)')
-@click.option('--qdrant-url', default='http://localhost:6333', help='Qdrant server URL')
+@click.option('--qdrant-url', default=None, help='Qdrant server URL')
 @click.option('--process-priority', type=click.Choice(['low', 'normal', 'high']), default='normal', help='Process scheduling priority (default: normal). Use low for background indexing.')
 @click.option('--not-nice', is_flag=True, help='Disable process priority reduction for worker processes (use normal priority)')
 @click.option('--force', is_flag=True, help='Force reindex all files')

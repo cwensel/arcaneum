@@ -30,7 +30,7 @@ def index_markdown_command(
     chunk_overlap: int,
     recursive: bool,
     exclude: tuple,
-    qdrant_url: str,
+    qdrant_url: str | None,
     process_priority: str,
     not_nice: bool,
     force: bool,

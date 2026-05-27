@@ -76,12 +76,17 @@ class TestQdrantConfig:
     def test_defaults(self):
         q = QdrantConfig()
         assert q.url == "http://localhost:6333"
+        assert q.api_key is None
         assert q.timeout == 120
         assert q.search_timeout == 60
 
     def test_custom_url(self):
         q = QdrantConfig(url="http://myhost:7777")
         assert q.url == "http://myhost:7777"
+
+    def test_api_key(self):
+        q = QdrantConfig(api_key="secret-token")
+        assert q.api_key == "secret-token"
 
 
 # --- ArcaneumConfig ---
@@ -114,11 +119,16 @@ class TestLoadConfig:
 
     def test_loads_qdrant_section(self, tmp_path):
         data = dict(MINIMAL_CONFIG_DATA)
-        data["qdrant"] = {"url": "http://remotehost:6333", "timeout": 60}
+        data["qdrant"] = {
+            "url": "http://remotehost:6333",
+            "api_key": "from-config",
+            "timeout": 60,
+        }
         path = tmp_path / "cfg.yaml"
         path.write_text(yaml.dump(data))
         cfg = load_config(path)
         assert cfg.qdrant.url == "http://remotehost:6333"
+        assert cfg.qdrant.api_key == "from-config"
         assert cfg.qdrant.timeout == 60
 
     def test_invalid_yaml_raises(self, tmp_path):

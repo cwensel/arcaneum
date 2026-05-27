@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel, Field
 from pathlib import Path
-from typing import Dict, List, Literal
+from typing import Dict, List, Literal, Optional
 import yaml
 from arcaneum.embeddings.client import EMBEDDING_MODELS
 
@@ -21,6 +21,7 @@ class ModelConfig(BaseModel):
 class QdrantConfig(BaseModel):
     """Qdrant server configuration."""
     url: str = "http://localhost:6333"
+    api_key: Optional[str] = None
     timeout: int = 120  # General timeout for indexing operations
     search_timeout: int = 60  # Timeout for search operations (can be longer)
 

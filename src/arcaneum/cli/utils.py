@@ -212,6 +212,7 @@ def set_process_priority(priority: str, disable_worker_nice: bool = False) -> No
 
 def create_qdrant_client(
     url: Optional[str] = None,
+    api_key: Optional[str] = None,
     timeout: Optional[int] = None,
     for_search: bool = False,
     config_path: Optional[Path] = None
@@ -223,6 +224,7 @@ def create_qdrant_client(
 
     Args:
         url: Qdrant server URL (defaults to config or localhost:6333)
+        api_key: Qdrant API key (defaults to env or config)
         timeout: Timeout in seconds (overrides config)
         for_search: If True, use search_timeout from config (default: False)
         config_path: Path to config file (defaults to ~/.arcaneum/config.yaml)
@@ -231,7 +233,8 @@ def create_qdrant_client(
         Configured QdrantClient instance
 
     Environment Variables:
-        ARC_QDRANT_URL: Override Qdrant URL
+        ARC_QDRANT_URL or QDRANT_URL: Override Qdrant URL
+        ARC_QDRANT_API_KEY or QDRANT_API_KEY: Override Qdrant API key
         ARC_QDRANT_TIMEOUT: Override timeout value
     """
     # Try to load config, but don't fail if it doesn't exist
@@ -249,11 +252,21 @@ def create_qdrant_client(
     # Determine URL (priority: param > env > config > default)
     final_url = url
     if not final_url:
-        final_url = os.environ.get("ARC_QDRANT_URL")
+        final_url = os.environ.get("ARC_QDRANT_URL") or os.environ.get("QDRANT_URL")
     if not final_url and qdrant_config:
         final_url = qdrant_config.url
     if not final_url:
         final_url = "http://localhost:6333"
+
+    # Determine API key (priority: param > env > config > none)
+    final_api_key = api_key
+    if not final_api_key:
+        final_api_key = (
+            os.environ.get("ARC_QDRANT_API_KEY")
+            or os.environ.get("QDRANT_API_KEY")
+        )
+    if not final_api_key and qdrant_config:
+        final_api_key = qdrant_config.api_key
 
     # Determine timeout (priority: param > env > config > default)
     final_timeout = timeout
@@ -272,9 +285,14 @@ def create_qdrant_client(
     if final_timeout is None:
         final_timeout = 60 if for_search else 120
 
-    logger.debug(f"Creating QdrantClient: url={final_url}, timeout={final_timeout}s")
+    logger.debug(
+        "Creating QdrantClient: url=%s, timeout=%ss, api_key=%s",
+        final_url,
+        final_timeout,
+        "set" if final_api_key else "unset",
+    )
 
-    return QdrantClient(url=final_url, timeout=final_timeout)
+    return QdrantClient(url=final_url, api_key=final_api_key, timeout=final_timeout)
 
 
 def create_meili_client(

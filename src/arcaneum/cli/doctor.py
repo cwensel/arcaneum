@@ -133,7 +133,9 @@ def check_environment_vars(verbose: bool = False) -> Tuple[bool, str]:
     """Check important environment variables."""
     important_vars = [
         'QDRANT_URL',
+        'ARC_QDRANT_URL',
         'QDRANT_API_KEY',
+        'ARC_QDRANT_API_KEY',
         'MEILISEARCH_URL',
         'MEILISEARCH_API_KEY',
     ]

@@ -130,15 +130,10 @@ def index_source_command(
             if not source_dir.exists():
                 raise ValueError(f"Path does not exist: {path}")
 
-        # Connect to Qdrant (use defaults)
-        qdrant_url = 'localhost'
-        qdrant_port = 6333
         if verbose:
-            console.print(f"[cyan]Connecting to Qdrant:[/cyan] {qdrant_url}:{qdrant_port}")
+            console.print("[cyan]Connecting to Qdrant[/cyan]")
 
-        # Use HTTP client (consistent with other CLI commands)
-        qdrant_url_full = f"http://{qdrant_url}:{qdrant_port}"
-        qdrant_client = create_qdrant_client(url=qdrant_url_full)
+        qdrant_client = create_qdrant_client()
 
         # Retrieve model from collection metadata if not provided
         if model is None:

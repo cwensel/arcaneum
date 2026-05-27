@@ -208,7 +208,7 @@ class PDFExtractor:
             md_text = '\n'.join(page_texts)
 
             metadata = {
-                'extraction_method': 'pymupdf4llm_markdown',
+                'extraction_method': 'pymupdf4llm_ocr' if self.use_ocr else 'pymupdf4llm_markdown',
                 'is_image_pdf': False,
                 'page_count': page_count,
                 'file_size': pdf_path.stat().st_size,

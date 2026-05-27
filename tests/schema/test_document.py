@@ -120,6 +120,13 @@ class TestToQdrantPoint:
             branch="main",
             git_project_identifier="myproject#main",
             function_names=["foo", "bar"],
+            ocr_confidence=57.5,
+            ocr_language="eng",
+            ocr_pages_processed=2,
+            ocr_pages_failed=1,
+            ocr_low_confidence_word_count=4,
+            ocr_merge_strategy="append_ocr_to_extracted_text",
+            ocr_triggered_by="quality",
             vectors={"model": [0.1, 0.2]},
         )
 
@@ -130,6 +137,13 @@ class TestToQdrantPoint:
         assert point.payload["git_branch"] == "main"
         assert point.payload["git_project_identifier"] == "myproject#main"
         assert point.payload["function_names"] == ["foo", "bar"]
+        assert point.payload["ocr_confidence"] == 57.5
+        assert point.payload["ocr_language"] == "eng"
+        assert point.payload["ocr_pages_processed"] == 2
+        assert point.payload["ocr_pages_failed"] == 1
+        assert point.payload["ocr_low_confidence_word_count"] == 4
+        assert point.payload["ocr_merge_strategy"] == "append_ocr_to_extracted_text"
+        assert point.payload["ocr_triggered_by"] == "quality"
 
     def test_optional_fields_omitted_when_none(self):
         """Test that optional fields are not included when None."""
@@ -222,6 +236,13 @@ class TestToMeilisearchDoc:
             title="Important Document",
             author="John Doe",
             document_type="pdf",
+            ocr_confidence=57.5,
+            ocr_language="eng",
+            ocr_pages_processed=2,
+            ocr_pages_failed=1,
+            ocr_low_confidence_word_count=4,
+            ocr_merge_strategy="append_ocr_to_extracted_text",
+            ocr_triggered_by="quality",
         )
 
         meili_doc = to_meilisearch_doc(doc)
@@ -230,6 +251,13 @@ class TestToMeilisearchDoc:
         assert meili_doc["title"] == "Important Document"
         assert meili_doc["author"] == "John Doe"
         assert meili_doc["document_type"] == "pdf"
+        assert meili_doc["ocr_confidence"] == 57.5
+        assert meili_doc["ocr_language"] == "eng"
+        assert meili_doc["ocr_pages_processed"] == 2
+        assert meili_doc["ocr_pages_failed"] == 1
+        assert meili_doc["ocr_low_confidence_word_count"] == 4
+        assert meili_doc["ocr_merge_strategy"] == "append_ocr_to_extracted_text"
+        assert meili_doc["ocr_triggered_by"] == "quality"
 
     def test_optional_fields_omitted_when_none(self):
         """Test that optional fields are not included when None."""

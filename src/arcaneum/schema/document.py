@@ -78,6 +78,13 @@ class DualIndexDocument:
     document_type: Optional[str] = None
     page_count: Optional[int] = None
     extraction_floor: Optional[bool] = None
+    ocr_confidence: Optional[float] = None
+    ocr_language: Optional[str] = None
+    ocr_pages_processed: Optional[int] = None
+    ocr_pages_failed: Optional[int] = None
+    ocr_low_confidence_word_count: Optional[int] = None
+    ocr_merge_strategy: Optional[str] = None
+    ocr_triggered_by: Optional[str] = None
 
     # Markdown-specific
     headings: List[str] = field(default_factory=list)
@@ -171,6 +178,27 @@ def to_qdrant_point(doc: DualIndexDocument, point_id: Optional[int] = None):
     if doc.extraction_floor:
         payload["extraction_floor"] = doc.extraction_floor
 
+    if doc.ocr_confidence is not None:
+        payload["ocr_confidence"] = doc.ocr_confidence
+
+    if doc.ocr_language:
+        payload["ocr_language"] = doc.ocr_language
+
+    if doc.ocr_pages_processed is not None:
+        payload["ocr_pages_processed"] = doc.ocr_pages_processed
+
+    if doc.ocr_pages_failed is not None:
+        payload["ocr_pages_failed"] = doc.ocr_pages_failed
+
+    if doc.ocr_low_confidence_word_count is not None:
+        payload["ocr_low_confidence_word_count"] = doc.ocr_low_confidence_word_count
+
+    if doc.ocr_merge_strategy:
+        payload["ocr_merge_strategy"] = doc.ocr_merge_strategy
+
+    if doc.ocr_triggered_by:
+        payload["ocr_triggered_by"] = doc.ocr_triggered_by
+
     if doc.headings:
         payload["headings"] = doc.headings
 
@@ -254,6 +282,27 @@ def to_meilisearch_doc(doc: DualIndexDocument) -> Dict[str, Any]:
 
     if doc.document_type:
         meili_doc["document_type"] = doc.document_type
+
+    if doc.ocr_confidence is not None:
+        meili_doc["ocr_confidence"] = doc.ocr_confidence
+
+    if doc.ocr_language:
+        meili_doc["ocr_language"] = doc.ocr_language
+
+    if doc.ocr_pages_processed is not None:
+        meili_doc["ocr_pages_processed"] = doc.ocr_pages_processed
+
+    if doc.ocr_pages_failed is not None:
+        meili_doc["ocr_pages_failed"] = doc.ocr_pages_failed
+
+    if doc.ocr_low_confidence_word_count is not None:
+        meili_doc["ocr_low_confidence_word_count"] = doc.ocr_low_confidence_word_count
+
+    if doc.ocr_merge_strategy:
+        meili_doc["ocr_merge_strategy"] = doc.ocr_merge_strategy
+
+    if doc.ocr_triggered_by:
+        meili_doc["ocr_triggered_by"] = doc.ocr_triggered_by
 
     if doc.headings:
         meili_doc["headings"] = doc.headings

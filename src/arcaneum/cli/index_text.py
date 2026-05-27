@@ -216,6 +216,9 @@ def index_text_pdf_command(
                     "skipped_pdfs": stats['skipped_pdfs'],
                     "failed_pdfs": stats['failed_pdfs'],
                     "total_pages": stats['total_pages'],
+                    "ocr_pages_processed": stats.get('ocr_pages_processed', 0),
+                    "ocr_pages_failed": stats.get('ocr_pages_failed', 0),
+                    "ocr_confidence": stats.get('ocr_confidence', 0.0),
                 }
             }
             if stats.get('errors'):

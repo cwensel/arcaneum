@@ -13,7 +13,7 @@ from typing import Dict, Any, List, Optional
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
 
 from ..pdf.extractor import PDFExtractor
-from ..pdf.ocr import OCREngine
+from ..pdf.ocr import OCREngine, merge_extracted_text_with_ocr
 from ...fulltext.client import FullTextClient
 
 logger = logging.getLogger(__name__)
@@ -102,8 +102,8 @@ class PDFFullTextIndexer:
         if self.ocr_engine and len(text.strip()) < 100:
             if verbose:
                 logger.info(f"OCR triggered for {pdf_path.name} (text < 100 chars)")
-            text, ocr_metadata = self.ocr_engine.process_pdf(pdf_path, verbose=verbose)
-            metadata.update(ocr_metadata)
+            ocr_text, ocr_metadata = self.ocr_engine.process_pdf(pdf_path, verbose=verbose)
+            text, metadata = merge_extracted_text_with_ocr(text, metadata, ocr_text, ocr_metadata)
 
         # Phase 2: Prepare MeiliSearch documents (page-level)
         documents = self._build_meilisearch_documents(
@@ -131,6 +131,9 @@ class PDFFullTextIndexer:
             'page_count': len(documents),
             'task_uid': task_uid,
             'extraction_method': metadata.get('extraction_method', 'unknown'),
+            'ocr_pages_processed': metadata.get('ocr_pages_processed', 0),
+            'ocr_pages_failed': metadata.get('ocr_pages_failed', 0),
+            'ocr_confidence': metadata.get('ocr_confidence'),
         }
 
     def _build_meilisearch_documents(
@@ -199,6 +202,13 @@ class PDFFullTextIndexer:
             if 'ocr_confidence' in metadata:
                 doc['ocr_confidence'] = metadata['ocr_confidence']
                 doc['ocr_language'] = metadata.get('ocr_language', 'eng')
+                doc['ocr_pages_processed'] = metadata.get('ocr_pages_processed', 0)
+                doc['ocr_pages_failed'] = metadata.get('ocr_pages_failed', 0)
+                doc['ocr_low_confidence_word_count'] = metadata.get(
+                    'ocr_low_confidence_word_count',
+                    0,
+                )
+                doc['ocr_merge_strategy'] = metadata.get('ocr_merge_strategy')
 
             documents.append(doc)
 
@@ -245,8 +255,11 @@ class PDFFullTextIndexer:
 
         if page_boundaries:
             # Use precise page boundaries from extraction
-            pages = []
+            pages = [''] * page_count
             for i, boundary in enumerate(page_boundaries):
+                page_number = boundary.get('page_number', i + 1)
+                if page_number < 1 or page_number > page_count:
+                    continue
                 start_char = boundary.get('start_char', 0)
                 length = boundary.get('page_text_length', 0)
                 end_char = start_char + length
@@ -257,7 +270,11 @@ class PDFFullTextIndexer:
                     end_char = min(end_char, next_start)
 
                 page_text = full_text[start_char:end_char]
-                pages.append(page_text)
+                page_index = page_number - 1
+                if pages[page_index] and page_text:
+                    pages[page_index] = f"{pages[page_index]}\n\n{page_text}"
+                else:
+                    pages[page_index] = page_text
 
             return pages
 
@@ -317,11 +334,18 @@ class PDFFullTextIndexer:
             'skipped_pdfs': 0,
             'failed_pdfs': 0,
             'total_pages': 0,
+            'ocr_pages_processed': 0,
+            'ocr_pages_failed': 0,
+            'ocr_confidence_sum': 0.0,
+            'ocr_pdf_count': 0,
             'errors': [],
         }
 
         if not pdf_files:
             logger.info("No PDF files found to index")
+            stats['ocr_confidence'] = 0.0
+            del stats['ocr_confidence_sum']
+            del stats['ocr_pdf_count']
             return stats
 
         # Index PDFs with progress tracking
@@ -357,6 +381,11 @@ class PDFFullTextIndexer:
                     result = self.index_pdf(pdf_path, verbose=verbose)
                     stats['indexed_pdfs'] += 1
                     stats['total_pages'] += result['page_count']
+                    stats['ocr_pages_processed'] += result.get('ocr_pages_processed', 0)
+                    stats['ocr_pages_failed'] += result.get('ocr_pages_failed', 0)
+                    if result.get('ocr_confidence') is not None:
+                        stats['ocr_confidence_sum'] += result['ocr_confidence']
+                        stats['ocr_pdf_count'] += 1
 
                     if verbose:
                         progress.console.print(
@@ -375,6 +404,13 @@ class PDFFullTextIndexer:
                     })
 
                 progress.update(task, advance=1)
+
+        if stats['ocr_pdf_count']:
+            stats['ocr_confidence'] = stats['ocr_confidence_sum'] / stats['ocr_pdf_count']
+        else:
+            stats['ocr_confidence'] = 0.0
+        del stats['ocr_confidence_sum']
+        del stats['ocr_pdf_count']
 
         return stats
 

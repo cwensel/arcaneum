@@ -6,7 +6,7 @@ from PIL import Image
 import cv2
 import numpy as np
 from pathlib import Path
-from typing import Tuple, Optional, Dict
+from typing import Tuple, Optional, Dict, Any, List
 from multiprocessing import cpu_count
 import os
 import io
@@ -20,13 +20,31 @@ from ..common.multiprocessing import get_mp_context, worker_init
 logger = logging.getLogger(__name__)
 
 
+def _safe_confidence(confidence: Any) -> Optional[float]:
+    """Normalize Tesseract confidence values, skipping structural rows."""
+    try:
+        conf = float(confidence)
+    except (TypeError, ValueError):
+        return None
+    if conf < 0:
+        return None
+    return conf
+
+
+def _ocr_data_value(data: Dict[str, List[Any]], key: str, index: int, default: Any) -> Any:
+    values = data.get(key)
+    if not values or index >= len(values):
+        return default
+    return values[index]
+
+
 def _ocr_single_page_worker(
     page_image_bytes: bytes,
     page_num: int,
     language: str,
     confidence_threshold: float,
     image_scale: float
-) -> Tuple[int, str, float]:
+) -> Tuple[int, str, float, Dict[str, Any]]:
     """Process a single PDF page with OCR (module-level for ProcessPoolExecutor).
 
     Args:
@@ -37,7 +55,7 @@ def _ocr_single_page_worker(
         image_scale: Scale factor for accuracy
 
     Returns:
-        Tuple of (page_num, text, confidence)
+        Tuple of (page_num, text, confidence, page_metadata)
     """
     # Set low priority UNLESS disabled by --not-nice flag (arcaneum-mql4)
     if os.environ.get('ARCANEUM_DISABLE_WORKER_NICE') != '1':
@@ -87,41 +105,149 @@ def _ocr_single_page_worker(
             output_type=pytesseract.Output.DICT
         )
 
-        # Extract text with confidence filtering
-        filtered_text = []
+        # Extract all words with confidence metadata. Do not discard low-confidence
+        # words: they can be the only recall signal in scanned/aged PDFs.
+        lines: Dict[Tuple[int, int, int], List[Tuple[int, str]]] = {}
         confidences = []
+        low_confidence_words = []
+        word_count = 0
 
         for i, conf in enumerate(data['conf']):
-            if conf == -1:
+            conf_value = _safe_confidence(conf)
+            if conf_value is None:
                 continue
-            if conf >= confidence_threshold:
-                text = data['text'][i]
-                if text.strip():
-                    filtered_text.append(text)
-                    confidences.append(conf)
+            text = data['text'][i]
+            if not text.strip():
+                continue
 
-        text = ' '.join(filtered_text)
+            block_num = int(_ocr_data_value(data, 'block_num', i, 0) or 0)
+            par_num = int(_ocr_data_value(data, 'par_num', i, 0) or 0)
+            line_num = int(_ocr_data_value(data, 'line_num', i, 0) or 0)
+            word_num = int(_ocr_data_value(data, 'word_num', i, word_count + 1) or (word_count + 1))
+            line_key = (block_num, par_num, line_num)
+            lines.setdefault(line_key, []).append((word_num, text))
+
+            word_count += 1
+            confidences.append(conf_value)
+            if conf_value < confidence_threshold:
+                low_confidence_words.append({
+                    'text': text,
+                    'confidence': conf_value,
+                })
+
+        text_lines = []
+        for line_key in sorted(lines.keys()):
+            words = [word for _, word in sorted(lines[line_key], key=lambda item: item[0])]
+            if words:
+                text_lines.append(' '.join(words))
+
+        text = '\n'.join(text_lines)
         avg_conf = sum(confidences) / len(confidences) if confidences else 0
 
-        result = (page_num, text, avg_conf)
+        page_metadata = {
+            'page_number': page_num,
+            'confidence': avg_conf,
+            'word_count': word_count,
+            'low_confidence_word_count': len(low_confidence_words),
+            'low_confidence_words': low_confidence_words,
+            'failed': False,
+        }
 
-        # Explicit cleanup of large objects before return
-        del image, img_array, gray, thresh, denoised
+        result = (page_num, text, avg_conf, page_metadata)
+
+        # Explicitly release large objects before return.
+        image = img_array = gray = thresh = denoised = None
 
         return result
 
     except Exception as e:
         logger.error(f"OCR failed for page {page_num}: {e}")
-        return (page_num, "", 0.0)
+        return (
+            page_num,
+            "",
+            0.0,
+            {
+                'page_number': page_num,
+                'confidence': 0.0,
+                'word_count': 0,
+                'low_confidence_word_count': 0,
+                'low_confidence_words': [],
+                'failed': True,
+                'error': str(e),
+            },
+        )
 
     finally:
         # Ensure cleanup even on exception
-        try:
-            del image, img_array, gray, thresh, denoised
-        except:
-            pass
+        image = img_array = gray = thresh = denoised = None
         # Force garbage collection in worker
         gc.collect()
+
+
+def _offset_page_boundaries(page_boundaries: List[Dict[str, Any]], offset: int) -> List[Dict[str, Any]]:
+    """Return page boundaries shifted by a character offset."""
+    shifted = []
+    for boundary in page_boundaries:
+        shifted_boundary = dict(boundary)
+        shifted_boundary['start_char'] = shifted_boundary.get('start_char', 0) + offset
+        shifted.append(shifted_boundary)
+    return shifted
+
+
+def merge_extracted_text_with_ocr(
+    extracted_text: str,
+    extracted_metadata: Dict[str, Any],
+    ocr_text: str,
+    ocr_metadata: Dict[str, Any],
+) -> Tuple[str, Dict[str, Any]]:
+    """Merge OCR fallback output without discarding the original extraction.
+
+    Existing markdown/layout text remains first so chunking still sees the
+    structured extraction. OCR is appended as recall enrichment and the merge
+    strategy is recorded for downstream payloads and JSON reports.
+    """
+    original_text = extracted_text or ""
+    original_metadata = dict(extracted_metadata or {})
+    merged_metadata = dict(original_metadata)
+    original_method = original_metadata.get('extraction_method', 'unknown')
+    ocr_method = ocr_metadata.get('extraction_method', 'ocr_tesseract')
+
+    if not ocr_text or not ocr_text.strip():
+        merged_metadata.update(ocr_metadata)
+        merged_metadata['original_extraction_method'] = original_method
+        merged_metadata['extraction_method'] = (
+            f"{original_method}+{ocr_method}" if original_text.strip() else ocr_method
+        )
+        merged_metadata['ocr_merge_strategy'] = 'ocr_failed_no_text'
+        merged_metadata['page_boundaries'] = original_metadata.get('page_boundaries', [])
+        merged_metadata['original_text_length'] = len(original_text)
+        merged_metadata['ocr_text_length'] = 0
+        return original_text, merged_metadata
+
+    if original_text.strip():
+        separator = "\n\n[OCR fallback text]\n\n"
+        merged_text = f"{original_text}{separator}{ocr_text}"
+        original_boundaries = original_metadata.get('page_boundaries', [])
+        ocr_boundaries = _offset_page_boundaries(
+            ocr_metadata.get('page_boundaries', []),
+            len(original_text) + len(separator),
+        )
+        merged_metadata.update(ocr_metadata)
+        merged_metadata['original_extraction_method'] = original_method
+        merged_metadata['extraction_method'] = f"{original_method}+{ocr_method}"
+        merged_metadata['ocr_merge_strategy'] = 'append_ocr_to_extracted_text'
+        merged_metadata['page_boundaries'] = [*original_boundaries, *ocr_boundaries]
+        merged_metadata['original_text_length'] = len(original_text)
+        merged_metadata['ocr_text_length'] = len(ocr_text)
+        return merged_text, merged_metadata
+
+    merged_metadata.update(ocr_metadata)
+    merged_metadata['original_extraction_method'] = original_method
+    merged_metadata['extraction_method'] = ocr_method
+    merged_metadata['ocr_merge_strategy'] = 'ocr_only_empty_extraction'
+    merged_metadata['original_text_length'] = 0
+    merged_metadata['ocr_text_length'] = len(ocr_text)
+    return ocr_text, merged_metadata
 
 
 class OCREngine:
@@ -190,7 +316,7 @@ class OCREngine:
             print(f"  → OCR: Processing {total_pages} pages in batches of {self.page_batch_size} (parallel, {self.ocr_workers} workers)...", flush=True)
 
         # Process pages in batches to avoid memory exhaustion
-        page_results = {}  # {page_num: (text, confidence)}
+        page_results = {}  # {page_num: (text, confidence, page_metadata)}
 
         for batch_start in range(1, total_pages + 1, self.page_batch_size):
             batch_end = min(batch_start + self.page_batch_size - 1, total_pages)
@@ -211,12 +337,27 @@ class OCREngine:
         # Assemble results in page order
         text_parts = []
         confidence_scores = []
+        page_boundaries = []
+        ocr_pages = []
+        failed_pages = 0
+        low_confidence_word_count = 0
+        current_pos = 0
 
         for page_num in sorted(page_results.keys()):
-            page_text, page_conf = page_results[page_num]
+            page_text, page_conf, page_metadata = page_results[page_num]
+            ocr_pages.append(page_metadata)
+            low_confidence_word_count += page_metadata.get('low_confidence_word_count', 0)
+            if page_metadata.get('failed'):
+                failed_pages += 1
             if page_text.strip():
+                page_boundaries.append({
+                    'page_number': page_num,
+                    'start_char': current_pos,
+                    'page_text_length': len(page_text),
+                })
                 text_parts.append(page_text)
                 confidence_scores.append(page_conf)
+                current_pos += len(page_text) + 1
 
         text = '\n'.join(text_parts)
         avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0
@@ -227,7 +368,11 @@ class OCREngine:
             'ocr_confidence': avg_confidence,
             'ocr_language': self.language,
             'page_count': total_pages,
-            'ocr_pages_processed': len(text_parts),
+            'ocr_pages_processed': len(ocr_pages) - failed_pages,
+            'ocr_pages_failed': failed_pages,
+            'ocr_low_confidence_word_count': low_confidence_word_count,
+            'ocr_pages': ocr_pages,
+            'page_boundaries': page_boundaries,
         }
 
         if verbose:
@@ -242,7 +387,7 @@ class OCREngine:
         last_page: int,
         total_pages: int,
         verbose: bool
-    ) -> Dict[int, Tuple[str, float]]:
+    ) -> Dict[int, Tuple[str, float, Dict[str, Any]]]:
         """Process a batch of PDF pages with memory-efficient image handling.
 
         Args:
@@ -253,7 +398,7 @@ class OCREngine:
             verbose: If True, show per-page progress
 
         Returns:
-            Dict mapping page_num to (text, confidence)
+            Dict mapping page_num to (text, confidence, page_metadata)
         """
         batch_results = {}
 
@@ -312,8 +457,8 @@ class OCREngine:
                 # Collect results as they complete
                 for async_result, page_num in async_results:
                     try:
-                        result_page_num, page_text, page_conf = async_result.get(timeout=self.page_timeout)
-                        batch_results[result_page_num] = (page_text, page_conf)
+                        result_page_num, page_text, page_conf, page_metadata = async_result.get(timeout=self.page_timeout)
+                        batch_results[result_page_num] = (page_text, page_conf, page_metadata)
 
                         # Show per-page progress
                         if verbose and page_text.strip():
@@ -321,10 +466,34 @@ class OCREngine:
 
                     except TimeoutError:
                         logger.error(f"OCR timeout for page {page_num} (exceeded {self.page_timeout}s)")
-                        batch_results[page_num] = ("", 0.0)
+                        batch_results[page_num] = (
+                            "",
+                            0.0,
+                            {
+                                'page_number': page_num,
+                                'confidence': 0.0,
+                                'word_count': 0,
+                                'low_confidence_word_count': 0,
+                                'low_confidence_words': [],
+                                'failed': True,
+                                'error': f"timeout after {self.page_timeout}s",
+                            },
+                        )
                     except Exception as e:
                         logger.error(f"OCR failed for page {page_num}: {e}")
-                        batch_results[page_num] = ("", 0.0)
+                        batch_results[page_num] = (
+                            "",
+                            0.0,
+                            {
+                                'page_number': page_num,
+                                'confidence': 0.0,
+                                'word_count': 0,
+                                'low_confidence_word_count': 0,
+                                'low_confidence_words': [],
+                                'failed': True,
+                                'error': str(e),
+                            },
+                        )
 
             except KeyboardInterrupt:
                 logger.warning("Interrupted - terminating OCR workers...")

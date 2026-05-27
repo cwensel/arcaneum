@@ -777,7 +777,7 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool 
     """
     from ..indexing.pdf.chunker import PDFChunker
     from ..indexing.pdf.extractor import PDFExtractor
-    from ..indexing.pdf.ocr import OCREngine
+    from ..indexing.pdf.ocr import OCREngine, merge_extracted_text_with_ocr
     from ..indexing.pdf.quality import looks_like_dropout
 
     # Extract text from PDF using PDFExtractor class
@@ -787,12 +787,14 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool 
     # OCR fallback: triggered for near-empty extractions (scanned/image PDFs)
     # or garbled text (corrupt font mappings, encoding failures)
     run_ocr = not text or len(text.strip()) < 100
+    ocr_triggered_by = 'empty' if run_ocr else None
     if not run_ocr and not use_ocr:
         from ..indexing.pdf.quality import needs_ocr as check_needs_ocr
         from ..indexing.pdf.quality import score_text
         if check_needs_ocr(text):
             logger.info(f"Garbled text detected in {file_path.name}, re-extracting with OCR")
             run_ocr = True
+            ocr_triggered_by = 'garbled'
         else:
             # Conservative soft-quality gate: needs_ocr() only catches hard
             # garbage (U+FFFD, no stop words). Files scoring 0.5-0.9 on
@@ -806,14 +808,20 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool 
                     f"(score {score:.2f}), re-extracting with OCR"
                 )
                 run_ocr = True
+                ocr_triggered_by = 'quality'
 
     if run_ocr and not use_ocr:
         # Re-extract with pymupdf4llm auto-OCR (handles garbled spans)
         try:
             ocr_extractor = PDFExtractor(use_ocr=True)
-            text, ocr_metadata = ocr_extractor.extract(file_path)
-            metadata.update(ocr_metadata)
-            metadata['ocr_triggered_by'] = 'quality'
+            ocr_text, ocr_metadata = ocr_extractor.extract(file_path)
+            text, metadata = merge_extracted_text_with_ocr(
+                text,
+                metadata,
+                ocr_text,
+                ocr_metadata,
+            )
+            metadata['ocr_triggered_by'] = ocr_triggered_by or 'quality'
         except Exception as e:
             logger.warning(f"OCR re-extraction failed for {file_path}: {e}")
 
@@ -851,8 +859,13 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool 
     if not text or len(text.strip()) < 100:
         try:
             ocr_engine = OCREngine(language='eng')
-            text, ocr_metadata = ocr_engine.process_pdf(file_path)
-            metadata.update(ocr_metadata)
+            ocr_text, ocr_metadata = ocr_engine.process_pdf(file_path)
+            text, metadata = merge_extracted_text_with_ocr(
+                text,
+                metadata,
+                ocr_text,
+                ocr_metadata,
+            )
             metadata['ocr_triggered_by'] = 'empty'
         except Exception as e:
             logger.warning(f"OCR failed for {file_path}: {e}")
@@ -868,6 +881,14 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool 
         'filename': file_path.name,
         'page_count': page_count,
         'page_boundaries': metadata.get('page_boundaries', []),
+        'extraction_method': metadata.get('extraction_method'),
+        'ocr_confidence': metadata.get('ocr_confidence'),
+        'ocr_language': metadata.get('ocr_language'),
+        'ocr_pages_processed': metadata.get('ocr_pages_processed', 0),
+        'ocr_pages_failed': metadata.get('ocr_pages_failed', 0),
+        'ocr_low_confidence_word_count': metadata.get('ocr_low_confidence_word_count', 0),
+        'ocr_merge_strategy': metadata.get('ocr_merge_strategy'),
+        'ocr_triggered_by': metadata.get('ocr_triggered_by'),
     }
     if extraction_floor:
         base_metadata['extraction_floor'] = True
@@ -1994,6 +2015,15 @@ def sync_directory_command(
                                 doc.page_count = chunk_meta.get('page_count')
                                 if chunk_meta.get('extraction_floor'):
                                     doc.extraction_floor = True
+                                doc.ocr_confidence = chunk_meta.get('ocr_confidence')
+                                doc.ocr_language = chunk_meta.get('ocr_language')
+                                doc.ocr_pages_processed = chunk_meta.get('ocr_pages_processed')
+                                doc.ocr_pages_failed = chunk_meta.get('ocr_pages_failed')
+                                doc.ocr_low_confidence_word_count = chunk_meta.get(
+                                    'ocr_low_confidence_word_count'
+                                )
+                                doc.ocr_merge_strategy = chunk_meta.get('ocr_merge_strategy')
+                                doc.ocr_triggered_by = chunk_meta.get('ocr_triggered_by')
                                 doc.document_type = 'pdf'
 
                             elif corpus_type == 'markdown':
@@ -2323,6 +2353,17 @@ def sync_directory_command(
                                     payload["page_count"] = chunk_meta["page_count"]
                                 if chunk_meta.get('extraction_floor'):
                                     payload["extraction_floor"] = True
+                                for key in (
+                                    "ocr_confidence",
+                                    "ocr_language",
+                                    "ocr_pages_processed",
+                                    "ocr_pages_failed",
+                                    "ocr_low_confidence_word_count",
+                                    "ocr_merge_strategy",
+                                    "ocr_triggered_by",
+                                ):
+                                    if chunk_meta.get(key) is not None:
+                                        payload[key] = chunk_meta[key]
                                 payload["document_type"] = "pdf"
 
                             points.append(PointStruct(
@@ -2554,6 +2595,17 @@ def _fetch_chunks_for_files_bulk(
                         meili_doc["language"] = payload["programming_language"]
                     if payload.get("document_type"):
                         meili_doc["document_type"] = payload["document_type"]
+                    for key in (
+                        "ocr_confidence",
+                        "ocr_language",
+                        "ocr_pages_processed",
+                        "ocr_pages_failed",
+                        "ocr_low_confidence_word_count",
+                        "ocr_merge_strategy",
+                        "ocr_triggered_by",
+                    ):
+                        if payload.get(key) is not None:
+                            meili_doc[key] = payload[key]
 
                     # Add git metadata fields for code corpora
                     if payload.get("git_project_identifier"):
@@ -3315,6 +3367,17 @@ def _backfill_meili_to_qdrant(
                         payload["page_count"] = chunk_meta["page_count"]
                     if chunk_meta.get('extraction_floor'):
                         payload["extraction_floor"] = True
+                    for key in (
+                        "ocr_confidence",
+                        "ocr_language",
+                        "ocr_pages_processed",
+                        "ocr_pages_failed",
+                        "ocr_low_confidence_word_count",
+                        "ocr_merge_strategy",
+                        "ocr_triggered_by",
+                    ):
+                        if chunk_meta.get(key) is not None:
+                            payload[key] = chunk_meta[key]
                     payload["document_type"] = "pdf"
 
                 points.append(PointStruct(

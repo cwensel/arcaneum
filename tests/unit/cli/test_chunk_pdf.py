@@ -152,28 +152,99 @@ class TestSoftQualityGate:
 
         # Initial extraction
         initial_extractor = MagicMock()
+        original_boundaries = [
+            {"page_number": 1, "start_char": 0, "page_text_length": len(_REALISTIC_TEXT)}
+        ]
         initial_extractor.extract.return_value = (
             _REALISTIC_TEXT,  # Long enough to pass the < 100 check
-            {"page_count": 1, "page_boundaries": []},
+            {
+                "extraction_method": "pymupdf4llm_markdown",
+                "page_count": 1,
+                "page_boundaries": original_boundaries,
+            },
         )
 
         # OCR re-extraction
         ocr_extractor = MagicMock()
+        ocr_text = "clean OCR text with full content " * 20
         ocr_extractor.extract.return_value = (
-            "clean OCR text with full content " * 20,
-            {"page_count": 1, "page_boundaries": [], "ocr": True},
+            ocr_text,
+            {
+                "extraction_method": "pymupdf4llm_ocr",
+                "page_count": 1,
+                "page_boundaries": [
+                    {"page_number": 1, "start_char": 0, "page_text_length": len(ocr_text)}
+                ],
+                "ocr_confidence": 72.0,
+                "ocr_pages_processed": 1,
+                "ocr_pages_failed": 0,
+            },
         )
 
         mock_extractor_cls.side_effect = [initial_extractor, ocr_extractor]
 
+        captured = {}
         chunker = MagicMock()
-        chunker.chunk.return_value = [_make_chunk("ocr text", {"file_path": str(fake_pdf)})]
+
+        def fake_chunk(text, metadata):
+            captured["text"] = text
+            captured["metadata"] = dict(metadata)
+            return [_make_chunk(text, metadata)]
+
+        chunker.chunk.side_effect = fake_chunk
         mock_chunker_cls.return_value = chunker
 
         result = chunk_pdf_file(fake_pdf, model_config, use_ocr=False)
 
         # OCR extractor was created with use_ocr=True
         mock_extractor_cls.assert_any_call(use_ocr=True)
+        assert captured["text"].startswith(_REALISTIC_TEXT)
+        assert "clean OCR text with full content" in captured["text"]
+        assert captured["metadata"]["ocr_merge_strategy"] == "append_ocr_to_extracted_text"
+        assert captured["metadata"]["ocr_triggered_by"] == "quality"
+        assert captured["metadata"]["ocr_confidence"] == 72.0
+        assert captured["metadata"]["page_boundaries"][0] == original_boundaries[0]
+        assert captured["metadata"]["page_boundaries"][1]["start_char"] > len(_REALISTIC_TEXT)
+        assert len(result) == 1
+
+    @patch("arcaneum.indexing.pdf.chunker.PDFChunker")
+    @patch("arcaneum.indexing.pdf.extractor.PDFExtractor")
+    def test_empty_text_ocr_retry_records_empty_trigger(
+        self, mock_extractor_cls, mock_chunker_cls, fake_pdf, model_config,
+    ):
+        initial_extractor = MagicMock()
+        initial_extractor.extract.return_value = (
+            "",
+            {"extraction_method": "pymupdf4llm_markdown", "page_count": 1, "page_boundaries": []},
+        )
+
+        ocr_text = "recovered OCR text " * 20
+        ocr_extractor = MagicMock()
+        ocr_extractor.extract.return_value = (
+            ocr_text,
+            {
+                "extraction_method": "pymupdf4llm_ocr",
+                "page_count": 1,
+                "page_boundaries": [
+                    {"page_number": 1, "start_char": 0, "page_text_length": len(ocr_text)}
+                ],
+            },
+        )
+        mock_extractor_cls.side_effect = [initial_extractor, ocr_extractor]
+
+        captured = {}
+        chunker = MagicMock()
+
+        def fake_chunk(text, metadata):
+            captured["metadata"] = dict(metadata)
+            return [_make_chunk(text, metadata)]
+
+        chunker.chunk.side_effect = fake_chunk
+        mock_chunker_cls.return_value = chunker
+
+        result = chunk_pdf_file(fake_pdf, model_config, use_ocr=False)
+
+        assert captured["metadata"]["ocr_triggered_by"] == "empty"
         assert len(result) == 1
 
     @patch("arcaneum.indexing.pdf.chunker.PDFChunker")

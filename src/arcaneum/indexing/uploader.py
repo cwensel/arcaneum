@@ -15,7 +15,7 @@ import time
 from ..embeddings.client import EmbeddingClient
 from .common.sync import MetadataBasedSync, compute_file_hash, compute_quick_hash
 from .pdf.extractor import PDFExtractor
-from .pdf.ocr import OCREngine
+from .pdf.ocr import OCREngine, merge_extracted_text_with_ocr
 from .pdf.chunker import PDFChunker
 from ..monitoring.cpu_stats import create_monitor
 from ..utils.memory import calculate_safe_workers, log_memory_stats
@@ -148,7 +148,7 @@ class PDFBatchUploader:
         pdf_idx: int,
         total_pdfs: int,
         force_reindex: bool = False
-    ) -> Tuple[List[PointStruct], int, Optional[str]]:
+    ) -> Tuple[List[PointStruct], int, Optional[str], Dict]:
         """Process a single PDF: extract, OCR, chunk, embed, create points.
 
         Args:
@@ -163,8 +163,13 @@ class PDFBatchUploader:
             force_reindex: If True, skip content hash check and reindex even if already indexed
 
         Returns:
-            Tuple of (points list, chunk count, error message or None)
+            Tuple of (points list, chunk count, error message or None, OCR stats)
         """
+        ocr_stats = {
+            'ocr_pages_processed': 0,
+            'ocr_pages_failed': 0,
+            'ocr_confidence': None,
+        }
         try:
             # Stage 0: Computing hashes (two-pass sync)
             if verbose:
@@ -202,7 +207,7 @@ class PDFBatchUploader:
                     elif not verbose:
                         print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → renamed (updated {result} chunks){' '*20}", flush=True)
 
-                    return ([], 0, None)
+                    return ([], 0, None, ocr_stats)
 
                 # Content already indexed - always call add_alternate_path to ensure metadata is complete
                 # This handles both new duplicate paths and migration of existing paths to new dict format
@@ -226,7 +231,7 @@ class PDFBatchUploader:
                     status = "alternate path added" if not path_already_tracked else "already tracked"
                     print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → {status}{' '*20}", flush=True)
 
-                return ([], 0, None)
+                return ([], 0, None, ocr_stats)
 
             # Pre-deletion: Remove old chunks with same file_hash before reindexing
             # This prevents partial data if indexing is interrupted mid-file
@@ -279,8 +284,18 @@ class PDFBatchUploader:
                 else:
                     print(f"{timestamp()}   → running OCR ({page_count} pages)", flush=True)
 
-                text, ocr_meta = self.ocr.process_pdf(pdf_path, verbose=verbose)
-                extract_meta.update(ocr_meta)
+                ocr_text, ocr_meta = self.ocr.process_pdf(pdf_path, verbose=verbose)
+                text, extract_meta = merge_extracted_text_with_ocr(
+                    text,
+                    extract_meta,
+                    ocr_text,
+                    ocr_meta,
+                )
+                ocr_stats = {
+                    'ocr_pages_processed': extract_meta.get('ocr_pages_processed', 0),
+                    'ocr_pages_failed': extract_meta.get('ocr_pages_failed', 0),
+                    'ocr_confidence': extract_meta.get('ocr_confidence'),
+                }
 
                 if verbose:
                     print(f"{timestamp()}      OCR complete", flush=True)
@@ -290,6 +305,9 @@ class PDFBatchUploader:
 
             # Chunk text with file metadata (two-pass sync support)
             file_path_abs = str(pdf_path.absolute())
+            payload_extract_meta = {
+                key: value for key, value in extract_meta.items() if key != 'ocr_pages'
+            }
             base_metadata = {
                 'filename': pdf_path.name,
                 'file_path': file_path_abs,  # Primary path (always store absolute path)
@@ -299,7 +317,7 @@ class PDFBatchUploader:
                 'file_hash': file_hash,     # Pass 2: Full content hash (for deep verification)
                 'file_size': pdf_path.stat().st_size,
                 'store_type': 'pdf',
-                **extract_meta
+                **payload_extract_meta
             }
 
             # Stage 3: Chunking
@@ -472,7 +490,7 @@ class PDFBatchUploader:
 
             # Return empty list since we already uploaded
             # uploaded_count is used for stats
-            return ([], uploaded_count, None)
+            return ([], uploaded_count, None, ocr_stats)
 
         except RuntimeError as e:
             # Check if this is a GPU OOM error
@@ -483,15 +501,15 @@ class PDFBatchUploader:
                 "out of memory"
             ]):
                 # Return special marker for GPU OOM that CLI can detect
-                return ([], 0, f"GPU_OOM: {error_msg}")
+                return ([], 0, f"GPU_OOM: {error_msg}", ocr_stats)
             else:
                 # Not a GPU OOM, treat as generic RuntimeError
-                return ([], 0, f"RuntimeError: {error_msg}")
+                return ([], 0, f"RuntimeError: {error_msg}", ocr_stats)
 
         except Exception as e:
             error_msg = str(e)
             error_type = type(e).__name__
-            return ([], 0, f"{error_type}: {error_msg}")
+            return ([], 0, f"{error_type}: {error_msg}", ocr_stats)
 
     def index_directory(
         self,
@@ -574,7 +592,14 @@ class PDFBatchUploader:
                 print("All PDFs up to date")
             else:
                 print(f"{timestamp()} ✅ All PDFs are up to date")
-            return {"files": 0, "chunks": 0, "errors": 0}
+            return {
+                "files": 0,
+                "chunks": 0,
+                "errors": 0,
+                "ocr_pages_processed": 0,
+                "ocr_pages_failed": 0,
+                "ocr_confidence": 0.0,
+            }
 
         # Randomize file order if requested (useful for parallel indexing)
         if randomize:
@@ -592,7 +617,15 @@ class PDFBatchUploader:
 
         # Process PDFs with optional parallel processing (arcaneum-108)
         point_id = self._get_next_point_id(collection_name)
-        stats = {"files": 0, "chunks": 0, "errors": 0}
+        stats = {
+            "files": 0,
+            "chunks": 0,
+            "errors": 0,
+            "ocr_pages_processed": 0,
+            "ocr_pages_failed": 0,
+            "ocr_confidence_sum": 0.0,
+            "ocr_pdf_count": 0,
+        }
 
         try:
             total_pdfs = len(pdf_files)
@@ -625,10 +658,11 @@ class PDFBatchUploader:
                     for future in as_completed(future_to_pdf):
                         pdf_idx, pdf_path = future_to_pdf[future]
                         try:
-                            points, file_chunk_count, error = future.result(timeout=self.pdf_timeout)
+                            points, file_chunk_count, error, ocr_stats = future.result(timeout=self.pdf_timeout)
                         except TimeoutError:
                             error = f"TimeoutError: PDF processing exceeded {self.pdf_timeout}s"
                             points, file_chunk_count = [], 0
+                            ocr_stats = {}
 
                         if error:
                             # Check for GPU OOM error - fail fast with clear message
@@ -666,6 +700,7 @@ class PDFBatchUploader:
                             if file_chunk_count > 0:
                                 stats["chunks"] += file_chunk_count
                                 stats["files"] += 1
+                                self._record_ocr_stats(stats, ocr_stats)
 
                                 # Complete
                                 if not verbose:
@@ -677,7 +712,7 @@ class PDFBatchUploader:
             else:
                 # Sequential mode: Process PDFs one at a time
                 for pdf_idx, pdf_path in enumerate(pdf_files, 1):
-                    points, file_chunk_count, error = self._process_single_pdf(
+                    points, file_chunk_count, error, ocr_stats = self._process_single_pdf(
                         pdf_path,
                         collection_name,
                         model_name,
@@ -725,6 +760,7 @@ class PDFBatchUploader:
                         if file_chunk_count > 0:
                             stats["chunks"] += file_chunk_count
                             stats["files"] += 1
+                            self._record_ocr_stats(stats, ocr_stats)
                             point_id += file_chunk_count
 
                             # Complete
@@ -768,7 +804,26 @@ class PDFBatchUploader:
             if cpu_monitor:
                 print(f"ℹ️  {cpu_monitor.get_summary()}")
 
+        if stats['ocr_pdf_count']:
+            stats['ocr_confidence'] = stats['ocr_confidence_sum'] / stats['ocr_pdf_count']
+        else:
+            stats['ocr_confidence'] = 0.0
+        del stats['ocr_confidence_sum']
+        del stats['ocr_pdf_count']
+
         return stats
+
+    def _record_ocr_stats(self, stats: Dict, ocr_stats: Dict):
+        """Accumulate per-file OCR stats for CLI JSON output."""
+        if not ocr_stats:
+            return
+        processed = ocr_stats.get('ocr_pages_processed', 0)
+        failed = ocr_stats.get('ocr_pages_failed', 0)
+        stats['ocr_pages_processed'] += processed
+        stats['ocr_pages_failed'] += failed
+        if ocr_stats.get('ocr_confidence') is not None:
+            stats['ocr_confidence_sum'] += ocr_stats['ocr_confidence']
+            stats['ocr_pdf_count'] += 1
 
     def _get_next_point_id(self, collection_name: str) -> int:
         """Get next available point ID for collection."""

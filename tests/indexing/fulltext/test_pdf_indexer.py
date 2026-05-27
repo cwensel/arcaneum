@@ -346,6 +346,10 @@ class TestPDFFullTextIndexerDocumentBuilding:
                 "file_size": 100,
                 "ocr_confidence": 95.5,
                 "ocr_language": "eng",
+                "ocr_pages_processed": 2,
+                "ocr_pages_failed": 1,
+                "ocr_low_confidence_word_count": 3,
+                "ocr_merge_strategy": "append_ocr_to_extracted_text",
             }
 
             documents = indexer._build_meilisearch_documents(
@@ -358,9 +362,23 @@ class TestPDFFullTextIndexerDocumentBuilding:
             assert doc["extraction_method"] == "ocr_tesseract"
             assert doc["ocr_confidence"] == 95.5
             assert doc["ocr_language"] == "eng"
+            assert doc["ocr_pages_processed"] == 2
+            assert doc["ocr_pages_failed"] == 1
+            assert doc["ocr_low_confidence_word_count"] == 3
+            assert doc["ocr_merge_strategy"] == "append_ocr_to_extracted_text"
 
         finally:
             pdf_path.unlink()
+
+    def test_index_directory_empty_finalizes_ocr_stats(self, indexer, tmp_path):
+        """Empty PDF directories return public OCR stats, not internal accumulators."""
+        stats = indexer.index_directory(tmp_path)
+
+        assert stats["ocr_pages_processed"] == 0
+        assert stats["ocr_pages_failed"] == 0
+        assert stats["ocr_confidence"] == 0.0
+        assert "ocr_confidence_sum" not in stats
+        assert "ocr_pdf_count" not in stats
 
 
 class TestPDFFullTextIndexerPageSplitting:
@@ -406,6 +424,25 @@ class TestPDFFullTextIndexerPageSplitting:
         assert len(pages) == 2
         assert pages[0] == "First page content"
         assert pages[1] == "Second page content"
+
+    def test_split_by_page_boundaries_merges_duplicate_ocr_page_segments(self, indexer):
+        """OCR-enriched text can append OCR segments while keeping original page numbers."""
+        text = "# Page 1\nOCR page 1\nPage 2 text\nOCR page 2"
+        metadata = {
+            "page_count": 2,
+            "page_boundaries": [
+                {"page_number": 1, "start_char": 0, "page_text_length": 8},
+                {"page_number": 1, "start_char": 9, "page_text_length": 10},
+                {"page_number": 2, "start_char": 20, "page_text_length": 11},
+                {"page_number": 2, "start_char": 32, "page_text_length": 10},
+            ],
+        }
+
+        pages = indexer._split_into_pages(text, 2, metadata)
+
+        assert len(pages) == 2
+        assert pages[0] == "# Page 1\n\nOCR page 1"
+        assert pages[1] == "Page 2 text\n\nOCR page 2"
 
     def test_split_single_page(self, indexer):
         """Test splitting single page document."""

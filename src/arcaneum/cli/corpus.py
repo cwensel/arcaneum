@@ -20,7 +20,11 @@ from ..cli.utils import (
 )
 from ..embeddings.client import EMBEDDING_MODELS
 from ..fulltext.indexes import get_index_settings
-from ..indexing.collection_metadata import get_collection_metadata, set_collection_metadata
+from ..indexing.collection_metadata import (
+    get_collection_metadata,
+    set_collection_metadata,
+    update_collection_metadata,
+)
 
 console = Console()
 
@@ -247,6 +251,7 @@ def list_corpora_command(verbose: bool, output_json: bool):
                 qdrant_collections[col.name] = {
                     "type": metadata.get("collection_type"),
                     "model": metadata.get("model"),
+                    "description": metadata.get("description"),
                     "models": models,
                     "model_summary": _format_model_summary(models),
                     "chunks": chunk_count,
@@ -292,6 +297,7 @@ def list_corpora_command(verbose: bool, output_json: bool):
 
             corpus_type = q_info.get("type") if q_info else None
             model = q_info.get("model") if q_info else None
+            description = q_info.get("description") if q_info else None
             models = q_info.get("models") if q_info else [{
                 "alias": UNKNOWN_LEGACY,
                 "name": UNKNOWN_LEGACY,
@@ -312,6 +318,7 @@ def list_corpora_command(verbose: bool, output_json: bool):
                 "name": name,
                 "type": corpus_type,
                 "model": model,
+                "description": description,
                 "models": models,
                 "model_summary": model_summary,
                 "status": status,
@@ -486,6 +493,7 @@ def create_corpus_command(
     name: str,
     corpus_type: str,
     models: str | None,
+    description: str | None,
     output_json: bool
 ):
     """Create both Qdrant collection and MeiliSearch index.
@@ -510,6 +518,7 @@ def create_corpus_command(
         corpus=name,
         corpus_type=corpus_type,
         models=models,
+        description=description,
     )
 
     try:
@@ -543,7 +552,8 @@ def create_corpus_command(
                 client=qdrant,
                 collection_name=name,
                 collection_type=corpus_type,
-                model=models
+                model=models,
+                description=description,
             )
 
             if not output_json:
@@ -599,6 +609,7 @@ def create_corpus_command(
         data = {
             "corpus": name,
             "type": corpus_type,
+            "description": description,
             "models": model_list,
             "vectors": {m: get_model_dimensions(m) for m in model_list},
             "qdrant_collection": name,
@@ -627,6 +638,66 @@ def create_corpus_command(
     except Exception as e:
         interaction_logger.finish(error=str(e))
         print_error(f"Failed to create corpus: {e}", output_json)
+        sys.exit(1)
+
+
+def update_corpus_command(
+    name: str,
+    description: str | None,
+    clear_description: bool,
+    output_json: bool,
+):
+    """Update corpus metadata without reindexing documents.
+
+    Args:
+        name: Corpus name
+        description: New description text. Empty string is preserved.
+        clear_description: Remove the stored description
+        output_json: If True, output JSON format
+    """
+    interaction_logger.start("corpus", "update", corpus=name)
+
+    try:
+        if description is None and not clear_description:
+            raise InvalidArgumentError(
+                "Nothing to update. Pass --description or --clear-description."
+            )
+        if description is not None and clear_description:
+            raise InvalidArgumentError(
+                "--description and --clear-description are mutually exclusive"
+            )
+
+        qdrant = create_qdrant_client()
+        try:
+            qdrant.get_collection(name)
+        except Exception as e:
+            raise ResourceNotFoundError(f"Corpus '{name}' not found") from e
+
+        updates = {
+            "description": None if clear_description else description,
+        }
+        metadata = update_collection_metadata(qdrant, name, **updates)
+
+        data = {
+            "corpus": name,
+            "description": metadata.get("description"),
+        }
+        if output_json:
+            print_json("success", f"Corpus '{name}' updated", data=data)
+        else:
+            if clear_description:
+                console.print(f"[green]✅ Cleared description for '{name}'[/green]")
+            else:
+                console.print(f"[green]✅ Updated description for '{name}'[/green]")
+
+        interaction_logger.finish()
+
+    except (InvalidArgumentError, ResourceNotFoundError):
+        interaction_logger.finish(error="invalid argument or resource not found")
+        raise
+    except Exception as e:
+        interaction_logger.finish(error=str(e))
+        print_error(f"Failed to update corpus: {e}", output_json)
         sys.exit(1)
 
 
@@ -740,6 +811,7 @@ def corpus_info_command(name: str, output_json: bool):
                 "chunk_count": chunk_count,
                 "type": collection_type,
                 "model": metadata.get("model"),
+                "description": metadata.get("description"),
                 "vectors": vectors,
                 "hnsw_config": {
                     "m": col_info.config.hnsw_config.m,
@@ -805,6 +877,9 @@ def corpus_info_command(name: str, output_json: bool):
             data = {
                 "corpus": name,
                 "type": collection_type,
+                "description": (
+                    qdrant_info.get("description") if qdrant_info else None
+                ),
                 "item_label": item_label,
                 "parity": parity,
                 "qdrant": qdrant_info,
@@ -816,6 +891,8 @@ def corpus_info_command(name: str, output_json: bool):
             # Header
             console.print(f"\n[bold cyan]Corpus: {name}[/bold cyan]")
             console.print(f"Type: [bold]{collection_type}[/bold]")
+            if qdrant_info and qdrant_info.get("description") is not None:
+                console.print(f"Description: {qdrant_info['description']}")
 
             # Parity status
             if parity["status"] == "synced":

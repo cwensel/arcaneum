@@ -553,11 +553,23 @@ def list_corpora(verbose, output_json):
 @click.argument('name')
 @click.option('--type', 'corpus_type', type=click.Choice(['pdf', 'code', 'markdown']), required=True, help='Corpus type')
 @click.option('--models', default=None, help='Embedding models (comma-separated; default inferred from --type)')
+@click.option('--description', default=None, help='Human-readable corpus description')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def create_corpus(name, corpus_type, models, output_json):
+def create_corpus(name, corpus_type, models, description, output_json):
     """Create both collection and index"""
     from arcaneum.cli.corpus import create_corpus_command
-    create_corpus_command(name, corpus_type, models, output_json)
+    create_corpus_command(name, corpus_type, models, description, output_json)
+
+
+@corpus.command('update')
+@click.argument('name')
+@click.option('--description', default=None, help='Set human-readable corpus description')
+@click.option('--clear-description', is_flag=True, help='Remove the corpus description')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def update_corpus(name, description, clear_description, output_json):
+    """Update corpus metadata without reindexing."""
+    from arcaneum.cli.corpus import update_corpus_command
+    update_corpus_command(name, description, clear_description, output_json)
 
 
 @corpus.command('delete')

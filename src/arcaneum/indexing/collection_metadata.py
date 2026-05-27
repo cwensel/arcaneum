@@ -112,6 +112,73 @@ def set_collection_metadata(
         raise
 
 
+def update_collection_metadata(
+    client: QdrantClient,
+    collection_name: str,
+    **updates
+) -> Dict[str, Any]:
+    """Update collection metadata in place without touching indexed documents.
+
+    Args:
+        client: Qdrant client
+        collection_name: Name of collection
+        **updates: Metadata keys to update. Values of None remove the key.
+
+    Returns:
+        Updated metadata payload without the internal metadata flag.
+
+    Raises:
+        ValueError: If the collection has no metadata point to update
+    """
+    existing = get_collection_metadata(client, collection_name)
+    if not existing:
+        raise ValueError(
+            f"Collection '{collection_name}' has no metadata point to update"
+        )
+
+    metadata = {**existing}
+    for key, value in updates.items():
+        if value is None:
+            metadata.pop(key, None)
+        else:
+            metadata[key] = value
+
+    collection_type = metadata.get("collection_type")
+    if collection_type is not None:
+        CollectionType.validate(collection_type)
+
+    try:
+        from qdrant_client.models import PointStruct
+
+        info = client.get_collection(collection_name)
+
+        if hasattr(info.config.params, 'vectors'):
+            if isinstance(info.config.params.vectors, dict):
+                vector_name = list(info.config.params.vectors.keys())[0]
+                vector_size = info.config.params.vectors[vector_name].size
+                vectors = {vector_name: [0.0] * vector_size}
+            else:
+                vector_size = info.config.params.vectors.size
+                vectors = [0.0] * vector_size
+        else:
+            raise ValueError("Could not determine vector configuration")
+
+        client.upsert(
+            collection_name=collection_name,
+            points=[PointStruct(
+                id=METADATA_POINT_ID,
+                vector=vectors,
+                payload={**metadata, "is_metadata": True},
+            )],
+        )
+        logger.info(f"Updated collection metadata for {collection_name}")
+        return metadata
+
+    except Exception as e:
+        logger.error(f"Failed to update collection metadata: {e}")
+        raise
+
+
 def get_collection_metadata(
     client: QdrantClient,
     collection_name: str

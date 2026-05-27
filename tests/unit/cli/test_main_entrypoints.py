@@ -86,10 +86,11 @@ def test_corpus_create_models_default_is_inferred():
     """`arc corpus create` leaves model selection to corpus-type defaults."""
     called = {}
 
-    def fake_create_corpus_command(name, corpus_type, models, output_json):
+    def fake_create_corpus_command(name, corpus_type, models, description, output_json):
         called['name'] = name
         called['corpus_type'] = corpus_type
         called['models'] = models
+        called['description'] = description
         raise SystemExit(0)
 
     result = _run(
@@ -102,6 +103,50 @@ def test_corpus_create_models_default_is_inferred():
         'name': 'Docs',
         'corpus_type': 'markdown',
         'models': None,
+        'description': None,
+    }
+
+
+def test_corpus_create_description_dispatches():
+    """`arc corpus create --description` forwards metadata to the handler."""
+    called = {}
+
+    def fake_create_corpus_command(name, corpus_type, models, description, output_json):
+        called['description'] = description
+        raise SystemExit(0)
+
+    result = _run(
+        [
+            'corpus', 'create', 'Docs', '--type', 'markdown',
+            '--description', 'Project design notes',
+        ],
+        **{'arcaneum.cli.corpus.create_corpus_command': fake_create_corpus_command},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert called['description'] == 'Project design notes'
+
+
+def test_corpus_update_description_dispatches():
+    """`arc corpus update --description` reaches the metadata update handler."""
+    called = {}
+
+    def fake_update_corpus_command(name, description, clear_description, output_json):
+        called['name'] = name
+        called['description'] = description
+        called['clear_description'] = clear_description
+        raise SystemExit(0)
+
+    result = _run(
+        ['corpus', 'update', 'Docs', '--description', 'Updated scope'],
+        **{'arcaneum.cli.corpus.update_corpus_command': fake_update_corpus_command},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert called == {
+        'name': 'Docs',
+        'description': 'Updated scope',
+        'clear_description': False,
     }
 
 

@@ -54,12 +54,28 @@ def _mock_corpus_list_clients(
     )
 
 
+def _mock_corpus_update_clients(monkeypatch, metadata):
+    from arcaneum.cli import corpus
+
+    class Qdrant:
+        def get_collection(self, name):
+            return _collection_info()
+
+    monkeypatch.setattr(corpus, "create_qdrant_client", lambda: Qdrant())
+    monkeypatch.setattr(
+        corpus,
+        "update_collection_metadata",
+        lambda _client, _name, **_updates: metadata,
+    )
+
+
 def test_corpus_module_exports_expected_commands():
     """Every documented 'arc corpus' subcommand function is importable."""
     from arcaneum.cli import corpus
 
     expected = {
         'create_corpus_command',
+        'update_corpus_command',
         'list_corpora_command',
         'delete_corpus_command',
         'corpus_info_command',
@@ -155,6 +171,7 @@ class TestCorpusListModelInfo:
 
         payload = json.loads(capsys.readouterr().out)
         corpus = payload["data"]["corpora"][0]
+        assert corpus["description"] is None
         assert corpus["model_summary"] == "arctic-m (fastembed)"
         assert corpus["models"] == [{
             "alias": "arctic-m",
@@ -264,3 +281,118 @@ class TestCorpusListModelInfo:
         output = capsys.readouterr().out
         assert "arctic-m" in output
         assert "fastembed" in output
+
+
+class TestCorpusDescriptions:
+    """Corpus description metadata is create/update/list/info visible."""
+
+    def test_list_json_includes_description(self, monkeypatch, capsys):
+        from arcaneum.cli.corpus import list_corpora_command
+
+        _mock_corpus_list_clients(
+            monkeypatch,
+            metadata_by_name={
+                "docs": {
+                    "collection_type": "markdown",
+                    "model": "arctic-m",
+                    "description": "Design notes and decision records",
+                }
+            },
+            collection_info_by_name={"docs": _collection_info()},
+        )
+
+        list_corpora_command(verbose=False, output_json=True)
+
+        corpus = json.loads(capsys.readouterr().out)["data"]["corpora"][0]
+        assert corpus["description"] == "Design notes and decision records"
+
+    def test_update_description_outputs_new_metadata(self, monkeypatch, capsys):
+        from arcaneum.cli.corpus import update_corpus_command
+
+        _mock_corpus_update_clients(
+            monkeypatch,
+            {"description": "Updated project notes"},
+        )
+
+        update_corpus_command(
+            "docs",
+            description="Updated project notes",
+            clear_description=False,
+            output_json=True,
+        )
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["data"] == {
+            "corpus": "docs",
+            "description": "Updated project notes",
+        }
+
+    def test_update_allows_empty_description(self, monkeypatch, capsys):
+        from arcaneum.cli.corpus import update_corpus_command
+
+        _mock_corpus_update_clients(monkeypatch, {"description": ""})
+
+        update_corpus_command(
+            "docs",
+            description="",
+            clear_description=False,
+            output_json=True,
+        )
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["data"]["description"] == ""
+
+    def test_clear_description_removes_metadata_value(self, monkeypatch, capsys):
+        from arcaneum.cli.corpus import update_corpus_command
+
+        _mock_corpus_update_clients(monkeypatch, {})
+
+        update_corpus_command(
+            "docs",
+            description=None,
+            clear_description=True,
+            output_json=True,
+        )
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["data"]["description"] is None
+
+    def test_metadata_update_preserves_existing_fields(self, monkeypatch):
+        from arcaneum.indexing import collection_metadata
+        from arcaneum.indexing.collection_metadata import update_collection_metadata
+
+        class Qdrant:
+            def __init__(self):
+                self.points = None
+
+            def get_collection(self, name):
+                return _collection_info()
+
+            def upsert(self, collection_name, points):
+                self.points = points
+
+        qdrant = Qdrant()
+        monkeypatch.setattr(
+            collection_metadata,
+            "get_collection_metadata",
+            lambda _client, _name: {
+                "collection_type": "markdown",
+                "model": "arctic-m",
+                "created_at": "2026-05-26T00:00:00",
+            },
+        )
+
+        updated = update_collection_metadata(
+            qdrant,
+            "docs",
+            description="Project notes",
+        )
+
+        assert updated == {
+            "collection_type": "markdown",
+            "model": "arctic-m",
+            "created_at": "2026-05-26T00:00:00",
+            "description": "Project notes",
+        }
+        assert qdrant.points[0].payload["is_metadata"] is True
+        assert qdrant.points[0].payload["description"] == "Project notes"

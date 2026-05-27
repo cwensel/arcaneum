@@ -2,21 +2,26 @@
 
 ## SSL Certificate Handling
 
-SSL certificate verification is **disabled by default** for compatibility with corporate proxies
-that use self-signed certificates. This means arc commands work out of the box behind corporate VPNs.
+SSL certificate verification is **enabled by default**. Arc downloads embedding models over TLS, and some
+SentenceTransformers models require remote repository code, so the safe default is to validate certificates
+before any model code can be fetched or executed.
 
 ```bash
-# Just works - no configuration needed
+# Strict TLS - no configuration needed
 arc search semantic "query" --corpus MyCorpus
 arc corpus sync MyCorpus ./code
 ```
 
-To enable strict SSL verification (not recommended for corporate networks):
+For a trusted corporate proxy with self-signed certificates, prefer offline mode or a configured CA bundle.
+As a last resort, disable SSL verification only for that trusted network:
 
 ```bash
-export ARC_SSL_VERIFY=true
+export ARC_SSL_VERIFY=false
 arc search semantic "query" --corpus MyCorpus
 ```
+
+This bypass is process-wide: it affects `requests`, `httpx`, Python SSL defaults, and Hugging Face Hub
+downloads made by the command. Do not combine it with first-time model downloads from untrusted networks.
 
 ## For Offline Mode (Air-gapped Networks)
 
@@ -68,8 +73,18 @@ TextEmbedding('BAAI/bge-large-en-v1.5', cache_dir=cache_dir)
 TextEmbedding('jinaai/jina-embeddings-v3', cache_dir=cache_dir)
 
 # SentenceTransformers models
-SentenceTransformer('dunzhang/stella_en_1.5B_v5', cache_folder=cache_dir)
-SentenceTransformer('jinaai/jina-embeddings-v2-base-code', cache_folder=cache_dir)
+SentenceTransformer(
+    'dunzhang/stella_en_1.5B_v5',
+    revision='7817065102fd9e1b031fe874e910c01f40b2f001',
+    trust_remote_code=True,
+    cache_folder=cache_dir,
+)
+SentenceTransformer(
+    'jinaai/jina-embeddings-v2-base-code',
+    revision='516f4baf13dec4ddddda8631e019b5737c8bc250',
+    trust_remote_code=True,
+    cache_folder=cache_dir,
+)
 "
 ```
 
@@ -83,7 +98,7 @@ scp -r ~/.arcaneum/models/ corporate-machine:~/.arcaneum/
 ### Step 3: Use arc Normally
 
 ```bash
-# SSL bypass is automatic, models cached - just works!
+# Strict TLS stays enabled by default, models cached - just works!
 arc corpus create docs --type pdf
 arc corpus sync docs ./pdfs
 arc corpus create code --type code
@@ -104,6 +119,6 @@ export TRANSFORMERS_OFFLINE=1
 
 | Variable               | Default | Description                                       |
 | ---------------------- | ------- | ------------------------------------------------- |
-| `ARC_SSL_VERIFY`       | `false` | Set to `true` to enable strict SSL verification   |
+| `ARC_SSL_VERIFY`       | `true`  | Set to `false` to disable SSL verification        |
 | `HF_HUB_OFFLINE`       | `0`     | Set to `1` for offline mode (no network calls)    |
 | `TRANSFORMERS_OFFLINE` | `0`     | Set to `1` for offline mode                       |

@@ -263,10 +263,8 @@ arc index code ~/code --collection MyCode
 **Option 2: Disable SSL Verification**
 
 ```bash
-# Set in your ~/.bashrc or ~/.zshrc (use on trusted networks only)
-export PYTHONHTTPSVERIFY=0
-export REQUESTS_CA_BUNDLE=""
-export CURL_CA_BUNDLE=""
+# Last resort for trusted corporate networks only
+export ARC_SSL_VERIFY=false
 ```
 
 See [docs/testing/offline-mode.md](../testing/offline-mode.md) for complete corporate network setup.

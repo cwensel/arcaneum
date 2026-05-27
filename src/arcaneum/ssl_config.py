@@ -1,14 +1,14 @@
 """SSL configuration utilities for corporate proxy/VPN environments.
 
-SSL verification is DISABLED by default for compatibility with corporate
-proxies that use self-signed certificates.
+SSL verification is enabled by default. Corporate proxy environments with
+self-signed certificates can explicitly opt out with ARC_SSL_VERIFY=false.
 
 Usage:
-    # Default: SSL verification disabled (works with corporate proxies)
+    # Default: strict SSL verification
     arc search semantic "query" --collection MyCollection
 
-    # To enable strict SSL verification:
-    export ARC_SSL_VERIFY=true
+    # To disable SSL verification for a trusted corporate proxy:
+    export ARC_SSL_VERIFY=false
     arc search semantic "query" --collection MyCollection
 
 Security Warning:
@@ -20,7 +20,8 @@ Security Warning:
     and should only be used on trusted networks (corporate VPNs, controlled
     dev environments). To avoid this, callers should not import this module
     from library code; disable_ssl_verification() should be invoked only from
-    the CLI entry point. Set ARC_SSL_VERIFY=true to keep strict validation.
+    the CLI entry point. Strict validation is the default; only set
+    ARC_SSL_VERIFY=false on trusted networks.
 """
 
 import os
@@ -152,25 +153,26 @@ def disable_ssl_verification(quiet: bool = False) -> bool:
 def configure_ssl_from_env() -> bool:
     """Configure SSL based on ARC_SSL_VERIFY environment variable.
 
-    SSL verification is DISABLED by default for compatibility with corporate
-    proxies. Set ARC_SSL_VERIFY=true to enable strict SSL verification.
+    SSL verification is enabled by default. Set ARC_SSL_VERIFY=false to opt
+    into the global corporate-proxy bypass.
 
     Returns:
         True if SSL verification was disabled, False otherwise.
 
     Example:
-        # Default: SSL verification disabled (works with corporate proxies)
+        # Default: strict SSL verification
         arc search semantic "query" --collection MyCollection
 
-        # To enable SSL verification:
-        export ARC_SSL_VERIFY=true
+        # To disable SSL verification for a trusted corporate proxy:
+        export ARC_SSL_VERIFY=false
         arc search semantic "query" --collection MyCollection
     """
-    ssl_verify = os.environ.get("ARC_SSL_VERIFY", "false").lower()
+    ssl_verify = os.environ.get("ARC_SSL_VERIFY")
 
-    if ssl_verify in ("true", "1", "yes", "on"):
-        # User explicitly wants SSL verification enabled
+    if ssl_verify is None:
         return False
 
-    # Default: disable SSL verification for corporate proxy compatibility
-    return disable_ssl_verification(quiet=True)
+    if ssl_verify.lower() in ("false", "0", "no", "off"):
+        return disable_ssl_verification(quiet=True)
+
+    return False

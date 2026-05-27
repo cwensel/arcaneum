@@ -39,6 +39,8 @@ EMBEDDING_MODELS = {
     # Code-specific models (SentenceTransformers)
     "jina-code": {
         "name": "jinaai/jina-embeddings-v2-base-code",
+        "revision": "516f4baf13dec4ddddda8631e019b5737c8bc250",
+        "trust_remote_code": True,
         "dimensions": 768,
         "backend": "sentence-transformers",
         "description": "Code-specific (768D, 2K effective context, legacy v2 model)",
@@ -56,6 +58,7 @@ EMBEDDING_MODELS = {
     },
     "jina-code-0.5b": {
         "name": "jinaai/jina-code-embeddings-0.5b",
+        "revision": "4db235132dafbe56a8b9c5f59b59795ecf58a4a7",
         "dimensions": 896,
         "backend": "sentence-transformers",
         "description": "Code-specific SOTA (896D, 32K context, Sept 2025, fast)",
@@ -70,6 +73,7 @@ EMBEDDING_MODELS = {
     },
     "jina-code-1.5b": {
         "name": "jinaai/jina-code-embeddings-1.5b",
+        "revision": "39aeb4fb9b60f930934c78ae5d749a46287c248a",
         "dimensions": 1536,
         "backend": "sentence-transformers",
         "description": "Code-specific SOTA (1536D, 32K context, Sept 2025, highest quality)",
@@ -81,6 +85,8 @@ EMBEDDING_MODELS = {
     },
     "codesage-large": {
         "name": "codesage/codesage-large",
+        "revision": "d672216d9b5cf6bc1babc53cca5f32cff2825c48",
+        "trust_remote_code": True,
         "dimensions": 1024,
         "backend": "sentence-transformers",
         "description": "CodeSage V2 (1024D, 9 languages, Dec 2024)",
@@ -92,6 +98,7 @@ EMBEDDING_MODELS = {
     },
     "nomic-code": {
         "name": "nomic-ai/nomic-embed-code",
+        "revision": "11114029805cee545ef111d5144b623787462a52",
         "dimensions": 3584,
         "backend": "sentence-transformers",
         "description": "Nomic Code (3584D, 7B params, 6 languages, 2025)",
@@ -105,6 +112,8 @@ EMBEDDING_MODELS = {
     # General purpose models (SentenceTransformers)
     "stella": {
         "name": "dunzhang/stella_en_1.5B_v5",
+        "revision": "7817065102fd9e1b031fe874e910c01f40b2f001",
+        "trust_remote_code": True,
         "dimensions": 1024,
         "backend": "sentence-transformers",
         "description": "General purpose (1024D, high quality for docs/PDFs)",
@@ -181,6 +190,7 @@ EMBEDDING_MODELS = {
     # Additional general purpose models
     "minilm": {
         "name": "sentence-transformers/all-MiniLM-L6-v2",
+        "revision": "c9745ed1d9f207416be6d2e6f8de32d1f16199bf",
         "dimensions": 384,
         "backend": "sentence-transformers",
         "description": "MiniLM (384D, lightweight, fast)",
@@ -189,6 +199,7 @@ EMBEDDING_MODELS = {
     },
     "gte-base": {
         "name": "thenlper/gte-base",
+        "revision": "c078288308d8dee004ab72c6191778064285ec0c",
         "dimensions": 768,
         "backend": "sentence-transformers",
         "description": "GTE Base (768D, general purpose retrieval)",
@@ -197,6 +208,7 @@ EMBEDDING_MODELS = {
     },
     "e5-base": {
         "name": "intfloat/e5-base-v2",
+        "revision": "f52bf8ec8c7124536f0efb74aca902b2995e5bcd",
         "dimensions": 768,
         "backend": "sentence-transformers",
         "description": "E5 Base v2 (768D, multilingual, strong performance)",
@@ -204,6 +216,50 @@ EMBEDDING_MODELS = {
         "params_billions": 0.110,  # ~110M params
     },
 }
+
+
+TRUST_REMOTE_CODE_ALLOWLIST = {
+    "jinaai/jina-embeddings-v2-base-code": "516f4baf13dec4ddddda8631e019b5737c8bc250",
+    "codesage/codesage-large": "d672216d9b5cf6bc1babc53cca5f32cff2825c48",
+    "dunzhang/stella_en_1.5B_v5": "7817065102fd9e1b031fe874e910c01f40b2f001",
+}
+
+
+def _sentence_transformer_load_kwargs(
+    model_key: str,
+    config: Dict,
+    *,
+    cache_folder: str,
+    local_files_only: bool,
+    device: str,
+) -> Dict:
+    """Build SentenceTransformer load kwargs with pinned remote-code policy."""
+    model_id = config["name"]
+    revision = config.get("revision")
+    if not revision:
+        raise ValueError(f"SentenceTransformer model '{model_key}' must pin a revision")
+
+    trust_remote_code = bool(config.get("trust_remote_code", False))
+    if trust_remote_code:
+        allowlisted_revision = TRUST_REMOTE_CODE_ALLOWLIST.get(model_id)
+        if allowlisted_revision is None:
+            raise ValueError(
+                f"SentenceTransformer model '{model_key}' enables trust_remote_code "
+                f"but '{model_id}' is not allowlisted"
+            )
+        if revision != allowlisted_revision:
+            raise ValueError(
+                f"SentenceTransformer model '{model_key}' enables trust_remote_code "
+                "with a revision that does not match the allowlist"
+            )
+
+    return {
+        "cache_folder": cache_folder,
+        "local_files_only": local_files_only,
+        "device": device,
+        "revision": revision,
+        "trust_remote_code": trust_remote_code,
+    }
 
 
 def _unknown_model_error(model_name: str) -> ValueError:
@@ -411,10 +467,13 @@ class EmbeddingClient:
         config = EMBEDDING_MODELS[model_name]
         model = SentenceTransformer(
             config["name"],
-            cache_folder=self.cache_dir,
-            local_files_only=True,
-            device="cpu",
-            trust_remote_code=True,
+            **_sentence_transformer_load_kwargs(
+                model_name,
+                config,
+                cache_folder=self.cache_dir,
+                local_files_only=True,
+                device="cpu",
+            ),
         )
         if "max_seq_length" in config:
             model.max_seq_length = config["max_seq_length"]
@@ -827,10 +886,9 @@ class EmbeddingClient:
                 if not is_cached:
                     print("   Downloading model files...", flush=True, file=sys.stderr)
 
-                # SentenceTransformer handles download progress automatically via HuggingFace
-                # Use local_files_only if cached to prevent network calls to HuggingFace Hub
-                # GPU acceleration via device parameter (RDR-013 Phase 2)
-                # trust_remote_code=True allows custom model architectures like stella
+                # SentenceTransformer handles download progress automatically via HuggingFace.
+                # Model revisions are pinned, and trust_remote_code is only enabled for
+                # allowlisted model/revision pairs.
                 model_obj = None
                 last_error = None
 
@@ -839,10 +897,13 @@ class EmbeddingClient:
                     try:
                         model_obj = SentenceTransformer(
                             config["name"],
-                            cache_folder=self.cache_dir,
-                            local_files_only=True,  # Skip HuggingFace Hub check if cached
-                            device=self._device,  # "mps", "cuda", or "cpu"
-                            trust_remote_code=True  # Required for stella and other custom models
+                            **_sentence_transformer_load_kwargs(
+                                model_name,
+                                config,
+                                cache_folder=self.cache_dir,
+                                local_files_only=True,
+                                device=self._device,
+                            ),
                         )
                         model_obj._backend = "sentence-transformers"
                         # Apply max_seq_length limit if configured (arcaneum-mem-leak)
@@ -866,10 +927,13 @@ class EmbeddingClient:
 
                         model_obj = SentenceTransformer(
                             config["name"],
-                            cache_folder=self.cache_dir,
-                            local_files_only=False,  # Allow network access to complete download
-                            device=self._device,  # "mps", "cuda", or "cpu"
-                            trust_remote_code=True  # Required for stella and other custom models
+                            **_sentence_transformer_load_kwargs(
+                                model_name,
+                                config,
+                                cache_folder=self.cache_dir,
+                                local_files_only=False,
+                                device=self._device,
+                            ),
                         )
                         model_obj._backend = "sentence-transformers"
                         # Apply max_seq_length limit if configured (arcaneum-mem-leak)
@@ -1877,6 +1941,9 @@ class EmbeddingClient:
             # Check if main model cache exists
             if not (os.path.exists(model_dir) and os.path.isdir(model_dir)):
                 return False
+
+            if not config.get("trust_remote_code", False):
+                return True
 
             # For models with trust_remote_code=True, also check transformers_modules cache
             # These models may have custom Python code in a separate cache location

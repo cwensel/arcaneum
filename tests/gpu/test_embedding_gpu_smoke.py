@@ -6,6 +6,7 @@ not the default pull-request matrix.
 """
 
 import os
+import threading
 import time
 
 import numpy as np
@@ -16,6 +17,15 @@ pytestmark = pytest.mark.gpu_smoke
 
 def _gpu_smoke_enabled() -> bool:
     return os.environ.get("ARC_RUN_GPU_SMOKE", "").lower() in {"1", "true", "yes", "on"}
+
+
+def _require_gpu_smoke_accelerator() -> bool:
+    return os.environ.get("ARC_REQUIRE_GPU_SMOKE_ACCELERATOR", "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _sentence_transformer_model() -> str:
@@ -44,18 +54,31 @@ def gpu_client():
     cache_dir = os.path.expanduser(os.environ.get("ARC_GPU_SMOKE_CACHE_DIR", get_models_dir()))
     client = EmbeddingClient(cache_dir=cache_dir, use_gpu=True)
     if client.get_device_info()["device"] == "cpu":
-        pytest.skip("no CUDA or MPS accelerator detected")
+        message = "no CUDA or MPS accelerator detected"
+        if _require_gpu_smoke_accelerator():
+            pytest.fail(message)
+        pytest.skip(message)
 
     yield client
 
-    # Keep failed timeout tests from turning process exit into a long atexit wait.
     deadline = time.monotonic() + 30
     while client._pending_gpu_cleanup and time.monotonic() < deadline:
         client._try_deferred_gpu_cleanup()
         if not client._pending_gpu_cleanup:
             break
         time.sleep(0.25)
-    client._pending_gpu_cleanup.clear()
+
+    client._try_deferred_gpu_cleanup()
+    live_cleanup = [
+        name for name, (thread, _model_ref) in client._pending_gpu_cleanup.items()
+        if thread.is_alive()
+    ]
+    if live_cleanup:
+        pytest.fail(
+            "GPU cleanup thread(s) still alive after smoke-test drain: "
+            + ", ".join(sorted(live_cleanup))
+        )
+    assert not client._pending_gpu_cleanup
 
 
 def test_sentence_transformer_small_encode_on_accelerator(gpu_client):
@@ -117,20 +140,50 @@ def test_fastembed_provider_selection_and_encode_smoke(gpu_client, monkeypatch):
     _assert_embeddings(embeddings, rows=1, dims=config["dimensions"])
 
 
-def test_timeout_poison_path_falls_back_after_real_accelerator_thread(gpu_client):
+def test_timeout_poison_path_falls_back_after_real_accelerator_thread(
+    gpu_client, monkeypatch
+):
     from arcaneum.embeddings.client import EMBEDDING_MODELS
 
     model_name = _sentence_transformer_model()
     config = EMBEDDING_MODELS[model_name]
     model = gpu_client.get_model(model_name)
+    original_encode = model.encode
 
-    embeddings = gpu_client._encode_with_oom_recovery(
-        model,
-        ["Timeout poison smoke test"],
-        internal_batch_size=1,
-        model_name=model_name,
-        encode_timeout=0,
+    original_encode(
+        ["Warm accelerator kernels before timeout smoke."],
+        batch_size=1,
+        show_progress_bar=False,
+        convert_to_numpy=True,
     )
+
+    encode_completed = threading.Event()
+    release_encode = threading.Event()
+
+    def encode_then_block(*args, **kwargs):
+        result = original_encode(*args, **kwargs)
+        encode_completed.set()
+        release_encode.wait(timeout=30)
+        return result
+
+    monkeypatch.setattr(model, "encode", encode_then_block)
+
+    try:
+        embeddings = gpu_client._encode_with_oom_recovery(
+            model,
+            ["Timeout poison smoke test"],
+            internal_batch_size=1,
+            model_name=model_name,
+            encode_timeout=5,
+        )
+
+        assert encode_completed.wait(timeout=30)
+        assert any(
+            thread.is_alive()
+            for thread, _model_ref in gpu_client._pending_gpu_cleanup.values()
+        )
+    finally:
+        release_encode.set()
 
     assert gpu_client._gpu_poisoned is True
     assert model_name not in gpu_client._models

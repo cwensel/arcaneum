@@ -32,6 +32,7 @@ jobs:
       ARC_GPU_SMOKE_CACHE_DIR: ~/.cache/arcaneum/models
       ARC_GPU_SMOKE_MODEL: minilm
       ARC_GPU_SMOKE_FASTEMBED_MODEL: bge-small
+      ARC_REQUIRE_GPU_SMOKE_ACCELERATOR: "1"
 
     steps:
       - uses: actions/checkout@v6
@@ -55,13 +56,16 @@ jobs:
       - name: Install package
         run: pip install -e ".[dev]"
 
-      - name: Show accelerator
+      - name: Require accelerator
         run: |
           python - <<'PY'
           from arcaneum.embeddings.client import EmbeddingClient
 
           client = EmbeddingClient(use_gpu=True)
-          print(client.get_device_info())
+          device_info = client.get_device_info()
+          print(device_info)
+          if device_info["device"] == "cpu":
+              raise SystemExit("GPU smoke runner has no CUDA or MPS accelerator")
           PY
 
       - name: Run GPU smoke tests

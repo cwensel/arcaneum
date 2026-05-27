@@ -121,6 +121,7 @@ markers = [
     "unit: Unit tests (no external dependencies)",
     "integration: Integration tests (require services)",
     "e2e: End-to-end tests",
+    "gpu_smoke: Opt-in accelerator smoke tests for CUDA/MPS embedding paths",
     "slow: Tests taking >5 seconds",
 ]
 addopts = "-v --tb=short"

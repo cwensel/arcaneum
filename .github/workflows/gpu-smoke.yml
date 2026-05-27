@@ -1,0 +1,78 @@
+name: GPU Smoke Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_labels:
+        description: JSON array of labels for a CUDA or MPS self-hosted runner
+        default: '["self-hosted","gpu"]'
+        required: true
+      python_version:
+        description: Python version to test
+        default: "3.12"
+        required: true
+  schedule:
+    - cron: "23 9 * * *"
+
+concurrency:
+  group: gpu-smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  gpu-smoke:
+    name: GPU Smoke Tests
+    runs-on: ${{ fromJSON(inputs.runner_labels || '["self-hosted","gpu"]') }}
+    timeout-minutes: 45
+
+    env:
+      ARC_RUN_GPU_SMOKE: "1"
+      ARC_GPU_SMOKE_CACHE_DIR: ~/.cache/arcaneum/models
+      ARC_GPU_SMOKE_MODEL: minilm
+      ARC_GPU_SMOKE_FASTEMBED_MODEL: bge-small
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ inputs.python_version || '3.12' }}
+          cache: pip
+
+      - name: Cache smoke models
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/arcaneum/models
+            ~/.cache/fastembed
+          key: gpu-smoke-${{ runner.os }}-py${{ inputs.python_version || '3.12' }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            gpu-smoke-${{ runner.os }}-py${{ inputs.python_version || '3.12' }}-
+
+      - name: Install package
+        run: pip install -e ".[dev]"
+
+      - name: Show accelerator
+        run: |
+          python - <<'PY'
+          from arcaneum.embeddings.client import EmbeddingClient
+
+          client = EmbeddingClient(use_gpu=True)
+          print(client.get_device_info())
+          PY
+
+      - name: Run GPU smoke tests
+        run: |
+          pytest tests/gpu -m gpu_smoke \
+            --junit-xml=test-results/gpu-smoke.xml \
+            -v
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: gpu-smoke-test-results
+          path: test-results/gpu-smoke.xml

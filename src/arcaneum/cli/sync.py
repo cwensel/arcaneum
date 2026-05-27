@@ -284,6 +284,86 @@ def _chunk_code_file_worker(
         return (file_path, [], str(e))
 
 
+def _build_quality_manifest(
+    *,
+    file_path: Path,
+    corpus_type: str,
+    source_hash: Optional[str],
+    chunk_count: int,
+    metadata: Optional[Dict[str, Any]] = None,
+    extraction_method: Optional[str] = None,
+    warnings: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Build per-file extraction quality metadata stored on each chunk."""
+    metadata = metadata or {}
+    warnings = list(warnings or [])
+    page_count = metadata.get("page_count")
+    page_boundaries = metadata.get("page_boundaries") or []
+    covered_pages = [
+        p.get("page_number")
+        for p in page_boundaries
+        if p.get("page_number") is not None and p.get("page_text_length", 0) > 0
+    ]
+    empty_pages = []
+    if page_count:
+        empty_pages = sorted(set(range(1, page_count + 1)) - set(covered_pages))
+    low_text_pages = [
+        p.get("page_number")
+        for p in page_boundaries
+        if p.get("page_number") is not None and 0 < p.get("page_text_length", 0) < 200
+    ]
+
+    if metadata.get("extraction_floor"):
+        warnings.append("extraction_floor")
+    if metadata.get("dropout_recovered"):
+        warnings.append("dropout_recovered")
+    if metadata.get("ocr_pages_failed", 0):
+        warnings.append("ocr_pages_failed")
+    if empty_pages:
+        warnings.append("empty_pages")
+    if low_text_pages:
+        warnings.append("low_text_pages")
+
+    method = extraction_method or metadata.get("extraction_method") or metadata.get("method")
+    if corpus_type == "code":
+        fallback_method = "line_based" if method == "line_based" else None
+    elif metadata.get("dropout_recovered"):
+        fallback_method = metadata.get("extraction_method")
+    elif metadata.get("extraction_floor"):
+        fallback_method = "normalized_bypass_no_improvement"
+    else:
+        fallback_method = None
+
+    return {
+        "schema_version": 1,
+        "file_path": str(file_path),
+        "source_hash": source_hash,
+        "extractor": corpus_type,
+        "extractor_version": "arcaneum.quality_manifest.v1",
+        "extraction_method": method,
+        "fallback_method": fallback_method,
+        "chunk_count": chunk_count,
+        "page_coverage": {
+            "page_count": page_count,
+            "covered_pages": sorted(set(covered_pages)),
+            "empty_pages": empty_pages,
+            "low_text_pages": low_text_pages,
+        },
+        "ocr": {
+            "triggered": bool(metadata.get("ocr_triggered_by")),
+            "reason": metadata.get("ocr_triggered_by"),
+            "pages_processed": metadata.get("ocr_pages_processed"),
+            "confidence": metadata.get("ocr_confidence"),
+            "failures": metadata.get("ocr_pages_failed"),
+        },
+        "table_handling_count": metadata.get("table_count"),
+        "image_handling_count": metadata.get("image_count"),
+        "quality_warnings": sorted(set(warnings)),
+        "repair_command": f"arc corpus sync <corpus> {file_path} --repair",
+        "verify_command": "arc corpus verify <corpus> --json",
+    }
+
+
 def get_meili_client() -> FullTextClient:
     """Get MeiliSearch client from environment or auto-generated key."""
     from ..paths import get_meilisearch_api_key
@@ -874,6 +954,8 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool 
         logger.warning(f"No text extracted from {file_path}")
         return []
 
+    page_count = metadata.get('page_count', page_count)
+
     # Create chunker and chunk the text
     chunker = PDFChunker(model_config)
     base_metadata = {
@@ -892,8 +974,21 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool 
     }
     if extraction_floor:
         base_metadata['extraction_floor'] = True
+        metadata['extraction_floor'] = True
+
+    base_metadata['quality_manifest'] = _build_quality_manifest(
+        file_path=file_path,
+        corpus_type='pdf',
+        source_hash=hashlib.sha256(file_path.read_bytes()).hexdigest(),
+        chunk_count=0,
+        metadata={**metadata, **base_metadata},
+    )
 
     chunks = chunker.chunk(text, base_metadata)
+    quality_manifest = dict(base_metadata['quality_manifest'])
+    quality_manifest['chunk_count'] = len(chunks)
+    for chunk in chunks:
+        chunk.metadata['quality_manifest'] = quality_manifest
 
     return [{'text': c.text, 'metadata': c.metadata} for c in chunks]
 
@@ -2012,6 +2107,7 @@ def sync_directory_command(
 
                             # Add type-specific metadata
                             chunk_meta = chunk.get('metadata', {})
+                            quality_manifest = chunk_meta.get('quality_manifest')
 
                             if corpus_type == 'pdf':
                                 doc.page_number = chunk_meta.get('page_number')
@@ -2038,6 +2134,14 @@ def sync_directory_command(
                             elif corpus_type == 'code':
                                 doc.language = chunk_meta.get('language', 'unknown')
                                 doc.line_number = chunk_meta.get('line_number')
+                                quality_manifest = _build_quality_manifest(
+                                    file_path=file_path,
+                                    corpus_type='code',
+                                    source_hash=file_hash,
+                                    chunk_count=len(chunks),
+                                    metadata=chunk_meta,
+                                    extraction_method=chunk_meta.get('method'),
+                                )
 
                                 # Extract git metadata for code files
                                 if git_discovery:
@@ -2063,6 +2167,7 @@ def sync_directory_command(
                                             include_version = git_version and git_root in version_identifiers
                                             apply_git_metadata(doc, git_meta, include_version_id=include_version)
 
+                            doc.quality_manifest = quality_manifest
                             documents.append(doc)
 
                         # Index to both systems
@@ -2352,6 +2457,8 @@ def sync_directory_command(
 
                             # Add type-specific metadata
                             chunk_meta = chunk.get('metadata', {})
+                            if chunk_meta.get("quality_manifest"):
+                                payload["quality_manifest"] = chunk_meta["quality_manifest"]
                             if corpus_type == 'pdf':
                                 if chunk_meta.get('page_number'):
                                     payload["page_number"] = chunk_meta["page_number"]
@@ -3369,6 +3476,8 @@ def _backfill_meili_to_qdrant(
 
                 # Add type-specific metadata
                 chunk_meta = chunk.get('metadata', {}) if isinstance(chunk, dict) else {}
+                if chunk_meta.get("quality_manifest"):
+                    payload["quality_manifest"] = chunk_meta["quality_manifest"]
                 if corpus_type == 'pdf':
                     if chunk_meta.get('page_number'):
                         payload["page_number"] = chunk_meta["page_number"]

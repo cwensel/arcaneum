@@ -58,6 +58,7 @@ def test_dropout_detected_from_payload_page_count(qdrant_client):
     assert result.files[0].suspected_dropout is True
     assert result.files[0].page_count == 8
     assert result.files[0].total_text_chars == 500
+    assert "suspected_dropout" in result.files[0].quality_manifest["quality_warnings"]
     assert result.get_items_needing_repair() == ["/tmp/fake.pdf"]
 
 
@@ -109,6 +110,7 @@ def test_healthy_pdf_not_flagged(qdrant_client):
 
     assert result.is_healthy is True
     assert result.dropout_items == 0
+    assert result.files[0].quality_manifest["quality_warnings"] == []
 
 
 def test_chunk_count_detects_missing_tail_chunk(qdrant_client):
@@ -136,6 +138,106 @@ def test_chunk_count_detects_missing_tail_chunk(qdrant_client):
     assert result.files[0].expected_chunks == 3
     assert result.files[0].actual_chunks == 2
     assert result.files[0].missing_indices == [2]
+    assert result.files[0].quality_manifest["chunk_count"] == 3
+
+
+def test_quality_manifest_marks_stale_source(qdrant_client, tmp_path):
+    stale = tmp_path / "stale.pdf"
+    stale.write_bytes(b"changed")
+    qdrant_client.scroll.side_effect = _scroll_once([
+        _point({
+            "file_path": str(stale),
+            "chunk_index": 0,
+            "chunk_count": 1,
+            "source_hash": "0" * 64,
+            "page_count": 1,
+            "text": "x" * 5000,
+        }),
+    ])
+
+    with patch.object(verify_mod, "get_collection_type", return_value="pdf"):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=1,
+        )
+
+    assert result.is_healthy is False
+    assert result.files[0].is_complete is False
+    assert "stale_source" in result.files[0].quality_manifest["quality_warnings"]
+
+
+def test_quality_manifest_preserves_ocr_fallback(qdrant_client):
+    qdrant_client.scroll.side_effect = _scroll_once([
+        _point({
+            "file_path": "/tmp/ocr.pdf",
+            "chunk_index": 0,
+            "chunk_count": 1,
+            "page_count": 1,
+            "text": "x" * 5000,
+            "quality_manifest": {
+                "schema_version": 1,
+                "file_path": "/tmp/ocr.pdf",
+                "source_hash": "abc",
+                "extractor": "pdf",
+                "extractor_version": "arcaneum.quality_manifest.v1",
+                "extraction_method": "pymupdf4llm_ocr",
+                "fallback_method": None,
+                "chunk_count": 1,
+                "page_coverage": {
+                    "page_count": 1,
+                    "covered_pages": [1],
+                    "empty_pages": [],
+                    "low_text_pages": [],
+                },
+                "ocr": {
+                    "triggered": True,
+                    "reason": "quality",
+                    "pages_processed": 1,
+                    "confidence": 72.0,
+                    "failures": 0,
+                },
+                "quality_warnings": [],
+                "repair_command": "arc corpus sync <corpus> /tmp/ocr.pdf --repair",
+                "verify_command": "arc corpus verify <corpus> --json",
+            },
+        }),
+    ])
+
+    with patch.object(verify_mod, "get_collection_type", return_value="pdf"):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=1,
+        )
+
+    manifest = result.files[0].quality_manifest
+    assert manifest["ocr"]["triggered"] is True
+    assert manifest["ocr"]["reason"] == "quality"
+    assert result.files[0].is_complete is True
+
+
+def test_quality_manifest_marks_garbled_text(qdrant_client):
+    qdrant_client.scroll.side_effect = _scroll_once([
+        _point({
+            "file_path": "/tmp/garbled.pdf",
+            "chunk_index": 0,
+            "chunk_count": 1,
+            "page_count": 1,
+            "text": "\ufffd" * 1000,
+        }),
+    ])
+
+    with patch.object(verify_mod, "get_collection_type", return_value="pdf"):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=1,
+            check_quality=True,
+        )
+
+    assert result.garbled_items == 1
+    assert "garbled_text" in result.files[0].quality_manifest["quality_warnings"]
 
 
 def test_chunk_count_rejects_sparse_out_of_range_indices(qdrant_client):

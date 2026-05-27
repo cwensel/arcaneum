@@ -1436,6 +1436,16 @@ def corpus_verify_command(
                     "complete_items": qdrant_result.complete_items,
                     "incomplete_items": qdrant_result.incomplete_items,
                 }
+                if qdrant_result.collection_type != "code":
+                    data["qdrant"]["files"] = [
+                        {
+                            "file_path": file.file_path,
+                            "is_complete": file.is_complete,
+                            "quality_manifest": file.quality_manifest,
+                        }
+                        for file in qdrant_result.files
+                        if getattr(file, "quality_manifest", None)
+                    ]
 
             if meili_result:
                 data["meilisearch"] = meili_result

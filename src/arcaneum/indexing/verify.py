@@ -14,6 +14,7 @@ Usage:
     result = verifier.verify_collection("MyCollection")
 """
 
+import hashlib
 import logging
 import os
 from dataclasses import dataclass, field
@@ -60,6 +61,7 @@ class FileVerificationResult:
     suspected_dropout: bool = False  # extracted text implausibly small for page count
     total_text_chars: int = 0  # sum of chunk text lengths (for dropout detection)
     page_count: Optional[int] = None  # authoritative page count from PDF
+    quality_manifest: Optional[dict] = None  # per-file extraction quality summary
 
     @property
     def completion_percentage(self) -> float:
@@ -369,13 +371,26 @@ class CollectionVerifier:
                 "total_text_chars": 0,
                 "page_count": None,
                 "extraction_floor": False,
+                "quality_manifest": None,
+                "source_hash": None,
             }
         )
 
         # Scroll through all points
         offset = None
         batch_count = 0
-        payload_fields = ["file_path", "chunk_index", "chunk_count"]
+        payload_fields = [
+            "file_path",
+            "chunk_index",
+            "chunk_count",
+            "source_hash",
+            "extraction_method",
+            "ocr_confidence",
+            "ocr_pages_failed",
+            "ocr_pages_processed",
+            "ocr_triggered_by",
+            "quality_manifest",
+        ]
         if check_dropout:
             payload_fields.extend(["page_count", "extraction_floor"])
         if check_quality or check_dropout:
@@ -408,6 +423,8 @@ class CollectionVerifier:
 
                 if not file_path:
                     continue
+                if payload.get("source_hash") and file_chunks[file_path]["source_hash"] is None:
+                    file_chunks[file_path]["source_hash"] = payload.get("source_hash")
 
                 # Track chunk indices for this file
                 if chunk_index is not None:
@@ -447,6 +464,39 @@ class CollectionVerifier:
                         file_chunks[file_path]["page_count"] = payload_page_count
                     if payload.get("extraction_floor"):
                         file_chunks[file_path]["extraction_floor"] = True
+                manifest = payload.get("quality_manifest")
+                if (
+                    isinstance(manifest, dict)
+                    and file_chunks[file_path]["quality_manifest"] is None
+                ):
+                    file_chunks[file_path]["quality_manifest"] = manifest
+                elif file_chunks[file_path]["quality_manifest"] is None:
+                    file_chunks[file_path]["quality_manifest"] = {
+                        "schema_version": 1,
+                        "file_path": file_path,
+                        "source_hash": payload.get("source_hash"),
+                        "extractor": collection_type or "file",
+                        "extractor_version": "legacy_payload",
+                        "extraction_method": payload.get("extraction_method"),
+                        "fallback_method": None,
+                        "chunk_count": chunk_count,
+                        "page_coverage": {
+                            "page_count": payload.get("page_count"),
+                            "covered_pages": [],
+                            "empty_pages": [],
+                            "low_text_pages": [],
+                        },
+                        "ocr": {
+                            "triggered": bool(payload.get("ocr_triggered_by")),
+                            "reason": payload.get("ocr_triggered_by"),
+                            "pages_processed": payload.get("ocr_pages_processed"),
+                            "confidence": payload.get("ocr_confidence"),
+                            "failures": payload.get("ocr_pages_failed"),
+                        },
+                        "quality_warnings": [],
+                        "repair_command": f"arc corpus sync <corpus> {file_path} --repair",
+                        "verify_command": "arc corpus verify <corpus> --json",
+                    }
 
             if offset is None:
                 break
@@ -469,6 +519,8 @@ class CollectionVerifier:
             quality_scores = file_data["quality_scores"]
             inferred_chunk_count = file_data["inferred_chunk_count"]
             conflicting_chunk_counts = len(explicit_chunk_counts) > 1
+            stale_source = False
+            source_hash = file_data["source_hash"]
 
             if inferred_chunk_count:
                 logger.warning(
@@ -507,6 +559,24 @@ class CollectionVerifier:
 
             if has_garbled:
                 garbled_count += 1
+                manifest = file_data["quality_manifest"] or {}
+                warnings = set(manifest.get("quality_warnings", []))
+                warnings.add("garbled_text")
+                manifest["quality_warnings"] = sorted(warnings)
+                file_data["quality_manifest"] = manifest
+
+            if source_hash and os.path.exists(file_path):
+                try:
+                    with open(file_path, "rb") as f:
+                        stale_source = hashlib.sha256(f.read()).hexdigest() != source_hash
+                    if stale_source:
+                        manifest = file_data["quality_manifest"] or {}
+                        warnings = set(manifest.get("quality_warnings", []))
+                        warnings.add("stale_source")
+                        manifest["quality_warnings"] = sorted(warnings)
+                        file_data["quality_manifest"] = manifest
+                except OSError:
+                    pass
 
             # Check extraction dropout.
             # page_count in payload is authoritative when present (newer indexes);
@@ -530,8 +600,17 @@ class CollectionVerifier:
                         if looks_like_dropout("x" * total_text_chars, page_count):
                             suspected_dropout = True
                             dropout_count += 1
+                            manifest = file_data["quality_manifest"] or {}
+                            warnings = set(manifest.get("quality_warnings", []))
+                            warnings.add("suspected_dropout")
+                            manifest["quality_warnings"] = sorted(warnings)
+                            file_data["quality_manifest"] = manifest
 
-            if is_complete and not has_garbled and not suspected_dropout:
+            file_is_healthy = (
+                is_complete and not has_garbled and not suspected_dropout and not stale_source
+            )
+
+            if file_is_healthy:
                 complete_count += 1
             else:
                 incomplete_count += 1
@@ -542,12 +621,13 @@ class CollectionVerifier:
                     expected_chunks=chunk_count if chunk_count else len(indices),
                     actual_chunks=len(indices),
                     missing_indices=missing,
-                    is_complete=is_complete and not has_garbled and not suspected_dropout,
+                    is_complete=file_is_healthy,
                     has_garbled_text=has_garbled,
                     avg_quality_score=round(avg_quality, 3),
                     suspected_dropout=suspected_dropout,
                     total_text_chars=total_text_chars,
                     page_count=page_count,
+                    quality_manifest=file_data["quality_manifest"],
                 )
             )
 

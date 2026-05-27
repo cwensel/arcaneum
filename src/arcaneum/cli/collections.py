@@ -495,6 +495,8 @@ def verify_collection_command(
                         }
                         if not file.is_complete:
                             file_data["missing_indices"] = file.missing_indices
+                        if getattr(file, "quality_manifest", None):
+                            file_data["quality_manifest"] = file.quality_manifest
                         data["files"].append(file_data)
 
                 # Include items needing repair

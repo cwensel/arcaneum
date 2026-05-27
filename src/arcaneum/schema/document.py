@@ -97,6 +97,7 @@ class DualIndexDocument:
     chunking_version: Optional[str] = None
     file_size: Optional[int] = None
     quick_hash: Optional[str] = None  # Metadata-based hash (mtime+size) for fast change detection
+    quality_manifest: Optional[Dict[str, Any]] = None
 
     # Vectors (Qdrant only)
     vectors: Dict[str, List[float]] = field(default_factory=dict)
@@ -225,6 +226,9 @@ def to_qdrant_point(doc: DualIndexDocument, point_id: Optional[int] = None):
     if doc.quick_hash:
         payload["quick_hash"] = doc.quick_hash
 
+    if doc.quality_manifest:
+        payload["quality_manifest"] = doc.quality_manifest
+
     # Use document id or provided point_id
     pid = point_id if point_id is not None else doc.id
 
@@ -320,5 +324,8 @@ def to_meilisearch_doc(doc: DualIndexDocument) -> Dict[str, Any]:
 
     if doc.section:
         meili_doc["section"] = doc.section
+
+    if doc.quality_manifest:
+        meili_doc["quality_manifest"] = doc.quality_manifest
 
     return meili_doc

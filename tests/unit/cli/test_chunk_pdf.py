@@ -8,12 +8,11 @@ mocked PDFExtractor and PDFChunker to verify:
   (c) soft quality gate (score_text < 0.7) triggers OCR for marginal text
 """
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from arcaneum.cli.sync import chunk_pdf_file
+from arcaneum.cli.sync import _build_quality_manifest, chunk_pdf_file
 
 
 def _make_chunk(text, metadata):
@@ -70,7 +69,12 @@ class TestDropoutFallback:
         fallback_extractor = MagicMock()
         fallback_extractor.extract.return_value = (
             _REALISTIC_TEXT * 5,  # ~2000 chars, much more than initial ~200
-            {"page_count": 8, "page_boundaries": [], "fallback": True},
+            {
+                "page_count": 8,
+                "page_boundaries": [],
+                "extraction_method": "pymupdf_normalized",
+                "fallback": True,
+            },
         )
 
         mock_extractor_cls.side_effect = [initial_extractor, fallback_extractor]
@@ -85,6 +89,11 @@ class TestDropoutFallback:
 
         # Fallback extractor was created with markdown_conversion=False
         mock_extractor_cls.assert_any_call(markdown_conversion=False)
+        manifest = result[0]["metadata"]["quality_manifest"]
+        assert manifest["source_hash"]
+        assert manifest["chunk_count"] == 1
+        assert manifest["fallback_method"] == "pymupdf_normalized"
+        assert "dropout_recovered" in manifest["quality_warnings"]
         assert len(result) == 1
 
     @patch("arcaneum.indexing.pdf.chunker.PDFChunker")
@@ -130,6 +139,9 @@ class TestDropoutFallback:
 
         # extraction_floor should be set because fallback didn't improve enough
         assert captured_meta.get("extraction_floor") is True
+        manifest = captured_meta["quality_manifest"]
+        assert manifest["fallback_method"] == "normalized_bypass_no_improvement"
+        assert "extraction_floor" in manifest["quality_warnings"]
 
 
 class TestSoftQualityGate:
@@ -202,6 +214,10 @@ class TestSoftQualityGate:
         assert "clean OCR text with full content" in captured["text"]
         assert captured["metadata"]["ocr_merge_strategy"] == "append_ocr_to_extracted_text"
         assert captured["metadata"]["ocr_triggered_by"] == "quality"
+        manifest = captured["metadata"]["quality_manifest"]
+        assert manifest["ocr"]["triggered"] is True
+        assert manifest["ocr"]["reason"] == "quality"
+        assert manifest["ocr"]["confidence"] == 72.0
         assert captured["metadata"]["ocr_confidence"] == 72.0
         assert captured["metadata"]["page_boundaries"][0] == original_boundaries[0]
         assert captured["metadata"]["page_boundaries"][1]["start_char"] > len(_REALISTIC_TEXT)
@@ -277,3 +293,22 @@ class TestSoftQualityGate:
         # Only one extractor created (initial), no OCR re-extraction
         assert mock_extractor_cls.call_count == 1
         assert len(result) == 1
+
+
+def test_code_quality_manifest_distinguishes_ast_fallback(tmp_path):
+    source = tmp_path / "fallback.py"
+    source.write_text("print('fallback')\n")
+
+    manifest = _build_quality_manifest(
+        file_path=source,
+        corpus_type="code",
+        source_hash="abc123",
+        chunk_count=1,
+        metadata={"method": "line_based"},
+        extraction_method="line_based",
+    )
+
+    assert manifest["extractor"] == "code"
+    assert manifest["extraction_method"] == "line_based"
+    assert manifest["fallback_method"] == "line_based"
+    assert manifest["source_hash"] == "abc123"

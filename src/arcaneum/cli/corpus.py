@@ -6,15 +6,21 @@ collection and a MeiliSearch index in a single operation.
 
 import sys
 
-from rich.console import Console
 from qdrant_client.models import HnswConfigDiff
+from rich.console import Console
 
-from ..cli.output import print_json, print_error, print_info
-from ..cli.utils import create_qdrant_client, create_meili_client, get_model_dimensions, build_vectors_config
-from ..cli.interaction_logger import interaction_logger
 from ..cli.errors import InvalidArgumentError, ResourceNotFoundError
+from ..cli.interaction_logger import interaction_logger
+from ..cli.output import print_error, print_info, print_json
+from ..cli.utils import (
+    build_vectors_config,
+    create_meili_client,
+    create_qdrant_client,
+    get_model_dimensions,
+)
+from ..embeddings.client import EMBEDDING_MODELS
 from ..fulltext.indexes import get_index_settings
-from ..indexing.collection_metadata import set_collection_metadata, get_collection_metadata
+from ..indexing.collection_metadata import get_collection_metadata, set_collection_metadata
 
 console = Console()
 
@@ -54,6 +60,164 @@ def map_corpus_type_to_canonical(corpus_type: str) -> str:
     return type_map.get(corpus_type, corpus_type)
 
 
+UNKNOWN_LEGACY = "unknown/legacy"
+
+
+def _split_metadata_models(model_metadata):
+    """Normalize stored model metadata into an ordered list of model names."""
+    if not model_metadata:
+        return []
+    if isinstance(model_metadata, str):
+        return [part.strip() for part in model_metadata.split(",") if part.strip()]
+    if isinstance(model_metadata, (list, tuple)):
+        return [str(part).strip() for part in model_metadata if str(part).strip()]
+    return [str(model_metadata)]
+
+
+def _embedding_model_config(model_name):
+    """Look up an embedding model by alias or canonical model name."""
+    if model_name in EMBEDDING_MODELS:
+        return model_name, EMBEDDING_MODELS[model_name]
+    for alias, config in EMBEDDING_MODELS.items():
+        if config.get("name") == model_name:
+            return alias, config
+    return model_name, {}
+
+
+def _extract_vectors_config(collection_info):
+    """Return stable vector config records for single or named Qdrant vectors."""
+    vectors = getattr(collection_info.config.params, "vectors", None)
+    if isinstance(vectors, dict):
+        return [
+            {
+                "vector_name": name,
+                "dimensions": vector_params.size,
+                "distance": str(vector_params.distance),
+            }
+            for name, vector_params in vectors.items()
+        ]
+    if vectors is not None:
+        return [{
+            "vector_name": None,
+            "dimensions": getattr(vectors, "size", None),
+            "distance": str(getattr(vectors, "distance", UNKNOWN_LEGACY)),
+        }]
+    return []
+
+
+def _extract_policy_metadata(metadata):
+    """Expose prompt/schema policy metadata when collections recorded it."""
+    policy = {
+        key: metadata.get(key, UNKNOWN_LEGACY)
+        for key in ("prompt_policy", "schema_policy")
+    }
+    for optional_key in ("prompt_schema_policy", "context_enrichment"):
+        if optional_key in metadata:
+            policy[optional_key] = metadata[optional_key]
+    return policy
+
+
+def _build_corpus_model_info(metadata, collection_info):
+    """Build JSON-stable model/vector/backend details for a corpus."""
+    model_names = _split_metadata_models(metadata.get("model"))
+    vector_configs = _extract_vectors_config(collection_info)
+    named_vectors = {
+        vector["vector_name"]: vector
+        for vector in vector_configs
+        if vector.get("vector_name") is not None
+    }
+    positional_vectors = [
+        vector for vector in vector_configs
+        if vector.get("vector_name") is None
+    ]
+
+    if not model_names and not vector_configs:
+        return [{
+            "alias": UNKNOWN_LEGACY,
+            "name": UNKNOWN_LEGACY,
+            "backend": UNKNOWN_LEGACY,
+            "vector_name": UNKNOWN_LEGACY,
+            "dimensions": None,
+            "distance": UNKNOWN_LEGACY,
+            "policy": _extract_policy_metadata(metadata),
+        }]
+
+    models = []
+    for index, model_name in enumerate(model_names):
+        alias, config = _embedding_model_config(model_name)
+        canonical_name = config.get("name", model_name)
+        candidates = (model_name, alias, canonical_name)
+        vector = next(
+            (
+                named_vectors.pop(candidate)
+                for candidate in candidates
+                if candidate in named_vectors
+            ),
+            positional_vectors[index] if index < len(positional_vectors) else {},
+        )
+        vector_name = vector.get("vector_name")
+
+        models.append({
+            "alias": alias,
+            "name": canonical_name,
+            "backend": config.get("backend", UNKNOWN_LEGACY),
+            "vector_name": vector_name or UNKNOWN_LEGACY,
+            "dimensions": vector.get("dimensions", config.get("dimensions")),
+            "distance": vector.get("distance", UNKNOWN_LEGACY),
+            "policy": _extract_policy_metadata(metadata),
+        })
+
+    if model_names:
+        unmatched_vectors = named_vectors.values()
+    else:
+        unmatched_vectors = vector_configs
+
+    for vector in unmatched_vectors:
+        vector_name = vector.get("vector_name")
+        lookup_name = vector_name
+
+        if lookup_name:
+            alias, config = _embedding_model_config(lookup_name)
+            canonical_name = config.get("name", lookup_name)
+            backend = config.get("backend", UNKNOWN_LEGACY)
+        else:
+            alias = UNKNOWN_LEGACY
+            canonical_name = UNKNOWN_LEGACY
+            backend = UNKNOWN_LEGACY
+
+        models.append({
+            "alias": alias,
+            "name": canonical_name,
+            "backend": backend,
+            "vector_name": vector_name or UNKNOWN_LEGACY,
+            "dimensions": vector.get(
+                "dimensions",
+                config.get("dimensions") if lookup_name else None,
+            ),
+            "distance": vector.get("distance", UNKNOWN_LEGACY),
+            "policy": _extract_policy_metadata(metadata),
+        })
+    return models
+
+
+def _format_model_summary(models):
+    """Format concise model info for the corpus table."""
+    if not models:
+        return UNKNOWN_LEGACY
+    parts = []
+    for model in models:
+        alias = model.get("alias") or UNKNOWN_LEGACY
+        vector_name = model.get("vector_name")
+        backend = model.get("backend")
+        suffix = []
+        if vector_name and vector_name != UNKNOWN_LEGACY and vector_name != alias:
+            suffix.append(vector_name)
+        if backend and backend != UNKNOWN_LEGACY:
+            suffix.append(backend)
+        parts.append(f"{alias} ({', '.join(suffix)})" if suffix else alias)
+    return ", ".join(parts)
+
+
 def list_corpora_command(verbose: bool, output_json: bool):
     """List all corpora with parity status.
 
@@ -79,9 +243,12 @@ def list_corpora_command(verbose: bool, output_json: bool):
                 col_info = qdrant.get_collection(col.name)
                 # Subtract 1 for the metadata point
                 chunk_count = col_info.points_count - 1 if col_info.points_count > 0 else 0
+                models = _build_corpus_model_info(metadata, col_info)
                 qdrant_collections[col.name] = {
                     "type": metadata.get("collection_type"),
                     "model": metadata.get("model"),
+                    "models": models,
+                    "model_summary": _format_model_summary(models),
                     "chunks": chunk_count,
                 }
         except Exception as e:
@@ -125,6 +292,19 @@ def list_corpora_command(verbose: bool, output_json: bool):
 
             corpus_type = q_info.get("type") if q_info else None
             model = q_info.get("model") if q_info else None
+            models = q_info.get("models") if q_info else [{
+                "alias": UNKNOWN_LEGACY,
+                "name": UNKNOWN_LEGACY,
+                "backend": UNKNOWN_LEGACY,
+                "vector_name": UNKNOWN_LEGACY,
+                "dimensions": None,
+                "distance": UNKNOWN_LEGACY,
+                "policy": {
+                    "prompt_policy": UNKNOWN_LEGACY,
+                    "schema_policy": UNKNOWN_LEGACY,
+                },
+            }]
+            model_summary = q_info.get("model_summary") if q_info else UNKNOWN_LEGACY
             q_chunks = q_info.get("chunks", 0) if q_info else 0
             m_chunks = m_info.get("chunks", 0) if m_info else 0
 
@@ -132,6 +312,8 @@ def list_corpora_command(verbose: bool, output_json: bool):
                 "name": name,
                 "type": corpus_type,
                 "model": model,
+                "models": models,
+                "model_summary": model_summary,
                 "status": status,
                 "qdrant_chunks": q_chunks,
                 "meili_chunks": m_chunks,
@@ -148,9 +330,9 @@ def list_corpora_command(verbose: bool, output_json: bool):
                 table = Table(title="Corpora")
                 table.add_column("Name", style="cyan")
                 table.add_column("Type", style="blue")
+                table.add_column("Model", style="magenta")
                 table.add_column("Status", style="green")
                 if verbose:
-                    table.add_column("Model", style="magenta")
                     table.add_column("Q Chunks", style="yellow")
                     table.add_column("M Chunks", style="yellow")
 
@@ -167,11 +349,11 @@ def list_corpora_command(verbose: bool, output_json: bool):
                     row = [
                         c["name"],
                         c["type"] or "—",
+                        c["model_summary"],
                         status_str,
                     ]
                     if verbose:
                         row.extend([
-                            c["model"] or "—",
                             str(c["qdrant_chunks"]),
                             str(c["meili_chunks"]),
                         ])

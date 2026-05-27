@@ -332,7 +332,10 @@ reliability and performance than bind mounts.
 **Legacy Migration:**
 
 If upgrading from an older version with `~/.arcaneum/`, the directory will be
-automatically migrated to XDG-compliant locations on first run.
+automatically migrated to XDG-compliant locations on first run. Qdrant client
+configuration is read from `~/.config/arcaneum/config.yaml`; an existing legacy
+`~/.arcaneum/config.yaml` is copied there the first time Qdrant configuration is
+loaded.
 
 **Migration Note:** If you're upgrading from bind mounts to named volumes, see
 **[Qdrant Migration Guide](docs/guides/qdrant-migration.md)** for detailed migration

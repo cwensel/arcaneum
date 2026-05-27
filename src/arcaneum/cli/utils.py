@@ -1,16 +1,18 @@
 """CLI utility functions."""
 
+import logging
 import os
 import sys
-import logging
-from typing import Optional, List, Set
 from pathlib import Path
+from typing import List, Optional, Set
+
 import click
 from qdrant_client import QdrantClient
-from qdrant_client.models import VectorParams, Distance
+from qdrant_client.models import Distance, VectorParams
 
 from ..config import load_config
 from ..embeddings.client import EMBEDDING_MODELS, _unknown_model_error
+from ..paths import get_legacy_arcaneum_dir
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +64,7 @@ def extract_vectors_info(collection_info) -> dict:
     named-vector collections, or an empty dict if no named vectors are defined.
     """
     params = collection_info.config.params
-    if hasattr(params, 'vectors') and isinstance(params.vectors, dict):
+    if hasattr(params, "vectors") and isinstance(params.vectors, dict):
         return {
             name: {"size": p.size, "distance": str(p.distance)}
             for name, p in params.vectors.items()
@@ -70,10 +72,7 @@ def extract_vectors_info(collection_info) -> dict:
     return {}
 
 
-def read_file_list(
-    from_file: str,
-    allowed_extensions: Optional[Set[str]] = None
-) -> List[Path]:
+def read_file_list(from_file: str, allowed_extensions: Optional[Set[str]] = None) -> List[Path]:
     """Read file paths from a list file or stdin.
 
     Args:
@@ -94,7 +93,7 @@ def read_file_list(
     paths = []
 
     # Read lines from stdin or file
-    if from_file == '-':
+    if from_file == "-":
         logger.debug("Reading file list from stdin")
         lines = sys.stdin.readlines()
     else:
@@ -103,7 +102,7 @@ def read_file_list(
             logger.error(f"File list not found: {from_file}")
             return []
         logger.debug(f"Reading file list from {from_file}")
-        with open(from_file_path, 'r') as f:
+        with open(from_file_path, "r") as f:
             lines = f.readlines()
 
     # Process each line
@@ -111,7 +110,7 @@ def read_file_list(
         line = line.strip()
 
         # Skip empty lines and comments
-        if not line or line.startswith('#'):
+        if not line or line.startswith("#"):
             continue
 
         # Convert to Path and make absolute
@@ -160,13 +159,13 @@ def set_process_priority(priority: str, disable_worker_nice: bool = False) -> No
     """
     # Store disable_worker_nice in environment for worker processes to access (arcaneum-mql4)
     if disable_worker_nice:
-        os.environ['ARCANEUM_DISABLE_WORKER_NICE'] = '1'
+        os.environ["ARCANEUM_DISABLE_WORKER_NICE"] = "1"
 
     if priority == "normal":
         return  # No change needed
 
     # Unix/Linux/macOS: use os.nice()
-    if hasattr(os, 'nice'):
+    if hasattr(os, "nice"):
         try:
             if priority == "low":
                 os.nice(10)  # Lower priority (background job)
@@ -185,9 +184,10 @@ def set_process_priority(priority: str, disable_worker_nice: bool = False) -> No
             logger.warning(f"Failed to set process priority: {e}")
 
     # Windows: use SetPriorityClass via psutil
-    elif sys.platform == 'win32':
+    elif sys.platform == "win32":
         try:
             import psutil
+
             process = psutil.Process(os.getpid())
 
             if priority == "low":
@@ -210,12 +210,57 @@ def set_process_priority(priority: str, disable_worker_nice: bool = False) -> No
         logger.warning(f"Process priority not supported on platform: {sys.platform}")
 
 
+def _resolve_qdrant_config_path() -> Path:
+    """Resolve the default Qdrant config path, migrating legacy config if needed."""
+    config_home = os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))
+    config_path = Path(config_home) / "arcaneum" / "config.yaml"
+    temp_config_path = config_path.with_name(f".{config_path.name}.{os.getpid()}.tmp")
+    legacy_config_path = get_legacy_arcaneum_dir() / "config.yaml"
+
+    if config_path.exists():
+        return config_path
+
+    if legacy_config_path.exists():
+        try:
+            legacy_config = legacy_config_path.read_text()
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            if config_path.exists():
+                return config_path
+            try:
+                fd = os.open(temp_config_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                raise
+            try:
+                with os.fdopen(fd, "w") as f:
+                    f.write(legacy_config)
+                os.replace(temp_config_path, config_path)
+            except Exception:
+                temp_config_path.unlink(missing_ok=True)
+                raise
+            logger.warning(
+                "Migrated legacy Qdrant config from %s to %s",
+                legacy_config_path,
+                config_path,
+            )
+        except (OSError, UnicodeError) as e:
+            logger.warning(
+                "Could not migrate legacy Qdrant config from %s to %s: %s; "
+                "reading the legacy file for this run",
+                legacy_config_path,
+                config_path,
+                e,
+            )
+            return legacy_config_path
+
+    return config_path
+
+
 def create_qdrant_client(
     url: Optional[str] = None,
     api_key: Optional[str] = None,
     timeout: Optional[int] = None,
     for_search: bool = False,
-    config_path: Optional[Path] = None
+    config_path: Optional[Path] = None,
 ) -> QdrantClient:
     """Create QdrantClient with proper timeout configuration.
 
@@ -227,7 +272,7 @@ def create_qdrant_client(
         api_key: Qdrant API key (defaults to env or config)
         timeout: Timeout in seconds (overrides config)
         for_search: If True, use search_timeout from config (default: False)
-        config_path: Path to config file (defaults to ~/.arcaneum/config.yaml)
+        config_path: Path to config file (defaults to ~/.config/arcaneum/config.yaml)
 
     Returns:
         Configured QdrantClient instance
@@ -240,7 +285,7 @@ def create_qdrant_client(
     # Try to load config, but don't fail if it doesn't exist
     qdrant_config = None
     if config_path is None:
-        config_path = Path.home() / ".arcaneum" / "config.yaml"
+        config_path = _resolve_qdrant_config_path()
 
     if config_path.exists():
         try:
@@ -261,10 +306,7 @@ def create_qdrant_client(
     # Determine API key (priority: param > env > config > none)
     final_api_key = api_key
     if not final_api_key:
-        final_api_key = (
-            os.environ.get("ARC_QDRANT_API_KEY")
-            or os.environ.get("QDRANT_API_KEY")
-        )
+        final_api_key = os.environ.get("ARC_QDRANT_API_KEY") or os.environ.get("QDRANT_API_KEY")
     if not final_api_key and qdrant_config:
         final_api_key = qdrant_config.api_key
 
@@ -314,13 +356,13 @@ def create_meili_client(
     Environment Variables:
         MEILISEARCH_URL: Override MeiliSearch URL
     """
-    from ..paths import get_meilisearch_api_key
     from ..fulltext.client import FullTextClient
+    from ..paths import get_meilisearch_api_key
 
     # Determine URL (priority: param > env > default)
     final_url = url
     if not final_url:
-        final_url = os.environ.get('MEILISEARCH_URL', 'http://localhost:7700')
+        final_url = os.environ.get("MEILISEARCH_URL", "http://localhost:7700")
 
     # Determine API key (priority: param > auto-generated)
     final_api_key = api_key

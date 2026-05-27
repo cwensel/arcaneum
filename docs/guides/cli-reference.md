@@ -1062,8 +1062,10 @@ MEILISEARCH_API_KEY=your-api-key  # Optional: auto-generated if not set
 
 Arcaneum also accepts `ARC_QDRANT_URL` and `ARC_QDRANT_API_KEY`; these take
 precedence over the unprefixed Qdrant variables when both are set. Qdrant
-credentials can also be stored in `~/.arcaneum/config.yaml` under
-`qdrant.api_key`.
+credentials can also be stored in `~/.config/arcaneum/config.yaml` under
+`qdrant.api_key`. On first default Qdrant config load, a legacy
+`~/.arcaneum/config.yaml` is copied to the XDG config path if the XDG file does
+not already exist.
 
 Note: `MEILISEARCH_API_KEY` is auto-generated on first `arc container start` and stored
 in `~/.config/arcaneum/meilisearch.key`. You only need to set it manually if you want

@@ -315,6 +315,8 @@ class PDFBatchUploader:
                 'file_quick_hashes': {file_path_abs: quick_hash},  # Map of path → quick_hash for Pass 1
                 'quick_hash': quick_hash,  # Pass 1: Fast metadata-based hash (mtime+size) - kept for compatibility
                 'file_hash': file_hash,     # Pass 2: Full content hash (for deep verification)
+                'source_hash': file_hash,
+                'chunking_version': 'pdf:v1',
                 'file_size': pdf_path.stat().st_size,
                 'store_type': 'pdf',
                 **payload_extract_meta
@@ -328,6 +330,8 @@ class PDFBatchUploader:
 
             chunks = chunker.chunk(text, base_metadata)
             file_chunk_count = len(chunks)
+            for chunk in chunks:
+                chunk.metadata['chunk_count'] = file_chunk_count
 
             if verbose:
                 print(f"{timestamp()}      created {file_chunk_count} chunks", flush=True)

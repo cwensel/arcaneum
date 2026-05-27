@@ -111,6 +111,146 @@ def test_healthy_pdf_not_flagged(qdrant_client):
     assert result.dropout_items == 0
 
 
+def test_chunk_count_detects_missing_tail_chunk(qdrant_client):
+    qdrant_client.scroll.side_effect = _scroll_once([
+        _point({
+            "file_path": "/tmp/incomplete.pdf",
+            "chunk_index": 0,
+            "chunk_count": 3,
+        }),
+        _point({
+            "file_path": "/tmp/incomplete.pdf",
+            "chunk_index": 1,
+            "chunk_count": 3,
+        }),
+    ])
+
+    with patch.object(verify_mod, "get_collection_type", return_value="pdf"):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=2,
+        )
+
+    assert result.is_healthy is False
+    assert result.files[0].expected_chunks == 3
+    assert result.files[0].actual_chunks == 2
+    assert result.files[0].missing_indices == [2]
+
+
+def test_chunk_count_rejects_sparse_out_of_range_indices(qdrant_client):
+    qdrant_client.scroll.side_effect = _scroll_once([
+        _point({
+            "file_path": "/tmp/sparse.pdf",
+            "chunk_index": 0,
+            "chunk_count": 3,
+        }),
+        _point({
+            "file_path": "/tmp/sparse.pdf",
+            "chunk_index": 2,
+            "chunk_count": 3,
+        }),
+        _point({
+            "file_path": "/tmp/sparse.pdf",
+            "chunk_index": 3,
+            "chunk_count": 3,
+        }),
+    ])
+
+    with patch.object(verify_mod, "get_collection_type", return_value="pdf"):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=3,
+        )
+
+    assert result.is_healthy is False
+    assert result.files[0].missing_indices == [1]
+    assert result.files[0].is_complete is False
+
+
+def test_inconsistent_chunk_counts_are_incomplete(qdrant_client, caplog):
+    qdrant_client.scroll.side_effect = _scroll_once([
+        _point({
+            "file_path": "/tmp/inconsistent.pdf",
+            "chunk_index": 0,
+            "chunk_count": 3,
+        }),
+        _point({
+            "file_path": "/tmp/inconsistent.pdf",
+            "chunk_index": 1,
+            "chunk_count": 2,
+        }),
+    ])
+
+    with patch.object(verify_mod, "get_collection_type", return_value="pdf"):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=2,
+        )
+
+    assert result.is_healthy is False
+    assert result.files[0].expected_chunks == 3
+    assert result.files[0].missing_indices == [2]
+    assert "Inconsistent chunk_count metadata" in caplog.text
+
+
+def test_explicit_chunk_count_overrides_legacy_inference(qdrant_client):
+    qdrant_client.scroll.side_effect = _scroll_once([
+        _point({
+            "file_path": "/tmp/mixed.pdf",
+            "chunk_index": 0,
+            "chunk_count": 3,
+        }),
+        _point({
+            "file_path": "/tmp/mixed.pdf",
+            "chunk_index": 1,
+            "chunk_count": 3,
+        }),
+        _point({
+            "file_path": "/tmp/mixed.pdf",
+            "chunk_index": 2,
+            "chunk_count": 3,
+        }),
+        _point({
+            "file_path": "/tmp/mixed.pdf",
+            "chunk_index": 3,
+        }),
+    ])
+
+    with patch.object(verify_mod, "get_collection_type", return_value="pdf"):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=4,
+        )
+
+    assert result.is_healthy is False
+    assert result.files[0].expected_chunks == 3
+    assert result.files[0].missing_indices == []
+    assert result.files[0].is_complete is False
+
+
+def test_legacy_missing_chunk_count_logs_warning(qdrant_client, caplog):
+    qdrant_client.scroll.side_effect = _scroll_once([
+        _point({
+            "file_path": "/tmp/legacy.pdf",
+            "chunk_index": 0,
+        }),
+    ])
+
+    with patch.object(verify_mod, "get_collection_type", return_value="pdf"):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=1,
+        )
+
+    assert result.is_healthy is True
+    assert "Legacy chunk metadata missing chunk_count" in caplog.text
+
+
 def test_dropout_falls_back_to_disk_page_count(qdrant_client, tmp_path):
     # No page_count in payload (simulates older indexed data); verify should
     # read it from disk via _page_count_from_disk.

@@ -362,6 +362,9 @@ class CollectionVerifier:
             lambda: {
                 "indices": set(),
                 "chunk_count": 0,
+                "explicit_chunk_counts": set(),
+                "inferred_chunk_count": False,
+                "legacy_max_chunk_count": 0,
                 "quality_scores": [],
                 "total_text_chars": 0,
                 "page_count": None,
@@ -411,16 +414,22 @@ class CollectionVerifier:
                     file_chunks[file_path]["indices"].add(chunk_index)
                     # Use explicit chunk_count if available, otherwise infer from max index
                     if chunk_count:
-                        file_chunks[file_path]["chunk_count"] = chunk_count
-                    else:
-                        # Infer expected count from max index seen (0-based, so +1)
+                        file_chunks[file_path]["explicit_chunk_counts"].add(chunk_count)
                         file_chunks[file_path]["chunk_count"] = max(
                             file_chunks[file_path]["chunk_count"],
+                            chunk_count,
+                        )
+                    else:
+                        # Infer expected count from max index seen (0-based, so +1)
+                        file_chunks[file_path]["inferred_chunk_count"] = True
+                        file_chunks[file_path]["legacy_max_chunk_count"] = max(
+                            file_chunks[file_path]["legacy_max_chunk_count"],
                             chunk_index + 1,
                         )
                 else:
                     # No chunk_index at all - just count occurrences
                     file_chunks[file_path]["indices"].add(len(file_chunks[file_path]["indices"]))
+                    file_chunks[file_path]["inferred_chunk_count"] = True
                     file_chunks[file_path]["chunk_count"] = len(file_chunks[file_path]["indices"])
 
                 text = payload.get("text", "") if (check_quality or check_dropout) else ""
@@ -452,17 +461,42 @@ class CollectionVerifier:
 
         for file_path, file_data in file_chunks.items():
             indices = file_data["indices"]
-            chunk_count = file_data["chunk_count"]
+            explicit_chunk_counts = file_data["explicit_chunk_counts"]
+            if explicit_chunk_counts:
+                chunk_count = max(explicit_chunk_counts)
+            else:
+                chunk_count = max(file_data["chunk_count"], file_data["legacy_max_chunk_count"])
             quality_scores = file_data["quality_scores"]
+            inferred_chunk_count = file_data["inferred_chunk_count"]
+            conflicting_chunk_counts = len(explicit_chunk_counts) > 1
+
+            if inferred_chunk_count:
+                logger.warning(
+                    "Legacy chunk metadata missing chunk_count for %s; "
+                    "verification inferred %s expected chunks and cannot prove tail completeness",
+                    file_path,
+                    chunk_count,
+                )
+            if conflicting_chunk_counts:
+                logger.warning(
+                    "Inconsistent chunk_count metadata for %s: %s",
+                    file_path,
+                    sorted(explicit_chunk_counts),
+                )
 
             # Check chunk completeness
-            if chunk_count == 0 or chunk_count == len(indices):
+            if chunk_count == 0:
                 is_complete = True
                 missing = []
             else:
                 expected_indices = set(range(chunk_count))
                 missing = sorted(expected_indices - indices)
-                is_complete = len(missing) == 0
+                unexpected = indices - expected_indices
+                is_complete = (
+                    len(missing) == 0
+                    and len(unexpected) == 0
+                    and not conflicting_chunk_counts
+                )
 
             # Check text quality
             has_garbled = False
@@ -530,4 +564,3 @@ class CollectionVerifier:
             is_healthy=incomplete_count == 0 and garbled_count == 0 and dropout_count == 0,
             files=file_results,
         )
-

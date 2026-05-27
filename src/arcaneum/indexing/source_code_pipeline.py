@@ -14,6 +14,7 @@ from concurrent.futures import as_completed
 from multiprocessing import cpu_count
 
 import sys
+import xxhash
 from rich.console import Console
 
 from .git_operations import GitProjectDiscovery
@@ -81,6 +82,7 @@ def _process_file_worker(
         filename = os.path.basename(file_path)
         file_ext = Path(file_path).suffix
         language = chunker.detect_language(file_path) or "text"
+        source_hash = xxhash.xxh3_128(code.encode('utf-8')).hexdigest()
 
         code_chunks = []
         for idx, chunk in enumerate(chunks):
@@ -94,6 +96,7 @@ def _process_file_worker(
                 line_count=code.count('\n') + 1,
                 chunk_index=idx,
                 chunk_count=len(chunks),
+                source_hash=source_hash,
                 text_extraction_method=chunk.method,
                 git_project_root=git_metadata.project_root,
                 git_project_name=git_metadata.project_name,

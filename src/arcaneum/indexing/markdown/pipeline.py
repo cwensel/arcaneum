@@ -191,6 +191,8 @@ class MarkdownIndexingPipeline:
                 'file_quick_hashes': {file_path_abs: quick_hash},  # Map of path → quick_hash for Pass 1
                 'quick_hash': quick_hash,  # Pass 1: Fast metadata-based hash (mtime+size) - kept for compatibility
                 'file_hash': file_metadata.content_hash,  # Pass 2: Full content hash
+                'source_hash': file_metadata.content_hash,
+                'chunking_version': 'markdown:v1',
                 'file_size': file_metadata.file_size,
                 'store_type': 'markdown',
                 'has_frontmatter': file_metadata.has_frontmatter,
@@ -217,6 +219,8 @@ class MarkdownIndexingPipeline:
 
             chunks = chunker.chunk(content, base_metadata)
             file_chunk_count = len(chunks)
+            for chunk in chunks:
+                chunk.metadata['chunk_count'] = file_chunk_count
 
             if verbose:
                 print(f"{timestamp()}      created {file_chunk_count} chunks", flush=True)
@@ -652,10 +656,18 @@ class MarkdownIndexingPipeline:
         hasher = xxhash.xxh64()
         hasher.update(content.encode('utf-8'))
         content_hash = hasher.hexdigest()
+        base_metadata.update({
+            'file_hash': content_hash,
+            'source_hash': content_hash,
+            'chunking_version': 'markdown:v1',
+        })
         self.sync.delete_chunks_by_file_hash(collection_name, content_hash)
 
         # Chunk content
         chunks = chunker.chunk(content, base_metadata)
+        chunk_count = len(chunks)
+        for chunk in chunks:
+            chunk.metadata['chunk_count'] = chunk_count
 
         # Generate embeddings (parallel)
         texts = [chunk.text for chunk in chunks]

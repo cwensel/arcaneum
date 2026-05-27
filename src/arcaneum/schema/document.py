@@ -93,6 +93,8 @@ class DualIndexDocument:
 
     # File metadata
     file_hash: Optional[str] = None
+    source_hash: Optional[str] = None
+    chunking_version: Optional[str] = None
     file_size: Optional[int] = None
     quick_hash: Optional[str] = None  # Metadata-based hash (mtime+size) for fast change detection
 
@@ -210,6 +212,12 @@ def to_qdrant_point(doc: DualIndexDocument, point_id: Optional[int] = None):
 
     if doc.file_hash:
         payload["file_hash"] = doc.file_hash
+
+    if doc.source_hash:
+        payload["source_hash"] = doc.source_hash
+
+    if doc.chunking_version:
+        payload["chunking_version"] = doc.chunking_version
 
     if doc.file_size is not None:
         payload["file_size"] = doc.file_size

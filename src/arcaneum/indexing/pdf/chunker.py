@@ -154,7 +154,11 @@ class PDFChunker:
             # Move start position (with overlap)
             start = end - overlap_chars
 
-        logger.info(f"Created {len(chunks)} chunks")
+        chunk_count = len(chunks)
+        for chunk in chunks:
+            chunk.metadata['chunk_count'] = chunk_count
+
+        logger.info(f"Created {chunk_count} chunks")
         return chunks
 
     def _calculate_page_number(self, chunk_start_char: int, page_boundaries: List[Dict]) -> Optional[int]:

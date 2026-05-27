@@ -1956,6 +1956,7 @@ def sync_directory_command(
                         documents = []
                         file_hash = compute_file_hash(file_path)
                         quick_hash = compute_quick_hash(file_path)
+                        chunking_version = "code-ast:v1" if corpus_type == "code" else f"{corpus_type}:v1"
 
                         # Batch embedding: collect all chunk texts and embed together
                         # This is much more efficient than embedding one chunk at a time,
@@ -2002,6 +2003,8 @@ def sync_directory_command(
                                 chunk_index=i,
                                 chunk_count=len(chunks),
                                 file_hash=file_hash,
+                                source_hash=file_hash,
+                                chunking_version=chunking_version,
                                 file_size=file_path.stat().st_size,
                                 quick_hash=quick_hash,
                                 vectors=vectors,
@@ -2320,6 +2323,7 @@ def sync_directory_command(
                         points = []
                         file_hash = compute_file_hash(file_path)
                         quick_hash = compute_quick_hash(file_path)
+                        chunking_version = "code-ast:v1" if corpus_type == "code" else f"{corpus_type}:v1"
 
                         for i, chunk in enumerate(chunks):
                             # Generate embeddings for all models
@@ -2340,6 +2344,8 @@ def sync_directory_command(
                                 "chunk_index": i,
                                 "chunk_count": len(chunks),
                                 "file_hash": file_hash,
+                                "source_hash": file_hash,
+                                "chunking_version": chunking_version,
                                 "file_size": file_path.stat().st_size,
                                 "quick_hash": quick_hash,
                             }
@@ -3332,6 +3338,7 @@ def _backfill_meili_to_qdrant(
             points = []
             file_hash = compute_file_hash(file_path)
             quick_hash = compute_quick_hash(file_path)
+            chunking_version = "code-ast:v1" if corpus_type == "code" else f"{corpus_type}:v1"
 
             for i, chunk in enumerate(chunks):
                 # Generate embeddings for all models
@@ -3354,6 +3361,8 @@ def _backfill_meili_to_qdrant(
                     "chunk_index": i,
                     "chunk_count": len(chunks),
                     "file_hash": file_hash,
+                    "source_hash": file_hash,
+                    "chunking_version": chunking_version,
                     "file_size": file_path.stat().st_size,
                     "quick_hash": quick_hash,
                 }

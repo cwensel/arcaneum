@@ -84,6 +84,8 @@ class CodeChunkMetadata:
     git_branch: str  # Component of identifier, kept for filtering
     git_commit_hash: str  # Full 40-char SHA
     git_remote_url: Optional[str] = None  # Sanitized remote URL
+    source_hash: str = ""  # Stable hash of the source file content
+    chunking_version: str = "code-ast:v1"  # Version identifier for chunking
 
     # Code analysis fields
     ast_chunked: bool = False  # True if AST parsing succeeded
@@ -94,6 +96,11 @@ class CodeChunkMetadata:
     # Embedding metadata
     embedding_model: str = "jina-embeddings-v2-base-code"
     store_type: str = "code"
+
+    def __post_init__(self):
+        """Default source_hash to the indexed source version for legacy callers."""
+        if not self.source_hash:
+            self.source_hash = self.git_commit_hash
 
     def to_payload(self) -> dict:
         """Convert to Qdrant payload dictionary.
@@ -110,6 +117,8 @@ class CodeChunkMetadata:
             "line_count": self.line_count,
             "chunk_index": self.chunk_index,
             "chunk_count": self.chunk_count,
+            "source_hash": self.source_hash,
+            "chunking_version": self.chunking_version,
             "text_extraction_method": self.text_extraction_method,
             "git_project_root": self.git_project_root,
             "git_project_name": self.git_project_name,
@@ -137,6 +146,8 @@ class CodeChunkMetadata:
             line_count=payload["line_count"],
             chunk_index=payload["chunk_index"],
             chunk_count=payload["chunk_count"],
+            source_hash=payload.get("source_hash", payload.get("git_commit_hash", "")),
+            chunking_version=payload.get("chunking_version", "code:legacy"),
             text_extraction_method=payload["text_extraction_method"],
             git_project_root=payload["git_project_root"],
             git_project_name=payload["git_project_name"],

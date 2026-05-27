@@ -57,6 +57,8 @@ class TestCodeChunkMetadata:
         assert metadata.has_imports is False
         assert metadata.embedding_model == "jina-embeddings-v2-base-code"
         assert metadata.store_type == "code"
+        assert metadata.source_hash == "a" * 40
+        assert metadata.chunking_version == "code-ast:v1"
 
     def test_to_payload(self):
         """Test conversion to Qdrant payload dictionary."""
@@ -75,6 +77,8 @@ class TestCodeChunkMetadata:
             git_project_name="project",
             git_branch="main",
             git_commit_hash="a" * 40,
+            source_hash="source123",
+            chunking_version="code-ast:v1:400:20",
             ast_chunked=True,
             has_functions=True
         )
@@ -87,6 +91,8 @@ class TestCodeChunkMetadata:
         assert payload["ast_chunked"] is True
         assert payload["has_functions"] is True
         assert payload["chunk_count"] == 2
+        assert payload["source_hash"] == "source123"
+        assert payload["chunking_version"] == "code-ast:v1:400:20"
 
     def test_from_payload(self):
         """Test reconstruction from Qdrant payload."""
@@ -106,6 +112,8 @@ class TestCodeChunkMetadata:
             git_branch="feature",
             git_commit_hash="b" * 40,
             git_remote_url="https://github.com/user/repo.git",
+            source_hash="source456",
+            chunking_version="code-ast:v1:400:20",
             has_classes=True
         )
 
@@ -116,6 +124,8 @@ class TestCodeChunkMetadata:
         assert reconstructed.file_path == original.file_path
         assert reconstructed.has_classes == original.has_classes
         assert reconstructed.git_remote_url == original.git_remote_url
+        assert reconstructed.source_hash == original.source_hash
+        assert reconstructed.chunking_version == original.chunking_version
 
 
 class TestCodeChunk:
@@ -199,5 +209,3 @@ class TestCodeChunk:
         assert point.id == chunk.id
         assert point.vector == chunk.embedding
         assert point.payload["git_project_identifier"] == "project#main"
-
-

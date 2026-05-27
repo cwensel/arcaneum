@@ -11,16 +11,31 @@ Tests validate:
 """
 
 import pytest
+
 from arcaneum.indexing.markdown.chunker import (
+    MARKDOWN_IT_AVAILABLE,
     SemanticMarkdownChunker,
-    MarkdownChunk,
     chunk_markdown,
-    MARKDOWN_IT_AVAILABLE
 )
 
 
 class TestSemanticMarkdownChunker:
     """Test suite for SemanticMarkdownChunker."""
+
+    @staticmethod
+    def _assert_non_frontmatter_lines_represented(source_text, chunks):
+        chunk_text = "\n".join(chunk.text for chunk in chunks)
+        lines = source_text.splitlines()
+        in_frontmatter = bool(lines and lines[0] == "---")
+
+        for line_number, line in enumerate(lines, start=1):
+            if in_frontmatter:
+                if line_number > 1 and line == "---":
+                    in_frontmatter = False
+                continue
+            if not line.strip():
+                continue
+            assert line in chunk_text, f"line {line_number} missing from chunks: {line!r}"
 
     def test_initialization(self):
         """Test chunker initializes with correct defaults."""
@@ -79,6 +94,52 @@ It has multiple lines of text."""
         assert '# Introduction' in chunks[0].text
         assert 'introduction section' in chunks[0].text
         assert chunks[0].header_path == ['Introduction']
+
+    @pytest.mark.skipif(not MARKDOWN_IT_AVAILABLE, reason="markdown-it-py not available")
+    def test_intro_before_first_heading_is_preserved(self):
+        """Preamble text before the first heading must not be dropped."""
+        text = """Intro line before any heading.
+Still part of the document preamble.
+
+# Section
+
+Section content."""
+
+        chunker = SemanticMarkdownChunker(chunk_size=100)
+        chunks = chunker.chunk(text, {})
+
+        assert chunks[0].text.startswith("Intro line before any heading.")
+        assert "Still part of the document preamble." in chunks[0].text
+        self._assert_non_frontmatter_lines_represented(text, chunks)
+
+    @pytest.mark.skipif(not MARKDOWN_IT_AVAILABLE, reason="markdown-it-py not available")
+    def test_raw_markdown_spans_preserve_inline_structure(self):
+        """Links, images, HTML, and code fences stay in chunk text verbatim."""
+        text = """---
+title: Raw Span Fixture
+---
+# Assets
+
+Read [the guide](https://example.test/guide) before deploying.
+
+![architecture](../assets/arch.png)
+
+<div data-kind="note">raw html</div>
+
+```python
+print("[literal markdown](not-a-link)")
+```
+"""
+
+        chunker = SemanticMarkdownChunker(chunk_size=1000)
+        chunks = chunker.chunk(text, {})
+        chunk_text = "\n".join(chunk.text for chunk in chunks)
+
+        assert "[the guide](https://example.test/guide)" in chunk_text
+        assert "![architecture](../assets/arch.png)" in chunk_text
+        assert '<div data-kind="note">raw html</div>' in chunk_text
+        assert 'print("[literal markdown](not-a-link)")' in chunk_text
+        self._assert_non_frontmatter_lines_represented(text, chunks)
 
     def test_nested_headers(self):
         """Test chunker handles nested header hierarchy correctly."""

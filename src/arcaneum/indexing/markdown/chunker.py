@@ -7,8 +7,8 @@ lists, tables) and preserve parent header context for better retrieval.
 """
 
 import logging
-from typing import List, Dict, Optional
 from dataclasses import dataclass
+from typing import Dict, List, Optional
 
 try:
     from markdown_it import MarkdownIt
@@ -250,84 +250,173 @@ class SemanticMarkdownChunker:
             List of section dicts with: level, header, content, start_pos, end_pos
         """
         sections = []
-        current_section = None
         header_stack = []  # Track parent headers for context
+        source_lines = source_text.split('\n')
+        content_start_line = self._content_start_line(source_lines)
+        heading_tokens = [
+            (index, token)
+            for index, token in enumerate(tokens)
+            if (
+                token.type == "heading_open"
+                and token.map
+                and token.map[0] >= content_start_line
+            )
+        ]
 
-        i = 0
-        while i < len(tokens):
-            token = tokens[i]
-
-            # Heading starts a new section
-            if token.type == "heading_open":
-                # Get heading level (h1=1, h2=2, etc.)
-                level = int(token.tag[1])
-
-                # Get heading text from next token (inline content)
-                heading_text = ""
-                if i + 1 < len(tokens) and tokens[i + 1].type == "inline":
-                    heading_text = tokens[i + 1].content
-
-                # Save previous section if exists
-                if current_section:
-                    sections.append(current_section)
-
-                # Update header stack (remove deeper levels)
-                header_stack = [h for h in header_stack if h['level'] < level]
-                header_stack.append({'level': level, 'text': heading_text})
-
-                # Start new section
-                current_section = {
-                    'level': level,
-                    'header': heading_text,
-                    'header_path': [h['text'] for h in header_stack],
-                    'content_parts': [],
-                    'start_line': token.map[0] if token.map else 0,
-                }
-
-                # Skip to heading_close
-                i += 3  # heading_open, inline, heading_close
-                continue
-
-            # Add content to current section
-            if current_section is not None:
-                content = self._extract_token_content(token, source_text)
-                if content:
-                    current_section['content_parts'].append({
-                        'type': token.type,
-                        'content': content,
-                        'is_code_block': token.type in ['code_block', 'fence']
-                    })
-
-            i += 1
-
-        # Save final section
-        if current_section:
-            sections.append(current_section)
-
-        # If no headers found, create a single section with all content
-        if not sections:
-            sections = [{
+        def add_preamble(end_line: int) -> None:
+            raw_text = self._source_lines(source_lines, content_start_line, end_line)
+            if not raw_text.strip():
+                return
+            sections.append({
                 'level': 0,
                 'header': '',
                 'header_path': [],
-                'content_parts': [{'type': 'text', 'content': source_text, 'is_code_block': False}],
-                'start_line': 0,
-            }]
+                'header_raw': '',
+                'raw_text': raw_text,
+                'content_parts': self._build_content_parts(
+                    tokens, source_lines, content_start_line, end_line
+                ),
+                'start_line': content_start_line,
+            })
+
+        if heading_tokens:
+            first_heading_line = heading_tokens[0][1].map[0]
+            add_preamble(first_heading_line)
+
+        for heading_index, (token_index, token) in enumerate(heading_tokens):
+            start_line, heading_end_line = token.map
+            end_line = (
+                heading_tokens[heading_index + 1][1].map[0]
+                if heading_index + 1 < len(heading_tokens)
+                else len(source_lines)
+            )
+
+            # Get heading level (h1=1, h2=2, etc.)
+            level = int(token.tag[1])
+
+            # Get heading text from next token (inline content)
+            heading_text = ""
+            if token_index + 1 < len(tokens) and tokens[token_index + 1].type == "inline":
+                heading_text = tokens[token_index + 1].content
+
+            # Update header stack (remove deeper levels)
+            header_stack = [h for h in header_stack if h['level'] < level]
+            header_stack.append({'level': level, 'text': heading_text})
+
+            raw_text = self._source_lines(source_lines, start_line, end_line)
+            if not raw_text.strip():
+                continue
+
+            sections.append({
+                'level': level,
+                'header': heading_text,
+                'header_path': [h['text'] for h in header_stack],
+                'header_raw': self._source_lines(source_lines, start_line, heading_end_line),
+                'raw_text': raw_text,
+                'content_parts': self._build_content_parts(
+                    tokens, source_lines, heading_end_line, end_line
+                ),
+                'start_line': start_line,
+            })
+
+        # If no headers found, create a single section with all non-frontmatter content
+        if not sections and not heading_tokens:
+            raw_text = self._source_lines(source_lines, content_start_line, len(source_lines))
+            if raw_text.strip():
+                sections = [{
+                    'level': 0,
+                    'header': '',
+                    'header_path': [],
+                    'header_raw': '',
+                    'raw_text': raw_text,
+                    'content_parts': self._build_content_parts(
+                        tokens, source_lines, content_start_line, len(source_lines)
+                    ),
+                    'start_line': content_start_line,
+                }]
 
         return sections
 
-    def _extract_token_content(self, token: Token, source_text: str) -> str:
-        """Extract content from a markdown token."""
-        # For tokens with content, use it directly
-        if token.content:
-            return token.content
+    def _content_start_line(self, source_lines: List[str]) -> int:
+        """Return the first content line after optional YAML frontmatter."""
+        if not source_lines or source_lines[0].strip() != "---":
+            return 0
 
-        # For tokens with map (line numbers), extract from source
+        for line_index in range(1, len(source_lines)):
+            if source_lines[line_index].strip() == "---":
+                return line_index + 1
+
+        return 0
+
+    def _source_lines(self, source_lines: List[str], start_line: int, end_line: int) -> str:
+        """Extract a raw source line span without surrounding blank lines."""
+        return '\n'.join(source_lines[start_line:end_line]).strip('\n')
+
+    def _build_content_parts(
+        self,
+        tokens: List[Token],
+        source_lines: List[str],
+        start_line: int,
+        end_line: int
+    ) -> List[Dict]:
+        """Build non-overlapping raw block spans for section splitting."""
+        content_parts = []
+        cursor = start_line
+
+        for token in tokens:
+            if not token.map or token.type == "heading_open":
+                continue
+
+            token_start, token_end = token.map
+            if token_start < start_line or token_start >= end_line:
+                continue
+
+            token_start = max(token_start, start_line)
+            token_end = min(token_end, end_line)
+            if token_end <= token_start or token_start < cursor:
+                continue
+
+            if token_start > cursor:
+                gap_content = self._source_lines(source_lines, cursor, token_start)
+                if gap_content.strip():
+                    content_parts.append({
+                        'type': 'text',
+                        'content': gap_content,
+                        'is_code_block': False
+                    })
+
+            content = self._source_lines(source_lines, token_start, token_end)
+            if content.strip():
+                content_parts.append({
+                    'type': token.type,
+                    'content': content,
+                    'is_code_block': token.type in ['code_block', 'fence']
+                })
+            cursor = token_end
+
+        if cursor < end_line:
+            tail_content = self._source_lines(source_lines, cursor, end_line)
+            if tail_content.strip():
+                content_parts.append({
+                    'type': 'text',
+                    'content': tail_content,
+                    'is_code_block': False
+                })
+
+        return content_parts
+
+    def _extract_token_content(self, token: Token, source_text: str) -> str:
+        """Extract raw source content from a markdown token."""
+        # Prefer source line spans so inline markdown structure is not stripped.
         if token.map:
             lines = source_text.split('\n')
             start_line, end_line = token.map
             content_lines = lines[start_line:end_line]
             return '\n'.join(content_lines)
+
+        # Fall back to token content only when no source span exists.
+        if token.content:
+            return token.content
 
         return ""
 
@@ -375,6 +464,9 @@ class SemanticMarkdownChunker:
 
     def _build_section_text(self, section: Dict) -> str:
         """Build text for a section including header and content."""
+        if section.get('raw_text') is not None:
+            return section['raw_text']
+
         parts = []
 
         # Add header if present
@@ -401,8 +493,10 @@ class SemanticMarkdownChunker:
         # Add header to first chunk
         header_text = ""
         if section['header']:
-            header_prefix = '#' * section['level']
-            header_text = f"{header_prefix} {section['header']}"
+            header_text = (
+                section.get('header_raw')
+                or f"{'#' * section['level']} {section['header']}"
+            )
             header_tokens = len(header_text) / self.CHARS_PER_TOKEN
             current_parts.append(header_text)
             current_tokens += header_tokens
@@ -436,7 +530,10 @@ class SemanticMarkdownChunker:
 
                     # Start new chunk with header context + code block
                     current_parts = [header_text, part_text] if header_text else [part_text]
-                    current_tokens = (len(header_text) / self.CHARS_PER_TOKEN if header_text else 0) + part_tokens
+                    header_tokens = (
+                        len(header_text) / self.CHARS_PER_TOKEN if header_text else 0
+                    )
+                    current_tokens = header_tokens + part_tokens
                     current_has_code = True
 
             # Regular content: can split if needed
@@ -460,7 +557,10 @@ class SemanticMarkdownChunker:
 
                     # Start new chunk with header context
                     current_parts = [header_text, part_text] if header_text else [part_text]
-                    current_tokens = (len(header_text) / self.CHARS_PER_TOKEN if header_text else 0) + part_tokens
+                    header_tokens = (
+                        len(header_text) / self.CHARS_PER_TOKEN if header_text else 0
+                    )
+                    current_tokens = header_tokens + part_tokens
                     current_has_code = False
 
         # Save final chunk

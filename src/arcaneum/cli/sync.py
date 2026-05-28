@@ -30,6 +30,7 @@ os.environ.setdefault('PYTORCH_MPS_HIGH_WATERMARK_RATIO', '0.8')
 import sys
 import hashlib
 from concurrent.futures import as_completed
+from datetime import datetime, timezone
 from multiprocessing import cpu_count
 from pathlib import Path
 from typing import List, Optional, Set, Dict, Any, Tuple
@@ -75,7 +76,11 @@ from ..embeddings.client import EmbeddingClient, EMBEDDING_MODELS
 from ..fulltext.client import FullTextClient
 from ..schema.document import DualIndexDocument, persisted_metadata_fields
 from ..indexing.dual_indexer import DualIndexer
-from ..indexing.collection_metadata import get_collection_type, get_collection_metadata
+from ..indexing.collection_metadata import (
+    get_collection_type,
+    get_collection_metadata,
+    update_collection_metadata,
+)
 from ..indexing.common.sync import MetadataBasedSync, compute_quick_hash
 from ..indexing.common.multiprocessing import create_process_pool
 from ..indexing.git_operations import GitProjectDiscovery, apply_git_metadata
@@ -85,6 +90,18 @@ from ..utils.formatting import format_size
 
 console = Console()
 logger = logging.getLogger(__name__)
+
+
+def _stamp_last_sync_metadata(qdrant, corpus: str) -> None:
+    """Record that a non-dry-run corpus sync completed successfully."""
+    try:
+        update_collection_metadata(
+            qdrant,
+            corpus,
+            last_sync=datetime.now(timezone.utc).isoformat(),
+        )
+    except Exception as e:
+        logger.warning("Failed to update last sync metadata for %s: %s", corpus, e)
 
 # Default patterns for files to exclude from indexing
 # These are typically generated, minified, or machine-readable files
@@ -1508,6 +1525,8 @@ def sync_directory_command(
             files.append(single_file)
 
         if not files:
+            if not dry_run:
+                _stamp_last_sync_metadata(qdrant, corpus)
             if output_json:
                 print_json("success", "No files to index", data={"indexed": 0})
             else:
@@ -1755,9 +1774,13 @@ def sync_directory_command(
                         console.print(f"   Stale paths cleaned:      {stale_cleaned} paths")
                     if already_indexed_count > 0:
                         console.print(f"   Already synced:           {already_indexed_count} files")
+                if not dry_run:
+                    _stamp_last_sync_metadata(qdrant, corpus)
                 interaction_logger.finish(result_count=files_renamed)
                 return
 
+            if not dry_run:
+                _stamp_last_sync_metadata(qdrant, corpus)
             if output_json:
                 print_json("success", "All files already indexed", data={
                     "indexed": 0,
@@ -2565,6 +2588,9 @@ def sync_directory_command(
                 prune=False,  # corpus sync uses --parity for orphan cleanup
                 warn=prune_warn,
             )
+
+        if not dry_run:
+            _stamp_last_sync_metadata(qdrant, corpus)
 
         # Output results
         data = {

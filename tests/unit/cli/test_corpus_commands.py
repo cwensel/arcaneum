@@ -21,10 +21,12 @@ def _mock_corpus_list_clients(
     metadata_by_name,
     collection_info_by_name,
     meili_chunks=None,
+    qdrant_payloads_by_name=None,
 ):
     from arcaneum.cli import corpus
 
     meili_chunks = meili_chunks or {}
+    qdrant_payloads_by_name = qdrant_payloads_by_name or {}
 
     class Qdrant:
         def get_collections(self):
@@ -34,6 +36,10 @@ def _mock_corpus_list_clients(
 
         def get_collection(self, name):
             return collection_info_by_name[name]
+
+        def scroll(self, collection_name, **_kwargs):
+            payloads = qdrant_payloads_by_name.get(collection_name, [])
+            return [SimpleNamespace(payload=payload) for payload in payloads], None
 
     class Meili:
         def health_check(self):
@@ -281,6 +287,86 @@ class TestCorpusListModelInfo:
         output = capsys.readouterr().out
         assert "arctic-m" in output
         assert "fastembed" in output
+
+    def test_json_includes_last_sync_and_type_specific_item_counts(self, monkeypatch, capsys):
+        from arcaneum.cli.corpus import UNKNOWN_LEGACY, list_corpora_command
+
+        _mock_corpus_list_clients(
+            monkeypatch,
+            metadata_by_name={
+                "code": {
+                    "collection_type": "code",
+                    "model": "jina-code",
+                    "last_sync": "2026-05-28T22:01:02+00:00",
+                },
+                "docs": {
+                    "collection_type": "pdf",
+                    "model": "arctic-m",
+                    "last_sync": "2026-05-28T22:03:04+00:00",
+                },
+                "legacy": {},
+                "markdown": {
+                    "collection_type": "markdown",
+                    "model": "arctic-m",
+                },
+            },
+            collection_info_by_name={
+                "code": _collection_info(points_count=4),
+                "docs": _collection_info(points_count=4),
+                "legacy": _collection_info(points_count=1, vectors=None),
+                "markdown": _collection_info(points_count=3),
+            },
+            qdrant_payloads_by_name={
+                "code": [
+                    {"file_path": "/repo/a.py", "file_paths": ["/repo/a.py", "/repo/c.py"]},
+                    {"file_path": "/repo/a.py"},
+                    {"file_path": "/repo/b.py"},
+                ],
+                "docs": [
+                    {"file_path": "/docs/guide.pdf"},
+                    {"file_path": "/docs/guide.pdf"},
+                    {"file_path": "/docs/spec.pdf"},
+                ],
+                "markdown": [
+                    {"file_path": "/notes/a.md"},
+                    {"file_path": "/notes/b.md"},
+                ],
+            },
+        )
+
+        list_corpora_command(verbose=False, output_json=True)
+
+        corpora = {
+            item["name"]: item
+            for item in json.loads(capsys.readouterr().out)["data"]["corpora"]
+        }
+        assert corpora["code"]["last_sync"] == "2026-05-28T22:01:02+00:00"
+        assert corpora["code"]["item_count"] == 3
+        assert corpora["code"]["item_unit"] == "source files"
+        assert corpora["docs"]["item_count"] == 2
+        assert corpora["docs"]["item_unit"] == "documents"
+        assert corpora["markdown"]["last_sync"] is None
+        assert corpora["markdown"]["last_sync_status"] == "never_synced"
+        assert corpora["markdown"]["item_count"] == 2
+        assert corpora["markdown"]["item_unit"] == "files"
+        assert corpora["legacy"]["last_sync_status"] == "unknown"
+        assert corpora["legacy"]["item_count"] is None
+        assert corpora["legacy"]["item_unit"] == UNKNOWN_LEGACY
+
+    def test_qdrant_item_count_includes_deduplicated_file_paths(self):
+        from arcaneum.cli.corpus import _get_qdrant_item_count
+
+        class Qdrant:
+            def scroll(self, **_kwargs):
+                return [
+                    SimpleNamespace(payload={
+                        "file_path": "/repo/renamed-a.py",
+                        "file_paths": ["/repo/a.py", "/repo/b.py"],
+                    }),
+                    SimpleNamespace(payload={"file_path": "/repo/c.py"}),
+                ], None
+
+        assert _get_qdrant_item_count(Qdrant(), "code", "code") == 3
 
 
 class TestCorpusDescriptions:

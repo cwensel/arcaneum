@@ -59,6 +59,27 @@ def map_corpus_type_to_canonical(corpus_type: str) -> str:
 UNKNOWN_LEGACY = "unknown/legacy"
 
 
+def _item_unit_for_corpus_type(collection_type):
+    """Return the user-facing unit for corpus list item counts."""
+    if collection_type == "code":
+        return "source files"
+    if collection_type == "markdown":
+        return "files"
+    if collection_type == "pdf":
+        return "documents"
+    return UNKNOWN_LEGACY
+
+
+def _last_sync_state(metadata):
+    """Normalize sync metadata into stable JSON fields."""
+    if not metadata:
+        return None, "unknown"
+    last_sync = metadata.get("last_sync")
+    if not last_sync:
+        return None, "never_synced"
+    return last_sync, "synced"
+
+
 def _split_metadata_models(model_metadata):
     """Normalize stored model metadata into an ordered list of model names."""
     if not model_metadata:
@@ -214,6 +235,54 @@ def _format_model_summary(models):
     return ", ".join(parts)
 
 
+def _get_qdrant_list_item_count(client, collection_name: str, collection_type: str):
+    """Count corpus-list items using the natural unit for each corpus type."""
+    if collection_type not in {"code", "markdown", "pdf"}:
+        return None, UNKNOWN_LEGACY
+
+    unique_items = set()
+    offset = None
+
+    while True:
+        points, offset = client.scroll(
+            collection_name=collection_name,
+            scroll_filter=metadata_exclusion_filter(),
+            limit=1000,
+            offset=offset,
+            with_payload=["file_path", "file_paths"],
+            with_vectors=False,
+        )
+
+        if not points:
+            break
+
+        for point in points:
+            if point.payload:
+                for item_id in _payload_file_paths(point.payload):
+                    unique_items.add(item_id)
+
+        if offset is None:
+            break
+
+    return len(unique_items), _item_unit_for_corpus_type(collection_type)
+
+
+def _payload_file_paths(payload):
+    """Yield every indexed file path represented by a point payload."""
+    file_paths = payload.get("file_paths")
+    if isinstance(file_paths, list):
+        emitted = False
+        for file_path in file_paths:
+            if file_path:
+                emitted = True
+                yield file_path
+        if emitted:
+            return
+    file_path = payload.get("file_path")
+    if file_path:
+        yield file_path
+
+
 def list_corpora_command(verbose: bool, output_json: bool):
     """List all corpora with parity status.
 
@@ -240,13 +309,22 @@ def list_corpora_command(verbose: bool, output_json: bool):
                 # Subtract 1 for the metadata point
                 chunk_count = col_info.points_count - 1 if col_info.points_count > 0 else 0
                 models = _build_corpus_model_info(metadata, col_info)
+                collection_type = metadata.get("collection_type")
+                last_sync, last_sync_status = _last_sync_state(metadata)
+                item_count, item_unit = _get_qdrant_list_item_count(
+                    qdrant, col.name, collection_type
+                )
                 qdrant_collections[col.name] = {
-                    "type": metadata.get("collection_type"),
+                    "type": collection_type,
                     "model": metadata.get("model"),
                     "description": metadata.get("description"),
                     "models": models,
                     "model_summary": _format_model_summary(models),
                     "chunks": chunk_count,
+                    "last_sync": last_sync,
+                    "last_sync_status": last_sync_status,
+                    "item_count": item_count,
+                    "item_unit": item_unit,
                 }
         except Exception as e:
             if not output_json:
@@ -305,6 +383,10 @@ def list_corpora_command(verbose: bool, output_json: bool):
             model_summary = q_info.get("model_summary") if q_info else UNKNOWN_LEGACY
             q_chunks = q_info.get("chunks", 0) if q_info else 0
             m_chunks = m_info.get("chunks", 0) if m_info else 0
+            last_sync = q_info.get("last_sync") if q_info else None
+            last_sync_status = q_info.get("last_sync_status") if q_info else "unknown"
+            item_count = q_info.get("item_count") if q_info else None
+            item_unit = q_info.get("item_unit") if q_info else UNKNOWN_LEGACY
 
             corpora.append({
                 "name": name,
@@ -316,6 +398,10 @@ def list_corpora_command(verbose: bool, output_json: bool):
                 "status": status,
                 "qdrant_chunks": q_chunks,
                 "meili_chunks": m_chunks,
+                "last_sync": last_sync,
+                "last_sync_status": last_sync_status,
+                "item_count": item_count,
+                "item_unit": item_unit,
             })
 
         # Output
@@ -331,6 +417,8 @@ def list_corpora_command(verbose: bool, output_json: bool):
                 table.add_column("Type", style="blue")
                 table.add_column("Model", style="magenta")
                 table.add_column("Status", style="green")
+                table.add_column("Last Sync", style="yellow")
+                table.add_column("Items", style="yellow")
                 if verbose:
                     table.add_column("Q Chunks", style="yellow")
                     table.add_column("M Chunks", style="yellow")
@@ -350,6 +438,16 @@ def list_corpora_command(verbose: bool, output_json: bool):
                         c["type"] or "—",
                         c["model_summary"],
                         status_str,
+                        c["last_sync"] or (
+                            "never synced"
+                            if c["last_sync_status"] == "never_synced"
+                            else UNKNOWN_LEGACY
+                        ),
+                        (
+                            f"{c['item_count']} {c['item_unit']}"
+                            if c["item_count"] is not None
+                            else UNKNOWN_LEGACY
+                        ),
                     ]
                     if verbose:
                         row.extend([
@@ -694,9 +792,9 @@ def update_corpus_command(
 
 
 def _get_qdrant_item_count(client, collection_name: str, collection_type: str) -> int:
-    """Get count of unique items (files or repos) in a Qdrant collection.
+    """Get count of unique items in a Qdrant collection.
 
-    Scrolls through collection to count unique file_path or git_project_identifier values.
+    Scrolls through collection to count unique file_path values.
 
     Args:
         client: Qdrant client
@@ -709,19 +807,13 @@ def _get_qdrant_item_count(client, collection_name: str, collection_type: str) -
     unique_items = set()
     offset = None
 
-    # Determine which field to use based on collection type
-    if collection_type == "code":
-        id_field = "git_project_identifier"
-    else:
-        id_field = "file_path"
-
     while True:
         points, offset = client.scroll(
             collection_name=collection_name,
             scroll_filter=metadata_exclusion_filter(),
             limit=1000,
             offset=offset,
-            with_payload=[id_field],
+            with_payload=["file_path", "file_paths"],
             with_vectors=False
         )
 
@@ -730,8 +822,7 @@ def _get_qdrant_item_count(client, collection_name: str, collection_type: str) -
 
         for point in points:
             if point.payload:
-                item_id = point.payload.get(id_field)
-                if item_id:
+                for item_id in _payload_file_paths(point.payload):
                     unique_items.add(item_id)
 
         if offset is None:
@@ -863,7 +954,7 @@ def corpus_info_command(name: str, output_json: bool):
 
         # Determine item label based on type
         collection_type = qdrant_info.get("type") if qdrant_info else "unknown"
-        item_label = "repos" if collection_type == "code" else "files"
+        item_label = _item_unit_for_corpus_type(collection_type)
 
         # Output
         if output_json:

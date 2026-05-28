@@ -102,6 +102,85 @@ def prompt_policy_issues(metadata: Dict[str, Any], model_name: str) -> list[str]
     return []
 
 
+def should_stamp_prompt_policy(
+    force: bool,
+    file_list: Optional[list],
+    stats: Dict[str, Any],
+    orphans_remaining: int,
+) -> bool:
+    """Decide whether a run may (re)stamp the collection's prompt policy.
+
+    Stamping certifies that EVERY vector in the collection was produced under
+    the collection's recorded embedding prompt policy. It is therefore only
+    valid for a force, full-directory run that succeeded cleanly and left no
+    orphan vectors behind. Shared by all force paths (pdf/markdown/source CLI
+    and the dual-index sync force path) so the gate is enforced identically.
+
+    The stamp is allowed ONLY when ALL hold:
+      - force is True (incremental runs never re-certify the whole collection)
+      - file_list is None (a partial --file-list run never covers the corpus)
+      - stats["errors"] == 0 (a failed file may have left stale chunks)
+      - stats["files"] > 0 (something was actually indexed)
+      - orphans_remaining == 0 (no indexed file is missing from disk)
+
+    Args:
+        force: Whether the run used force/full reindex.
+        file_list: Explicit file list for the run, or None for full-directory.
+        stats: Run statistics dict with "files" and "errors" counts.
+        orphans_remaining: Count of indexed files no longer on disk after the run.
+
+    Returns:
+        True if the run may stamp the prompt policy, False otherwise.
+    """
+    if not force:
+        return False
+    if file_list is not None:
+        return False
+    if stats.get("errors", 0) != 0:
+        return False
+    if stats.get("files", 0) <= 0:
+        return False
+    if orphans_remaining != 0:
+        return False
+    return True
+
+
+def stamp_embedding_prompt_policy(
+    qdrant: QdrantClient,
+    collection_name: str,
+    collection_type: str,
+    model: str,
+) -> Dict[str, Any]:
+    """Write/refresh the collection's embedding_prompt_policy metadata.
+
+    Records the current prompt policy for ``model`` (via
+    :func:`get_embedding_prompt_policies`) onto the collection metadata point,
+    certifying that the indexed vectors match the active embedding registry.
+    Mirrors how create-time metadata records the policy. Only call this after
+    :func:`should_stamp_prompt_policy` returns True.
+
+    Args:
+        qdrant: Qdrant client.
+        collection_name: Name of the collection to stamp.
+        collection_type: Collection type ("pdf", "code", or "markdown").
+        model: Embedding model name (or names) backing the collection.
+
+    Returns:
+        The updated metadata payload (without the internal metadata flag).
+    """
+    CollectionType.validate(collection_type)
+    policy = get_embedding_prompt_policies(model)
+    updated = update_collection_metadata(
+        qdrant,
+        collection_name,
+        embedding_prompt_policy=policy,
+    )
+    logger.info(
+        f"Stamped embedding prompt policy for {collection_name} (model={model})"
+    )
+    return updated
+
+
 def _condition_list(
     conditions: Optional[Condition | list[Condition]],
 ) -> list[Condition]:

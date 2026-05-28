@@ -23,23 +23,20 @@ Usage:
 """
 
 import threading
-from typing import Dict
+from pathlib import Path
+from typing import Dict, Tuple
+
 from arcaneum.embeddings.client import EmbeddingClient
 
 # Global model cache with thread-safe access
-_model_cache: Dict[str, EmbeddingClient] = {}
+_model_cache: Dict[Tuple[str, str, bool], EmbeddingClient] = {}
 _cache_lock = threading.Lock()
 
-# Track cache configuration to ensure consistency
-_cache_config = {
-    "cache_dir": None,
-    "use_gpu": None,
-}
 
-
-def _get_cache_key(model_name: str, use_gpu: bool) -> str:
+def _get_cache_key(model_name: str, cache_dir: str, use_gpu: bool) -> Tuple[str, str, bool]:
     """Generate a cache key for a model configuration."""
-    return f"{model_name}:{use_gpu}"
+    normalized_cache_dir = str(Path(cache_dir).expanduser().resolve())
+    return (model_name, normalized_cache_dir, use_gpu)
 
 
 def get_cached_model(
@@ -62,10 +59,10 @@ def get_cached_model(
 
     Note:
         Thread-safe. Multiple threads can safely call this concurrently.
-        All models in cache use the same cache_dir and GPU settings.
+        Cache entries are isolated by model name, cache_dir, and GPU mode.
     """
     with _cache_lock:
-        cache_key = _get_cache_key(model_name, use_gpu)
+        cache_key = _get_cache_key(model_name, cache_dir, use_gpu)
 
         if cache_key in _model_cache:
             return _model_cache[cache_key]
@@ -77,26 +74,6 @@ def get_cached_model(
         )
         client.get_model(model_name)
 
-        # Update configuration for consistency checking
-        if _cache_config["cache_dir"] is None:
-            _cache_config["cache_dir"] = cache_dir
-            _cache_config["use_gpu"] = use_gpu
-        elif (
-            _cache_config["cache_dir"] != cache_dir
-            or _cache_config["use_gpu"] != use_gpu
-        ):
-            # Warn if cache is being used with different settings
-            import warnings
-            warnings.warn(
-                f"Model cache was initialized with different settings. "
-                f"Previous: cache_dir={_cache_config['cache_dir']}, "
-                f"use_gpu={_cache_config['use_gpu']}. "
-                f"Current: cache_dir={cache_dir}, use_gpu={use_gpu}. "
-                f"Using cached instance with previous settings.",
-                RuntimeWarning,
-            )
-
         _model_cache[cache_key] = client
         return client
-
 

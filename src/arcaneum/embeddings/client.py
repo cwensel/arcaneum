@@ -457,7 +457,10 @@ class EmbeddingClient:
         """Load a fresh SentenceTransformer on CPU for fallback after GPU poisoning.
 
         Creates a completely new model instance on CPU — no shared state with the
-        GPU model. Uses local_files_only=True since model files are already cached.
+        GPU model. Tries local_files_only=True first to preserve offline
+        fallback when local files are complete, then mirrors the main
+        SentenceTransformers loader by retrying with network access after a
+        local load failure.
         Cached in _cpu_fallback_models so it's only loaded once per model.
         """
         if model_name in self._cpu_fallback_models:
@@ -465,16 +468,28 @@ class EmbeddingClient:
 
         from sentence_transformers import SentenceTransformer
         config = EMBEDDING_MODELS[model_name]
-        model = SentenceTransformer(
-            config["name"],
-            **_sentence_transformer_load_kwargs(
-                model_name,
-                config,
-                cache_folder=self.cache_dir,
-                local_files_only=True,
-                device="cpu",
-            ),
-        )
+        try:
+            model = SentenceTransformer(
+                config["name"],
+                **_sentence_transformer_load_kwargs(
+                    model_name,
+                    config,
+                    cache_folder=self.cache_dir,
+                    local_files_only=True,
+                    device="cpu",
+                ),
+            )
+        except Exception:
+            model = SentenceTransformer(
+                config["name"],
+                **_sentence_transformer_load_kwargs(
+                    model_name,
+                    config,
+                    cache_folder=self.cache_dir,
+                    local_files_only=False,
+                    device="cpu",
+                ),
+            )
         if "max_seq_length" in config:
             model.max_seq_length = config["max_seq_length"]
         # Mark backend so _embed_impl routes to encode() path, not embed() (FastEmbed)
@@ -1008,13 +1023,16 @@ class EmbeddingClient:
         Returns:
             List of embedding vectors (as lists or arrays)
         """
+        model_config = EMBEDDING_MODELS.get(model_name, {})
+        if model_config.get("backend") == "sentence-transformers":
+            self._maybe_disable_gpu_for_memory_pressure(model_name)
+
         model = self.get_model(model_name)
 
         # Pre-truncate texts that exceed safe character limit to prevent OOM
         # Generated code (OpenAPI, protobuf) can have high token density where
         # 1 char ≈ 1 token. Use conservative ratio of 2 chars/token.
         # This prevents tokenizer from allocating massive buffers before truncation.
-        model_config = EMBEDDING_MODELS.get(model_name, {})
         max_seq_length = model_config.get("max_seq_length", 8192)
         max_chars = max_seq_length * 2  # Conservative: assume 0.5 tokens/char worst case
 

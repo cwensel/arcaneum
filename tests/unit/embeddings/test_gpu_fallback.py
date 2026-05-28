@@ -1,6 +1,7 @@
 """Unit tests for GPU fallback stability (RDR-020)."""
 
 import threading
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -47,6 +48,36 @@ class TestGetModelReturnsCPUWhenPoisoned:
 
         mock_get_fallback.assert_called_once_with("jina-code")
         assert result is mock_model
+
+    def test_cpu_fallback_tries_local_model_before_download(self, embedding_client):
+        embedding_client._gpu_poisoned = True
+        mock_model = MagicMock()
+
+        with patch.object(embedding_client, "is_model_cached", return_value=False):
+            with patch("sentence_transformers.SentenceTransformer", return_value=mock_model) as st:
+                result = embedding_client.get_model("jina-code")
+
+        assert result is mock_model
+        assert st.call_count == 1
+        assert st.call_args.kwargs["local_files_only"] is True
+        assert st.call_args.kwargs["device"] == "cpu"
+
+    def test_cpu_fallback_downloads_after_local_load_failure(self, embedding_client):
+        embedding_client._gpu_poisoned = True
+        mock_model = MagicMock()
+
+        with patch.object(embedding_client, "is_model_cached", return_value=True):
+            with patch(
+                "sentence_transformers.SentenceTransformer",
+                side_effect=[OSError("incomplete cache"), mock_model],
+            ) as st:
+                result = embedding_client.get_model("jina-code")
+
+        assert result is mock_model
+        assert st.call_count == 2
+        assert st.call_args_list[0].kwargs["local_files_only"] is True
+        assert st.call_args_list[1].kwargs["local_files_only"] is False
+        assert st.call_args_list[1].kwargs["device"] == "cpu"
 
     def test_does_not_load_gpu_model_when_poisoned(self, embedding_client):
         """Poisoned client should not attempt to create a new GPU model."""
@@ -153,6 +184,46 @@ class TestSystemMemoryPressureGuard:
         monkeypatch.setenv("ARC_MIN_SYSTEM_AVAILABLE_GB", "invalid")
 
         assert embedding_client._min_system_available_gb() == 4.0
+
+    def test_embed_falls_back_before_direct_encode_under_low_memory(
+        self, embedding_client, monkeypatch
+    ):
+        monkeypatch.setenv("ARC_MIN_SYSTEM_AVAILABLE_GB", "4")
+        embedding_client._models["jina-code"] = MagicMock()
+
+        cpu_model = SimpleNamespace(_backend="sentence-transformers")
+
+        with patch.object(embedding_client, "_system_memory_available_gb", return_value=2.5):
+            with patch.object(embedding_client, "_get_cpu_fallback_model", return_value=cpu_model):
+                with patch.object(embedding_client, "_encode_on_cpu_fallback") as mock_encode:
+                    mock_encode.return_value = np.random.rand(1, 768).astype(np.float32)
+                    with patch.object(embedding_client, "_validate_embeddings", return_value=True):
+                        with patch("arcaneum.utils.memory.get_gpu_memory_info") as mock_gpu_mem:
+                            embeddings = embedding_client.embed(["text"], "jina-code")
+
+        assert embeddings.shape == (1, 768)
+        assert embedding_client._gpu_poisoned is True
+        assert "jina-code" not in embedding_client._models
+        assert mock_encode.call_args.args[0] is cpu_model
+        mock_gpu_mem.assert_not_called()
+
+    def test_cpu_only_direct_embed_does_not_poison_gpu(self, embedding_client, monkeypatch):
+        monkeypatch.setenv("ARC_MIN_SYSTEM_AVAILABLE_GB", "4")
+        embedding_client.use_gpu = False
+
+        mock_model = MagicMock()
+        mock_model._backend = "sentence-transformers"
+        embedding_client._models["jina-code"] = mock_model
+
+        with patch.object(embedding_client, "_system_memory_available_gb", return_value=2.5):
+            with patch.object(embedding_client, "_encode_with_oom_recovery") as mock_encode:
+                mock_encode.return_value = np.random.rand(1, 768).astype(np.float32)
+                with patch.object(embedding_client, "_validate_embeddings", return_value=True):
+                    embeddings = embedding_client.embed(["text"], "jina-code")
+
+        assert embeddings.shape == (1, 768)
+        assert embedding_client._gpu_poisoned is False
+        assert embedding_client._models["jina-code"] is mock_model
 
 
 class TestDeferredGpuCleanup:

@@ -392,7 +392,7 @@ class TestCorpusDescriptions:
         assert updated["model"] == "arctic-m"
         assert updated["created_at"] == "2026-05-26T00:00:00"
         assert updated["description"] == "Project notes"
-        assert updated["schema_version"] == 1
-        assert updated["app_version"]
+        assert "schema_version" not in updated
+        assert "app_version" not in updated
         assert qdrant.points[0].payload["is_metadata"] is True
         assert qdrant.points[0].payload["description"] == "Project notes"

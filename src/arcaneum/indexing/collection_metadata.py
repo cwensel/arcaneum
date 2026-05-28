@@ -220,7 +220,7 @@ def update_collection_metadata(
             f"Collection '{collection_name}' has no metadata point to update"
         )
 
-    metadata = {**persisted_schema_defaults(), **existing}
+    metadata = {**existing}
     for key, value in updates.items():
         if value is None:
             metadata.pop(key, None)

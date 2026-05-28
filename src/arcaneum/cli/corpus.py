@@ -1476,6 +1476,10 @@ def corpus_verify_command(
             # Qdrant section
             console.print(f"\n[bold]Qdrant Collection:[/bold]")
             if qdrant_result:
+                if qdrant_result.errors:
+                    console.print("  [yellow]Verification errors:[/yellow]")
+                    for error in qdrant_result.errors:
+                        console.print(f"    [yellow]- {error}[/yellow]")
                 if qdrant_result.is_healthy:
                     console.print(f"  [green]Status: Healthy[/green]")
                     console.print(f"  Items: {qdrant_result.total_items} ({qdrant_result.complete_items} complete)")

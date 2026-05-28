@@ -532,6 +532,10 @@ def verify_collection_command(
                 console.print(f"Type: {type_str}")
                 console.print(f"Total points: {result.total_points:,}")
                 console.print(f"Total items: {result.total_items}")
+                if result.errors:
+                    console.print("\n[yellow]Verification errors:[/yellow]")
+                    for error in result.errors:
+                        console.print(f"  [yellow]- {error}[/yellow]")
 
                 if result.is_healthy:
                     console.print(f"\n[green]Collection is healthy - all {result.complete_items} items complete[/green]")

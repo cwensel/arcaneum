@@ -5,7 +5,7 @@ from rich.table import Table
 
 from arcaneum.cli.corpus_defaults import DEFAULT_MODELS_BY_CORPUS_TYPE
 from arcaneum.cli.output import print_json
-from arcaneum.embeddings.client import EMBEDDING_MODELS, get_embedding_prompt_policy
+from arcaneum.embeddings.client import EMBEDDING_MODELS
 from arcaneum.utils.memory import get_batch_size_for_model_params
 
 console = Console()
@@ -60,21 +60,55 @@ def _prompt_policy_summary(config: dict) -> str:
     return "; ".join(parts)
 
 
-def _suggested_batches(config: dict) -> dict:
-    """Return conservative batch hints from the same registry fields runtime uses."""
+def _outer_batch_hint(config: dict) -> dict:
+    """Return outer embed_parallel batch hints from EmbeddingClient runtime rules."""
     params = config.get("params_billions")
-    if params is None:
-        outer = 128 if config.get("backend", "fastembed") == "fastembed" else 32
+    if params is not None and params >= 1.0:
+        mps = 128
+    elif params is not None and params >= 0.3:
+        mps = 256
     else:
-        outer = get_batch_size_for_model_params(params)
-        if config.get("backend", "fastembed") == "fastembed":
-            outer = max(128, outer)
-    mps_inner = config.get("mps_max_batch")
+        mps = 512
+
+    dimensions = config["dimensions"]
+    if dimensions <= 384:
+        cuda = 1024
+    elif dimensions <= 768:
+        cuda = 768
+    else:
+        cuda = 512
+
     return {
-        "cpu_outer": f"1-{outer}",
-        "gpu_outer": f"8-{outer}",
-        "mps_inner_max": mps_inner,
+        "cpu": 512,
+        "cuda": cuda,
+        "mps": mps,
     }
+
+
+def _sentence_transformers_encode_hint(config: dict) -> dict | None:
+    """Return internal encode batch hints for SentenceTransformers models."""
+    if config.get("backend", "fastembed") != "sentence-transformers":
+        return None
+    params = config.get("params_billions")
+    return {
+        "cpu_max": 256,
+        "gpu_dynamic": "memory-probed",
+        "mps_max": config.get("mps_max_batch") or get_batch_size_for_model_params(params),
+    }
+
+
+def _suggested_batches(config: dict) -> dict:
+    """Return batch hints with runtime outer and ST internal encode scopes split."""
+    return {
+        "outer": _outer_batch_hint(config),
+        "sentence_transformers_encode": _sentence_transformers_encode_hint(config),
+    }
+
+
+def _batch_summary(row: dict) -> str:
+    """Compact table summary for outer batch hints."""
+    outer = row["suggested_batches"]["outer"]
+    return f"cpu{outer['cpu']} cuda{outer['cuda']} mps{outer['mps']}"
 
 
 def _hardware_support(config: dict) -> dict:
@@ -97,11 +131,7 @@ def _hardware_support(config: dict) -> dict:
 
 def _reindex_warning(config: dict) -> str:
     """Explain when model metadata changes require corpus reindexing."""
-    policy = get_embedding_prompt_policy(config["alias"])
-    has_prompt_policy = bool(policy.get("query") or policy.get("document"))
-    if has_prompt_policy:
-        return "reindex after prompt/task/backend/default changes"
-    return "reindex after dimension/backend/default changes"
+    return "reindex after dimension/prompt/task/backend/default changes"
 
 
 def _model_catalog_row(alias: str, config: dict) -> dict:
@@ -169,7 +199,7 @@ def list_models_command(output_json: bool):
                     str(row["context_limit"] or "default"),
                     str(row["dimensions"]),
                     row["risk_tier"],
-                    row["suggested_batches"]["cpu_outer"],
+                    _batch_summary(row),
                     row["description"],
                 )
 
@@ -177,7 +207,13 @@ def list_models_command(output_json: bool):
         console.print("\n[cyan]Usage:[/cyan]")
         console.print("  arc corpus create docs --type pdf        # defaults to arctic-m")
         console.print("  arc corpus create code --type code       # defaults to jina-code")
-        console.print("  arc sync docs ~/docs --no-gpu            # CPU-first stable path")
+        console.print("  arc corpus sync docs ~/docs --no-gpu     # CPU-first stable path")
         console.print("  arc models list --json                   # full LLM-readable policy")
-        console.print("\n[yellow]GPU is opt-in.[/yellow] Prefer stable defaults unless you need a larger model.")
-        console.print("Reindex a corpus after changing model dimensions, backend, prompts, tasks, or defaults.")
+        console.print(
+            "\n[yellow]GPU is opt-in.[/yellow] Prefer stable defaults unless you need a "
+            "larger model."
+        )
+        console.print(
+            "Reindex a corpus after changing model dimensions, backend, prompts, tasks, "
+            "or defaults."
+        )

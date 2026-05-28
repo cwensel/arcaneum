@@ -4,9 +4,7 @@ Tests for 'arc models list' command.
 """
 
 import json
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 
 class TestModelsList:
@@ -17,8 +15,16 @@ class TestModelsList:
         from arcaneum.cli.models import list_models_command
 
         mock_models = {
-            'stella': {'name': 'stella-model', 'dimensions': 1024, 'description': 'General-purpose model'},
-            'jina-code': {'name': 'jina-code-model', 'dimensions': 768, 'description': 'Code-optimized model'},
+            'stella': {
+                'name': 'stella-model',
+                'dimensions': 1024,
+                'description': 'General-purpose model',
+            },
+            'jina-code': {
+                'name': 'jina-code-model',
+                'dimensions': 768,
+                'description': 'Code-optimized model',
+            },
         }
 
         with patch('arcaneum.cli.models.EMBEDDING_MODELS', mock_models):
@@ -33,8 +39,8 @@ class TestModelsList:
 
     def test_shows_dimensions(self):
         """Test that dimension values are rendered in the table output."""
-        from arcaneum.cli.models import list_models_command
         from arcaneum.cli import models as models_module
+        from arcaneum.cli.models import list_models_command
 
         mock_models = {
             'stella': {'name': 'stella', 'dimensions': 1024},
@@ -59,11 +65,15 @@ class TestModelsList:
 
     def test_shows_descriptions(self):
         """Test that descriptions are rendered in the table output."""
-        from arcaneum.cli.models import list_models_command
         from arcaneum.cli import models as models_module
+        from arcaneum.cli.models import list_models_command
 
         mock_models = {
-            'stella': {'name': 'stella', 'dimensions': 1024, 'description': 'General-purpose embedding model'},
+            'stella': {
+                'name': 'stella',
+                'dimensions': 1024,
+                'description': 'General-purpose embedding model',
+            },
         }
 
         with patch('arcaneum.cli.models.EMBEDDING_MODELS', mock_models):
@@ -146,17 +156,31 @@ class TestModelsList:
         assert models['arctic-m']['default_for'] == ['pdf', 'markdown']
         assert models['arctic-m']['support_tier'] == 'stable-default'
         assert models['arctic-m']['hardware']['mps'] == 'experimental-coreml'
-        assert models['arctic-m']['suggested_batches']['cpu_outer'] == '1-128'
+        assert models['arctic-m']['suggested_batches']['outer'] == {
+            'cpu': 512,
+            'cuda': 768,
+            'mps': 512,
+        }
+        assert models['arctic-m']['suggested_batches']['sentence_transformers_encode'] is None
 
         assert models['nomic-code']['risk_tier'] == 'very-high'
         assert models['nomic-code']['support_tier'] == 'gpu-opt-in'
         assert models['nomic-code']['hardware']['cuda'] is True
-        assert models['nomic-code']['suggested_batches']['mps_inner_max'] == 1
+        assert models['nomic-code']['suggested_batches']['outer'] == {
+            'cpu': 512,
+            'cuda': 512,
+            'mps': 128,
+        }
+        assert models['nomic-code']['suggested_batches']['sentence_transformers_encode'] == {
+            'cpu_max': 256,
+            'gpu_dynamic': 'memory-probed',
+            'mps_max': 1,
+        }
 
     def test_table_output_exposes_selection_columns(self):
         """Test table output shows the compact LLM selection columns."""
-        from arcaneum.cli.models import list_models_command
         from arcaneum.cli import models as models_module
+        from arcaneum.cli.models import list_models_command
 
         mock_models = {
             'arctic-m': {

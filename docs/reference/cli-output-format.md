@@ -234,12 +234,19 @@ All errors use the `[ERROR]` prefix:
           "mps_note": "supported; use registry mps_max_batch"
         },
         "suggested_batches": {
-          "cpu_outer": "1-128",
-          "gpu_outer": "8-128",
-          "mps_inner_max": 16
+          "outer": {
+            "cpu": 512,
+            "cuda": 768,
+            "mps": 512
+          },
+          "sentence_transformers_encode": {
+            "cpu_max": 256,
+            "gpu_dynamic": "memory-probed",
+            "mps_max": 16
+          }
         },
-        "reindex_warning": "reindex after prompt/task/backend/default changes",
-        "description": "Code-specific (768D, 8K context, best for source code)"
+        "reindex_warning": "reindex after dimension/prompt/task/backend/default changes",
+        "description": "Code-specific (768D, 2K effective context, legacy v2 model)"
       },
       {
         "alias": "arctic-m",
@@ -261,11 +268,14 @@ All errors use the `[ERROR]` prefix:
           "mps_note": "requires ARC_EXPERIMENTAL_COREML=1"
         },
         "suggested_batches": {
-          "cpu_outer": "1-128",
-          "gpu_outer": "8-128",
-          "mps_inner_max": null
+          "outer": {
+            "cpu": 512,
+            "cuda": 768,
+            "mps": 512
+          },
+          "sentence_transformers_encode": null
         },
-        "reindex_warning": "reindex after prompt/task/backend/default changes",
+        "reindex_warning": "reindex after dimension/prompt/task/backend/default changes",
         "description": "Snowflake Arctic Embed M (768D, stable retrieval default)"
       }
     ]

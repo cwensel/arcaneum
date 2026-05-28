@@ -56,6 +56,11 @@ The system supports PDF documents and source code with git-aware, AST-based chun
 
 See `arc models list` for complete model information and recommendations.
 
+Arcaneum records each collection's embedding prompt policy when it is indexed. Reindex a
+corpus after changing model query/document prompts, tasks, or prompt-aware model defaults;
+semantic search rejects collections whose stored prompt policy no longer matches the current
+model registry.
+
 ### GPU Acceleration
 
 - **CPU is the default** for the most stable indexing behavior

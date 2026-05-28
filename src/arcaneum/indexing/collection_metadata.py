@@ -12,6 +12,11 @@ from typing import Any, Dict, Optional
 from qdrant_client import QdrantClient
 from qdrant_client.models import Condition, FieldCondition, Filter, MatchValue
 
+from arcaneum.embeddings.client import (
+    get_embedding_prompt_policies,
+    get_embedding_prompt_policy,
+    model_key_for_name,
+)
 from arcaneum.schema.document import (
     PERSISTED_SCHEMA_VERSION,
     PERSISTED_SCHEMA_VERSION_FIELD,
@@ -66,6 +71,34 @@ def persisted_schema_issues(metadata: Dict[str, Any]) -> list[str]:
 
     if not metadata.get("app_version"):
         return ["collection metadata is missing app_version"]
+    return []
+
+
+def prompt_policy_issues(metadata: Dict[str, Any], model_name: str) -> list[str]:
+    """Return issues when stored prompt policy differs from current model policy."""
+    model_key = model_key_for_name(model_name)
+    if model_key is None:
+        return [f"embedding model '{model_name}' is not configured"]
+
+    stored_policies = metadata.get("embedding_prompt_policy")
+    if not stored_policies:
+        return [
+            "collection metadata is missing embedding_prompt_policy; "
+            "reindex before semantic search with prompt-aware models"
+        ]
+
+    stored_policy = stored_policies.get(model_key)
+    current_policy = get_embedding_prompt_policy(model_key)
+    if stored_policy is None:
+        return [
+            f"collection metadata is missing prompt policy for model '{model_key}'; "
+            "reindex before semantic search"
+        ]
+    if stored_policy != current_policy:
+        return [
+            f"collection prompt policy for model '{model_key}' differs from "
+            "the current embedding registry; reindex the corpus"
+        ]
     return []
 
 
@@ -149,6 +182,7 @@ def set_collection_metadata(
         **persisted_schema_defaults(),
         "collection_type": collection_type,
         "model": model,
+        "embedding_prompt_policy": get_embedding_prompt_policies(model),
         "created_at": datetime.now().isoformat(),
         "created_by": "arcaneum",
         METADATA_PAYLOAD_KEY: True,  # Flag to identify metadata point

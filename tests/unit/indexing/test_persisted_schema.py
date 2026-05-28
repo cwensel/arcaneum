@@ -2,8 +2,10 @@
 
 from types import SimpleNamespace
 
+from arcaneum.embeddings.client import get_embedding_prompt_policy
 from arcaneum.indexing.collection_metadata import (
     persisted_schema_issues,
+    prompt_policy_issues,
     set_collection_metadata,
 )
 from arcaneum.indexing.verify import CollectionVerifier
@@ -49,6 +51,7 @@ def test_collection_metadata_defaults_include_persisted_schema_fields():
     payload = qdrant.points[0].payload
     assert payload["schema_version"] == PERSISTED_SCHEMA_VERSION
     assert payload["app_version"] != ""
+    assert payload["embedding_prompt_policy"]["stella"] == get_embedding_prompt_policy("stella")
 
 
 def test_persisted_schema_issues_flags_legacy_metadata():
@@ -58,6 +61,25 @@ def test_persisted_schema_issues_flags_legacy_metadata():
         "collection metadata is legacy schema v0; reindex or backfill "
         "schema_version/app_version before relying on persisted compatibility"
     ]
+
+
+def test_prompt_policy_issues_flag_missing_and_changed_policy():
+    assert "missing embedding_prompt_policy" in prompt_policy_issues({}, "stella")[0]
+
+    stale_metadata = {
+        "embedding_prompt_policy": {
+            "stella": {
+                **get_embedding_prompt_policy("stella"),
+                "query": {"method": "encode"},
+            }
+        }
+    }
+
+    assert "differs" in prompt_policy_issues(stale_metadata, "stella")[0]
+    assert prompt_policy_issues(
+        {"embedding_prompt_policy": {"stella": get_embedding_prompt_policy("stella")}},
+        "stella",
+    ) == []
 
 
 def test_persisted_schema_issues_rejects_non_integer_version():

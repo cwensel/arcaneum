@@ -8,8 +8,8 @@ from arcaneum.embeddings.client import (
     EMBEDDING_MODELS,
     TRUST_REMOTE_CODE_ALLOWLIST,
     _sentence_transformer_load_kwargs,
+    get_embedding_prompt_policy,
 )
-
 
 REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
 
@@ -72,3 +72,10 @@ def test_non_remote_code_models_do_not_enable_trust_remote_code():
 
     assert kwargs["trust_remote_code"] is False
     assert kwargs["revision"] == config["revision"]
+
+
+def test_sentence_transformer_prompt_policy_records_retrieval_semantics():
+    assert get_embedding_prompt_policy("jina-code")["query"]["task"] == "retrieval.query"
+    assert get_embedding_prompt_policy("jina-code")["document"]["task"] == "retrieval.passage"
+    assert get_embedding_prompt_policy("stella")["query"]["prompt_name"] == "s2p_query"
+    assert get_embedding_prompt_policy("e5-base")["document"]["prompt"] == "passage: "

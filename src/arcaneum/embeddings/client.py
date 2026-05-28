@@ -8,7 +8,7 @@ import sys
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, TimeoutError, wait
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastembed import TextEmbedding
 
@@ -47,6 +47,8 @@ EMBEDDING_MODELS = {
         "available": True,
         "recommended_for": "code",
         "params_billions": 0.137,  # ~137M params
+        "query_task": "retrieval.query",
+        "document_task": "retrieval.passage",
         # Attention memory is O(batch × seq_len² × heads). 8192 was producing
         # multi-GB Metal driver allocations on files with one long chunk in a
         # mixed batch (jetsam SIGKILL territory). AST chunks max ~400 tokens;
@@ -65,6 +67,8 @@ EMBEDDING_MODELS = {
         "available": True,
         "recommended_for": "code",
         "params_billions": 0.5,  # 500M params, Qwen2 attention needs ~4GB per batch
+        "query_task": "retrieval.query",
+        "document_task": "retrieval.passage",
         # Limit seq_length to control attention memory: O(batch × seq_len²)
         # Model supports 32K but was trained on 512; 8192 is recommended max
         # See: https://huggingface.co/jinaai/jina-code-embeddings-0.5b
@@ -80,6 +84,8 @@ EMBEDDING_MODELS = {
         "available": True,
         "recommended_for": "code",
         "params_billions": 1.5,  # 1.5B params
+        "query_task": "retrieval.query",
+        "document_task": "retrieval.passage",
         "max_seq_length": 8192,  # Same as 0.5b - limit attention memory
         "mps_max_batch": 2,  # MPS needs very small batches for 1.5B model (like stella)
     },
@@ -120,6 +126,7 @@ EMBEDDING_MODELS = {
         "available": True,
         "recommended_for": "pdf",
         "params_billions": 1.5,  # 1.5B params
+        "query_prompt_name": "s2p_query",
         "mps_max_batch": 2,  # MPS needs small batches to avoid system lockups on unified memory
         # Note: Model default max_seq_length=512, don't override
     },
@@ -214,6 +221,8 @@ EMBEDDING_MODELS = {
         "description": "E5 Base v2 (768D, multilingual, strong performance)",
         "available": True,
         "params_billions": 0.110,  # ~110M params
+        "query_prompt": "query: ",
+        "document_prompt": "passage: ",
     },
 }
 
@@ -268,6 +277,85 @@ def _unknown_model_error(model_name: str) -> ValueError:
         f"Unknown model: {model_name}. "
         f"Available models: {list(EMBEDDING_MODELS.keys())}"
     )
+
+
+def model_key_for_name(model_name: str) -> Optional[str]:
+    """Return the registry key for either a model key or provider model name."""
+    if model_name in EMBEDDING_MODELS:
+        return model_name
+    for key, config in EMBEDDING_MODELS.items():
+        if config.get("name") == model_name:
+            return key
+    return None
+
+
+def get_embedding_prompt_policy(model_name: str) -> Dict[str, Any]:
+    """Return the stable query/document prompt policy for a configured model."""
+    model_key = model_key_for_name(model_name)
+    if model_key is None:
+        raise _unknown_model_error(model_name)
+
+    config = EMBEDDING_MODELS[model_key]
+    backend = config.get("backend", "fastembed")
+    policy = {
+        "version": 1,
+        "model": model_key,
+        "backend": backend,
+        "document": {},
+        "query": {},
+    }
+
+    if backend == "fastembed":
+        policy["document"]["method"] = "embed"
+        policy["query"]["method"] = "query_embed"
+    else:
+        policy["document"]["method"] = "encode"
+        policy["query"]["method"] = "encode"
+
+    for role in ("document", "query"):
+        for field in ("prompt", "prompt_name", "task"):
+            value = config.get(f"{role}_{field}")
+            if value:
+                policy[role][field] = value
+
+    return policy
+
+
+def get_embedding_prompt_policies(model_names: str | List[str]) -> Dict[str, Dict[str, Any]]:
+    """Return prompt policies keyed by registry model key for one or more models."""
+    if isinstance(model_names, str):
+        names = [m.strip() for m in model_names.split(",") if m.strip()]
+    else:
+        names = list(model_names)
+
+    policies: Dict[str, Dict[str, Any]] = {}
+    for name in names:
+        model_key = model_key_for_name(name)
+        if model_key is not None:
+            policies[model_key] = get_embedding_prompt_policy(model_key)
+    return policies
+
+
+def _prompted_texts(texts: List[str], policy: Dict[str, Any], role: str) -> List[str]:
+    prompt = policy.get(role, {}).get("prompt")
+    if not prompt:
+        return texts
+    return [f"{prompt}{text}" for text in texts]
+
+
+def _sentence_transformer_encode_kwargs(
+    model_name: str,
+    prompt_type: str,
+) -> Dict[str, Any]:
+    """Return SentenceTransformer encode kwargs for task/prompt-name policies."""
+    policy = get_embedding_prompt_policy(model_name)
+    role_policy = policy.get(prompt_type, {})
+    kwargs: Dict[str, Any] = {}
+    if role_policy.get("prompt_name"):
+        kwargs["prompt_name"] = role_policy["prompt_name"]
+    if role_policy.get("task"):
+        kwargs["task"] = role_policy["task"]
+    return kwargs
 
 
 class EmbeddingClient:
@@ -547,7 +635,13 @@ class EmbeddingClient:
         except Exception as e:
             logger.debug(f"Could not set torch thread count: {e}")
 
-    def _encode_on_cpu_fallback(self, cpu_model, texts: List[str]):
+    def _encode_on_cpu_fallback(
+        self,
+        cpu_model,
+        texts: List[str],
+        model_name: str,
+        prompt_type: str,
+    ):
         """Run model.encode on CPU with bounded memory.
 
         Used in two paths: (1) explicit CPU mode (use_gpu=False or _device=="cpu"),
@@ -561,12 +655,15 @@ class EmbeddingClient:
 
         self._ensure_cpu_fallback_threading()
 
+        encode_kwargs = _sentence_transformer_encode_kwargs(model_name, prompt_type)
+
         if len(texts) <= self._CPU_FALLBACK_OUTER_BATCH:
             return cpu_model.encode(
                 texts,
                 batch_size=self._CPU_FALLBACK_INNER_BATCH,
                 show_progress_bar=False,
                 convert_to_numpy=True,
+                **encode_kwargs,
             )
 
         chunks = []
@@ -577,6 +674,7 @@ class EmbeddingClient:
                 batch_size=self._CPU_FALLBACK_INNER_BATCH,
                 show_progress_bar=False,
                 convert_to_numpy=True,
+                **encode_kwargs,
             ))
         return np.concatenate(chunks, axis=0)
 
@@ -826,8 +924,9 @@ class EmbeddingClient:
                         # Re-raise other errors as-is
                         raise
             elif backend == "sentence-transformers":
-                from sentence_transformers import SentenceTransformer
                 import sys
+
+                from sentence_transformers import SentenceTransformer
 
                 # Warn about large models on MPS - risk of system lockup
                 params_billions = config.get("params_billions", 0)
@@ -930,7 +1029,14 @@ class EmbeddingClient:
 
         return self._models[model_name]
 
-    def embed(self, texts: List[str], model_name: str, batch_size: int = 512, max_internal_batch: int = None) -> List[List[float]]:
+    def embed(
+        self,
+        texts: List[str],
+        model_name: str,
+        batch_size: int = 512,
+        max_internal_batch: int = None,
+        prompt_type: str = "document",
+    ) -> List[List[float]]:
         """Generate embeddings for texts using specified model.
 
         Processes in batches to optimize GPU utilization.
@@ -952,9 +1058,22 @@ class EmbeddingClient:
         """
         # No lock needed - single-threaded embedding is faster for GPU models
         # GPU parallelism is via large batches (256-512), not thread-level parallelism
-        return self._embed_impl(texts, model_name, batch_size=batch_size, max_internal_batch=max_internal_batch)
+        return self._embed_impl(
+            texts,
+            model_name,
+            batch_size=batch_size,
+            max_internal_batch=max_internal_batch,
+            prompt_type=prompt_type,
+        )
 
-    def _embed_impl(self, texts: List[str], model_name: str, batch_size: int = 512, max_internal_batch: int = None) -> List[List[float]]:
+    def _embed_impl(
+        self,
+        texts: List[str],
+        model_name: str,
+        batch_size: int = 512,
+        max_internal_batch: int = None,
+        prompt_type: str = "document",
+    ) -> List[List[float]]:
         """Internal implementation of embedding (called with or without lock).
 
         Optimized GPU→CPU transfer strategies for reduced overhead (arcaneum-ppa2).
@@ -974,6 +1093,9 @@ class EmbeddingClient:
         Returns:
             List of embedding vectors (as lists or arrays)
         """
+        if prompt_type not in {"document", "query"}:
+            raise ValueError(f"Unknown prompt_type: {prompt_type}")
+
         model_config = EMBEDDING_MODELS.get(model_name, {})
         if model_config.get("backend") == "sentence-transformers":
             self._maybe_disable_gpu_for_memory_pressure(model_name)
@@ -1013,7 +1135,8 @@ class EmbeddingClient:
                 f"(model={model_name}, max_seq_length={max_seq_length})."
             )
 
-        texts = safe_texts
+        prompt_policy = get_embedding_prompt_policy(model_name)
+        texts = _prompted_texts(safe_texts, prompt_policy, prompt_type)
 
         # Additional safeguard: if we still have very large texts after truncation,
         # something is wrong - refuse to process to prevent OOM
@@ -1035,7 +1158,7 @@ class EmbeddingClient:
             # This replaces the previous hard-coded values (8/32/64) which caused
             # excessive kernel launches and poor GPU utilization
             if self._device in ("mps", "cuda") and not self._gpu_poisoned:
-                from ..utils.memory import get_gpu_memory_info, estimate_safe_batch_size_v2
+                from ..utils.memory import estimate_safe_batch_size_v2, get_gpu_memory_info
 
                 available_bytes, _, device_type = get_gpu_memory_info()
                 if available_bytes:
@@ -1098,7 +1221,7 @@ class EmbeddingClient:
                         self._clear_gpu_cache()
 
                     batch_embeddings = self._encode_with_oom_recovery(
-                        model, batch_texts, internal_batch_size, model_name
+                        model, batch_texts, internal_batch_size, model_name, prompt_type
                     )
                     sorted_embeddings[offset:offset + len(batch_texts)] = batch_embeddings
                     offset += len(batch_texts)
@@ -1109,7 +1232,7 @@ class EmbeddingClient:
             else:
                 # Small input - process all at once
                 sorted_embeddings = self._encode_with_oom_recovery(
-                    model, sorted_texts, internal_batch_size, model_name
+                    model, sorted_texts, internal_batch_size, model_name, prompt_type
                 )
 
             # Unsort back to original order. sort_idx[i] = original index of
@@ -1171,8 +1294,15 @@ class EmbeddingClient:
 
             return all_embeddings
 
-    def _encode_with_oom_recovery(self, model, texts: List[str], internal_batch_size: int, model_name: str,
-                                   encode_timeout: int = 120):
+    def _encode_with_oom_recovery(
+        self,
+        model,
+        texts: List[str],
+        internal_batch_size: int,
+        model_name: str,
+        prompt_type: str = "document",
+        encode_timeout: int = 120,
+    ):
         """Encode texts with OOM recovery for MPS/CUDA.
 
         Metal/MPS OOM errors can occur in two ways:
@@ -1204,7 +1334,7 @@ class EmbeddingClient:
         if self._gpu_poisoned:
             cpu_model = self._get_cpu_fallback_model(model_name)
             logger.info(f"GPU poisoned, falling back to CPU for {len(texts)} texts")
-            return self._encode_on_cpu_fallback(cpu_model, texts)
+            return self._encode_on_cpu_fallback(cpu_model, texts, model_name, prompt_type)
 
         # CPU short-circuit: the daemon-thread + timeout + poisoning machinery below
         # only makes sense for MPS/CUDA hangs at the Metal/CUDA C++ level. On CPU the
@@ -1212,7 +1342,7 @@ class EmbeddingClient:
         # would spawn a second CPU encode that competes with the still-running first
         # one for OMP threads and RAM. Run inline with bounded batching instead.
         if self._device == "cpu":
-            return self._encode_on_cpu_fallback(model, texts)
+            return self._encode_on_cpu_fallback(model, texts, model_name, prompt_type)
 
         import gc
         import sys
@@ -1243,7 +1373,8 @@ class EmbeddingClient:
                         texts,
                         batch_size=batch_size,
                         show_progress_bar=False,
-                        convert_to_numpy=True
+                        convert_to_numpy=True,
+                        **_sentence_transformer_encode_kwargs(model_name, prompt_type),
                     )
 
                     self._sync_gpu_if_needed()
@@ -1272,7 +1403,7 @@ class EmbeddingClient:
                 )
                 import sys
                 print(
-                    f"  GPU encode timed out — falling back to CPU for remaining work.",
+                    "  GPU encode timed out — falling back to CPU for remaining work.",
                     file=sys.stderr, flush=True
                 )
 
@@ -1291,7 +1422,7 @@ class EmbeddingClient:
 
                 # Fall back to CPU for these texts instead of raising
                 cpu_model = self._get_cpu_fallback_model(model_name)
-                return self._encode_on_cpu_fallback(cpu_model, texts)
+                return self._encode_on_cpu_fallback(cpu_model, texts, model_name, prompt_type)
 
             # Thread completed - check for exceptions
             if container['error'] is not None:
@@ -1437,8 +1568,9 @@ class EmbeddingClient:
             # List.extend() over-allocates by 25-50% during growth, causing memory bloat.
             # Pre-allocation uses exact memory needed. (arcaneum-q6by)
             # Only allocate if accumulating results.
-            import numpy as np
             import gc
+
+            import numpy as np
             dim = self.get_dimensions(model_name)
             if accumulate:
                 all_embeddings = np.zeros((len(texts), dim), dtype=np.float32)

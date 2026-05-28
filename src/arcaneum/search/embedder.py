@@ -1,10 +1,12 @@
 """Query embedding pipeline for semantic search (RDR-007)."""
 
-from typing import Tuple, List
 from pathlib import Path
+from typing import List, Tuple
+
 from qdrant_client import QdrantClient
 
-from ..embeddings.client import EmbeddingClient, EMBEDDING_MODELS
+from ..embeddings.client import EMBEDDING_MODELS, EmbeddingClient
+from ..indexing.collection_metadata import get_collection_metadata, prompt_policy_issues
 
 
 class SearchEmbedder:
@@ -99,6 +101,11 @@ class SearchEmbedder:
                 f"Available models: {available}"
             )
 
+        metadata = get_collection_metadata(client, collection_name)
+        policy_issues = prompt_policy_issues(metadata, model_key)
+        if policy_issues:
+            raise ValueError(policy_issues[0])
+
         # Generate embedding using the detected model
         # Note: query_embed() is for queries, embed() is for documents
         model = self._embedding_client.get_model(model_key)
@@ -112,8 +119,13 @@ class SearchEmbedder:
             # Return numpy array directly - Qdrant accepts numpy arrays natively
             return (model_key, query_vector)
         elif backend == "sentence-transformers":
-            # SentenceTransformers: Use encode (no separate query_embed)
-            query_vector = model.encode([query], convert_to_numpy=True)[0]
+            # SentenceTransformers: use the same prompt-aware path as indexing,
+            # with query semantics selected from the model registry.
+            query_vector = self._embedding_client.embed(
+                [query],
+                model_key,
+                prompt_type="query",
+            )[0]
             # Return numpy array directly - Qdrant accepts numpy arrays natively (arcaneum-zfch)
             return (model_key, query_vector)
         else:

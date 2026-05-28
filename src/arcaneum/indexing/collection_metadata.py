@@ -124,6 +124,19 @@ def should_stamp_prompt_policy(
       - stats["files"] > 0 (something was actually indexed)
       - orphans_remaining == 0 (no indexed file is missing from disk)
 
+    Known limitation (bounded guarantee — see kata gr80): the caller's
+    coverage signal (``orphans_remaining`` and the ``on_disk_paths`` it is
+    derived from) is computed from on-disk EXISTENCE, not from the set of
+    files actually re-embedded by this run. A file that still exists on disk
+    but was not reprocessed therefore looks "covered." As a result this gate
+    can over-certify (stamp when it should abstain) for: a ``--no-recursive``
+    markdown force that leaves indexed subdirectory files uncovered; an
+    indexed source repo under the requested root that is no longer discovered
+    (e.g. ``.git`` removed or extraction failed); and a source force scoped to
+    one root of a multi-root collection. The guarantee is therefore sound only
+    for a fully-covered, single-root, recursive force run. gr80 tightens this
+    by passing actual per-run coverage into the gate.
+
     Args:
         force: Whether the run used force/full reindex.
         file_list: Explicit file list for the run, or None for full-directory.

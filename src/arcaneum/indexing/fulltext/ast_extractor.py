@@ -238,11 +238,17 @@ class ASTFunctionExtractor:
 
         try:
             parser = get_parser(language)
-            tree = parser.parse(bytes(code, "utf8"))
+            try:
+                tree = parser.parse(bytes(code, "utf8"))
+            except TypeError:
+                # tree-sitter-language-pack 1.8+ switched its Python binding to
+                # parse text directly instead of UTF-8 bytes.
+                tree = parser.parse(code)
+            root_node = self._tree_root(tree)
 
             definitions: List[CodeDefinition] = []
             self._extract_from_node(
-                tree.root_node,
+                root_node,
                 code,
                 language,
                 file_path,
@@ -287,26 +293,28 @@ class ASTFunctionExtractor:
         def_types = DEFINITION_TYPES.get(language, {})
 
         # Handle Python decorated definitions specially
-        if language == "python" and node.type == "decorated_definition":
+        node_type = self._node_type(node)
+
+        if language == "python" and node_type == "decorated_definition":
             # Find the actual definition inside the decorator
-            for child in node.children:
-                if child.type in def_types:
+            for child in self._node_children(node):
+                if self._node_type(child) in def_types:
                     self._process_definition_node(
                         child, node, code, language, file_path, definitions, parent_name, def_types
                     )
                     return
             # If no definition found, process children normally
-            for child in node.children:
+            for child in self._node_children(node):
                 self._extract_from_node(child, code, language, file_path, definitions, parent_name)
             return
 
-        if node.type in def_types:
+        if node_type in def_types:
             self._process_definition_node(
                 node, node, code, language, file_path, definitions, parent_name, def_types
             )
         else:
             # Not a definition node, but might contain definitions
-            for child in node.children:
+            for child in self._node_children(node):
                 self._extract_from_node(child, code, language, file_path, definitions, parent_name)
 
     def _process_definition_node(
@@ -333,17 +341,17 @@ class ASTFunctionExtractor:
             def_types: Definition types mapping for this language
         """
         # Get the name from the identifier child
-        name = self._extract_name(definition_node)
+        name = self._extract_name(definition_node, code)
 
         # Build qualified name (e.g., "MyClass.method")
         qualified = f"{parent_name}.{name}" if parent_name else name
 
         # Line numbers: tree-sitter uses 0-indexed, convert to 1-indexed
         # Use source_node for line ranges (includes decorators)
-        start_line = source_node.start_point[0] + 1
-        end_line = source_node.end_point[0] + 1
+        start_line = self._node_line(source_node, "start") + 1
+        end_line = self._node_line(source_node, "end") + 1
 
-        code_type = def_types.get(definition_node.type, "unknown")
+        code_type = def_types.get(self._node_type(definition_node), "unknown")
 
         definitions.append(CodeDefinition(
             name=name,
@@ -351,18 +359,18 @@ class ASTFunctionExtractor:
             code_type=code_type,
             start_line=start_line,
             end_line=end_line,
-            content=source_node.text.decode("utf8"),
+            content=self._node_text(source_node, code),
             file_path=file_path
         ))
 
         # Recurse into nested definitions (e.g., methods in classes)
-        for child in definition_node.children:
+        for child in self._node_children(definition_node):
             self._extract_from_node(
                 child, code, language, file_path,
                 definitions, parent_name=qualified
             )
 
-    def _extract_name(self, node) -> str:
+    def _extract_name(self, node, code: str) -> str:
         """Extract the name from a definition node.
 
         Args:
@@ -375,14 +383,63 @@ class ASTFunctionExtractor:
         for field_name in ["name", "identifier"]:
             name_node = node.child_by_field_name(field_name)
             if name_node:
-                return name_node.text.decode("utf8")
+                return self._node_text(name_node, code)
 
         # Fallback: look for identifier child directly
-        for child in node.children:
-            if child.type in ("identifier", "name"):
-                return child.text.decode("utf8")
+        for child in self._node_children(node):
+            if self._node_type(child) in ("identifier", "name"):
+                return self._node_text(child, code)
 
         return "anonymous"
+
+    @staticmethod
+    def _tree_root(tree):
+        root = getattr(tree, "root_node")
+        return root() if callable(root) else root
+
+    @staticmethod
+    def _node_type(node) -> str:
+        node_type = getattr(node, "type", None)
+        if node_type is not None:
+            return node_type() if callable(node_type) else node_type
+        kind = getattr(node, "kind", "")
+        return kind() if callable(kind) else kind
+
+    @staticmethod
+    def _node_children(node):
+        children = getattr(node, "children", None)
+        if children is not None:
+            return children() if callable(children) else children
+        child_count = getattr(node, "child_count", 0)
+        child_count = child_count() if callable(child_count) else child_count
+        return [node.child(index) for index in range(child_count)]
+
+    @staticmethod
+    def _node_line(node, edge: str) -> int:
+        point = getattr(node, f"{edge}_point", None)
+        if point is None:
+            point = getattr(node, f"{edge}_position")
+        point = point() if callable(point) else point
+        if hasattr(point, "row"):
+            return point.row
+        return point[0]
+
+    @staticmethod
+    def _node_text(node, code: str) -> str:
+        text = getattr(node, "text", None)
+        if text is not None:
+            text = text() if callable(text) else text
+            return text.decode("utf8") if isinstance(text, bytes) else text
+
+        start_byte = getattr(node, "start_byte", None)
+        end_byte = getattr(node, "end_byte", None)
+        if start_byte is None or end_byte is None:
+            byte_range = getattr(node, "byte_range")
+            byte_range = byte_range() if callable(byte_range) else byte_range
+            start_byte, end_byte = byte_range
+        start_byte = start_byte() if callable(start_byte) else start_byte
+        end_byte = end_byte() if callable(end_byte) else end_byte
+        return code.encode("utf8")[start_byte:end_byte].decode("utf8")
 
     def _extract_module_code(
         self,

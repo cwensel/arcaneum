@@ -319,6 +319,9 @@ class ASTCodeChunker:
                 overlap_lines = max(0, self.chunk_overlap // 10)  # Rough overlap
                 current_chunk = current_chunk[-overlap_lines:] if overlap_lines > 0 else []
                 current_tokens = sum(len(l) / self.CHARS_PER_TOKEN for l in current_chunk)
+                while current_chunk and current_tokens + line_tokens > self.chunk_size:
+                    current_chunk.pop(0)
+                    current_tokens = sum(len(l) / self.CHARS_PER_TOKEN for l in current_chunk)
 
             # Add line to current chunk
             current_chunk.append(line)

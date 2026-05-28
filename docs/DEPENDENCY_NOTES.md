@@ -2,7 +2,7 @@
 
 This document explains the reasoning behind key dependency constraints in `pyproject.toml`.
 
-Last reviewed: January 2026
+Last reviewed: May 2026
 
 ## DynamicCache Breaking Change (transformers v4.54+)
 
@@ -26,12 +26,14 @@ Embedding models that depend on these methods (including **Stella** and **NV-Emb
 - The model tries to use removed cache methods
 - Batches fail with `RuntimeError: 'DynamicCache' object has no attribute 'get_usable_length'`
 
-### Upstream Status (January 2026)
+### Upstream Status (May 2026)
 
-**The issue remains unfixed upstream:**
+**The issue still requires a guarded upper bound:**
 
-- **transformers 4.54.0 through 4.57.6** - All versions have the breaking change
-- **transformers v5.0** - Still in release candidate stage (RC2 as of Jan 8, 2026), not production ready
+- **transformers 4.54.0+** - The cache refactor remains incompatible with the
+  official Stella model path this project supports
+- **transformers v5.x** - Now released, but not adopted here until the Stella
+  compatibility path is explicitly retested
 - **stella model** (`dunzhang/stella_en_1.5B_v5`) - [Not patched by maintainers](https://huggingface.co/NovaSearch/stella_en_1.5B_v5/discussions/47)
 
 **Community workaround exists:**
@@ -45,35 +47,35 @@ but we use the official model with constrained transformers versions for stabili
 **Current constraints in pyproject.toml:**
 
 ```toml
-sentence-transformers>=5.2.0        # 5.2.0 fixes torch 2.9+ compatibility
+sentence-transformers>=5.5.1        # current stable, compatible with the transformers cap
 transformers>=4.40.0,<4.54.0        # 4.54+ has cache breaking changes
-torch>=2.8.0                        # 2.9.x now works with sentence-transformers 5.2.0+
-pymupdf-layout>=0.1.0               # Better PDF layout detection
+torch>=2.12.0
+pymupdf-layout>=1.27.2.3            # Better PDF layout detection
 ```
 
 **Why this version matrix:**
 
-1. ✅ **sentence-transformers 5.2.0** - Adds transformers v5 support, fixes torch 2.9+ compatibility
+1. ✅ **sentence-transformers 5.5.1** - Keeps current stable sentence-transformers while respecting the transformers cap
 2. ✅ **transformers 4.40-4.53** - Avoids cache breaking change in 4.54+
-3. ✅ **torch 2.8.0+** - Compatible with sentence-transformers 5.2.0+
-4. ✅ **pymupdf-layout** - Improves PDF semantic chunking quality
+3. ✅ **torch 2.12.0+** - Current PyPI stable baseline for the ML stack
+4. ✅ **pymupdf-layout 1.27.2.3+** - Improves PDF semantic chunking quality
 
 **What we tested & rejected:**
 
 - ❌ **transformers 4.57.5** - DynamicCache breaking change still present
 - ❌ **transformers 4.56.x, 4.55.x, 4.54.x** - All have the cache breaking change
-- ❌ **transformers v5.0-RC2** - Release candidate, not production ready
+- ❌ **transformers v5.x** - Requires a separate Stella compatibility pass before adoption
 
 **Rationale:**
 
 - The DynamicCache breaking change has not been resolved in any transformers 4.54+ release
 - The stella model maintainers have not updated their code to use the new Cache API
 - This matrix prioritizes **stability & reliability** over latest features
-- sentence-transformers 5.2.0 requires transformers>=4.34.0, compatible with our <4.54.0 constraint
+- sentence-transformers remains compatible with our <4.54.0 constraint
 
 **Future improvements:**
 
-- Monitor [transformers v5.0 release](https://github.com/huggingface/transformers/releases) for final stable release
+- Run a Stella compatibility spike against transformers v5.x before lifting the cap
 - Watch [stella model discussions](https://huggingface.co/NovaSearch/stella_en_1.5B_v5/discussions) for upstream fix
 - Consider switching to patched stella model if upstream remains unfixed after v5.0 releases
 
@@ -98,7 +100,7 @@ pymupdf-layout>=0.1.0               # Better PDF layout detection
    pip show transformers sentence-transformers torch | grep Version
    ```
 
-   Expected: transformers 4.53.x or lower, sentence-transformers 5.2.x, torch 2.8.x+
+   Expected: transformers 4.53.x or lower, sentence-transformers 5.5.x, torch 2.12.x+
 
 **If you have persistent embedding errors:**
 
@@ -139,9 +141,14 @@ pymupdf-layout>=0.1.0               # Better PDF layout detection
 
 All other dependencies use flexible version constraints and should not cause similar issues:
 
-- **sentence-transformers:** >=5.2.0 (compatible with transformers 4.34+, torch 2.9+)
-- **torch:** >=2.8.0 (no upper bound needed with sentence-transformers 5.2.0+)
-- **fastembed:** >=0.7.3 (uses ONNX, no transformers dependency)
+- **qdrant-client:** >=1.18.0
+- **sentence-transformers:** >=5.5.1 (kept behind the transformers <4.54 cap)
+- **torch:** >=2.12.0
+- **fastembed:** >=0.8.0 (uses ONNX, no transformers dependency)
+- **meilisearch:** >=0.41.0
+- **PyMuPDF/PyMuPDF4LLM/pymupdf-layout:** >=1.27.2.3
+- **tree-sitter-language-pack:** >=1.8.1; the AST extractor supports both the
+  older bytes-based binding and the 1.8+ method-based binding
 - **llama-index-core:** >=0.14.6 (abstracts transformers, no direct dependency)
 
 ### pymupdf-layout Integration

@@ -35,11 +35,11 @@ keywords = [
 
 dependencies = [
     "click>=8.3.0",
-    "qdrant-client>=1.16.1",
-    "fastembed>=0.7.3",
-    "sentence-transformers>=5.2.0",  # 5.2.0 fixes compatibility with torch 2.9+
+    "qdrant-client>=1.18.0",
+    "fastembed>=0.8.0",
+    "sentence-transformers>=5.5.1",
     "transformers>=4.40.0,<4.54.0",  # 4.54+ has DynamicCache breaking change (see docs/DEPENDENCY_NOTES.md)
-    "torch>=2.8.0",  # 2.9.x now works with sentence-transformers 5.2.0+
+    "torch>=2.12.0",
     "pyyaml>=6.0.3",
     "rich>=14.2.0",
     "pydantic>=2.12.3",
@@ -48,9 +48,9 @@ dependencies = [
     "psutil>=6.1.0",  # CPU monitoring (RDR-013 Phase 1)
     "xxhash>=3.5.0",  # Fast non-cryptographic hashing for file deduplication
     # PDF indexing dependencies (RDR-004, RDR-016)
-    "pymupdf>=1.27.2",
-    "pymupdf4llm>=1.27.2",  # Auto-OCR for garbled text (>90% unreadable chars triggers Tesseract)
-    "pymupdf-layout>=1.27.2",  # Auto-initialized by pymupdf4llm for layout detection
+    "pymupdf>=1.27.2.3",
+    "pymupdf4llm>=1.27.2.3",  # Auto-OCR for garbled text (>90% unreadable chars triggers Tesseract)
+    "pymupdf-layout>=1.27.2.3",  # Auto-initialized by pymupdf4llm for layout detection
     "pdfplumber>=0.11.7",
     "pytesseract>=0.3.13",
     "pdf2image>=1.17.0",
@@ -58,10 +58,9 @@ dependencies = [
     "Pillow>=10.0.0",  # Direct use in OCR image pipeline
     # Source code indexing dependencies (RDR-005)
     "tree-sitter>=0.24.0",  # Required at runtime; tree-sitter-language-pack 1.6.3 dropped it from deps
-    # language-pack 1.8 switched to a new Node binding (root_node/start_point/
-    # type/text became methods/renamed; parse() requires str). Pin under
-    # 1.8 until ast_extractor is migrated.
-    "tree-sitter-language-pack>=0.10.0,!=1.6.3,<1.8",
+    # 1.6.3 dropped the direct tree-sitter dependency; 1.8 switched to
+    # method-based bindings, which ast_extractor supports.
+    "tree-sitter-language-pack>=1.8.1",
     "llama-index-core>=0.14.6",
     "GitPython>=3.1.45",
     # Markdown indexing dependencies (RDR-014)
@@ -76,7 +75,7 @@ dependencies = [
     "msgpack>=1.1.0",
     "numpy>=1.26.0",
     # Full-text search (RDR-008)
-    "meilisearch>=0.31.0",
+    "meilisearch>=0.41.0",
 ]
 
 [project.optional-dependencies]

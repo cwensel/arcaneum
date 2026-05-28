@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from arcaneum.embeddings.client import get_embedding_prompt_policy
+from arcaneum.embeddings.client import EMBEDDING_MODELS, EmbeddingClient, get_embedding_prompt_policy
 from arcaneum.search.embedder import SearchEmbedder
 
 
@@ -49,3 +49,27 @@ def test_query_embedding_rejects_collections_without_prompt_policy():
 
     with pytest.raises(ValueError, match="missing embedding_prompt_policy"):
         embedder.generate_query_embedding("auth checks", "docs", _client({}))
+
+
+def test_prompt_prefix_length_is_reserved_when_clipping(monkeypatch):
+    config = {**EMBEDDING_MODELS["e5-base"], "max_seq_length": 8}
+    monkeypatch.setitem(EMBEDDING_MODELS, "e5-base", config)
+
+    client = EmbeddingClient.__new__(EmbeddingClient)
+    client._device = "cpu"
+    client._gpu_poisoned = False
+    client.get_model = MagicMock(return_value=SimpleNamespace(_backend="sentence-transformers"))
+    captured = {}
+
+    def fake_encode(_model, texts, _model_name, _prompt_type):
+        captured["texts"] = texts
+        return [[0.1, 0.2]]
+
+    client._encode_on_cpu_fallback = fake_encode
+    client._validate_embeddings = MagicMock(return_value=True)
+
+    result = client.embed(["x" * 20], "e5-base", prompt_type="document")
+
+    assert result.tolist() == [[0.1, 0.2]]
+    assert captured["texts"] == ["passage: " + ("x" * 7)]
+    assert len(captured["texts"][0]) == 16

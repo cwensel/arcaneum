@@ -1102,12 +1102,21 @@ class EmbeddingClient:
 
         model = self.get_model(model_name)
 
+        prompt_policy = get_embedding_prompt_policy(model_name)
+        prompt = prompt_policy.get(prompt_type, {}).get("prompt", "")
+
         # Pre-truncate texts that exceed safe character limit to prevent OOM
         # Generated code (OpenAPI, protobuf) can have high token density where
         # 1 char ≈ 1 token. Use conservative ratio of 2 chars/token.
         # This prevents tokenizer from allocating massive buffers before truncation.
         max_seq_length = model_config.get("max_seq_length", 8192)
         max_chars = max_seq_length * 2  # Conservative: assume 0.5 tokens/char worst case
+        max_source_chars = max_chars - len(prompt)
+        if max_source_chars <= 0:
+            raise RuntimeError(
+                f"Embedding prompt for {model_name}/{prompt_type} is longer than "
+                f"the safe character limit ({max_chars} chars)."
+            )
 
         # Log chunk sizes for debugging OOM issues
         max_text_len = max(len(t) for t in texts) if texts else 0
@@ -1121,8 +1130,8 @@ class EmbeddingClient:
         truncated_count = 0
         safe_texts = []
         for text in texts:
-            if len(text) > max_chars:
-                safe_texts.append(text[:max_chars])
+            if len(text) > max_source_chars:
+                safe_texts.append(text[:max_source_chars])
                 truncated_count += 1
             else:
                 safe_texts.append(text)
@@ -1130,12 +1139,11 @@ class EmbeddingClient:
         if truncated_count > 0:
             logger.warning(
                 f"Embedding safety clipped {truncated_count}/{len(texts)} oversized texts before "
-                f"embedding; content beyond {max_chars} chars is not represented in vectors. "
+                f"embedding; content beyond {max_source_chars} chars is not represented in vectors. "
                 f"This indicates upstream chunking should split smaller chunks "
                 f"(model={model_name}, max_seq_length={max_seq_length})."
             )
 
-        prompt_policy = get_embedding_prompt_policy(model_name)
         texts = _prompted_texts(safe_texts, prompt_policy, prompt_type)
 
         # Additional safeguard: if we still have very large texts after truncation,

@@ -8,7 +8,7 @@ from qdrant_client.models import HnswConfigDiff
 from rich.console import Console
 from rich.table import Table
 
-from arcaneum.cli.corpus import DEFAULT_MODELS_BY_CORPUS_TYPE
+from arcaneum.cli.corpus_defaults import DEFAULT_MODELS_BY_CORPUS_TYPE
 from arcaneum.cli.errors import InvalidArgumentError, ResourceNotFoundError
 from arcaneum.cli.interaction_logger import interaction_logger
 from arcaneum.cli.output import print_error, print_json

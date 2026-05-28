@@ -9,6 +9,7 @@ import sys
 from qdrant_client.models import HnswConfigDiff
 from rich.console import Console
 
+from ..cli.corpus_defaults import DEFAULT_MODELS_BY_CORPUS_TYPE
 from ..cli.errors import InvalidArgumentError, ResourceNotFoundError
 from ..cli.interaction_logger import interaction_logger
 from ..cli.output import print_error, print_info, print_json
@@ -28,16 +29,6 @@ from ..indexing.collection_metadata import (
 )
 
 console = Console()
-
-
-DEFAULT_MODELS_BY_CORPUS_TYPE = {
-    # FastEmbed CPU defaults keep the common document pipeline stable on
-    # Apple Silicon while still using a modern retrieval model.
-    "pdf": "arctic-m",
-    "markdown": "arctic-m",
-    # Keep code default lightweight. Larger code models remain opt-in.
-    "code": "jina-code",
-}
 
 
 def default_models_for_type(corpus_type: str) -> str:

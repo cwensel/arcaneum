@@ -307,62 +307,57 @@ class TestEmbedImplCpuBatchSizingWhenPoisoned:
                     mock_gpu_mem.assert_not_called()
 
 
-class TestGpuRecovery:
-    """_try_gpu_recovery() clears poison and releases CPU model."""
+class TestGpuPoisonStaysSticky:
+    """Completed cleanup does not re-enable GPU after timeout poisoning."""
 
-    def test_recovery_clears_poison(self, embedding_client):
+    def test_deferred_cleanup_keeps_cpu_fallback(self, embedding_client):
         embedding_client._gpu_poisoned = True
-        embedding_client._cpu_fallback_models["jina-code"] = MagicMock()
+        finished_thread = MagicMock(spec=threading.Thread)
+        finished_thread.is_alive.return_value = False
+        embedding_client._pending_gpu_cleanup["jina-code"] = (finished_thread, MagicMock())
+        cpu_model = MagicMock()
 
-        result = embedding_client._try_gpu_recovery("jina-code")
+        with patch.object(
+            embedding_client,
+            "_get_cpu_fallback_model",
+            return_value=cpu_model,
+        ) as get_cpu:
+            with patch.object(embedding_client, "_encode_on_cpu_fallback") as encode_cpu:
+                encode_cpu.return_value = np.random.rand(2, 768).astype(np.float32)
 
-        assert result is True
-        assert embedding_client._gpu_poisoned is False
-        assert "jina-code" not in embedding_client._cpu_fallback_models
+                result = embedding_client._encode_with_oom_recovery(
+                    MagicMock(),
+                    ["text1", "text2"],
+                    internal_batch_size=8,
+                    model_name="jina-code",
+                )
 
-    def test_recovery_not_poisoned(self, embedding_client):
-        result = embedding_client._try_gpu_recovery("jina-code")
+        assert result is encode_cpu.return_value
+        assert embedding_client._gpu_poisoned is True
+        assert embedding_client._pending_gpu_cleanup == {}
+        get_cpu.assert_called_once_with("jina-code")
+        encode_cpu.assert_called_once_with(cpu_model, ["text1", "text2"])
 
-        assert result is False
-
-    def test_recovery_blocked_by_alive_thread(self, embedding_client):
+    def test_poison_stays_set_with_alive_thread(self, embedding_client):
         embedding_client._gpu_poisoned = True
         alive_thread = MagicMock(spec=threading.Thread)
         alive_thread.is_alive.return_value = True
         embedding_client._pending_gpu_cleanup["jina-code"] = (alive_thread, MagicMock())
+        cpu_model = MagicMock()
 
-        result = embedding_client._try_gpu_recovery("jina-code")
+        with patch.object(embedding_client, "_get_cpu_fallback_model", return_value=cpu_model):
+            with patch.object(embedding_client, "_encode_on_cpu_fallback") as encode_cpu:
+                encode_cpu.return_value = np.random.rand(2, 768).astype(np.float32)
 
-        assert result is False
+                embedding_client._encode_with_oom_recovery(
+                    MagicMock(),
+                    ["text1", "text2"],
+                    internal_batch_size=8,
+                    model_name="jina-code",
+                )
+
         assert embedding_client._gpu_poisoned is True
-
-
-class TestGpuRecoveryLimit:
-    """Second poisoning prevents further recovery attempts."""
-
-    def test_second_recovery_rejected(self, embedding_client):
-        embedding_client._gpu_poisoned = True
-        embedding_client._gpu_recovery_attempts = 1  # Already used one attempt
-        embedding_client._max_gpu_recovery_attempts = 1
-
-        result = embedding_client._try_gpu_recovery("jina-code")
-
-        assert result is False
-        assert embedding_client._gpu_poisoned is True
-
-    def test_first_recovery_allowed_second_rejected(self, embedding_client):
-        # First recovery
-        embedding_client._gpu_poisoned = True
-        result1 = embedding_client._try_gpu_recovery("jina-code")
-        assert result1 is True
-
-        # Simulate GPU failing again
-        embedding_client._gpu_poisoned = True
-
-        # Second recovery should be rejected
-        result2 = embedding_client._try_gpu_recovery("jina-code")
-        assert result2 is False
-        assert embedding_client._gpu_poisoned is True
+        assert "jina-code" in embedding_client._pending_gpu_cleanup
 
 
 class TestTimeoutHandlerReleasesModel:

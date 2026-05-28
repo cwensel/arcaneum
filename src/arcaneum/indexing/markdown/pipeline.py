@@ -558,6 +558,18 @@ class MarkdownIndexingPipeline:
                                     print(f"\r{status_line:<80}")
                                 else:
                                     print(f"{timestamp()}   ✓ complete ({file_chunk_count} chunks)", flush=True)
+                            elif self.streaming and file_chunk_count > 0:
+                                # Streaming mode already uploaded chunks inside the
+                                # embed callback, so points is empty. Count the file
+                                # and chunks as successfully indexed.
+                                stats["chunks"] += file_chunk_count
+                                stats["files"] += 1
+
+                                if not verbose:
+                                    status_line = f"[{file_idx}/{total_files}] {file_path.name} ✓ ({file_chunk_count} chunks)"
+                                    print(f"\r{status_line:<80}")
+                                else:
+                                    print(f"{timestamp()}   ✓ complete ({file_chunk_count} chunks)", flush=True)
 
             else:
                 # Sequential mode: Process files one at a time
@@ -600,6 +612,20 @@ class MarkdownIndexingPipeline:
                             point_id += len(points)
 
                             # Complete
+                            if not verbose:
+                                status_line = f"[{file_idx}/{total_files}] {file_path.name} ✓ ({file_chunk_count} chunks)"
+                                print(f"\r{status_line:<80}")
+                            else:
+                                print(f"{timestamp()}   ✓ complete ({file_chunk_count} chunks)", flush=True)
+                        elif self.streaming and file_chunk_count > 0:
+                            # Streaming mode already uploaded chunks inside the
+                            # embed callback, so points is empty. Count the file
+                            # and chunks as successfully indexed, and advance the
+                            # point id past the IDs the streaming callback consumed.
+                            stats["chunks"] += file_chunk_count
+                            stats["files"] += 1
+                            point_id += file_chunk_count
+
                             if not verbose:
                                 status_line = f"[{file_idx}/{total_files}] {file_path.name} ✓ ({file_chunk_count} chunks)"
                                 print(f"\r{status_line:<80}")

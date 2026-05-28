@@ -2934,6 +2934,7 @@ def _repair_meili_metadata(
                 if current_version_id != expected_version_id:
                     docs_needing_version_id.append({
                         'id': doc_id,
+                        **persisted_metadata_fields(),
                         'git_version_identifier': expected_version_id,
                     })
 

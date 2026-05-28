@@ -3,7 +3,11 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from arcaneum.cli.sync import _backfill_meili_to_qdrant, _fetch_chunks_for_files_bulk
+from arcaneum.cli.sync import (
+    _backfill_meili_to_qdrant,
+    _fetch_chunks_for_files_bulk,
+    _repair_meili_metadata,
+)
 
 
 def test_fetch_chunks_for_files_bulk_preserves_pdf_ocr_metadata():
@@ -90,3 +94,41 @@ def test_backfill_meili_to_qdrant_builds_code_quality_manifest(tmp_path):
     manifest = points[0].payload["quality_manifest"]
     assert manifest["extractor"] == "code"
     assert manifest["source_hash"] == points[0].payload["source_hash"]
+
+
+def test_repair_meili_version_identifier_stamps_persisted_schema():
+    index = MagicMock()
+    index.get_documents.side_effect = [
+        {
+            "results": [
+                {
+                    "id": "doc-1",
+                    "file_path": "/repo/example.py",
+                    "chunk_index": 0,
+                    "git_project_identifier": "proj#main",
+                    "git_project_name": "proj",
+                    "git_branch": "main",
+                    "git_commit_hash": "abcdef123456",
+                }
+            ]
+        },
+        {"results": []},
+    ]
+    index.update_documents.return_value = SimpleNamespace(task_uid=123)
+    meili = MagicMock()
+    meili.get_index.return_value = index
+
+    updated, failed = _repair_meili_metadata(
+        qdrant=MagicMock(),
+        meili=meili,
+        corpus="code-corpus",
+        output_json=True,
+        console=MagicMock(),
+    )
+
+    assert updated == 1
+    assert failed == 0
+    update_doc = index.update_documents.call_args.args[0][0]
+    assert update_doc["schema_version"] == 1
+    assert update_doc["app_version"]
+    assert update_doc["git_version_identifier"] == "proj#main@abcdef1"

@@ -13,6 +13,26 @@ def _pipeline_with_sync(sync):
     return pipeline
 
 
+def test_markdown_pipeline_uses_default_embedding_batch_size_for_none():
+    pipeline = MarkdownIndexingPipeline(
+        qdrant_client=Mock(),
+        embedding_client=Mock(),
+        embedding_batch_size=None,
+    )
+
+    assert pipeline.embedding_batch_size == 128
+
+
+def test_markdown_pipeline_preserves_explicit_embedding_batch_size():
+    pipeline = MarkdownIndexingPipeline(
+        qdrant_client=Mock(),
+        embedding_client=Mock(),
+        embedding_batch_size=64,
+    )
+
+    assert pipeline.embedding_batch_size == 64
+
+
 def test_duplicate_markdown_content_returns_empty_result_tuple(tmp_path):
     markdown_file = tmp_path / "copy.md"
     markdown_file.write_text("# Same content\n", encoding="utf-8")

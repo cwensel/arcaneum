@@ -190,6 +190,7 @@ def test_index_markdown_qdrant_url_defaults_to_shared_resolution(tmp_path):
 
     def fake_index_markdown_command(*args, **kwargs):
         called['qdrant_url'] = args[9]
+        called['embedding_batch_size'] = args[4]
         raise SystemExit(0)
 
     result = _run(
@@ -199,6 +200,7 @@ def test_index_markdown_qdrant_url_defaults_to_shared_resolution(tmp_path):
 
     assert result.exit_code == 0, result.output
     assert called['qdrant_url'] is None
+    assert called['embedding_batch_size'] is None
 
 
 def test_index_markdown_explicit_qdrant_url_is_preserved(tmp_path):

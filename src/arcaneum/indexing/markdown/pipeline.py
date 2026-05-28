@@ -39,7 +39,7 @@ class MarkdownIndexingPipeline:
         exclude_patterns: List[str] = None,
         file_workers: int = 1,
         embedding_workers: int = 4,
-        embedding_batch_size: int = 128,
+        embedding_batch_size: Optional[int] = 128,
         streaming: bool = True,
     ):
         """Initialize markdown indexing pipeline.
@@ -51,7 +51,7 @@ class MarkdownIndexingPipeline:
             exclude_patterns: Patterns to exclude from discovery (default: node_modules, .git, venv)
             file_workers: Number of markdown files to process in parallel (default: 1)
             embedding_workers: Number of parallel workers for embedding generation (default: 4)
-            embedding_batch_size: Batch size for embedding generation (default: 256, optimized from 200 per arcaneum-9kgg)
+            embedding_batch_size: Batch size for embedding generation (default: 128)
             streaming: Upload embeddings immediately after each batch instead of accumulating
                 in memory. Reduces memory usage from O(total_chunks) to O(batch_size).
                 Default: True for memory efficiency.
@@ -61,7 +61,7 @@ class MarkdownIndexingPipeline:
         self.batch_size = batch_size
         self.file_workers = file_workers
         self.embedding_workers = embedding_workers
-        self.embedding_batch_size = embedding_batch_size
+        self.embedding_batch_size = 128 if embedding_batch_size is None else embedding_batch_size
         self.streaming = streaming
 
         # Initialize components with custom or default exclude patterns

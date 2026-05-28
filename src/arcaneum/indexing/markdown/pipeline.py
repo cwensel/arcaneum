@@ -151,7 +151,7 @@ class MarkdownIndexingPipeline:
                     elif not verbose:
                         print(f"\r[{file_idx}/{total_files}] {file_path.name} → renamed (updated {result} chunks){' '*20}", flush=True)
 
-                    return None
+                    return ([], 0, None)
 
                 # Content already indexed - always call add_alternate_path to ensure metadata is complete
                 # This handles both new duplicate paths and migration of existing paths to new dict format
@@ -175,7 +175,7 @@ class MarkdownIndexingPipeline:
                     status = "alternate path added" if not path_already_tracked else "already tracked"
                     print(f"\r[{file_idx}/{total_files}] {file_path.name} → {status}{' '*20}", flush=True)
 
-                return None
+                return ([], 0, None)
 
             # Stage 1e: Pre-deletion - Remove old chunks with same file_hash before reindexing
             # This prevents partial data if indexing is interrupted mid-file

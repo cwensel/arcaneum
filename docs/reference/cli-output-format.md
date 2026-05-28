@@ -217,14 +217,56 @@ All errors use the `[ERROR]` prefix:
       {
         "alias": "jina-code",
         "model": "jinaai/jina-embeddings-v2-base-code",
+        "backend": "sentence-transformers",
+        "recommended_for": "code",
+        "default_for": ["code"],
+        "support_tier": "stable-default",
+        "install_extra": "core",
+        "prompt_policy": "query_task=retrieval.query; document_task=retrieval.passage",
+        "context_limit": 2048,
         "dimensions": 768,
+        "params_billions": 0.137,
+        "risk_tier": "low",
+        "hardware": {
+          "cpu": true,
+          "cuda": true,
+          "mps": true,
+          "mps_note": "supported; use registry mps_max_batch"
+        },
+        "suggested_batches": {
+          "cpu_outer": "1-128",
+          "gpu_outer": "8-128",
+          "mps_inner_max": 16
+        },
+        "reindex_warning": "reindex after prompt/task/backend/default changes",
         "description": "Code-specific (768D, 8K context, best for source code)"
       },
       {
-        "alias": "stella",
-        "model": "dunzhang/stella_en_1.5B_v5",
-        "dimensions": 1024,
-        "description": "General purpose (1024D, high quality for docs/PDFs)"
+        "alias": "arctic-m",
+        "model": "snowflake/snowflake-arctic-embed-m",
+        "backend": "fastembed",
+        "recommended_for": "docs",
+        "default_for": ["pdf", "markdown"],
+        "support_tier": "stable-default",
+        "install_extra": "core",
+        "prompt_policy": "fastembed query_embed/embed",
+        "context_limit": null,
+        "dimensions": 768,
+        "params_billions": null,
+        "risk_tier": "low",
+        "hardware": {
+          "cpu": true,
+          "cuda": false,
+          "mps": "experimental-coreml",
+          "mps_note": "requires ARC_EXPERIMENTAL_COREML=1"
+        },
+        "suggested_batches": {
+          "cpu_outer": "1-128",
+          "gpu_outer": "8-128",
+          "mps_inner_max": null
+        },
+        "reindex_warning": "reindex after prompt/task/backend/default changes",
+        "description": "Snowflake Arctic Embed M (768D, stable retrieval default)"
       }
     ]
   },

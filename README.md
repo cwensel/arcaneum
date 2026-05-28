@@ -55,6 +55,10 @@ The system supports PDF documents and source code with git-aware, AST-based chun
 - **bge-small** (384D) - BGE small embeddings, fastest for size-constrained scenarios
 
 See `arc models list` for complete model information and recommendations.
+Use `arc models list --json` for the LLM-readable catalog: it includes backend,
+recommended and default corpus uses, support/risk tier, prompt policy, context
+limit, hardware support, suggested CPU/GPU/MPS batch ranges, and reindex
+warnings.
 
 Arcaneum records each collection's embedding prompt policy when it is indexed. Reindex a
 corpus after changing model query/document prompts, tasks, or prompt-aware model defaults;

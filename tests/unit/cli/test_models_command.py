@@ -102,6 +102,85 @@ class TestModelsList:
         model = output['data']['models'][0]
         assert 'alias' in model
         assert 'dimensions' in model
+        assert 'backend' in model
+        assert 'recommended_for' in model
+        assert 'default_for' in model
+        assert 'support_tier' in model
+        assert 'install_extra' in model
+        assert 'prompt_policy' in model
+        assert 'context_limit' in model
+        assert 'params_billions' in model
+        assert 'risk_tier' in model
+        assert 'hardware' in model
+        assert 'suggested_batches' in model
+        assert 'reindex_warning' in model
+
+    def test_json_output_includes_llm_selection_policy(self, capsys):
+        """Test JSON exposes defaults, risk, hardware, and batch guidance."""
+        from arcaneum.cli.models import list_models_command
+
+        mock_models = {
+            'arctic-m': {
+                'name': 'snowflake/snowflake-arctic-embed-m',
+                'dimensions': 768,
+                'backend': 'fastembed',
+                'description': 'stable docs model',
+                'recommended_for': 'docs',
+            },
+            'nomic-code': {
+                'name': 'nomic-ai/nomic-embed-code',
+                'dimensions': 3584,
+                'backend': 'sentence-transformers',
+                'params_billions': 7.0,
+                'mps_max_batch': 1,
+                'recommended_for': 'code',
+            },
+        }
+
+        with patch('arcaneum.cli.models.EMBEDDING_MODELS', mock_models):
+            list_models_command(output_json=True)
+
+        output = json.loads(capsys.readouterr().out)
+        models = {model['alias']: model for model in output['data']['models']}
+
+        assert models['arctic-m']['default_for'] == ['pdf', 'markdown']
+        assert models['arctic-m']['support_tier'] == 'stable-default'
+        assert models['arctic-m']['hardware']['mps'] == 'experimental-coreml'
+        assert models['arctic-m']['suggested_batches']['cpu_outer'] == '1-128'
+
+        assert models['nomic-code']['risk_tier'] == 'very-high'
+        assert models['nomic-code']['support_tier'] == 'gpu-opt-in'
+        assert models['nomic-code']['hardware']['cuda'] is True
+        assert models['nomic-code']['suggested_batches']['mps_inner_max'] == 1
+
+    def test_table_output_exposes_selection_columns(self):
+        """Test table output shows the compact LLM selection columns."""
+        from arcaneum.cli.models import list_models_command
+        from arcaneum.cli import models as models_module
+
+        mock_models = {
+            'arctic-m': {
+                'name': 'snowflake/snowflake-arctic-embed-m',
+                'dimensions': 768,
+                'backend': 'fastembed',
+                'recommended_for': 'docs',
+                'description': 'stable docs model',
+            },
+        }
+
+        with patch('arcaneum.cli.models.EMBEDDING_MODELS', mock_models):
+            with patch.object(models_module, 'console') as mock_console:
+                list_models_command(output_json=False)
+
+        table = mock_console.print.call_args_list[0].args[0]
+        headers = [column.header for column in table.columns]
+
+        assert 'Backend' in headers
+        assert 'Use' in headers
+        assert 'Default' in headers
+        assert 'Tier' in headers
+        assert 'Risk' in headers
+        assert 'Batch' in headers
 
 
 class TestEmptyModels:

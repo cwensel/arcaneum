@@ -522,6 +522,8 @@ def verify_collection_command(
                 msg = (
                     f"Collection '{name}' is healthy"
                     if result.is_healthy
+                    else f"Collection '{name}' has verification errors"
+                    if result.errors and result.incomplete_items == 0
                     else f"Collection '{name}' has {result.incomplete_items} incomplete items"
                 )
                 print_json(status, msg, data)
@@ -539,6 +541,8 @@ def verify_collection_command(
 
                 if result.is_healthy:
                     console.print(f"\n[green]Collection is healthy - all {result.complete_items} items complete[/green]")
+                elif result.errors and result.incomplete_items == 0:
+                    console.print("\n[yellow]Collection has verification errors[/yellow]")
                 else:
                     console.print(f"\n[yellow]Found {result.incomplete_items} incomplete items[/yellow]")
                     console.print(f"Complete: {result.complete_items}, Incomplete: {result.incomplete_items}")

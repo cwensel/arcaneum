@@ -1483,6 +1483,9 @@ def corpus_verify_command(
                 if qdrant_result.is_healthy:
                     console.print(f"  [green]Status: Healthy[/green]")
                     console.print(f"  Items: {qdrant_result.total_items} ({qdrant_result.complete_items} complete)")
+                elif qdrant_result.errors and qdrant_result.incomplete_items == 0:
+                    console.print("  [yellow]Status: Verification errors[/yellow]")
+                    console.print(f"  Items: {qdrant_result.total_items} ({qdrant_result.complete_items} complete)")
                 else:
                     console.print(f"  [yellow]Status: {qdrant_result.incomplete_items} incomplete items[/yellow]")
                     console.print(f"  Items: {qdrant_result.total_items} ({qdrant_result.complete_items} complete, {qdrant_result.incomplete_items} incomplete)")

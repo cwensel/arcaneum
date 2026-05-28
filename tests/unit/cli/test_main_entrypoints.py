@@ -9,9 +9,11 @@ regressions.
 
 from unittest.mock import MagicMock, patch
 
+import json
+import click
 from click.testing import CliRunner
 
-from arcaneum.cli.main import cli
+from arcaneum.cli.main import cli, main
 
 
 def _run(args, **patches):
@@ -80,6 +82,108 @@ def test_search_text_entrypoint_dispatches():
     assert result.exit_code == 0, result.output
     assert called['query'] == 'hello world'
     assert called['corpora'] == ['MyCorpus']
+
+
+def test_root_json_flag_propagates_to_subcommand(tmp_path):
+    """`arc --json ...` should activate existing local output_json handlers."""
+    runner = CliRunner()
+
+    models_dir = tmp_path / "models"
+    data_dir = tmp_path / "data"
+    legacy_dir = tmp_path / "legacy"
+
+    with patch('arcaneum.cli.config.get_models_dir', return_value=models_dir):
+        with patch('arcaneum.cli.config.get_data_dir', return_value=data_dir):
+            with patch('arcaneum.cli.config.get_legacy_arcaneum_dir', return_value=legacy_dir):
+                result = runner.invoke(
+                    cli,
+                    ['--json', 'config', 'show-cache-dir'],
+                    catch_exceptions=False,
+                )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "success"
+    assert "cache" in payload["data"]
+
+
+def test_main_json_formats_click_errors(capsys):
+    """Console entrypoint should format Click errors as JSON under --json."""
+    with patch('sys.argv', ['arc', '--json', 'missing-command']):
+        with patch('arcaneum.cli.main.configure_ssl_from_env'):
+            exit_code = main()
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 2
+    assert payload["status"] == "error"
+    assert "missing-command" in payload["message"]
+
+
+def test_main_json_formats_click_abort(capsys):
+    """Console entrypoint should not classify Click aborts as unexpected."""
+    with patch('sys.argv', ['arc', '--json']):
+        with patch('arcaneum.cli.main.configure_ssl_from_env'):
+            with patch('arcaneum.cli.main.cli', side_effect=click.Abort()):
+                exit_code = main()
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 1
+    assert payload["status"] == "error"
+    assert payload["message"] == "Operation aborted"
+
+
+def test_main_preserves_click_exit():
+    """Console entrypoint should preserve successful Click exits."""
+    with patch('sys.argv', ['arc', '--json']):
+        with patch('arcaneum.cli.main.configure_ssl_from_env'):
+            with patch('arcaneum.cli.main.cli', side_effect=click.exceptions.Exit(0)):
+                exit_code = main()
+
+    assert exit_code == 0
+
+
+def test_main_json_formats_path_validation_errors(capsys):
+    """Validation helpers should surface specific messages in JSON mode."""
+    with patch('sys.argv', ['arc', '--json', 'index', 'markdown', '--collection', 'Docs']):
+        with patch('arcaneum.cli.main.configure_ssl_from_env'):
+            exit_code = main()
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 2
+    assert payload["status"] == "error"
+    assert "Either PATH or --from-file" in payload["message"]
+
+
+def test_main_json_formats_corpus_sync_validation_errors(capsys):
+    """Corpus sync validation should flow through JSON UsageError handling."""
+    with patch('sys.argv', ['arc', '--json', 'corpus', 'sync', 'Docs']):
+        with patch('arcaneum.cli.main.configure_ssl_from_env'):
+            exit_code = main()
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 2
+    assert payload["status"] == "error"
+    assert "Either PATH(s) or --from-file" in payload["message"]
+
+
+def test_main_json_formats_corpus_sync_git_flag_conflict(capsys):
+    """Mutually exclusive corpus sync flags should return JSON errors."""
+    with patch('sys.argv', [
+        'arc', '--json', 'corpus', 'sync', 'Docs', '.',
+        '--git-update', '--git-version',
+    ]):
+        with patch('arcaneum.cli.main.configure_ssl_from_env'):
+            exit_code = main()
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 2
+    assert payload["status"] == "error"
+    assert "--git-update and --git-version" in payload["message"]
 
 
 def test_corpus_create_models_default_is_inferred():

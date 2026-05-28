@@ -47,14 +47,12 @@ def validate_path_or_from_file(path: Optional[str], from_file: Optional[str]) ->
     """Ensure exactly one of PATH or --from-file is provided.
 
     Raises:
-        click.Abort: If neither or both are provided.
+        click.UsageError: If neither or both are provided.
     """
     if not path and not from_file:
-        click.echo("Error: Either PATH or --from-file must be provided", err=True)
-        raise click.Abort()
+        raise click.UsageError("Either PATH or --from-file must be provided")
     if path and from_file:
-        click.echo("Error: Cannot use both PATH and --from-file", err=True)
-        raise click.Abort()
+        raise click.UsageError("Cannot use both PATH and --from-file")
 
 
 def extract_vectors_info(collection_info) -> dict:

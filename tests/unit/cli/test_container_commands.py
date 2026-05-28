@@ -176,6 +176,65 @@ class TestContainerStatus:
         assert 'Qdrant' in output
         assert 'MeiliSearch' in output
 
+    def test_json_status_is_single_parseable_document(self, capsys):
+        """Test that status JSON mode does not mix prose into stdout."""
+        from arcaneum.cli.docker import status_command
+
+        def result(stdout=""):
+            mock_result = MagicMock()
+            mock_result.returncode = 0
+            mock_result.stdout = stdout
+            mock_result.stderr = ""
+            return mock_result
+
+        with patch('shutil.which', return_value='/usr/bin/docker'):
+            with patch('subprocess.run') as mock_run:
+                mock_run.side_effect = [
+                    result(),  # docker info
+                    result("NAME STATUS\nqdrant Up\n"),  # compose ps
+                    result('{"Volumes": [{"Name": "arcaneum_qdrant", "Size": "1MB"}]}'),
+                    result("arcaneum_qdrant\n"),
+                    result("/var/lib/docker/volumes/arcaneum_qdrant/_data\n"),
+                ]
+
+                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
+                    with patch('arcaneum.cli.docker.check_qdrant_health', return_value=True):
+                        with patch('arcaneum.cli.docker.check_meilisearch_health', return_value=False):
+                            status_command.callback(output_json=True)
+
+        captured = capsys.readouterr()
+        payload = json.loads(captured.out)
+        assert payload["status"] == "success"
+        assert payload["data"]["services"]["qdrant"]["healthy"] is True
+        assert payload["data"]["services"]["meilisearch"]["healthy"] is False
+        assert payload["data"]["volumes"][0]["name"] == "arcaneum_qdrant"
+        assert captured.err == ""
+
+    def test_json_status_stops_after_compose_error(self, capsys):
+        """Test that compose failure emits only the error envelope."""
+        from arcaneum.cli.docker import status_command
+
+        with patch('shutil.which', return_value='/usr/bin/docker'):
+            with patch('subprocess.run') as mock_run:
+                info_result = MagicMock(returncode=0, stdout="", stderr="")
+                compose_error = subprocess.CalledProcessError(
+                    1,
+                    ["docker", "compose", "ps"],
+                    stderr="compose failed",
+                )
+                mock_run.side_effect = [info_result, compose_error]
+
+                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
+                    with pytest.raises(SystemExit) as exc_info:
+                        status_command.callback(output_json=True)
+
+        captured = capsys.readouterr()
+        payload = json.loads(captured.out)
+        assert exc_info.value.code == 1
+        assert payload["status"] == "error"
+        assert "Container command failed" in payload["message"]
+        assert captured.out.count('"status"') == 1
+
 
 class TestContainerLogs:
     """Test 'arc container logs' command."""
@@ -231,6 +290,62 @@ class TestContainerLogs:
                 calls = mock_run.call_args_list
                 compose_calls = [c for c in calls if 'compose' in str(c)]
                 assert any('--tail=50' in str(c) for c in compose_calls)
+
+    def test_logs_json_captures_compose_output(self, capsys):
+        """Test logs JSON mode wraps compose output instead of streaming prose."""
+        from arcaneum.cli.docker import logs_command
+
+        with patch('shutil.which', return_value='/usr/bin/docker'):
+            with patch('subprocess.run') as mock_run:
+                info_result = MagicMock(returncode=0, stdout="", stderr="")
+                logs_result = MagicMock(returncode=0, stdout="qdrant ready\n", stderr="")
+                mock_run.side_effect = [info_result, logs_result]
+
+                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
+                    logs_command.callback(follow=False, tail=5, output_json=True)
+
+        captured = capsys.readouterr()
+        payload = json.loads(captured.out)
+        assert payload["status"] == "success"
+        assert payload["data"]["lines"] == ["qdrant ready"]
+        assert captured.err == ""
+
+    def test_logs_json_rejects_follow(self, capsys):
+        """Test JSON mode rejects non-terminating follow mode."""
+        from arcaneum.cli.docker import logs_command
+
+        with pytest.raises(SystemExit) as exc_info:
+            logs_command.callback(follow=True, tail=5, output_json=True)
+
+        captured = capsys.readouterr()
+        payload = json.loads(captured.out)
+        assert exc_info.value.code == 2
+        assert payload["status"] == "error"
+        assert "--follow" in payload["message"]
+
+    def test_logs_json_exits_after_compose_error(self, capsys):
+        """Test logs JSON mode exits non-zero after compose failure."""
+        from arcaneum.cli.docker import logs_command
+
+        with patch('shutil.which', return_value='/usr/bin/docker'):
+            with patch('subprocess.run') as mock_run:
+                info_result = MagicMock(returncode=0, stdout="", stderr="")
+                logs_error = subprocess.CalledProcessError(
+                    1,
+                    ["docker", "compose", "logs"],
+                    stderr="logs failed",
+                )
+                mock_run.side_effect = [info_result, logs_error]
+
+                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
+                    with pytest.raises(SystemExit) as exc_info:
+                        logs_command.callback(follow=False, tail=5, output_json=True)
+
+        captured = capsys.readouterr()
+        payload = json.loads(captured.out)
+        assert exc_info.value.code == 1
+        assert payload["status"] == "error"
+        assert "Container command failed" in payload["message"]
 
 
 class TestContainerBackupRestore:
@@ -292,6 +407,29 @@ class TestContainerBackupRestore:
         docker_cp_calls = [c for c in mock_run.call_args_list if "cp" in c.args[0]]
         assert docker_cp_calls
         assert "qdrant:/qdrant/snapshots/Docs/Docs-123.snapshot" in docker_cp_calls[0].args[0]
+
+    def test_backup_json_reports_docker_unavailable(self, capsys):
+        """Test backup JSON mode uses a structured Docker availability error."""
+        from arcaneum.cli.docker import backup_command
+
+        with patch('shutil.which', return_value=None):
+            with pytest.raises(SystemExit) as exc_info:
+                backup_command.callback(
+                    output=None,
+                    qdrant_url='http://qdrant',
+                    meilisearch_url='http://meili',
+                    qdrant_container='qdrant',
+                    qdrant_timeout=300,
+                    skip_meilisearch=True,
+                    output_json=True,
+                )
+
+        captured = capsys.readouterr()
+        payload = json.loads(captured.out)
+        assert exc_info.value.code == 1
+        assert payload["status"] == "error"
+        assert "Docker is not installed" in payload["message"]
+        assert captured.err == ""
 
     def test_restore_recovers_qdrant_and_recreates_meilisearch(self, temp_dir):
         """Test that restore uses manifest entries for both services."""
@@ -374,6 +512,33 @@ class TestContainerBackupRestore:
             method == "POST" and url == "http://meili/indexes/DocsText/documents"
             for method, url, _ in requests_seen
         )
+
+    def test_restore_json_reports_docker_unavailable(self, temp_dir, capsys):
+        """Test restore JSON mode uses a structured Docker availability error."""
+        from arcaneum.cli.docker import restore_command
+
+        backup_path = temp_dir / "backup"
+        backup_path.mkdir()
+
+        with patch('shutil.which', return_value=None):
+            with pytest.raises(SystemExit) as exc_info:
+                restore_command.callback(
+                    backup_directory=str(backup_path),
+                    qdrant_url='http://qdrant',
+                    meilisearch_url='http://meili',
+                    qdrant_container='qdrant',
+                    qdrant_timeout=300,
+                    meilisearch_timeout=1800,
+                    skip_meilisearch=True,
+                    output_json=True,
+                )
+
+        captured = capsys.readouterr()
+        payload = json.loads(captured.out)
+        assert exc_info.value.code == 1
+        assert payload["status"] == "error"
+        assert "Docker is not installed" in payload["message"]
+        assert captured.err == ""
 
     def test_backup_rejects_meili_task_created_during_qdrant_snapshot(self, temp_dir):
         """Test that an empty starting task history is still a real baseline."""
@@ -470,6 +635,67 @@ class TestContainerReset:
 
         # Verify 'down' was called
         assert 'down' in call_order
+
+    def test_json_stops_after_compose_down_failure(self, temp_dir, capsys):
+        """Test reset JSON mode does not delete data after compose down fails."""
+        from arcaneum.cli.docker import reset_command
+
+        data_dir = temp_dir / "data"
+        qdrant_dir = data_dir / "qdrant"
+        qdrant_dir.mkdir(parents=True)
+        protected = qdrant_dir / "collection.bin"
+        protected.write_text("keep")
+
+        with patch('shutil.which', return_value='/usr/bin/docker'):
+            with patch('subprocess.run') as mock_run:
+                info_result = MagicMock(returncode=0, stdout="", stderr="")
+                down_error = subprocess.CalledProcessError(
+                    1,
+                    ["docker", "compose", "down"],
+                    stderr="down failed",
+                )
+                mock_run.side_effect = [info_result, down_error]
+
+                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
+                    with patch('arcaneum.cli.docker.get_data_dir', return_value=data_dir):
+                        with pytest.raises(SystemExit) as exc_info:
+                            reset_command.callback(confirm=True, output_json=True)
+
+        captured = capsys.readouterr()
+        payload = json.loads(captured.out)
+        assert exc_info.value.code == 1
+        assert payload["status"] == "error"
+        assert "Container command failed" in payload["message"]
+        assert protected.exists()
+        assert captured.out.count('"status"') == 1
+
+    def test_reset_json_exits_after_delete_failure(self, temp_dir, capsys):
+        """Test reset JSON mode exits non-zero after data deletion failure."""
+        from arcaneum.cli.docker import reset_command
+
+        data_dir = temp_dir / "data"
+        qdrant_dir = data_dir / "qdrant"
+        qdrant_dir.mkdir(parents=True)
+        (qdrant_dir / "collection.bin").write_text("delete")
+
+        with patch('shutil.which', return_value='/usr/bin/docker'):
+            with patch('subprocess.run') as mock_run:
+                mock_run.side_effect = [
+                    MagicMock(returncode=0, stdout="", stderr=""),
+                    MagicMock(returncode=0, stdout="", stderr=""),
+                ]
+
+                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
+                    with patch('arcaneum.cli.docker.get_data_dir', return_value=data_dir):
+                        with patch('shutil.rmtree', side_effect=OSError("permission denied")):
+                            with pytest.raises(SystemExit) as exc_info:
+                                reset_command.callback(confirm=True, output_json=True)
+
+        captured = capsys.readouterr()
+        payload = json.loads(captured.out)
+        assert exc_info.value.code == 1
+        assert payload["status"] == "error"
+        assert "Failed to reset data" in payload["message"]
 
 
 class TestCheckDockerAvailable:

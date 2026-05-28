@@ -49,6 +49,10 @@ Human-readable formatted output using Rich library with colors and formatting.
 ### JSON Output (`--json` flag)
 
 Machine-readable structured JSON output for scripting and automation.
+Pass `--json` either before the command (`arc --json corpus list`) or on
+commands that expose a local flag (`arc corpus list --json`). In JSON mode,
+stdout contains only the JSON document; startup warnings, progress, and other
+human messages go to stderr.
 
 **Standard Format:**
 ```json
@@ -61,6 +65,10 @@ Machine-readable structured JSON output for scripting and automation.
   "errors": []
 }
 ```
+
+Commands that manage local state, such as `arc config` and `arc container`,
+use the same envelope. Status-style commands return structured state instead
+of prose when JSON mode is active.
 
 ## Progress Output Format
 

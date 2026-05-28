@@ -1,5 +1,7 @@
 """Main CLI entry point for Arcaneum (RDR-001 with RDR-006 enhancements)."""
 
+import functools
+from contextlib import redirect_stdout
 import sys
 import click
 import os
@@ -29,17 +31,55 @@ from arcaneum.cli.utils import validate_path_or_from_file
 
 
 @click.group()
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
 @click.version_option(version=__version__)
 @click.pass_context
-def cli(ctx):
+def cli(ctx, output_json):
     """Arcaneum: Semantic and full-text search tools for Qdrant and MeiliSearch"""
+    ctx.ensure_object(dict)
+    ctx.obj["output_json"] = output_json
+
     # Run migration from legacy ~/.arcaneum/ to XDG-compliant structure if needed
     # Only show verbose output if user passed --verbose or similar flags
     verbose = ctx.parent and ctx.parent.params.get('verbose', False) if ctx.parent else False
 
     # Auto-migrate silently on first access (only logs errors)
     from arcaneum.migrations import run_migration_if_needed
-    run_migration_if_needed(verbose=verbose)
+    if output_json:
+        with redirect_stdout(sys.stderr):
+            run_migration_if_needed(verbose=verbose)
+    else:
+        run_migration_if_needed(verbose=verbose)
+
+
+def _enable_global_json(command: click.Command):
+    """Propagate root `arc --json` into leaf callbacks with `output_json`.
+
+    Most commands already expose a local `--json`. This keeps those signatures
+    intact while making the root flag authoritative for nested commands.
+    """
+    if isinstance(command, click.Group):
+        for child in command.commands.values():
+            _enable_global_json(child)
+
+    if getattr(command, "_arc_global_json_enabled", False):
+        return
+    if command.callback is None:
+        return
+    if "output_json" not in {param.name for param in command.params}:
+        return
+
+    callback = command.callback
+
+    @functools.wraps(callback)
+    def wrapped(*args, **kwargs):
+        ctx = click.get_current_context(silent=True)
+        if ctx is not None and (ctx.find_root().obj or {}).get("output_json", False):
+            kwargs["output_json"] = True
+        return callback(*args, **kwargs)
+
+    command.callback = wrapped
+    command._arc_global_json_enabled = True
 
 
 # Collection management commands (RDR-003)
@@ -649,13 +689,11 @@ def sync_directory(corpus, paths, from_file, models, file_types, force, dry_run,
     """
     # Validate that at least one of paths or from_file is provided
     if not paths and not from_file:
-        click.echo("Error: Either PATH(s) or --from-file must be provided", err=True)
-        raise SystemExit(1)
+        raise click.UsageError("Either PATH(s) or --from-file must be provided")
 
     # Validate mutually exclusive git flags
     if git_update and git_version:
-        click.echo("Error: --git-update and --git-version are mutually exclusive", err=True)
-        raise SystemExit(1)
+        raise click.UsageError("--git-update and --git-version are mutually exclusive")
 
     # Resolve skip prefixes: --no-skip-dir-prefix disables all, otherwise use provided prefixes
     effective_prefixes = () if no_skip_dir_prefix else skip_dir_prefix
@@ -847,6 +885,8 @@ cli.add_command(container_group, name='container')
 from arcaneum.cli.fulltext import fulltext as indexes_group
 cli.add_command(indexes_group, name='indexes')
 
+_enable_global_json(cli)
+
 
 def main():
     """Main CLI entry point with structured error handling (RDR-006)."""
@@ -854,27 +894,61 @@ def main():
     # later in the CLI flow pick up the settings, while library consumers that
     # import arcaneum.cli.main without invoking main() are not affected.
     configure_ssl_from_env()
+    json_mode = '--json' in sys.argv[1:]
     try:
-        cli()
+        cli(standalone_mode=False)
         return EXIT_SUCCESS
+    except click.exceptions.Exit as e:
+        return e.exit_code
     except click.ClickException as e:
         # Click handles its own exceptions (usage errors, etc.)
-        e.show()
+        if json_mode:
+            from arcaneum.cli.output import print_json
+            print_json("error", str(e), errors=[str(e)])
+        else:
+            e.show()
         return EXIT_INVALID_ARGS
     except (InvalidArgumentError, click.BadParameter) as e:
-        print(f"[ERROR] {e}", file=sys.stderr)
+        if json_mode:
+            from arcaneum.cli.output import print_json
+            print_json("error", str(e), errors=[str(e)])
+        else:
+            print(f"[ERROR] {e}", file=sys.stderr)
         return EXIT_INVALID_ARGS
     except ResourceNotFoundError as e:
-        print(f"[ERROR] {e}", file=sys.stderr)
+        if json_mode:
+            from arcaneum.cli.output import print_json
+            print_json("error", str(e), errors=[str(e)])
+        else:
+            print(f"[ERROR] {e}", file=sys.stderr)
         return EXIT_NOT_FOUND
+    except click.Abort:
+        if json_mode:
+            from arcaneum.cli.output import print_json
+            print_json("error", "Operation aborted", errors=["Operation aborted"])
+        else:
+            print("Aborted!", file=sys.stderr)
+        return EXIT_ERROR
     except KeyboardInterrupt:
-        print("\n[INFO] Operation cancelled by user", file=sys.stderr)
+        if json_mode:
+            from arcaneum.cli.output import print_json
+            print_json("error", "Operation cancelled by user", errors=["Operation cancelled by user"])
+        else:
+            print("\n[INFO] Operation cancelled by user", file=sys.stderr)
         return EXIT_ERROR
     except ArcaneumError as e:
-        print(f"[ERROR] {e}", file=sys.stderr)
+        if json_mode:
+            from arcaneum.cli.output import print_json
+            print_json("error", str(e), errors=[str(e)])
+        else:
+            print(f"[ERROR] {e}", file=sys.stderr)
         return e.exit_code
     except Exception as e:
-        print(f"[ERROR] Unexpected error: {e}", file=sys.stderr)
+        if json_mode:
+            from arcaneum.cli.output import print_json
+            print_json("error", f"Unexpected error: {e}", errors=[str(e)])
+        else:
+            print(f"[ERROR] Unexpected error: {e}", file=sys.stderr)
         if '--verbose' in sys.argv or '-v' in sys.argv:
             import traceback
             traceback.print_exc()

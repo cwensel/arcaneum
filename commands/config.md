@@ -13,11 +13,13 @@ Manage Arcaneum configuration and model cache.
 **Arguments:**
 
 - --confirm: Confirm cache deletion (required for clear-cache)
+- --json: Emit a machine-readable JSON envelope on stdout
 
 **Examples:**
 
 ```text
 /config show-cache-dir
+/config show-cache-dir --json
 /config clear-cache --confirm
 ```
 

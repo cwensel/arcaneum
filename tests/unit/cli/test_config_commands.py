@@ -77,6 +77,27 @@ class TestShowCacheDir:
         # Should mention legacy directory
         assert 'Legacy' in captured.out or 'legacy' in captured.out.lower()
 
+    def test_json_output(self, temp_dir, capsys):
+        """Test that show-cache-dir emits a parseable JSON envelope."""
+        from arcaneum.cli.config import show_cache_dir
+
+        models_dir = temp_dir / "cache" / "models"
+        data_dir = temp_dir / "data"
+        legacy_dir = temp_dir / "legacy"
+        models_dir.mkdir(parents=True)
+        data_dir.mkdir(parents=True)
+
+        with patch('arcaneum.cli.config.get_models_dir', return_value=models_dir):
+            with patch('arcaneum.cli.config.get_data_dir', return_value=data_dir):
+                with patch('arcaneum.cli.config.get_legacy_arcaneum_dir', return_value=legacy_dir):
+                    show_cache_dir(output_json=True)
+
+        captured = capsys.readouterr()
+        payload = json.loads(captured.out)
+        assert payload["status"] == "success"
+        assert payload["data"]["cache"]["path"] == str(models_dir)
+        assert payload["data"]["data"]["exists"] is True
+
 
 class TestClearCache:
     """Test 'arc config clear-cache' command."""
@@ -138,6 +159,25 @@ class TestClearCache:
 
         # Should indicate cache is already empty
         assert 'empty' in captured.out.lower() or 'already' in captured.out.lower()
+
+    def test_clear_cache_json_confirm_required(self, temp_dir, capsys):
+        """Test that JSON mode reports confirmation errors as JSON."""
+        from arcaneum.cli.config import clear_cache
+
+        models_dir = temp_dir / "cache" / "models"
+        models_dir.mkdir(parents=True)
+        (models_dir / "model.bin").write_bytes(b"x" * 1024)
+
+        with patch('arcaneum.cli.config.get_models_dir', return_value=models_dir):
+            with pytest.raises(SystemExit) as exc_info:
+                clear_cache(confirm=False, output_json=True)
+
+        captured = capsys.readouterr()
+        payload = json.loads(captured.out)
+        assert exc_info.value.code == 2
+        assert payload["status"] == "error"
+        assert "--confirm" in payload["message"]
+        assert captured.err == ""
 
 
 class TestGetDirSize:

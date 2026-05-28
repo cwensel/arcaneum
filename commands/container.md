@@ -19,12 +19,14 @@ Manage Docker container services for Qdrant and MeiliSearch.
 - --follow, -f: Follow log output (logs command only)
 - --tail <n>: Number of log lines to show (logs command, default: 100)
 - --confirm: Confirm data deletion (reset command only)
+- --json: Emit a machine-readable JSON envelope on stdout
 
 **Examples:**
 
 ```text
 /container start
 /container status
+/container status --json
 /container logs
 /container logs --follow
 /container stop

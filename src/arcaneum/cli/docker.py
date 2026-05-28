@@ -11,18 +11,23 @@ import click
 import requests
 
 from arcaneum.cli.errors import HelpfulGroup
-from arcaneum.cli.output import print_error, print_info, print_success, print_warning
+from arcaneum.cli.output import print_error, print_info, print_success, print_warning, print_json
 from arcaneum.paths import get_data_dir
 from arcaneum.utils.formatting import format_size
 
 _TASK_UID_UNSET = object()
 
 
-def check_docker_available():
+def _exit_on_json_error(output_json: bool, code: int = 1):
+    if output_json:
+        raise SystemExit(code)
+
+
+def check_docker_available(output_json: bool = False):
     """Check if Docker is installed and running."""
     if not shutil.which("docker"):
-        print_error("Docker is not installed. Please install Docker Desktop or Docker Engine.")
-        print_info("Visit: https://docs.docker.com/get-docker/")
+        print_error("Docker is not installed. Please install Docker Desktop or Docker Engine.", output_json)
+        print_info("Visit: https://docs.docker.com/get-docker/", output_json)
         return False
 
     try:
@@ -34,14 +39,14 @@ def check_docker_available():
         )
         return True
     except subprocess.CalledProcessError:
-        print_error("Docker is installed but not running. Please start Docker.")
+        print_error("Docker is installed but not running. Please start Docker.", output_json)
         return False
     except subprocess.TimeoutExpired:
-        print_error("Docker is not responding. Please check Docker status.")
+        print_error("Docker is not responding. Please check Docker status.", output_json)
         return False
 
 
-def get_compose_file():
+def get_compose_file(output_json: bool = False):
     """Get the path to docker-compose.yml."""
     # Find the repository root directory
     # This file is at: src/arcaneum/cli/docker.py
@@ -59,12 +64,12 @@ def get_compose_file():
         if path.exists():
             return str(path.resolve())
 
-    print_error("docker-compose.yml not found")
-    print_info(f"Expected locations: {repo_root}/deploy/docker-compose.yml or ./docker-compose.yml")
+    print_error("docker-compose.yml not found", output_json)
+    print_info(f"Expected locations: {repo_root}/deploy/docker-compose.yml or ./docker-compose.yml", output_json)
     return None
 
 
-def run_compose_command(args, check=True, capture_output=False, env=None):
+def run_compose_command(args, check=True, capture_output=False, env=None, output_json: bool = False):
     """Run a docker compose command.
 
     Args:
@@ -73,7 +78,7 @@ def run_compose_command(args, check=True, capture_output=False, env=None):
         capture_output: Whether to capture stdout/stderr
         env: Optional environment variables to add (merged with current env)
     """
-    compose_file = get_compose_file()
+    compose_file = get_compose_file(output_json)
     if not compose_file:
         return None
 
@@ -95,8 +100,8 @@ def run_compose_command(args, check=True, capture_output=False, env=None):
         )
         return result
     except subprocess.CalledProcessError as e:
-        print_error(f"Container command failed: {e}")
-        if e.stderr:
+        print_error(f"Container command failed: {e}", output_json)
+        if e.stderr and not output_json:
             print(e.stderr)
         return None
 
@@ -144,25 +149,53 @@ def check_meilisearch_health():
 
 
 @container_group.command('start')
-def start_command():
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def start_command(output_json=False):
     """Start container services"""
-    if not check_docker_available():
+    if not check_docker_available(output_json):
+        _exit_on_json_error(output_json)
         return
 
     # Get container environment (auto-generates MeiliSearch key if needed)
     container_env = get_container_env()
 
-    print_info("Starting container services...")
-    result = run_compose_command(["up", "-d"], env=container_env)
+    print_info("Starting container services...", output_json)
+    result = run_compose_command(
+        ["up", "-d"],
+        env=container_env,
+        capture_output=output_json,
+        output_json=output_json,
+    )
 
     if result is None:
+        _exit_on_json_error(output_json)
         return
 
     # Wait for services to start
     time.sleep(3)
 
+    qdrant_healthy = check_qdrant_health()
+    meili_healthy = check_meilisearch_health()
+
+    if output_json:
+        print_json("success", "Container services start requested", {
+            "services": {
+                "qdrant": {
+                    "healthy": qdrant_healthy,
+                    "rest_api": "http://localhost:6333",
+                    "dashboard": "http://localhost:6333/dashboard",
+                },
+                "meilisearch": {
+                    "healthy": meili_healthy,
+                    "http_api": "http://localhost:7700",
+                },
+            },
+            "data_directory": str(get_data_dir()),
+        })
+        return
+
     # Check Qdrant
-    if check_qdrant_health():
+    if qdrant_healthy:
         print_success("Qdrant started successfully")
         print("  REST API: http://localhost:6333")
         print("  Dashboard: http://localhost:6333/dashboard")
@@ -170,7 +203,7 @@ def start_command():
         print_warning("Qdrant may not be ready yet. Check logs with: arc container logs")
 
     # Check MeiliSearch
-    if check_meilisearch_health():
+    if meili_healthy:
         print_success("MeiliSearch started successfully")
         print("  HTTP API: http://localhost:7700")
     else:
@@ -181,62 +214,90 @@ def start_command():
 
 
 @container_group.command('stop')
-def stop_command():
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def stop_command(output_json=False):
     """Stop container services"""
-    if not check_docker_available():
+    if not check_docker_available(output_json):
+        _exit_on_json_error(output_json)
         return
 
-    print_info("Stopping container services...")
-    result = run_compose_command(["down"])
+    print_info("Stopping container services...", output_json)
+    result = run_compose_command(["down"], capture_output=output_json, output_json=output_json)
 
     if result is not None:
-        print_success("Container services stopped")
+        print_success("Container services stopped", json_output=output_json, data={"stopped": True})
+    else:
+        _exit_on_json_error(output_json)
 
 
 @container_group.command('restart')
-def restart_command():
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def restart_command(output_json=False):
     """Restart container services"""
-    if not check_docker_available():
+    if not check_docker_available(output_json):
+        _exit_on_json_error(output_json)
         return
 
-    print_info("Restarting container services...")
-    result = run_compose_command(["restart"])
+    print_info("Restarting container services...", output_json)
+    result = run_compose_command(["restart"], capture_output=output_json, output_json=output_json)
 
     if result is None:
+        _exit_on_json_error(output_json)
         return
 
     time.sleep(2)
 
-    if check_qdrant_health():
+    qdrant_healthy = check_qdrant_health()
+    meili_healthy = check_meilisearch_health()
+
+    if output_json:
+        print_json("success", "Container services restart requested", {
+            "services": {
+                "qdrant": {"healthy": qdrant_healthy},
+                "meilisearch": {"healthy": meili_healthy},
+            }
+        })
+    elif qdrant_healthy:
         print_success("Container services restarted")
     else:
         print_warning("Services may not be ready yet")
 
 
 @container_group.command('status')
-def status_command():
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def status_command(output_json=False):
     """Show container services status"""
-    if not check_docker_available():
+    if not check_docker_available(output_json):
+        _exit_on_json_error(output_json)
         return
 
-    print_info("Container Services Status:")
-    print()
-    run_compose_command(["ps"])
+    print_info("Container Services Status:", output_json)
+    if not output_json:
+        print()
+    ps_result = run_compose_command(["ps"], capture_output=output_json, output_json=output_json)
+    if ps_result is None:
+        _exit_on_json_error(output_json)
+        return
 
-    print()
-    if check_qdrant_health():
-        print_success("Qdrant: Healthy")
-    else:
-        print_error("Qdrant: Unhealthy or not running")
+    qdrant_healthy = check_qdrant_health()
+    meili_healthy = check_meilisearch_health()
 
-    if check_meilisearch_health():
-        print_success("MeiliSearch: Healthy")
-    else:
-        print_error("MeiliSearch: Unhealthy or not running")
+    if not output_json:
+        print()
+        if qdrant_healthy:
+            print_success("Qdrant: Healthy")
+        else:
+            print_error("Qdrant: Unhealthy or not running")
+
+        if meili_healthy:
+            print_success("MeiliSearch: Healthy")
+        else:
+            print_error("MeiliSearch: Unhealthy or not running")
 
     # Show Docker volume information
-    print()
-    print_info("Docker Volumes:")
+    if not output_json:
+        print()
+    print_info("Docker Volumes:", output_json)
 
     # Get volume information including sizes using docker system df
     try:
@@ -261,6 +322,7 @@ def status_command():
         )
 
         volumes = result.stdout.strip().split('\n')
+        volume_results = []
         for volume in volumes:
             if volume:
                 # Get volume details
@@ -275,29 +337,78 @@ def status_command():
                     check=False
                 )
 
-                print(f"  {volume}")
-                if size != 'unknown':
-                    print(f"    Size: {size}")
+                volume_result = {"name": volume, "size": None if size == 'unknown' else size}
                 if inspect_result.returncode == 0:
                     mountpoint = inspect_result.stdout.strip()
-                    print(f"    Mountpoint: {mountpoint}")
+                    volume_result["mountpoint"] = mountpoint
+                volume_results.append(volume_result)
+
+                if not output_json:
+                    print(f"  {volume}")
+                    if size != 'unknown':
+                        print(f"    Size: {size}")
+                    if inspect_result.returncode == 0:
+                        print(f"    Mountpoint: {mountpoint}")
+
+        if output_json:
+            print_json("success", "Container services status", {
+                "compose": {
+                    "stdout": ps_result.stdout if ps_result is not None else "",
+                },
+                "services": {
+                    "qdrant": {"healthy": qdrant_healthy},
+                    "meilisearch": {"healthy": meili_healthy},
+                },
+                "volumes": volume_results,
+            })
     except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
-        print_warning(f"Could not retrieve volume information: {e}")
+        if output_json:
+            print_json("success", "Container services status", {
+                "compose": {
+                    "stdout": ps_result.stdout if ps_result is not None else "",
+                },
+                "services": {
+                    "qdrant": {"healthy": qdrant_healthy},
+                    "meilisearch": {"healthy": meili_healthy},
+                },
+                "volumes": [],
+                "warnings": [f"Could not retrieve volume information: {e}"],
+            })
+        else:
+            print_warning(f"Could not retrieve volume information: {e}")
 
 
 @container_group.command('logs')
 @click.option('--follow', '-f', is_flag=True, help='Follow log output')
 @click.option('--tail', type=int, default=100, help='Number of lines to show')
-def logs_command(follow, tail):
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def logs_command(follow, tail, output_json=False):
     """Show container services logs"""
-    if not check_docker_available():
+    if output_json and follow:
+        print_error("--json cannot be combined with --follow; use a finite --tail", output_json)
+        raise SystemExit(2)
+
+    if not check_docker_available(output_json):
+        _exit_on_json_error(output_json)
         return
 
     args = ["logs", f"--tail={tail}"]
     if follow:
         args.append("-f")
 
-    run_compose_command(args)
+    result = run_compose_command(args, capture_output=output_json, output_json=output_json)
+    if result is None:
+        _exit_on_json_error(output_json)
+        return
+
+    if output_json and result is not None:
+        print_json("success", "Container logs", {
+            "follow": follow,
+            "tail": tail,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "lines": result.stdout.splitlines(),
+        })
 
 
 def _request_json(method: str, url: str, **kwargs):
@@ -710,7 +821,8 @@ def backup_command(
     output_json,
 ):
     """Back up Qdrant snapshots and MeiliSearch indexes."""
-    if not check_docker_available():
+    if not check_docker_available(output_json):
+        _exit_on_json_error(output_json)
         return
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -797,7 +909,8 @@ def restore_command(
     output_json,
 ):
     """Restore Qdrant snapshots and MeiliSearch indexes from a backup."""
-    if not check_docker_available():
+    if not check_docker_available(output_json):
+        _exit_on_json_error(output_json)
         return
 
     backup_path = Path(backup_directory).expanduser()
@@ -832,19 +945,24 @@ def restore_command(
 
 @container_group.command('reset')
 @click.option('--confirm', is_flag=True, help='Confirm deletion of all data')
-def reset_command(confirm):
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+def reset_command(confirm, output_json=False):
     """Reset all container data (WARNING: deletes all collections)"""
     if not confirm:
-        print_error("This will delete ALL data including collections!")
-        print_error("Use --confirm to proceed")
+        print_error("Use --confirm to delete ALL data including collections", output_json)
+        _exit_on_json_error(output_json, code=2)
         return
 
-    if not check_docker_available():
+    if not check_docker_available(output_json):
+        _exit_on_json_error(output_json)
         return
 
     # Stop services first
-    print_warning("Stopping services...")
-    run_compose_command(["down"])
+    print_warning("Stopping services...", output_json)
+    result = run_compose_command(["down"], capture_output=output_json, output_json=output_json)
+    if result is None:
+        _exit_on_json_error(output_json)
+        return
 
     # Delete data directories
     data_dir = get_data_dir()
@@ -852,24 +970,37 @@ def reset_command(confirm):
     snapshots_dir = data_dir / "qdrant_snapshots"
 
     try:
+        deleted = []
         if qdrant_dir.exists():
             size = get_dir_size(qdrant_dir)
-            print_warning(f"Deleting Qdrant data ({format_size(size)})...")
+            print_warning(f"Deleting Qdrant data ({format_size(size)})...", output_json)
             shutil.rmtree(qdrant_dir)
+            deleted.append({"path": str(qdrant_dir), "size_bytes": size})
 
         if snapshots_dir.exists():
-            print_warning("Deleting Qdrant snapshots...")
+            print_warning("Deleting Qdrant snapshots...", output_json)
+            size = get_dir_size(snapshots_dir)
             shutil.rmtree(snapshots_dir)
+            deleted.append({"path": str(snapshots_dir), "size_bytes": size})
 
         # Recreate empty directories
         qdrant_dir.mkdir(parents=True, exist_ok=True)
         snapshots_dir.mkdir(parents=True, exist_ok=True)
 
-        print_success("Data reset complete")
-        print_info("Run 'arc container start' to restart services")
+        print_success(
+            "Data reset complete",
+            json_output=output_json,
+            data={
+                "deleted": deleted,
+                "created": [str(qdrant_dir), str(snapshots_dir)],
+                "next": "arc container start",
+            },
+        )
+        print_info("Run 'arc container start' to restart services", output_json)
 
     except Exception as e:
-        print_error(f"Failed to reset data: {e}")
+        print_error(f"Failed to reset data: {e}", output_json)
+        _exit_on_json_error(output_json)
 
 
 def get_dir_size(path: Path) -> int:

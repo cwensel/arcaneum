@@ -171,6 +171,25 @@ pytest tests/test_collections.py
 pytest -v tests/
 ```
 
+### CI Quality Gates
+
+The `Tests` workflow combines a fast, single-version `quality-gates` job with
+the Python 3.12/3.13 test matrix. The matrix jobs exercise the service-backed
+unit, integration, and CLI suites against Qdrant and MeiliSearch. The quality
+job runs ahead of release as the non-service gate for:
+
+- `ruff check .` with a ratcheted lint baseline
+- `ruff format --check .` with a ratcheted format baseline
+- package build and `twine check`
+- `pip-audit . --skip-editable` with a checked vulnerability baseline
+- schema, utility, and PDF unit coverage with `--cov-fail-under=65`
+
+The lint, format, audit, and coverage floors are intentionally ratcheted. Lower
+the lint/format baselines and remove fixed audit baseline entries when cleanup
+lands, and raise `--cov-fail-under` when new coverage lifts the baseline. Do
+not weaken a ratchet without a release-blocker comment explaining the temporary
+tradeoff.
+
 ## Documentation Guidelines
 
 ### When to Update Documentation

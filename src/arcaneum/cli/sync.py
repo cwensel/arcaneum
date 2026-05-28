@@ -73,7 +73,7 @@ from ..cli.interaction_logger import interaction_logger
 from ..cli.errors import InvalidArgumentError, ResourceNotFoundError
 from ..embeddings.client import EmbeddingClient, EMBEDDING_MODELS
 from ..fulltext.client import FullTextClient
-from ..schema.document import DualIndexDocument
+from ..schema.document import DualIndexDocument, persisted_metadata_fields
 from ..indexing.dual_indexer import DualIndexer
 from ..indexing.collection_metadata import get_collection_type, get_collection_metadata
 from ..indexing.common.sync import MetadataBasedSync, compute_quick_hash
@@ -2445,6 +2445,7 @@ def sync_directory_command(
 
                             # Build payload
                             payload = {
+                                **persisted_metadata_fields(),
                                 "text": chunk['text'],
                                 "file_path": str(file_path.absolute()),
                                 "filename": file_path.name,
@@ -2706,6 +2707,7 @@ def _fetch_chunks_for_files_bulk(
 
                     meili_doc = {
                         "id": str(point.id),
+                        **persisted_metadata_fields(),
                         "content": payload.get("text", ""),
                         "file_path": file_path,
                         "filename": payload.get("filename", ""),
@@ -2975,6 +2977,7 @@ def _repair_meili_metadata(
                     git_meta = git_metadata_by_file[file_path]
                     update_doc = {
                         'id': doc['id'],
+                        **persisted_metadata_fields(),
                         **git_meta
                     }
                     updates.append(update_doc)
@@ -3475,6 +3478,7 @@ def _backfill_meili_to_qdrant(
 
                 # Build payload
                 payload = {
+                    **persisted_metadata_fields(),
                     "text": chunk_text,
                     "file_path": str(file_path.absolute()),
                     "filename": file_path.name,

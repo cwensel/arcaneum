@@ -234,6 +234,8 @@ class TestPDFFullTextIndexerDocumentBuilding:
             # Check first document
             doc1 = documents[0]
             assert "id" in doc1
+            assert doc1["schema_version"] == 1
+            assert doc1["app_version"]
             assert doc1["page_number"] == 1
             assert doc1["filename"] == pdf_path.name
             assert doc1["extraction_method"] == "pymupdf"

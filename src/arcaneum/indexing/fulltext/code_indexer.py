@@ -28,6 +28,7 @@ from ..common.multiprocessing import create_process_pool
 from ..types import GitMetadata
 from .ast_extractor import ASTFunctionExtractor, CodeDefinition
 from .sync import GitCodeMetadataSync
+from ...schema.document import persisted_metadata_fields
 from ...fulltext.client import FullTextClient
 
 logger = logging.getLogger(__name__)
@@ -512,6 +513,7 @@ class SourceCodeFullTextIndexer:
         return {
             # Primary key
             'id': doc_id,
+            **persisted_metadata_fields(),
 
             # Searchable content
             'content': defn.content,

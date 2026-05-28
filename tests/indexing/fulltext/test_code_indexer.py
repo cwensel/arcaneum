@@ -88,6 +88,8 @@ class TestSourceCodeFullTextIndexerDocumentBuilding:
         )
 
         assert "id" in doc
+        assert doc["schema_version"] == 1
+        assert doc["app_version"]
         assert doc["content"] == "def my_function():\n    pass"
         assert doc["function_name"] == "my_function"
         assert doc["class_name"] is None

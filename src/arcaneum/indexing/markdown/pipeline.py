@@ -18,6 +18,7 @@ from qdrant_client.models import PointStruct
 import xxhash
 
 from ...embeddings.client import EMBEDDING_MODELS, EmbeddingClient
+from ...schema.document import persisted_metadata_fields
 from ...utils.formatting import format_duration
 from ..common.sync import MetadataBasedSync, compute_file_hash, compute_quick_hash
 from .discovery import MarkdownDiscovery
@@ -271,6 +272,7 @@ class MarkdownIndexingPipeline:
                     points = []
                     for chunk, embedding in zip(batch_chunks, batch_embeddings):
                         payload = {
+                            **persisted_metadata_fields(),
                             **chunk.metadata,
                             'text': chunk.text,
                         }
@@ -338,6 +340,7 @@ class MarkdownIndexingPipeline:
                 points = []
                 for chunk, embedding in zip(chunks, embeddings):
                     payload = {
+                        **persisted_metadata_fields(),
                         **chunk.metadata,
                         'text': chunk.text,
                     }
@@ -684,6 +687,7 @@ class MarkdownIndexingPipeline:
 
         for chunk, embedding in zip(chunks, embeddings):
             payload = {
+                **persisted_metadata_fields(),
                 **chunk.metadata,
                 'text': chunk.text,
             }

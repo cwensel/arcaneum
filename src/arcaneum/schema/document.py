@@ -29,6 +29,17 @@ def current_app_version() -> str:
     return ARCANEUM_VERSION
 
 
+def persisted_metadata_fields(
+    schema_version: int = PERSISTED_SCHEMA_VERSION,
+    app_version: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return schema fields required on persisted search records."""
+    return {
+        PERSISTED_SCHEMA_VERSION_FIELD: schema_version,
+        PERSISTED_APP_VERSION_FIELD: app_version or current_app_version(),
+    }
+
+
 @dataclass
 class DualIndexDocument:
     """Document schema for dual indexing to Qdrant and MeiliSearch.
@@ -145,8 +156,7 @@ def to_qdrant_point(doc: DualIndexDocument, point_id: Optional[int] = None):
 
     # Build payload with all metadata
     payload = {
-        PERSISTED_SCHEMA_VERSION_FIELD: doc.schema_version,
-        PERSISTED_APP_VERSION_FIELD: doc.app_version,
+        **persisted_metadata_fields(doc.schema_version, doc.app_version),
         "text": doc.content,  # Content field for search snippets
         "file_path": doc.file_path,
         "filename": doc.filename,
@@ -274,8 +284,7 @@ def to_meilisearch_doc(doc: DualIndexDocument) -> Dict[str, Any]:
     """
     meili_doc = {
         "id": doc.id,
-        PERSISTED_SCHEMA_VERSION_FIELD: doc.schema_version,
-        PERSISTED_APP_VERSION_FIELD: doc.app_version,
+        **persisted_metadata_fields(doc.schema_version, doc.app_version),
         "content": doc.content,
         "file_path": doc.file_path,
         "filename": doc.filename,

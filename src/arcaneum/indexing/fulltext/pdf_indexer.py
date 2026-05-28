@@ -14,6 +14,7 @@ from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeEl
 
 from ..pdf.extractor import PDFExtractor
 from ..pdf.ocr import OCREngine, merge_extracted_text_with_ocr
+from ...schema.document import persisted_metadata_fields
 from ...fulltext.client import FullTextClient
 
 logger = logging.getLogger(__name__)
@@ -180,6 +181,7 @@ class PDFFullTextIndexer:
             doc = {
                 # Primary key
                 'id': doc_id,
+                **persisted_metadata_fields(),
 
                 # Searchable content
                 'content': page_text,

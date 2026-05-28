@@ -16,6 +16,7 @@ from .interaction_logger import interaction_logger
 from .errors import InvalidArgumentError, ResourceNotFoundError
 from .search_merge import fetch_from_corpora, per_corpus_limit
 from .utils import create_meili_client
+from ..schema.document import persisted_metadata_fields
 from ..utils.formatting import format_size
 
 console = Console()
@@ -1099,6 +1100,7 @@ def import_index(file, target_name, output_json):
                     if record_type == 'index_metadata':
                         metadata = record
                     elif record_type == 'document':
+                        record = {**persisted_metadata_fields(), **record}
                         documents.append(record)
 
             if not metadata:

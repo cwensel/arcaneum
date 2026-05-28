@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from typing import Optional, List
 from uuid import uuid4
 
+from arcaneum.schema.document import persisted_metadata_fields
+
 
 @dataclass
 class GitMetadata:
@@ -209,7 +211,10 @@ class CodeChunk:
             vector = self.embedding
 
         # Build payload with metadata AND content (for search result display)
-        payload = self.metadata.to_payload()
+        payload = {
+            **persisted_metadata_fields(),
+            **self.metadata.to_payload(),
+        }
         payload["text"] = self.content  # Add content field for search snippets
 
         return PointStruct(

@@ -24,6 +24,7 @@ from .interaction_logger import interaction_logger
 from .logging_config import setup_logging_default, setup_logging_verbose, setup_logging_debug
 from .utils import set_process_priority
 from .errors import InvalidArgumentError, ResourceNotFoundError
+from ..schema.document import persisted_metadata_fields
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -679,6 +680,7 @@ def _index_code_simple(
                 # Build document
                 doc = {
                     'id': doc_id,
+                    **persisted_metadata_fields(),
                     'content': content,
                     'filename': file_path.name,
                     'file_path': str(file_path.absolute()),
@@ -913,6 +915,7 @@ def index_text_markdown_command(
                     # Build document
                     doc = {
                         'id': doc_id,
+                        **persisted_metadata_fields(),
                         'content': content,
                         'title': title,
                         'filename': file_path.name,

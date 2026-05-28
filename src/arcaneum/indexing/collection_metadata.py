@@ -13,10 +13,9 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Condition, FieldCondition, Filter, MatchValue
 
 from arcaneum.schema.document import (
-    PERSISTED_APP_VERSION_FIELD,
     PERSISTED_SCHEMA_VERSION,
     PERSISTED_SCHEMA_VERSION_FIELD,
-    current_app_version,
+    persisted_metadata_fields,
 )
 
 logger = logging.getLogger(__name__)
@@ -29,10 +28,7 @@ METADATA_PAYLOAD_KEY = "is_metadata"
 
 def persisted_schema_defaults() -> Dict[str, Any]:
     """Return metadata fields required for persisted collection compatibility."""
-    return {
-        PERSISTED_SCHEMA_VERSION_FIELD: PERSISTED_SCHEMA_VERSION,
-        PERSISTED_APP_VERSION_FIELD: current_app_version(),
-    }
+    return persisted_metadata_fields()
 
 
 def persisted_schema_issues(metadata: Dict[str, Any]) -> list[str]:
@@ -68,7 +64,7 @@ def persisted_schema_issues(metadata: Dict[str, Any]) -> list[str]:
             f"this Arcaneum supports (v{PERSISTED_SCHEMA_VERSION})"
         ]
 
-    if not metadata.get(PERSISTED_APP_VERSION_FIELD):
+    if not metadata.get("app_version"):
         return ["collection metadata is missing app_version"]
     return []
 

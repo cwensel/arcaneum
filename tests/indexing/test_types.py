@@ -208,4 +208,6 @@ class TestCodeChunk:
 
         assert point.id == chunk.id
         assert point.vector == chunk.embedding
+        assert point.payload["schema_version"] == 1
+        assert point.payload["app_version"]
         assert point.payload["git_project_identifier"] == "project#main"

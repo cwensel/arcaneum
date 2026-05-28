@@ -18,6 +18,7 @@ from .pdf.extractor import PDFExtractor
 from .pdf.ocr import OCREngine, merge_extracted_text_with_ocr
 from .pdf.chunker import PDFChunker
 from ..monitoring.cpu_stats import create_monitor
+from ..schema.document import persisted_metadata_fields
 from ..utils.memory import calculate_safe_workers, log_memory_stats
 from ..utils.formatting import format_duration
 from ..cli.output import timestamp
@@ -386,6 +387,7 @@ class PDFBatchUploader:
                             id=point_id,
                             vector={model_name: embedding},
                             payload={
+                                **persisted_metadata_fields(),
                                 'text': chunk.text,
                                 **chunk.metadata
                             }
@@ -453,6 +455,7 @@ class PDFBatchUploader:
                         id=point_id,
                         vector={model_name: embedding},
                         payload={
+                            **persisted_metadata_fields(),
                             'text': chunk.text,
                             **chunk.metadata
                         }

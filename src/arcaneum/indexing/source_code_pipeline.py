@@ -207,6 +207,7 @@ class SourceCodeIndexer:
             "files_processed": 0,
             "chunks_created": 0,
             "chunks_uploaded": 0,
+            "errors": 0,
         }
 
     def index_directory(
@@ -594,6 +595,9 @@ class SourceCodeIndexer:
                                 file=sys.stdout
                             )
                 except Exception as e:
+                    # Real per-file failure: count it so the prompt-policy
+                    # stamp gate can withhold certification (job-1921 Fix C).
+                    self.stats["errors"] += 1
                     logger.error(f"Error processing {file_path}: {e}")
                     continue
 

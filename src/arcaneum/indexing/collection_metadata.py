@@ -6,6 +6,7 @@ ensuring PDFs, source code, and markdown are not mixed in the same collection.
 """
 
 import logging
+import os
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -181,6 +182,60 @@ def stamp_embedding_prompt_policy(
     return updated
 
 
+class MultiRootPruneError(ValueError):
+    """Raised when --prune is requested on a multi-root collection.
+
+    Pruning is single-directory only: an orphan is an indexed file that no
+    longer exists under the directory being indexed. When the collection's
+    indexed paths span multiple directory trees, a single-directory force run
+    cannot distinguish a genuine orphan from a file that lives under another
+    indexed tree, so pruning would risk deleting still-on-disk files (job-1921).
+    """
+
+
+def _is_under(path: str, directory: str) -> bool:
+    """Return True if ``path`` is the directory itself or lives under it.
+
+    Uses absolute, normalized paths and ``os.path.commonpath`` so trailing
+    slashes and ``..`` segments are handled robustly. Returns False when the
+    paths share no common base (e.g. different drives on Windows) or on any
+    path error.
+    """
+    try:
+        p = os.path.abspath(path)
+        d = os.path.abspath(directory)
+        if p == d:
+            return True
+        return os.path.commonpath([p, d]) == d
+    except (ValueError, TypeError):
+        return False
+
+
+def _orphan_chunks_remain(sync: Any, collection_name: str, file_path: str) -> bool:
+    """Return True if chunks for ``file_path`` still exist after a prune attempt.
+
+    Prefers the sync's state query (``has_chunks_for_file_path``). If the sync
+    does not expose it, conservatively assume chunks remain so a path that could
+    not be verified clean does not get counted as pruned (preserves the stamp's
+    integrity guarantee).
+    """
+    checker = getattr(sync, "has_chunks_for_file_path", None)
+    if checker is None:
+        return True
+    return bool(checker(collection_name, file_path))
+
+
+def _collection_is_multi_root(pre_run_paths: set, indexed_dir: str) -> bool:
+    """True if any indexed path lies outside the directory being indexed.
+
+    A collection is "multi-root" relative to ``indexed_dir`` when its
+    pre-run indexed paths include at least one file not under ``indexed_dir``.
+    Such a collection spans multiple directory trees, so a single-directory
+    force run must not treat the other trees' files as orphans.
+    """
+    return any(not _is_under(p, indexed_dir) for p in pre_run_paths)
+
+
 def prune_orphans_and_stamp(
     qdrant: QdrantClient,
     sync: Any,
@@ -193,6 +248,8 @@ def prune_orphans_and_stamp(
     on_disk_paths: set,
     pre_run_paths: set,
     prune: bool,
+    indexed_dir: Optional[str] = None,
+    covered_paths: Optional[set] = None,
     warn: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Shared post-indexing orphan handling + prompt-policy stamp for force runs.
@@ -206,6 +263,20 @@ def prune_orphans_and_stamp(
     remain). If orphans remain and ``prune`` is off, the stamp is skipped and a
     warning is emitted.
 
+    Multi-root guard (job-1921 Fix A): when ``indexed_dir`` is provided (the
+    single-directory CLIs — markdown, PDF — pass it), the collection is checked
+    for paths outside that directory. Orphan detection compares a collection-
+    wide pre-run set against a directory-scoped on-disk set, so on a collection
+    spanning multiple trees the other trees' files look like orphans. To avoid
+    deleting still-on-disk files:
+      - ``prune`` set + multi-root → raise :class:`MultiRootPruneError`
+        (delete nothing, stamp nothing).
+      - bare force (no prune) + multi-root → skip the stamp and warn; do NOT
+        classify the other directories' files as orphans.
+      - single-root (or ``indexed_dir`` is None) → unchanged behavior.
+    Paths that thread a collection-wide on-disk set (source, dual-index sync)
+    are symmetric and pass ``indexed_dir=None`` to keep their behavior intact.
+
     Args:
         qdrant: Qdrant client.
         sync: MetadataBasedSync (provides delete_chunks_by_file_path).
@@ -218,11 +289,25 @@ def prune_orphans_and_stamp(
         on_disk_paths: Absolute path strings the run covered that exist on disk.
         pre_run_paths: Indexed file_path set captured BEFORE indexing.
         prune: Whether to delete orphan chunks.
+        indexed_dir: Directory being indexed for single-directory CLIs; enables
+            the multi-root guard. None disables it (collection-wide on-disk
+            paths are already symmetric).
+        covered_paths: Absolute path strings the run actually (re)embedded under
+            the current prompt policy. When provided, the stamp is additionally
+            withheld if any still-existing pre-run indexed path was NOT covered
+            (a scope-limited run such as --no-recursive or a depth-limited source
+            reindex leaves stale vectors that must not be certified). None
+            disables the coverage gate (back-compat / callers that always cover
+            the full collection).
         warn: Optional callable(str) used to surface the stale-policy warning.
 
     Returns:
         Dict with keys: orphans (list), orphans_pruned (int),
         orphans_remaining (int), stamped (bool).
+
+    Raises:
+        MultiRootPruneError: If ``prune`` is requested on a multi-root
+            collection (single-directory CLIs only).
     """
     result = {
         "orphans": [],
@@ -233,6 +318,27 @@ def prune_orphans_and_stamp(
 
     # Orphan detection only applies to full-directory force runs.
     if force and file_list is None:
+        # Multi-root guard (markdown/PDF single-directory CLIs pass indexed_dir).
+        if indexed_dir is not None and _collection_is_multi_root(
+            pre_run_paths, indexed_dir
+        ):
+            if prune:
+                raise MultiRootPruneError(
+                    f"Cannot --prune: collection {collection_name} contains "
+                    f"indexed files outside {indexed_dir} (spans multiple "
+                    "directories). Prune is single-directory only."
+                )
+            message = (
+                f"Collection {collection_name} spans multiple directories; "
+                "prompt-policy not certified from a single-directory run."
+            )
+            if warn is not None:
+                warn(message)
+            else:
+                logger.warning(message)
+            # Do not classify other-directory files as orphans; skip stamp.
+            return result
+
         orphans = sorted(set(pre_run_paths) - set(on_disk_paths))
         result["orphans"] = orphans
 
@@ -240,18 +346,63 @@ def prune_orphans_and_stamp(
             pruned = 0
             for orphan in orphans:
                 try:
-                    if sync.delete_chunks_by_file_path(collection_name, orphan) >= 0:
+                    removed = sync.delete_chunks_by_file_path(collection_name, orphan)
+                    # An orphan is resolved when its chunks are gone from the
+                    # collection. A positive delete count proves removal. A
+                    # zero count is ambiguous: it may mean the chunks were
+                    # already cleared earlier in the run (the source pipeline
+                    # deletes a project's whole branch before re-upload, so a
+                    # deleted file's chunks vanish before this per-file prune) OR
+                    # that the delete matched/removed nothing because of an
+                    # error. Resolve the ambiguity by checking actual state so a
+                    # legitimately-clean orphan counts as pruned while a path
+                    # whose chunks still remain is correctly withheld
+                    # (job-1921 Fix B + source reconciliation).
+                    if removed > 0:
                         pruned += 1
-                except Exception as exc:  # pragma: no cover - defensive
+                    elif not _orphan_chunks_remain(sync, collection_name, orphan):
+                        pruned += 1
+                except Exception as exc:
                     logger.warning(f"Failed to prune orphan {orphan}: {exc}")
             result["orphans_pruned"] = pruned
-            result["orphans_remaining"] = 0
+            result["orphans_remaining"] = len(orphans) - pruned
         else:
-            result["orphans_remaining"] = len(orphans)
+            # Without --prune, an orphan only blocks certification if its
+            # chunks are actually still present (stale vectors). Orphans whose
+            # chunks were already cleared earlier in the run (e.g. the source
+            # pipeline's branch-delete before re-upload) leave no stale vectors,
+            # so they must NOT withhold the stamp on an otherwise-clean reindex.
+            result["orphans_remaining"] = sum(
+                1
+                for orphan in orphans
+                if _orphan_chunks_remain(sync, collection_name, orphan)
+            )
 
     orphans_remaining = result["orphans_remaining"]
 
-    if should_stamp_prompt_policy(force, file_list, stats, orphans_remaining):
+    # Coverage gate: a stamp certifies that EVERY vector in the collection was
+    # produced under the current prompt policy. A scope-limited force (e.g.
+    # markdown --no-recursive, a depth-limited source reindex) only re-embeds a
+    # subset, so any still-existing indexed file that this run did NOT cover
+    # retains potentially-stale vectors. Such uncovered files are NOT orphans
+    # (they still exist, so they must not be pruned) but they DO bar
+    # certification. Only enforced when callers supply covered_paths.
+    uncovered_present: list = []
+    if force and file_list is None and covered_paths is not None:
+        still_present = set(pre_run_paths) & set(on_disk_paths)
+        uncovered_present = sorted(still_present - set(covered_paths))
+
+    if uncovered_present:
+        message = (
+            f"{len(uncovered_present)} indexed file(s) were not re-indexed by "
+            "this run (scope-limited); their vectors may use a stale prompt "
+            "policy. Collection not certified. Re-run a full reindex to certify."
+        )
+        if warn is not None:
+            warn(message)
+        else:
+            logger.warning(message)
+    elif should_stamp_prompt_policy(force, file_list, stats, orphans_remaining):
         stamp_embedding_prompt_policy(qdrant, collection_name, collection_type, model)
         result["stamped"] = True
     elif force and file_list is None and orphans_remaining > 0 and not prune:

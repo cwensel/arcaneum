@@ -352,14 +352,38 @@ def index_source_command(
 
         # Orphan-aware prompt-policy stamp gate (C3/C4)
         if force and file_list is None:
-            from ..indexing.collection_metadata import prune_orphans_and_stamp
+            from ..indexing.collection_metadata import (
+                prune_orphans_and_stamp,
+                _is_under,
+            )
 
             on_disk_paths = path_sync._get_indexed_file_paths_set(collection)
             on_disk_paths = {p for p in on_disk_paths if Path(p).exists()}
+            # Coverage for certification. This run only re-embeds git projects
+            # under source_dir, so it covers only still-existing indexed files
+            # within that tree — NOT files indexed from other roots (a code
+            # collection can span multiple source roots). Certifying the whole
+            # collection after reindexing one root would leave the other root's
+            # stale vectors certified, so scope covered_paths to source_dir.
+            # A depth-limited run additionally re-embeds only a subtree, so it
+            # cannot certify even within source_dir: treat it as fully partial.
+            if depth is None:
+                covered_paths = {
+                    p for p in on_disk_paths if _is_under(p, str(source_dir))
+                }
+            else:
+                covered_paths = set()
             gate_stats = {
                 "files": stats.get("files_processed", 0),
-                "errors": 0,
+                # Real per-file failure count from the pipeline; a reindex with
+                # errors must not certify the collection (job-1921 Fix C).
+                "errors": stats.get("errors", 0),
             }
+            prune_warn = (
+                None
+                if output_json
+                else (lambda m: console.print(f"[yellow]⚠ {m}[/yellow]"))
+            )
             prune_orphans_and_stamp(
                 qdrant=qdrant_client,
                 sync=path_sync,
@@ -372,7 +396,8 @@ def index_source_command(
                 on_disk_paths=on_disk_paths,
                 pre_run_paths=pre_run_paths,
                 prune=prune,
-                warn=lambda m: console.print(f"[yellow]⚠ {m}[/yellow]"),
+                covered_paths=covered_paths,
+                warn=prune_warn,
             )
 
         # Post-verify if requested

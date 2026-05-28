@@ -545,6 +545,49 @@ class MetadataBasedSync:
             logger.warning(f"Error deleting chunks by file_path {file_path}: {e}")
             return 0
 
+    def has_chunks_for_file_path(self, collection_name: str, file_path: str) -> bool:
+        """Return True if any chunk for ``file_path`` still exists in the collection.
+
+        Used by the orphan-prune flow to determine, state-based, whether an
+        orphan is genuinely resolved. A delete may legitimately remove nothing
+        (return 0) when the chunks were already cleared earlier in the run (e.g.
+        the source pipeline deletes a project's whole branch before re-uploading,
+        so a deleted file's chunks are gone before the per-file prune runs). In
+        that case the orphan IS resolved even though the per-file delete matched
+        nothing. Querying actual state distinguishes "already clean" from "delete
+        failed / chunks remain" without weakening the stamp's integrity guarantee.
+
+        Args:
+            collection_name: Qdrant collection name.
+            file_path: Absolute file path to check.
+
+        Returns:
+            True if at least one chunk for the path remains, False otherwise.
+            On query error, returns True (conservative: cannot certify cleanliness).
+        """
+        path_filter = Filter(
+            must=[
+                FieldCondition(
+                    key="file_path",
+                    match=MatchValue(value=file_path),
+                )
+            ]
+        )
+        try:
+            points, _ = self.qdrant.scroll(
+                collection_name=collection_name,
+                scroll_filter=path_filter,
+                limit=1,
+                with_payload=False,
+                with_vectors=False,
+            )
+            return len(points) > 0
+        except Exception as e:
+            logger.warning(
+                f"Error checking chunks for file_path {file_path}: {e}"
+            )
+            return True
+
     def find_file_by_content_hash(self, collection_name: str, file_hash: str) -> List[str]:
         """Find all file_paths in collection with given content hash.
 

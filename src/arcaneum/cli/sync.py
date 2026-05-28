@@ -2546,6 +2546,11 @@ def sync_directory_command(
 
             stamp_sync = MetadataBasedSync(qdrant)
             gate_stats = {"files": total_indexed, "errors": files_failed}
+            prune_warn = (
+                None
+                if output_json
+                else (lambda m: console.print(f"[yellow]⚠ {m}[/yellow]"))
+            )
             prune_orphans_and_stamp(
                 qdrant=qdrant,
                 sync=stamp_sync,
@@ -2558,7 +2563,7 @@ def sync_directory_command(
                 on_disk_paths=all_discovered_paths,
                 pre_run_paths=sync_pre_run_paths,
                 prune=False,  # corpus sync uses --parity for orphan cleanup
-                warn=(None if output_json else (lambda m: console.print(f"[yellow]⚠ {m}[/yellow]"))),
+                warn=prune_warn,
             )
 
         # Output results

@@ -5,7 +5,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from arcaneum.embeddings.client import EMBEDDING_MODELS, EmbeddingClient, get_embedding_prompt_policy
+from arcaneum.embeddings.client import (
+    EMBEDDING_MODELS,
+    EmbeddingClient,
+    get_embedding_prompt_policy,
+)
 from arcaneum.search.embedder import SearchEmbedder
 
 

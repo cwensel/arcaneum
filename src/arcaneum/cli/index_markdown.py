@@ -14,7 +14,13 @@ from .utils import create_qdrant_client
 from ..config import DEFAULT_MODELS
 from ..embeddings.model_cache import get_cached_model
 from ..indexing.markdown.pipeline import MarkdownIndexingPipeline
-from ..indexing.collection_metadata import validate_collection_type, CollectionType, get_vector_names
+from ..indexing.collection_metadata import (
+    validate_collection_type,
+    CollectionType,
+    get_vector_names,
+    MultiRootPruneError,
+)
+from .errors import EXIT_INVALID_ARGS
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -270,8 +276,22 @@ def index_markdown_command(
         if force and file_list is None:
             from ..indexing.collection_metadata import prune_orphans_and_stamp
 
-            discovered = pipeline.discovery.discover_files(markdown_dir, recursive=recursive)
-            on_disk_paths = {str(Path(p).absolute()) for p in discovered}
+            # An orphan is an indexed file that no longer exists on disk. Use
+            # existence, not this run's discovery scope, so a scope-limited run
+            # (e.g. --no-recursive) does NOT treat still-existing indexed files
+            # in unscanned subdirectories as orphans and delete them. Mirrors
+            # the source path's symmetric, existence-based on_disk set.
+            on_disk_paths = {p for p in pre_run_paths if Path(p).exists()}
+            # Files this run actually re-embedded (its discovery scope). A
+            # --no-recursive run covers only the top level, so subdirectory
+            # files are NOT covered and must bar certification (stale vectors).
+            covered = pipeline.discovery.discover_files(markdown_dir, recursive=recursive)
+            covered_paths = {str(Path(p).absolute()) for p in covered}
+            prune_warn = (
+                None
+                if output_json
+                else (lambda m: console.print(f"[yellow]⚠ {m}[/yellow]"))
+            )
             prune_orphans_and_stamp(
                 qdrant=qdrant,
                 sync=pipeline.sync,
@@ -284,7 +304,9 @@ def index_markdown_command(
                 on_disk_paths=on_disk_paths,
                 pre_run_paths=pre_run_paths,
                 prune=prune,
-                warn=lambda m: console.print(f"[yellow]⚠ {m}[/yellow]"),
+                indexed_dir=str(Path(markdown_dir).absolute()),
+                covered_paths=covered_paths,
+                warn=prune_warn,
             )
 
         # Post-verify if requested
@@ -337,6 +359,15 @@ def index_markdown_command(
         interaction_logger.finish(error="interrupted by user")
         console.print("\n\nIndexing interrupted by user")
         sys.exit(130)
+    except MultiRootPruneError as e:
+        # A refused --prune on a multi-root collection is an invalid-argument
+        # condition, not an unexpected failure: exit with the invalid-args code.
+        interaction_logger.finish(error=str(e))
+        if output_json:
+            print(json.dumps({"error": str(e)}))
+        else:
+            console.print(f"[red]❌ {e}[/red]")
+        sys.exit(EXIT_INVALID_ARGS)
     except Exception as e:
         interaction_logger.finish(error=str(e))
         if output_json:

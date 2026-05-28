@@ -260,6 +260,54 @@ class TestSourceCodeIndexer:
             f"delete must precede upload, got order: {call_order}"
         )
 
+    def test_per_file_failure_increments_error_count(
+        self, temp_git_repo, mock_qdrant_client, mock_embedder
+    ):
+        """A file whose worker raises must be counted in stats['errors'].
+
+        Regression for job-1921 Fix C: the source stamp gate previously
+        hardcoded errors=0, so a reindex with per-file failures could still
+        stamp. The pipeline must track real failures so the gate can withhold
+        the stamp. We force every submitted future to raise on .result() and
+        assert stats['errors'] reflects the failed files (and nothing was
+        indexed/uploaded).
+        """
+        from concurrent.futures import Future
+
+        class _FakeExecutor:
+            def submit(self, fn, *args, **kwargs):
+                fut = Future()
+                fut.set_exception(RuntimeError("worker boom"))
+                return fut
+
+            def shutdown(self, *a, **k):
+                pass
+
+        indexer_obj = QdrantIndexer(mock_qdrant_client)
+        indexer = SourceCodeIndexer(
+            qdrant_indexer=indexer_obj,
+            embedding_client=mock_embedder,
+            embedding_model_id="test-model",
+        )
+
+        parent_dir = os.path.dirname(temp_git_repo)
+
+        with patch(
+            "arcaneum.indexing.source_code_pipeline.create_process_pool",
+            return_value=_FakeExecutor(),
+        ):
+            stats = indexer.index_directory(
+                input_path=parent_dir,
+                collection_name="test-collection",
+                force=True,
+                show_progress=False,
+            )
+
+        # Every tracked file failed -> errors counted, nothing uploaded.
+        assert stats["errors"] >= 1
+        assert stats["files_processed"] == 0
+        assert stats["chunks_uploaded"] == 0
+
     def test_index_directory_with_depth(self, mock_qdrant_client, mock_embedder):
         """Test indexing with depth limit."""
         indexer_obj = QdrantIndexer(mock_qdrant_client)

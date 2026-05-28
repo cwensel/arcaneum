@@ -182,6 +182,26 @@ def test_corpus_sync_defaults_to_cpu_and_gpu_is_opt_in():
     ]
 
 
+def test_corpus_parity_passes_max_embedding_batch():
+    called = {}
+
+    def fake_parity_command(
+        name, dry_run, verify, repair_metadata, text_workers,
+        max_embedding_batch, timeout, create_missing, confirm, verbose, output_json
+    ):
+        called["name"] = name
+        called["max_embedding_batch"] = max_embedding_batch
+        raise SystemExit(0)
+
+    result = _run(
+        ['corpus', 'parity', 'Docs', '--max-embedding-batch', '4'],
+        **{'arcaneum.cli.sync.parity_command': fake_parity_command},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert called == {"name": "Docs", "max_embedding_batch": 4}
+
+
 def test_index_markdown_qdrant_url_defaults_to_shared_resolution(tmp_path):
     """`arc index markdown` must not force localhost before client creation."""
     called = {}

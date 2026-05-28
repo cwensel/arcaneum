@@ -2433,15 +2433,21 @@ def sync_directory_command(
                         quick_hash = compute_quick_hash(file_path)
                         chunking_version = "code-ast:v1" if corpus_type == "code" else f"{corpus_type}:v1"
 
+                        chunk_texts = [chunk['text'] for chunk in chunks]
+                        model_embeddings = {}
+                        for model in model_list:
+                            model_embeddings[model] = embedding_client.embed(
+                                chunk_texts, model, max_internal_batch=max_embedding_batch
+                            )
+
                         for i, chunk in enumerate(chunks):
-                            # Generate embeddings for all models
                             vectors = {}
                             for model in model_list:
-                                embeddings = embedding_client.embed([chunk['text']], model, max_internal_batch=max_embedding_batch)
-                                if hasattr(embeddings, 'tolist'):
-                                    vectors[model] = embeddings[0].tolist()
+                                embedding = model_embeddings[model][i]
+                                if hasattr(embedding, 'tolist'):
+                                    vectors[model] = embedding.tolist()
                                 else:
-                                    vectors[model] = list(embeddings[0])
+                                    vectors[model] = list(embedding)
 
                             # Build payload
                             payload = {
@@ -3330,6 +3336,7 @@ def _backfill_meili_to_qdrant(
     progress,
     backfill_task,
     text_workers: int = 1,
+    max_embedding_batch: Optional[int] = None,
 ) -> tuple:
     """Backfill files from MeiliSearch to Qdrant.
 
@@ -3349,6 +3356,7 @@ def _backfill_meili_to_qdrant(
         progress: Rich progress instance
         backfill_task: Progress task ID
         text_workers: Number of parallel workers for code chunking (1=sequential)
+        max_embedding_batch: Optional cap passed to the embedding client
 
     Returns:
         Tuple of (files_success, chunks_success, files_failed, skipped_paths)
@@ -3465,17 +3473,25 @@ def _backfill_meili_to_qdrant(
             quick_hash = compute_quick_hash(file_path)
             chunking_version = "code-ast:v1" if corpus_type == "code" else f"{corpus_type}:v1"
 
+            chunk_texts = [
+                chunk.get('text') if isinstance(chunk, dict) else chunk.content
+                for chunk in chunks
+            ]
+            model_embeddings = {}
+            for model in model_list:
+                model_embeddings[model] = embedding_client.embed(
+                    chunk_texts, model, max_internal_batch=max_embedding_batch
+                )
+
             for i, chunk in enumerate(chunks):
-                # Generate embeddings for all models
                 vectors = {}
-                # Get text from chunk - handle both dict (pre-chunked) and Chunk object formats
-                chunk_text = chunk.get('text') if isinstance(chunk, dict) else chunk.content
+                chunk_text = chunk_texts[i]
                 for model in model_list:
-                    embeddings = embedding_client.embed([chunk_text], model)
-                    if hasattr(embeddings, 'tolist'):
-                        vectors[model] = embeddings[0].tolist()
+                    embedding = model_embeddings[model][i]
+                    if hasattr(embedding, 'tolist'):
+                        vectors[model] = embedding.tolist()
                     else:
-                        vectors[model] = list(embeddings[0])
+                        vectors[model] = list(embedding)
 
                 # Build payload
                 payload = {
@@ -3705,6 +3721,7 @@ def _parity_all_corpora(
     verify: bool,
     repair_metadata: bool,
     qdrant_timeout: int,
+    max_embedding_batch: Optional[int],
     create_missing: bool,
     confirm: bool,
     verbose: bool,
@@ -3874,6 +3891,7 @@ def _parity_all_corpora(
                     repair_metadata=repair_metadata,
                     effective_text_workers=effective_text_workers,
                     qdrant_timeout=qdrant_timeout,
+                    max_embedding_batch=max_embedding_batch,
                     create_missing=False,  # Already handled create_missing above
                     verbose=verbose,
                     output_json=output_json,
@@ -3925,6 +3943,7 @@ def _parity_single_corpus(
     repair_metadata: bool,
     effective_text_workers: int,
     qdrant_timeout: int,
+    max_embedding_batch: Optional[int],
     create_missing: bool,
     verbose: bool,
     output_json: bool,
@@ -3939,6 +3958,7 @@ def _parity_single_corpus(
         repair_metadata: If True, update MeiliSearch docs with missing git metadata from Qdrant
         effective_text_workers: Number of parallel workers for code chunking
         qdrant_timeout: Timeout in seconds for Qdrant operations
+        max_embedding_batch: Cap passed to embedding client during Qdrant backfill
         create_missing: If True, create missing MeiliSearch index for qdrant_only corpus
         verbose: If True, show detailed progress
         output_json: If True, output JSON format
@@ -4252,6 +4272,7 @@ def _parity_single_corpus(
                     qdrant, embedding_client, corpus, corpus_type, model_list, model_config,
                     qdrant_backfill_paths, verbose, output_json, progress, backfill_task,
                     text_workers=effective_text_workers,
+                    max_embedding_batch=max_embedding_batch,
                 )
 
         # Repair metadata if requested (for code corpora)
@@ -4337,6 +4358,7 @@ def parity_command(
     verify: bool,
     repair_metadata: bool,
     text_workers: Optional[int],
+    max_embedding_batch: Optional[int],
     qdrant_timeout: int,
     create_missing: bool,
     confirm: bool,
@@ -4360,6 +4382,7 @@ def parity_command(
         verify: If True, verify chunk counts match for files in both systems
         repair_metadata: If True, update MeiliSearch docs with missing git metadata from Qdrant
         text_workers: Number of parallel workers for code chunking (None=auto, 0/1=sequential)
+        max_embedding_batch: Cap for embedding batch size during Qdrant backfill
         qdrant_timeout: Timeout in seconds for Qdrant operations
         create_missing: If True, create missing MeiliSearch indexes for qdrant_only corpora
         confirm: If True, skip confirmation prompt when processing all corpora
@@ -4383,6 +4406,7 @@ def parity_command(
             repair_metadata=repair_metadata,
             effective_text_workers=effective_text_workers,
             qdrant_timeout=qdrant_timeout,
+            max_embedding_batch=max_embedding_batch,
             create_missing=create_missing,
             verbose=verbose,
             output_json=output_json,
@@ -4395,6 +4419,7 @@ def parity_command(
             verify=verify,
             repair_metadata=repair_metadata,
             qdrant_timeout=qdrant_timeout,
+            max_embedding_batch=max_embedding_batch,
             create_missing=create_missing,
             confirm=confirm,
             verbose=verbose,

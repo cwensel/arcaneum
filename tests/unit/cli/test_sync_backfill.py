@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from arcaneum.cli import sync as sync_module
 from arcaneum.cli.sync import (
     _backfill_meili_to_qdrant,
     _fetch_chunks_for_files_bulk,
@@ -94,6 +95,55 @@ def test_backfill_meili_to_qdrant_builds_code_quality_manifest(tmp_path):
     manifest = points[0].payload["quality_manifest"]
     assert manifest["extractor"] == "code"
     assert manifest["source_hash"] == points[0].payload["source_hash"]
+
+
+def test_backfill_meili_to_qdrant_batches_embeddings_per_file(monkeypatch, tmp_path):
+    source = tmp_path / "example.py"
+    source.write_text("print('hello')\n")
+    chunks = [
+        {"text": "first", "metadata": {"method": "line"}},
+        {"text": "second", "metadata": {"method": "line"}},
+        {"text": "third", "metadata": {"method": "line"}},
+    ]
+    monkeypatch.setattr(sync_module, "chunk_code_file", lambda *args, **kwargs: chunks)
+
+    qdrant = MagicMock()
+    embedding_client = MagicMock()
+
+    def embed(texts, model, max_internal_batch=None):
+        base = 10 if model == "model-a" else 20
+        return [[base + i] for i, _ in enumerate(texts)]
+
+    embedding_client.embed.side_effect = embed
+
+    files_success, chunks_success, files_failed, skipped = sync_module._backfill_meili_to_qdrant(
+        qdrant=qdrant,
+        embedding_client=embedding_client,
+        corpus="code-corpus",
+        corpus_type="code",
+        model_list=["model-a", "model-b"],
+        model_config={"chunk_size": 8000, "chunk_overlap": 20},
+        file_paths=[str(source)],
+        verbose=False,
+        output_json=True,
+        progress=MagicMock(),
+        backfill_task=1,
+        text_workers=1,
+        max_embedding_batch=2,
+    )
+
+    assert files_success == 1
+    assert chunks_success == 3
+    assert files_failed == 0
+    assert skipped == []
+    assert embedding_client.embed.call_count == 2
+    for call in embedding_client.embed.call_args_list:
+        assert call.args[0] == ["first", "second", "third"]
+        assert call.kwargs["max_internal_batch"] == 2
+
+    points = qdrant.upsert.call_args.kwargs["points"]
+    assert [point.vector["model-a"] for point in points] == [[10], [11], [12]]
+    assert [point.vector["model-b"] for point in points] == [[20], [21], [22]]
 
 
 def test_repair_meili_version_identifier_stamps_persisted_schema():

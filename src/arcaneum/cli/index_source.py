@@ -17,7 +17,7 @@ from arcaneum.indexing.collection_metadata import (
     validate_collection_type,
     set_collection_metadata,
     get_vector_names,
-    CollectionType
+    CollectionType,
 )
 from arcaneum.embeddings.model_cache import get_cached_model
 from arcaneum.paths import get_models_dir
@@ -44,7 +44,7 @@ def index_source_command(
     verbose: bool,
     debug: bool,
     profile: bool,
-    output_json: bool
+    output_json: bool,
 ):
     """Index source code to Qdrant collection (from RDR-005).
 
@@ -105,7 +105,8 @@ def index_source_command(
 
     # Start interaction logging (RDR-018)
     interaction_logger.start(
-        "index", "code",
+        "index",
+        "code",
         collection=collection,
         path=path,
         from_file=from_file,
@@ -120,6 +121,7 @@ def index_source_command(
 
         if from_file:
             from .utils import read_file_list
+
             # Code indexing doesn't restrict by extension - accepts all source files
             file_list = read_file_list(from_file, allowed_extensions=None)
             if not file_list:
@@ -128,6 +130,7 @@ def index_source_command(
             source_dir = file_list[0].parent
         else:
             from pathlib import Path
+
             source_dir = Path(path)
             if not source_dir.exists():
                 raise ValueError(f"Path does not exist: {path}")
@@ -140,13 +143,14 @@ def index_source_command(
         # Retrieve model from collection metadata if not provided
         if model is None:
             from arcaneum.indexing.collection_metadata import get_collection_metadata
+
             metadata = get_collection_metadata(qdrant_client, collection)
-            if not metadata or 'model' not in metadata:
+            if not metadata or "model" not in metadata:
                 raise ValueError(
                     f"Collection '{collection}' has no model metadata. "
                     "Please create the collection with 'arc collection create --type code' first."
                 )
-            model = metadata['model']
+            model = metadata["model"]
         else:
             # Warn about deprecated --model flag
             console.print(
@@ -161,7 +165,10 @@ def index_source_command(
             if not no_gpu:
                 # GPU mode: auto-tune based on available memory
                 try:
-                    from arcaneum.utils.memory import get_gpu_memory_info, estimate_safe_batch_size_v2
+                    from arcaneum.utils.memory import (
+                        get_gpu_memory_info,
+                        estimate_safe_batch_size_v2,
+                    )
 
                     available_bytes, total_bytes, device_type = get_gpu_memory_info()
 
@@ -171,7 +178,7 @@ def index_source_command(
                             available_gpu_bytes=available_bytes,
                             pipeline_overhead_gb=0.3,
                             safety_factor=0.6,
-                            device_type=device_type
+                            device_type=device_type,
                         )
                     else:
                         embedding_batch_size = 128  # Fallback
@@ -188,9 +195,7 @@ def index_source_command(
         # saving 7-8 seconds on subsequent CLI invocations within the same session
         # CPU is the stable default; --gpu opts into accelerator embedding.
         embedding_client = get_cached_model(
-            model_name=model,
-            cache_dir=str(get_models_dir()),
-            use_gpu=not no_gpu
+            model_name=model, cache_dir=str(get_models_dir()), use_gpu=not no_gpu
         )
 
         # Show configuration at start (if verbose)
@@ -203,14 +208,18 @@ def index_source_command(
             device_info = embedding_client.get_device_info()
             if no_gpu:
                 console.print(f"  Device: CPU (GPU acceleration disabled)")
-            elif device_info['gpu_available']:
-                console.print(f"  [green]Device: {device_info['device'].upper()} (GPU acceleration enabled)[/green]")
+            elif device_info["gpu_available"]:
+                console.print(
+                    f"  [green]Device: {device_info['device'].upper()} (GPU acceleration enabled)[/green]"
+                )
             else:
                 console.print(f"  Device: CPU (GPU not available)")
 
             # Show parallelism configuration
             console.print(f"  File processing: {actual_file_workers} workers")
-            console.print(f"  Embedding: {actual_embedding_workers} workers, batch size {embedding_batch_size}")
+            console.print(
+                f"  Embedding: {actual_embedding_workers} workers, batch size {embedding_batch_size}"
+            )
 
             # Show process priority
             if process_priority != "normal":
@@ -221,29 +230,31 @@ def index_source_command(
         # Check/create collection and determine vector name
         if not qdrant_indexer.collection_exists(collection):
             if verbose:
-                console.print(f"[yellow]Collection '{collection}' does not exist, creating...[/yellow]")
+                console.print(
+                    f"[yellow]Collection '{collection}' does not exist, creating...[/yellow]"
+                )
 
             # Map model names to actual embedding models for NEW collections
             model_map = {
-                'jina-code': 'jinaai/jina-embeddings-v2-base-code',  # 768D - code-specific
-                'jina-v2-code': 'jinaai/jina-embeddings-v2-base-code',  # 768D
-                'jina-v3': 'jinaai/jina-embeddings-v3',  # 1024D - multilingual
-                'jina-base-en': 'jinaai/jina-embeddings-v2-base-en',  # 768D - English-only
-                'stella': 'dunzhang/stella_en_1.5B_v5',     # 1024D
-                'bge': 'BAAI/bge-large-en-v1.5',            # 1024D
+                "jina-code": "jinaai/jina-embeddings-v2-base-code",  # 768D - code-specific
+                "jina-v2-code": "jinaai/jina-embeddings-v2-base-code",  # 768D
+                "jina-v3": "jinaai/jina-embeddings-v3",  # 1024D - multilingual
+                "jina-base-en": "jinaai/jina-embeddings-v2-base-en",  # 768D - English-only
+                "stella": "dunzhang/stella_en_1.5B_v5",  # 1024D
+                "bge": "BAAI/bge-large-en-v1.5",  # 1024D
             }
-            embedding_model = model_map.get(model, 'jinaai/jina-embeddings-v2-base-code')
+            embedding_model = model_map.get(model, "jinaai/jina-embeddings-v2-base-code")
 
             # Determine vector size
             vector_sizes = {
-                'sentence-transformers/all-MiniLM-L6-v2': 384,
-                'BAAI/bge-small-en-v1.5': 384,
-                'BAAI/bge-base-en-v1.5': 768,
-                'BAAI/bge-large-en-v1.5': 1024,
-                'jinaai/jina-embeddings-v2-base-code': 768,
-                'jinaai/jina-embeddings-v2-base-en': 768,
-                'jinaai/jina-embeddings-v3': 1024,
-                'dunzhang/stella_en_1.5B_v5': 1024,
+                "sentence-transformers/all-MiniLM-L6-v2": 384,
+                "BAAI/bge-small-en-v1.5": 384,
+                "BAAI/bge-base-en-v1.5": 768,
+                "BAAI/bge-large-en-v1.5": 1024,
+                "jinaai/jina-embeddings-v2-base-code": 768,
+                "jinaai/jina-embeddings-v2-base-en": 768,
+                "jinaai/jina-embeddings-v3": 1024,
+                "dunzhang/stella_en_1.5B_v5": 1024,
             }
             vector_size = vector_sizes.get(embedding_model, 768)
 
@@ -254,11 +265,13 @@ def index_source_command(
                 client=qdrant_client,
                 collection_name=collection,
                 collection_type=CollectionType.CODE,
-                model=embedding_model
+                model=embedding_model,
             )
             vector_name = model  # Use specified model for new collection
             if verbose:
-                console.print(f"[green]✓ Collection created (type: code, vector: {vector_name})[/green]")
+                console.print(
+                    f"[green]✓ Collection created (type: code, vector: {vector_name})[/green]"
+                )
         else:
             # Validate collection type
             validate_collection_type(qdrant_client, collection, CollectionType.CODE)
@@ -276,23 +289,25 @@ def index_source_command(
                 # Map vector name back to actual embedding model
                 # Must match EMBEDDING_MODELS dimensions in embeddings/client.py
                 vector_to_model_map = {
-                    'bge': 'BAAI/bge-large-en-v1.5',        # 1024D
-                    'stella': 'dunzhang/stella_en_1.5B_v5',  # 1024D
-                    'jina-code': 'jinaai/jina-embeddings-v2-base-code',  # 768D - code-specific
-                    'jina': 'jinaai/jina-embeddings-v2-base-code',  # 768D
-                    'jina-v3': 'jinaai/jina-embeddings-v3',  # 1024D - multilingual
-                    'jina-base-en': 'jinaai/jina-embeddings-v2-base-en',  # 768D - English-only
-                    'jina-code-0.5b': 'jinaai/jina-code-embeddings-0.5b',  # 896D - SOTA code model
-                    'jina-code-1.5b': 'jinaai/jina-code-embeddings-1.5b',  # 1536D - SOTA code model
+                    "bge": "BAAI/bge-large-en-v1.5",  # 1024D
+                    "stella": "dunzhang/stella_en_1.5B_v5",  # 1024D
+                    "jina-code": "jinaai/jina-embeddings-v2-base-code",  # 768D - code-specific
+                    "jina": "jinaai/jina-embeddings-v2-base-code",  # 768D
+                    "jina-v3": "jinaai/jina-embeddings-v3",  # 1024D - multilingual
+                    "jina-base-en": "jinaai/jina-embeddings-v2-base-en",  # 768D - English-only
+                    "jina-code-0.5b": "jinaai/jina-code-embeddings-0.5b",  # 896D - SOTA code model
+                    "jina-code-1.5b": "jinaai/jina-code-embeddings-1.5b",  # 1536D - SOTA code model
                 }
-                embedding_model = vector_to_model_map.get(vector_name, 'jinaai/jina-embeddings-v2-base-code')
+                embedding_model = vector_to_model_map.get(
+                    vector_name, "jinaai/jina-embeddings-v2-base-code"
+                )
                 if verbose:
                     console.print(f"[cyan]Auto-detected embedding model:[/cyan] {embedding_model}")
             else:
                 vector_name = model
                 model_map = {
-                    'jina-code': 'sentence-transformers/all-MiniLM-L6-v2',
-                    'bge': 'BAAI/bge-large-en-v1.5',
+                    "jina-code": "sentence-transformers/all-MiniLM-L6-v2",
+                    "bge": "BAAI/bge-large-en-v1.5",
                 }
                 embedding_model = model_map.get(model, model)
                 console.print(f"[green]✓ Collection '{collection}' exists (type: code)[/green]")
@@ -308,7 +323,7 @@ def index_source_command(
             parallel_workers=actual_file_workers,  # File processing parallelism
             embedding_workers=actual_embedding_workers,  # Embedding generation parallelism
             embedding_batch_size=embedding_batch_size,  # Embedding batch size
-            streaming=streaming  # Stream embeddings to Qdrant immediately
+            streaming=streaming,  # Stream embeddings to Qdrant immediately
         )
 
         # Pre-verify if requested - find incomplete items to include in indexing
@@ -327,11 +342,14 @@ def index_source_command(
                 if incomplete_identifiers:
                     repair_targets = set(incomplete_identifiers)
                     if verbose or not output_json:
-                        console.print(f"[yellow]Found {len(repair_targets)} incomplete items to repair: {list(repair_targets)}[/yellow]\n")
+                        console.print(
+                            f"[yellow]Found {len(repair_targets)} incomplete items to repair: {list(repair_targets)}[/yellow]\n"
+                        )
 
         # Capture indexed paths BEFORE indexing so we can detect orphans
         # (indexed files no longer on disk) on a force, full-directory run.
         from arcaneum.indexing.common.sync import MetadataBasedSync
+
         path_sync = MetadataBasedSync(qdrant_client)
         pre_run_paths = set()
         if force and file_list is None:
@@ -347,32 +365,22 @@ def index_source_command(
             verbose=verbose,
             file_list=file_list,
             profile=profile,
-            repair_targets=repair_targets  # Projects to force re-index even if commit unchanged
+            repair_targets=repair_targets,  # Projects to force re-index even if commit unchanged
         )
 
         # Orphan-aware prompt-policy stamp gate (C3/C4)
         if force and file_list is None:
             from ..indexing.collection_metadata import (
                 prune_orphans_and_stamp,
-                _is_under,
             )
 
             on_disk_paths = path_sync._get_indexed_file_paths_set(collection)
             on_disk_paths = {p for p in on_disk_paths if Path(p).exists()}
-            # Coverage for certification. This run only re-embeds git projects
-            # under source_dir, so it covers only still-existing indexed files
-            # within that tree — NOT files indexed from other roots (a code
-            # collection can span multiple source roots). Certifying the whole
-            # collection after reindexing one root would leave the other root's
-            # stale vectors certified, so scope covered_paths to source_dir.
-            # A depth-limited run additionally re-embeds only a subtree, so it
-            # cannot certify even within source_dir: treat it as fully partial.
-            if depth is None:
-                covered_paths = {
-                    p for p in on_disk_paths if _is_under(p, str(source_dir))
-                }
-            else:
-                covered_paths = set()
+            # Coverage for certification is the set of files this run actually
+            # processed. Existence under source_dir is not enough: a still-on-
+            # disk repo may be undiscovered, metadata extraction may fail, or a
+            # collection may span roots while this run only reindexed one.
+            covered_paths = set(stats.get("covered_paths", []))
             gate_stats = {
                 "files": stats.get("files_processed", 0),
                 # Real per-file failure count from the pipeline; a reindex with
@@ -380,9 +388,7 @@ def index_source_command(
                 "errors": stats.get("errors", 0),
             }
             prune_warn = (
-                None
-                if output_json
-                else (lambda m: console.print(f"[yellow]⚠ {m}[/yellow]"))
+                None if output_json else (lambda m: console.print(f"[yellow]⚠ {m}[/yellow]"))
             )
             prune_orphans_and_stamp(
                 qdrant=qdrant_client,
@@ -410,11 +416,15 @@ def index_source_command(
 
             if verification_result.is_healthy:
                 if verbose or not output_json:
-                    console.print(f"[green]Collection verified - all {verification_result.complete_items} items complete[/green]")
+                    console.print(
+                        f"[green]Collection verified - all {verification_result.complete_items} items complete[/green]"
+                    )
             else:
                 if verbose or not output_json:
                     still_incomplete = verification_result.get_items_needing_repair()
-                    console.print(f"[yellow]Warning: {len(still_incomplete)} items still incomplete after indexing[/yellow]")
+                    console.print(
+                        f"[yellow]Warning: {len(still_incomplete)} items still incomplete after indexing[/yellow]"
+                    )
                     for item in still_incomplete[:5]:
                         console.print(f"  [yellow]{item}[/yellow]")
 
@@ -430,13 +440,14 @@ def index_source_command(
         # Output
         if output_json:
             import json
+
             print(json.dumps(stats, indent=2))
 
         # Log successful operation (RDR-018)
         interaction_logger.finish(
-            result_count=stats.get('projects_processed', 0),
-            files=stats.get('files_processed', 0),
-            chunks=stats.get('chunks_uploaded', 0),
+            result_count=stats.get("projects_processed", 0),
+            files=stats.get("files_processed", 0),
+            chunks=stats.get("chunks_uploaded", 0),
         )
 
         sys.exit(0)
@@ -453,5 +464,6 @@ def index_source_command(
             console.print(f"\n[bold red]Error:[/bold red] {e}")
         else:
             import json
+
             print(json.dumps({"error": str(e)}, indent=2))
         sys.exit(1)

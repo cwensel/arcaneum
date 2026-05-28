@@ -8,8 +8,12 @@ from unittest.mock import Mock, MagicMock, patch
 import pytest
 import git
 
-from arcaneum.indexing.source_code_pipeline import SourceCodeIndexer
+from arcaneum.indexing.source_code_pipeline import (
+    SourceCodeIndexer,
+    _process_file_worker,
+)
 from arcaneum.indexing.qdrant_indexer import QdrantIndexer
+from arcaneum.indexing.types import GitMetadata
 
 
 @pytest.fixture
@@ -53,19 +57,19 @@ class Calculator:
             raise ValueError("Division by zero")
         return x / y
 ''',
-        "tests.py": '''
+        "tests.py": """
 def test_add():
     assert add(2, 3) == 5
 
 def test_multiply():
     calc = Calculator()
     assert calc.multiply(4, 5) == 20
-'''
+""",
     }
 
     for filename, content in files.items():
         filepath = os.path.join(temp_dir, filename)
-        with open(filepath, 'w') as f:
+        with open(filepath, "w") as f:
             f.write(content)
         repo.index.add([filename])
 
@@ -97,11 +101,13 @@ def mock_embedder():
     """
     client = Mock()
     client.use_gpu = False
-    client.get_device_info = Mock(return_value={
-        'gpu_enabled': False,
-        'gpu_available': False,
-        'device': 'cpu',
-    })
+    client.get_device_info = Mock(
+        return_value={
+            "gpu_enabled": False,
+            "gpu_available": False,
+            "device": "cpu",
+        }
+    )
 
     def fake_embed_parallel(texts, model_name, on_batch_complete=None, batch_size=None, **kwargs):
         embeddings = [[0.1] * 384] * len(texts)
@@ -125,7 +131,7 @@ class TestSourceCodeIndexer:
             qdrant_indexer=indexer_obj,
             embedding_client=mock_embedder,
             embedding_model_id="test-model",
-            chunk_size=400
+            chunk_size=400,
         )
 
         assert indexer.qdrant_indexer == indexer_obj
@@ -139,14 +145,12 @@ class TestSourceCodeIndexer:
         indexer = SourceCodeIndexer(
             qdrant_indexer=indexer_obj,
             embedding_client=mock_embedder,
-            embedding_model_id="test-model"
+            embedding_model_id="test-model",
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
             stats = indexer.index_directory(
-                input_path=temp_dir,
-                collection_name="test-collection",
-                show_progress=False
+                input_path=temp_dir, collection_name="test-collection", show_progress=False
             )
 
             assert stats["projects_discovered"] == 0
@@ -159,15 +163,13 @@ class TestSourceCodeIndexer:
         indexer = SourceCodeIndexer(
             qdrant_indexer=indexer_obj,
             embedding_client=mock_embedder,
-            embedding_model_id="test-model"
+            embedding_model_id="test-model",
         )
 
         parent_dir = os.path.dirname(temp_git_repo)
 
         stats = indexer.index_directory(
-            input_path=parent_dir,
-            collection_name="test-collection",
-            show_progress=False
+            input_path=parent_dir, collection_name="test-collection", show_progress=False
         )
 
         # Should discover and index the repository
@@ -175,6 +177,11 @@ class TestSourceCodeIndexer:
         assert stats["projects_indexed"] == 1
         assert stats["files_processed"] >= 3  # main.py, utils.py, tests.py
         assert stats["chunks_created"] > 0
+        assert set(stats["covered_paths"]) >= {
+            os.path.join(temp_git_repo, "main.py"),
+            os.path.join(temp_git_repo, "utils.py"),
+            os.path.join(temp_git_repo, "tests.py"),
+        }
 
         # Should have called upsert
         assert mock_qdrant_client.upsert.called
@@ -186,7 +193,7 @@ class TestSourceCodeIndexer:
         indexer = SourceCodeIndexer(
             qdrant_indexer=indexer_obj,
             embedding_client=mock_embedder,
-            embedding_model_id="test-model"
+            embedding_model_id="test-model",
         )
 
         parent_dir = os.path.dirname(temp_git_repo)
@@ -195,7 +202,7 @@ class TestSourceCodeIndexer:
             input_path=parent_dir,
             collection_name="test-collection",
             force=True,
-            show_progress=False
+            show_progress=False,
         )
 
         # Should index even if already indexed (force bypasses skip logic)
@@ -220,19 +227,17 @@ class TestSourceCodeIndexer:
 
         # Record call order so we can assert delete precedes upload.
         call_order = []
-        mock_qdrant_client.delete.side_effect = (
-            lambda *a, **k: call_order.append("delete") or Mock(operation_id="op")
+        mock_qdrant_client.delete.side_effect = lambda *a, **k: (
+            call_order.append("delete") or Mock(operation_id="op")
         )
-        mock_qdrant_client.upsert.side_effect = (
-            lambda *a, **k: call_order.append("upsert")
-        )
+        mock_qdrant_client.upsert.side_effect = lambda *a, **k: call_order.append("upsert")
 
         indexer_obj = QdrantIndexer(mock_qdrant_client)
 
         indexer = SourceCodeIndexer(
             qdrant_indexer=indexer_obj,
             embedding_client=mock_embedder,
-            embedding_model_id="test-model"
+            embedding_model_id="test-model",
         )
 
         parent_dir = os.path.dirname(temp_git_repo)
@@ -241,7 +246,7 @@ class TestSourceCodeIndexer:
             input_path=parent_dir,
             collection_name="test-collection",
             force=True,
-            show_progress=False
+            show_progress=False,
         )
 
         assert stats["projects_indexed"] == 1
@@ -306,7 +311,29 @@ class TestSourceCodeIndexer:
         # Every tracked file failed -> errors counted, nothing uploaded.
         assert stats["errors"] >= 1
         assert stats["files_processed"] == 0
+        assert stats["covered_paths"] == []
         assert stats["chunks_uploaded"] == 0
+
+    def test_process_file_worker_propagates_read_failures(self, tmp_path):
+        """Worker read/chunk failures must count as indexing errors upstream."""
+        missing_file = tmp_path / "missing.py"
+        metadata = GitMetadata(
+            project_root=str(tmp_path),
+            commit_hash="a" * 40,
+            branch="main",
+            project_name="repo",
+            remote_url=None,
+        )
+
+        with pytest.raises(FileNotFoundError):
+            _process_file_worker(
+                str(missing_file),
+                "repo#main",
+                metadata,
+                "test-model",
+                400,
+                20,
+            )
 
     def test_index_directory_with_depth(self, mock_qdrant_client, mock_embedder):
         """Test indexing with depth limit."""
@@ -315,7 +342,7 @@ class TestSourceCodeIndexer:
         indexer = SourceCodeIndexer(
             qdrant_indexer=indexer_obj,
             embedding_client=mock_embedder,
-            embedding_model_id="test-model"
+            embedding_model_id="test-model",
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -328,23 +355,22 @@ class TestSourceCodeIndexer:
 
             # Add a file and commit
             file1 = os.path.join(repo1, "test.py")
-            with open(file1, 'w') as f:
+            with open(file1, "w") as f:
                 f.write("print('test')")
             git_repo1.index.add(["test.py"])
             git_repo1.index.commit("Initial")
 
             # Index with depth=0
             stats = indexer.index_directory(
-                input_path=temp_dir,
-                collection_name="test-collection",
-                depth=0,
-                show_progress=False
+                input_path=temp_dir, collection_name="test-collection", depth=0, show_progress=False
             )
 
             # Should find repo at depth 0
             assert stats["projects_discovered"] == 1
 
-    def test_incremental_sync_skips_unchanged(self, temp_git_repo, mock_qdrant_client, mock_embedder):
+    def test_incremental_sync_skips_unchanged(
+        self, temp_git_repo, mock_qdrant_client, mock_embedder
+    ):
         """Test that unchanged projects are skipped."""
         # Mock that project is already indexed with same commit
         repo = git.Repo(temp_git_repo)
@@ -354,7 +380,7 @@ class TestSourceCodeIndexer:
         mock_point = Mock()
         mock_point.payload = {
             "git_project_identifier": f"test-repo#{current_branch}",
-            "git_commit_hash": current_commit
+            "git_commit_hash": current_commit,
         }
         mock_qdrant_client.scroll.return_value = ([mock_point], None)
 
@@ -363,15 +389,13 @@ class TestSourceCodeIndexer:
         indexer = SourceCodeIndexer(
             qdrant_indexer=indexer_obj,
             embedding_client=mock_embedder,
-            embedding_model_id="test-model"
+            embedding_model_id="test-model",
         )
 
         parent_dir = os.path.dirname(temp_git_repo)
 
         stats = indexer.index_directory(
-            input_path=parent_dir,
-            collection_name="test-collection",
-            show_progress=False
+            input_path=parent_dir, collection_name="test-collection", show_progress=False
         )
 
         # Should discover but skip (unchanged)
@@ -379,7 +403,9 @@ class TestSourceCodeIndexer:
         assert stats["projects_skipped"] == 1
         assert stats["projects_indexed"] == 0
 
-    def test_incremental_sync_reindexes_changed(self, temp_git_repo, mock_qdrant_client, mock_embedder):
+    def test_incremental_sync_reindexes_changed(
+        self, temp_git_repo, mock_qdrant_client, mock_embedder
+    ):
         """Test that changed projects are re-indexed."""
         # Mock that project is indexed with different commit
         repo = git.Repo(temp_git_repo)
@@ -388,7 +414,7 @@ class TestSourceCodeIndexer:
         mock_point = Mock()
         mock_point.payload = {
             "git_project_identifier": f"test-repo#{current_branch}",
-            "git_commit_hash": "a" * 40  # Different commit
+            "git_commit_hash": "a" * 40,  # Different commit
         }
         mock_qdrant_client.scroll.return_value = ([mock_point], None)
 
@@ -397,15 +423,13 @@ class TestSourceCodeIndexer:
         indexer = SourceCodeIndexer(
             qdrant_indexer=indexer_obj,
             embedding_client=mock_embedder,
-            embedding_model_id="test-model"
+            embedding_model_id="test-model",
         )
 
         parent_dir = os.path.dirname(temp_git_repo)
 
         stats = indexer.index_directory(
-            input_path=parent_dir,
-            collection_name="test-collection",
-            show_progress=False
+            input_path=parent_dir, collection_name="test-collection", show_progress=False
         )
 
         # Should discover and re-index (commit changed)
@@ -423,12 +447,13 @@ class TestSourceCodeIndexer:
         indexer = SourceCodeIndexer(
             qdrant_indexer=indexer_obj,
             embedding_client=mock_embedder,
-            embedding_model_id="test-model"
+            embedding_model_id="test-model",
         )
 
         # Modify stats
         indexer.stats["projects_indexed"] = 5
         indexer.stats["files_processed"] = 10
+        indexer.stats["covered_paths"] = ["/repo/main.py"]
 
         # Reset
         indexer.reset_stats()
@@ -436,3 +461,4 @@ class TestSourceCodeIndexer:
         # Should be zero
         assert indexer.stats["projects_indexed"] == 0
         assert indexer.stats["files_processed"] == 0
+        assert indexer.stats["covered_paths"] == []

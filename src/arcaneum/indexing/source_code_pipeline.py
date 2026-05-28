@@ -39,7 +39,7 @@ def _process_file_worker(
     git_metadata: GitMetadata,
     embedding_model_id: str,
     chunk_size: int,
-    chunk_overlap: int
+    chunk_overlap: int,
 ) -> List[CodeChunk]:
     """Process a single file: read, chunk, create metadata.
 
@@ -57,9 +57,9 @@ def _process_file_worker(
         List of CodeChunk objects with metadata (no embeddings yet)
     """
     # Set low priority UNLESS disabled by --not-nice flag (arcaneum-mql4)
-    if os.environ.get('ARCANEUM_DISABLE_WORKER_NICE') != '1':
+    if os.environ.get("ARCANEUM_DISABLE_WORKER_NICE") != "1":
         try:
-            if hasattr(os, 'nice'):
+            if hasattr(os, "nice"):
                 os.nice(10)  # Background priority for code processing workers
         except Exception:
             pass  # Ignore if we can't set priority
@@ -69,7 +69,7 @@ def _process_file_worker(
         chunker = ASTCodeChunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
 
         # Read file
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             code = f.read()
 
         # Chunk with AST
@@ -82,7 +82,7 @@ def _process_file_worker(
         filename = os.path.basename(file_path)
         file_ext = Path(file_path).suffix
         language = chunker.detect_language(file_path) or "text"
-        source_hash = xxhash.xxh3_128(code.encode('utf-8')).hexdigest()
+        source_hash = xxhash.xxh3_128(code.encode("utf-8")).hexdigest()
 
         code_chunks = []
         for idx, chunk in enumerate(chunks):
@@ -93,7 +93,7 @@ def _process_file_worker(
                 file_extension=file_ext,
                 programming_language=language,
                 file_size=len(code),
-                line_count=code.count('\n') + 1,
+                line_count=code.count("\n") + 1,
                 chunk_index=idx,
                 chunk_count=len(chunks),
                 source_hash=source_hash,
@@ -104,22 +104,18 @@ def _process_file_worker(
                 git_commit_hash=git_metadata.commit_hash,
                 git_remote_url=git_metadata.remote_url,
                 ast_chunked=(chunk.method != "line_based"),
-                embedding_model=embedding_model_id
+                embedding_model=embedding_model_id,
             )
 
-            code_chunk = CodeChunk(
-                content=chunk.content,
-                metadata=metadata
-            )
+            code_chunk = CodeChunk(content=chunk.content, metadata=metadata)
 
             code_chunks.append(code_chunk)
 
         return code_chunks
 
     except Exception as e:
-        # Log error and return empty list
         logger.error(f"Error processing {file_path}: {e}")
-        return []
+        raise
 
 
 class SourceCodeIndexer:
@@ -150,7 +146,7 @@ class SourceCodeIndexer:
         parallel_workers: Optional[int] = None,
         embedding_workers: int = 4,
         embedding_batch_size: int = 128,
-        streaming: bool = True
+        streaming: bool = True,
     ):
         """Initialize source code indexer.
 
@@ -193,9 +189,24 @@ class SourceCodeIndexer:
 
         # Default extensions (15+ languages from RDR-005)
         self.extensions = extensions or [
-            ".py", ".java", ".js", ".jsx", ".ts", ".tsx",
-            ".cs", ".go", ".rs", ".c", ".h", ".cpp", ".hpp",
-            ".php", ".rb", ".kt", ".scala", ".swift"
+            ".py",
+            ".java",
+            ".js",
+            ".jsx",
+            ".ts",
+            ".tsx",
+            ".cs",
+            ".go",
+            ".rs",
+            ".c",
+            ".h",
+            ".cpp",
+            ".hpp",
+            ".php",
+            ".rb",
+            ".kt",
+            ".scala",
+            ".swift",
         ]
 
         # Statistics
@@ -205,6 +216,7 @@ class SourceCodeIndexer:
             "projects_skipped": 0,
             "projects_empty": 0,
             "files_processed": 0,
+            "covered_paths": [],
             "chunks_created": 0,
             "chunks_uploaded": 0,
             "errors": 0,
@@ -220,7 +232,7 @@ class SourceCodeIndexer:
         verbose: bool = False,
         file_list: Optional[List] = None,
         profile: bool = False,
-        repair_targets: Optional[Set[str]] = None
+        repair_targets: Optional[Set[str]] = None,
     ) -> dict:
         """Index all git repositories in directory with metadata-based sync.
 
@@ -278,10 +290,12 @@ class SourceCodeIndexer:
 
         # Show device info (GPU is opt-in; CPU is the stable default)
         device_info = self.embedding_client.get_device_info()
-        if not device_info['gpu_enabled']:
+        if not device_info["gpu_enabled"]:
             console.print(f"  Device: CPU (GPU acceleration disabled)")
-        elif device_info['gpu_available']:
-            console.print(f"  [green]Device: {device_info['device'].upper()} (GPU acceleration enabled)[/green]")
+        elif device_info["gpu_available"]:
+            console.print(
+                f"  [green]Device: {device_info['device'].upper()} (GPU acceleration enabled)[/green]"
+            )
         else:
             console.print(f"  Device: CPU (GPU not available)")
 
@@ -291,7 +305,7 @@ class SourceCodeIndexer:
         if force:
             console.print(f"  Mode: Force reindex")
         # Check if offline mode set via environment
-        if os.environ.get('HF_HUB_OFFLINE') == '1':
+        if os.environ.get("HF_HUB_OFFLINE") == "1":
             console.print(f"  [yellow]Mode: Offline (HF_HUB_OFFLINE=1)[/yellow]")
         console.print()
 
@@ -305,7 +319,9 @@ class SourceCodeIndexer:
                 console.print(f"{timestamp()} Found {len(indexed_projects)} indexed combinations\n")
         else:
             if verbose:
-                console.print(f"{timestamp()} [yellow]Force mode: bypassing incremental sync[/yellow]\n")
+                console.print(
+                    f"{timestamp()} [yellow]Force mode: bypassing incremental sync[/yellow]\n"
+                )
             indexed_projects = {}
 
         # Step 2: Discover git projects
@@ -343,9 +359,7 @@ class SourceCodeIndexer:
 
             # Check if needs indexing (query Qdrant metadata)
             needs_indexing = self.sync.should_reindex_project(
-                collection_name,
-                identifier,
-                git_metadata.commit_hash
+                collection_name, identifier, git_metadata.commit_hash
             )
 
             # Skip if already indexed and not forcing/repairing
@@ -413,7 +427,9 @@ class SourceCodeIndexer:
         if not verbose:
             console.print(f"[INFO] Indexing {len(projects_to_index)} projects...")
         else:
-            console.print(f"{timestamp()} [cyan]Indexing {len(projects_to_index)} project(s)...[/cyan]\n")
+            console.print(
+                f"{timestamp()} [cyan]Indexing {len(projects_to_index)} project(s)...[/cyan]\n"
+            )
 
         # Process projects with appropriate output level
         total_projects = len(projects_to_index)
@@ -421,8 +437,11 @@ class SourceCodeIndexer:
         for idx, (project_root, git_metadata, identifier) in enumerate(projects_to_index, 1):
             if not verbose:
                 # Progress with percentage (RDR-006 format)
-                percentage = (idx / total_projects * 100)
-                console.print(f"[INFO] Processing {idx}/{total_projects} ({percentage:.0f}%) {identifier}", end="")
+                percentage = idx / total_projects * 100
+                console.print(
+                    f"[INFO] Processing {idx}/{total_projects} ({percentage:.0f}%) {identifier}",
+                    end="",
+                )
 
             self._index_project(
                 project_root,
@@ -432,7 +451,7 @@ class SourceCodeIndexer:
                 verbose=verbose,
                 project_num=idx,
                 total_projects=total_projects,
-                profiler=profiler
+                profiler=profiler,
             )
 
             # Stats are now shown in _index_project final line
@@ -447,9 +466,13 @@ class SourceCodeIndexer:
             console.print(f"\nStatistics:")
             console.print(f"  Projects discovered: {self.stats['projects_discovered']}")
             console.print(f"  Projects indexed: {self.stats['projects_indexed']}")
-            console.print(f"  Projects skipped: {self.stats['projects_skipped']} (already up to date)")
-            if self.stats['projects_empty'] > 0:
-                console.print(f"  Projects empty: {self.stats['projects_empty']} (no indexable files)")
+            console.print(
+                f"  Projects skipped: {self.stats['projects_skipped']} (already up to date)"
+            )
+            if self.stats["projects_empty"] > 0:
+                console.print(
+                    f"  Projects empty: {self.stats['projects_empty']} (no indexable files)"
+                )
             console.print(f"  Files processed: {self.stats['files_processed']}")
             console.print(f"  Chunks created: {self.stats['chunks_created']}")
             console.print(f"  Chunks uploaded: {self.stats['chunks_uploaded']}")
@@ -458,7 +481,9 @@ class SourceCodeIndexer:
             if cpu_monitor:
                 console.print(f"\nPerformance:")
                 stats = cpu_monitor.get_stats()
-                console.print(f"  CPU usage: {stats['cpu_percent']:.1f}% total ({stats['cpu_percent_per_core']:.1f}% per core)")
+                console.print(
+                    f"  CPU usage: {stats['cpu_percent']:.1f}% total ({stats['cpu_percent_per_core']:.1f}% per core)"
+                )
                 console.print(f"  Threads: {stats['num_threads']} | Cores: {stats['num_cores']}")
                 console.print(f"  Elapsed: {stats['elapsed_time']:.1f}s")
 
@@ -472,7 +497,7 @@ class SourceCodeIndexer:
             msg += f"{self.stats['chunks_uploaded']} chunks"
 
             # Add context if projects were processed but empty
-            if self.stats['projects_empty'] > 0:
+            if self.stats["projects_empty"] > 0:
                 msg += f" ({self.stats['projects_empty']} projects had no indexable files)"
 
             console.print(msg)
@@ -496,7 +521,7 @@ class SourceCodeIndexer:
         verbose: bool = False,
         project_num: int = 1,
         total_projects: int = 1,
-        profiler: Optional[PipelineProfiler] = None
+        profiler: Optional[PipelineProfiler] = None,
     ):
         """Index a single project.
 
@@ -526,7 +551,7 @@ class SourceCodeIndexer:
                     f"\r[{project_num}/{total_projects}] {identifier}: "
                     f"⊘ (no indexable files)" + " " * 30,
                     flush=True,
-                    file=sys.stdout
+                    file=sys.stdout,
                 )
                 print()
             return
@@ -542,15 +567,18 @@ class SourceCodeIndexer:
         # Default: cpu_count // 2 for responsive laptop
         all_chunks = []
         files_processed = 0
+        covered_paths = []
 
         # Show initial progress
         if not verbose:
             print(
                 f"\r[{project_num}/{total_projects}] {identifier}: "
-                f"→ processing {total_files} files (parallel, {self.parallel_workers} workers)" + " " * 20,
+                f"→ processing {total_files} files (parallel, {self.parallel_workers} workers)"
+                + " "
+                * 20,
                 end="",
                 flush=True,
-                file=sys.stdout
+                file=sys.stdout,
             )
 
         # Track file processing time for profiler
@@ -570,7 +598,7 @@ class SourceCodeIndexer:
                     git_metadata,
                     self.embedding_model_id,
                     self.chunk_size,
-                    self.chunker.chunk_overlap  # Pass chunk_overlap from initialized chunker
+                    self.chunker.chunk_overlap,  # Pass chunk_overlap from initialized chunker
                 )
                 future_to_file[future] = file_path
 
@@ -581,6 +609,7 @@ class SourceCodeIndexer:
 
                 try:
                     file_chunks = future.result()
+                    covered_paths.append(str(Path(file_path).absolute()))
                     if file_chunks:
                         all_chunks.extend(file_chunks)
                         files_processed += 1
@@ -592,7 +621,7 @@ class SourceCodeIndexer:
                                 f"{files_processed}/{total_files} files ({filename}: {len(file_chunks)})    ",
                                 end="",
                                 flush=True,
-                                file=sys.stdout
+                                file=sys.stdout,
                             )
                 except Exception as e:
                     # Real per-file failure: count it so the prompt-policy
@@ -613,9 +642,12 @@ class SourceCodeIndexer:
 
         # Record file processing stage timing
         if profiler:
-            profiler.record_stage("file_processing", time.time() - file_processing_start, files_processed)
+            profiler.record_stage(
+                "file_processing", time.time() - file_processing_start, files_processed
+            )
 
         self.stats["files_processed"] += files_processed
+        self.stats["covered_paths"].extend(covered_paths)
 
         # Show chunking status in verbose mode
         if verbose:
@@ -641,7 +673,7 @@ class SourceCodeIndexer:
                 f"→ embedding {total_chunks} chunks (parallel)" + " " * 30,
                 end="",
                 flush=True,
-                file=sys.stdout
+                file=sys.stdout,
             )
 
         # Track embedding time for profiler
@@ -653,9 +685,13 @@ class SourceCodeIndexer:
 
         # Progress callback for verbose mode - updates line in-place with ETA
         # Extended signature: batch_idx, total_batches, effective_batch_size, chunks_done, total_chunks
-        def embedding_progress(batch_idx: int, total_batches: int,
-                               effective_batch_size: int = None, chunks_done: int = None,
-                               total_chunks_param: int = None):
+        def embedding_progress(
+            batch_idx: int,
+            total_batches: int,
+            effective_batch_size: int = None,
+            chunks_done: int = None,
+            total_chunks_param: int = None,
+        ):
             nonlocal last_batch_end, last_chunks_done
             if not verbose:
                 return
@@ -680,7 +716,12 @@ class SourceCodeIndexer:
                     avg_rate = sum(recent_chunk_rates) / len(recent_chunk_rates)
                     eta = remaining_chunks / avg_rate if avg_rate > 0 else 0
                     # Show effective batch size if different from original
-                    batch_info = f"batch={effective_batch_size}" if effective_batch_size and effective_batch_size != self.embedding_batch_size else ""
+                    batch_info = (
+                        f"batch={effective_batch_size}"
+                        if effective_batch_size
+                        and effective_batch_size != self.embedding_batch_size
+                        else ""
+                    )
                     progress = f"[{chunks_done}/{total_chunks_param} chunks{', ' + batch_info if batch_info else ''}, ~{format_duration(eta)} remaining]"
                 else:
                     progress = f"[{chunks_done}/{total_chunks_param} chunks]"
@@ -692,13 +733,19 @@ class SourceCodeIndexer:
                     avg_per_batch = elapsed / batch_idx
                     remaining = total_batches - batch_idx
                     eta = remaining * avg_per_batch
-                    progress = f"[{batch_idx}/{total_batches} batches, ~{format_duration(eta)} remaining]"
+                    progress = (
+                        f"[{batch_idx}/{total_batches} batches, ~{format_duration(eta)} remaining]"
+                    )
                 else:
                     progress = f"[0/{total_batches} batches]"
 
             last_batch_end = now
             # Use fresh timestamp for each update
-            print(f"\r{timestamp()}   → embedding ({total_chunks} chunks) {progress}    ", end="", flush=True)
+            print(
+                f"\r{timestamp()}   → embedding ({total_chunks} chunks) {progress}    ",
+                end="",
+                flush=True,
+            )
 
         texts = [chunk.content for chunk in all_chunks]
         uploaded = 0
@@ -709,18 +756,18 @@ class SourceCodeIndexer:
             def on_embed_batch(batch_idx: int, start_idx: int, batch_embeddings):
                 nonlocal uploaded
                 # Get corresponding chunks for this batch
-                batch_chunks = all_chunks[start_idx:start_idx + len(batch_embeddings)]
+                batch_chunks = all_chunks[start_idx : start_idx + len(batch_embeddings)]
                 # Attach embeddings to chunks
                 for chunk, embedding in zip(batch_chunks, batch_embeddings):
                     chunk.embedding = embedding
                 # Upload batch
                 if verbose:
-                    print(f"\n{timestamp()}   → uploading batch ({len(batch_chunks)} chunks, {uploaded}/{total_chunks} total)", flush=True)
+                    print(
+                        f"\n{timestamp()}   → uploading batch ({len(batch_chunks)} chunks, {uploaded}/{total_chunks} total)",
+                        flush=True,
+                    )
                 batch_uploaded = self.qdrant_indexer.upload_chunks(
-                    collection_name,
-                    batch_chunks,
-                    vector_name=self.vector_name,
-                    bulk_mode=True
+                    collection_name, batch_chunks, vector_name=self.vector_name, bulk_mode=True
                 )
                 uploaded += batch_uploaded
 
@@ -740,7 +787,7 @@ class SourceCodeIndexer:
                 batch_size=self.embedding_batch_size,
                 progress_callback=embedding_progress if verbose else None,
                 on_batch_complete=on_embed_batch,
-                accumulate=False
+                accumulate=False,
             )
 
             # Record embedding stage timing (includes upload time in streaming mode)
@@ -751,10 +798,12 @@ class SourceCodeIndexer:
             if verbose:
                 embedding_elapsed = time.time() - embedding_start
                 # Show final batch count, then newline and summary
-                print(f"\r{timestamp()}   → embedding ({total_chunks} chunks) [{total_batches}/{total_batches} batches, complete]    ")
+                print(
+                    f"\r{timestamp()}   → embedding ({total_chunks} chunks) [{total_batches}/{total_batches} batches, complete]    "
+                )
                 console.print(
                     f"{timestamp()}      embedded {total_chunks} chunks in {embedding_elapsed:.2f}s "
-                    f"({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed/total_batches:.2f}s/batch)"
+                    f"({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed / total_batches:.2f}s/batch)"
                 )
 
             self.stats["chunks_uploaded"] += uploaded
@@ -765,6 +814,7 @@ class SourceCodeIndexer:
             del all_chunks
             del texts
             import gc
+
             gc.collect()
             # Clear GPU cache if using GPU to prevent memory buildup across projects
             if self.embedding_client.use_gpu:
@@ -777,7 +827,7 @@ class SourceCodeIndexer:
                 self.embedding_model_id,
                 max_workers=self.embedding_workers,
                 batch_size=self.embedding_batch_size,
-                progress_callback=embedding_progress if verbose else None
+                progress_callback=embedding_progress if verbose else None,
             )
 
             # Record embedding stage timing
@@ -788,10 +838,12 @@ class SourceCodeIndexer:
             if verbose:
                 embedding_elapsed = time.time() - embedding_start
                 # Show final batch count, then newline and summary
-                print(f"\r{timestamp()}   → embedding ({total_chunks} chunks) [{total_batches}/{total_batches} batches, complete]    ")
+                print(
+                    f"\r{timestamp()}   → embedding ({total_chunks} chunks) [{total_batches}/{total_batches} batches, complete]    "
+                )
                 console.print(
                     f"{timestamp()}      embedded {total_chunks} chunks in {embedding_elapsed:.2f}s "
-                    f"({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed/total_batches:.2f}s/batch)"
+                    f"({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed / total_batches:.2f}s/batch)"
                 )
 
             # Attach embeddings to chunks
@@ -801,14 +853,16 @@ class SourceCodeIndexer:
 
             # Show upload progress
             if verbose:
-                console.print(f"{timestamp()}   → uploading ({total_files} files, {len(all_chunks)} chunks)")
+                console.print(
+                    f"{timestamp()}   → uploading ({total_files} files, {len(all_chunks)} chunks)"
+                )
             else:
                 print(
                     f"\r[{project_num}/{total_projects}] {identifier}: "
                     f"→ uploading ({total_files} files, {len(all_chunks)} chunks)" + " " * 20,
                     end="",
                     flush=True,
-                    file=sys.stdout
+                    file=sys.stdout,
                 )
 
             # Track upload time for profiler
@@ -817,10 +871,7 @@ class SourceCodeIndexer:
             # Upload to Qdrant with bulk mode for 1.3-1.5x speedup (RDR-013 Phase 1)
             # Bulk mode disables HNSW indexing during upload, rebuilds after completion
             uploaded = self.qdrant_indexer.upload_chunks(
-                collection_name,
-                all_chunks,
-                vector_name=self.vector_name,
-                bulk_mode=True
+                collection_name, all_chunks, vector_name=self.vector_name, bulk_mode=True
             )
 
             # Record upload stage timing
@@ -836,6 +887,7 @@ class SourceCodeIndexer:
             del texts
             del all_embeddings
             import gc
+
             gc.collect()
             # Clear GPU cache if using GPU to prevent memory buildup across projects
             if self.embedding_client.use_gpu:
@@ -847,17 +899,19 @@ class SourceCodeIndexer:
 
         # Final status line
         if verbose:
-            console.print(f"{timestamp()}   ✓ complete ({project_files} files, {project_chunks} chunks)")
+            console.print(
+                f"{timestamp()}   ✓ complete ({project_files} files, {project_chunks} chunks)"
+            )
         else:
             print(
                 f"\r[{project_num}/{total_projects}] {identifier}: "
                 f"✓ ({project_files} files, {project_chunks} chunks)" + " " * 30,
                 flush=True,
-                file=sys.stdout
+                file=sys.stdout,
             )
             print()
 
     def reset_stats(self):
         """Reset statistics counters."""
         for key in self.stats:
-            self.stats[key] = 0
+            self.stats[key] = [] if key == "covered_paths" else 0

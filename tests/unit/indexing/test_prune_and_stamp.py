@@ -80,9 +80,7 @@ class StampQdrant:
 
     def get_collection(self, _name):
         return SimpleNamespace(
-            config=SimpleNamespace(
-                params=SimpleNamespace(vectors=SimpleNamespace(size=2))
-            )
+            config=SimpleNamespace(params=SimpleNamespace(vectors=SimpleNamespace(size=2)))
         )
 
     def retrieve(self, collection_name, ids, with_payload, with_vectors):
@@ -497,6 +495,39 @@ def test_multi_root_source_reindex_does_not_certify_other_root():
     assert result["orphans"] == []  # /repos/B/y.py still exists -> not an orphan
     assert sync.deleted == []  # and is never deleted
     assert result["stamped"] is False  # but bars certification
+    assert qdrant.upserted is None
+    assert any("not re-indexed" in w for w in warnings)
+
+
+def test_undiscovered_source_repo_does_not_certify_on_disk_files():
+    # MEDIUM regression (gr80): source certification must use files actually
+    # processed by the run. A repo that still exists on disk but was not
+    # discovered or had metadata extraction fail is not an orphan, but its
+    # still-present vectors were not refreshed and must bar certification.
+    sync = FakeSync(["/repos/A/live.py"])
+    qdrant = StampQdrant(_meta())
+    warnings, warn = _captured()
+
+    result = prune_orphans_and_stamp(
+        qdrant=qdrant,
+        sync=sync,
+        collection_name="code",
+        collection_type="code",
+        model="stella",
+        force=True,
+        file_list=None,
+        stats={"files": 1, "errors": 0},
+        on_disk_paths={"/repos/A/live.py"},
+        pre_run_paths={"/repos/A/live.py"},
+        prune=False,
+        indexed_dir=None,
+        covered_paths=set(),
+        warn=warn,
+    )
+
+    assert result["orphans"] == []
+    assert sync.deleted == []
+    assert result["stamped"] is False
     assert qdrant.upserted is None
     assert any("not re-indexed" in w for w in warnings)
 

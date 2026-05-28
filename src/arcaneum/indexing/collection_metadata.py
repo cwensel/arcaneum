@@ -124,18 +124,9 @@ def should_stamp_prompt_policy(
       - stats["files"] > 0 (something was actually indexed)
       - orphans_remaining == 0 (no indexed file is missing from disk)
 
-    Known limitation (bounded guarantee — see kata gr80): the caller's
-    coverage signal (``orphans_remaining`` and the ``on_disk_paths`` it is
-    derived from) is computed from on-disk EXISTENCE, not from the set of
-    files actually re-embedded by this run. A file that still exists on disk
-    but was not reprocessed therefore looks "covered." As a result this gate
-    can over-certify (stamp when it should abstain) for: a ``--no-recursive``
-    markdown force that leaves indexed subdirectory files uncovered; an
-    indexed source repo under the requested root that is no longer discovered
-    (e.g. ``.git`` removed or extraction failed); and a source force scoped to
-    one root of a multi-root collection. The guarantee is therefore sound only
-    for a fully-covered, single-root, recursive force run. gr80 tightens this
-    by passing actual per-run coverage into the gate.
+    Callers that can perform scope-limited work pass ``covered_paths`` to
+    :func:`prune_orphans_and_stamp`, which withholds certification when any
+    still-existing indexed file was not actually processed by the run.
 
     Args:
         force: Whether the run used force/full reindex.
@@ -189,9 +180,7 @@ def stamp_embedding_prompt_policy(
         collection_name,
         embedding_prompt_policy=policy,
     )
-    logger.info(
-        f"Stamped embedding prompt policy for {collection_name} (model={model})"
-    )
+    logger.info(f"Stamped embedding prompt policy for {collection_name} (model={model})")
     return updated
 
 
@@ -332,9 +321,7 @@ def prune_orphans_and_stamp(
     # Orphan detection only applies to full-directory force runs.
     if force and file_list is None:
         # Multi-root guard (markdown/PDF single-directory CLIs pass indexed_dir).
-        if indexed_dir is not None and _collection_is_multi_root(
-            pre_run_paths, indexed_dir
-        ):
+        if indexed_dir is not None and _collection_is_multi_root(pre_run_paths, indexed_dir):
             if prune:
                 raise MultiRootPruneError(
                     f"Cannot --prune: collection {collection_name} contains "
@@ -386,9 +373,7 @@ def prune_orphans_and_stamp(
             # pipeline's branch-delete before re-upload) leave no stale vectors,
             # so they must NOT withhold the stamp on an otherwise-clean reindex.
             result["orphans_remaining"] = sum(
-                1
-                for orphan in orphans
-                if _orphan_chunks_remain(sync, collection_name, orphan)
+                1 for orphan in orphans if _orphan_chunks_remain(sync, collection_name, orphan)
             )
 
     orphans_remaining = result["orphans_remaining"]
@@ -466,6 +451,7 @@ def metadata_exclusion_filter(query_filter: Optional[Filter] = None) -> Filter:
 
 class CollectionType:
     """Valid collection types."""
+
     PDF = "pdf"
     CODE = "code"
     MARKDOWN = "markdown"
@@ -486,11 +472,7 @@ class CollectionType:
 
 
 def set_collection_metadata(
-    client: QdrantClient,
-    collection_name: str,
-    collection_type: str,
-    model: str,
-    **extra_metadata
+    client: QdrantClient, collection_name: str, collection_type: str, model: str, **extra_metadata
 ) -> None:
     """Set collection-level metadata including type.
 
@@ -516,7 +498,7 @@ def set_collection_metadata(
         "created_at": datetime.now().isoformat(),
         "created_by": "arcaneum",
         METADATA_PAYLOAD_KEY: True,  # Flag to identify metadata point
-        **extra_metadata
+        **extra_metadata,
     }
 
     try:
@@ -528,7 +510,7 @@ def set_collection_metadata(
         info = client.get_collection(collection_name)
 
         # Handle both single vector and named vectors
-        if hasattr(info.config.params, 'vectors'):
+        if hasattr(info.config.params, "vectors"):
             if isinstance(info.config.params.vectors, dict):
                 # Named vectors - use first one
                 vector_name = list(info.config.params.vectors.keys())[0]
@@ -542,16 +524,9 @@ def set_collection_metadata(
             raise ValueError("Could not determine vector configuration")
 
         # Upsert metadata point with reserved UUID
-        metadata_point = PointStruct(
-            id=METADATA_POINT_ID,
-            vector=vectors,
-            payload=metadata
-        )
+        metadata_point = PointStruct(id=METADATA_POINT_ID, vector=vectors, payload=metadata)
 
-        client.upsert(
-            collection_name=collection_name,
-            points=[metadata_point]
-        )
+        client.upsert(collection_name=collection_name, points=[metadata_point])
 
         logger.info(f"Set collection metadata for {collection_name}: type={collection_type}")
 
@@ -561,9 +536,7 @@ def set_collection_metadata(
 
 
 def update_collection_metadata(
-    client: QdrantClient,
-    collection_name: str,
-    **updates
+    client: QdrantClient, collection_name: str, **updates
 ) -> Dict[str, Any]:
     """Update collection metadata in place without touching indexed documents.
 
@@ -580,9 +553,7 @@ def update_collection_metadata(
     """
     existing = get_collection_metadata(client, collection_name)
     if not existing:
-        raise ValueError(
-            f"Collection '{collection_name}' has no metadata point to update"
-        )
+        raise ValueError(f"Collection '{collection_name}' has no metadata point to update")
 
     metadata = {**existing}
     for key, value in updates.items():
@@ -600,7 +571,7 @@ def update_collection_metadata(
 
         info = client.get_collection(collection_name)
 
-        if hasattr(info.config.params, 'vectors'):
+        if hasattr(info.config.params, "vectors"):
             if isinstance(info.config.params.vectors, dict):
                 vector_name = list(info.config.params.vectors.keys())[0]
                 vector_size = info.config.params.vectors[vector_name].size
@@ -613,11 +584,13 @@ def update_collection_metadata(
 
         client.upsert(
             collection_name=collection_name,
-            points=[PointStruct(
-                id=METADATA_POINT_ID,
-                vector=vectors,
-                payload={**metadata, METADATA_PAYLOAD_KEY: True},
-            )],
+            points=[
+                PointStruct(
+                    id=METADATA_POINT_ID,
+                    vector=vectors,
+                    payload={**metadata, METADATA_PAYLOAD_KEY: True},
+                )
+            ],
         )
         logger.info(f"Updated collection metadata for {collection_name}")
         return metadata
@@ -627,10 +600,7 @@ def update_collection_metadata(
         raise
 
 
-def get_collection_metadata(
-    client: QdrantClient,
-    collection_name: str
-) -> Dict[str, Any]:
+def get_collection_metadata(client: QdrantClient, collection_name: str) -> Dict[str, Any]:
     """Get collection-level metadata.
 
     Retrieves metadata from the special reserved point.
@@ -651,7 +621,7 @@ def get_collection_metadata(
             collection_name=collection_name,
             ids=[METADATA_POINT_ID],
             with_payload=True,
-            with_vectors=False
+            with_vectors=False,
         )
 
         if points and len(points) > 0:
@@ -667,10 +637,7 @@ def get_collection_metadata(
         return {}
 
 
-def get_collection_type(
-    client: QdrantClient,
-    collection_name: str
-) -> Optional[str]:
+def get_collection_type(client: QdrantClient, collection_name: str) -> Optional[str]:
     """Get the type of a collection.
 
     Args:
@@ -693,10 +660,7 @@ def get_collection_type(
 
 
 def validate_collection_type(
-    client: QdrantClient,
-    collection_name: str,
-    expected_type: str,
-    allow_untyped: bool = True
+    client: QdrantClient, collection_name: str, expected_type: str, allow_untyped: bool = True
 ) -> None:
     """Validate that collection type matches expected type.
 
@@ -739,10 +703,7 @@ def validate_collection_type(
     logger.debug(f"Collection '{collection_name}' type validated: {actual_type}")
 
 
-def get_vector_names(
-    client: QdrantClient,
-    collection_name: str
-) -> list:
+def get_vector_names(client: QdrantClient, collection_name: str) -> list:
     """Get list of vector names in collection.
 
     Args:
@@ -756,7 +717,7 @@ def get_vector_names(
     try:
         info = client.get_collection(collection_name)
 
-        if hasattr(info.config.params, 'vectors'):
+        if hasattr(info.config.params, "vectors"):
             if isinstance(info.config.params.vectors, dict):
                 return list(info.config.params.vectors.keys())
 

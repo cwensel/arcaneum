@@ -8,6 +8,26 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 from uuid import uuid4
 
+from arcaneum import __version__ as ARCANEUM_VERSION
+
+
+PERSISTED_SCHEMA_VERSION = 1
+PERSISTED_SCHEMA_VERSION_FIELD = "schema_version"
+PERSISTED_APP_VERSION_FIELD = "app_version"
+
+# Migration contract:
+# - Adding optional payload fields is backward-compatible within this version.
+# - Renaming, removing, or changing the type/meaning of persisted payload fields
+#   requires bumping PERSISTED_SCHEMA_VERSION and adding a verifier/backfill path.
+# - Existing collections without schema_version are treated as legacy v0 and
+#   should be repaired by reindexing or by a targeted metadata backfill when the
+#   payload shape is still compatible.
+
+
+def current_app_version() -> str:
+    """Return the Arcaneum version stored with persisted payloads."""
+    return ARCANEUM_VERSION
+
 
 @dataclass
 class DualIndexDocument:
@@ -51,6 +71,8 @@ class DualIndexDocument:
     content: str = ""
 
     # Shared metadata (both systems)
+    schema_version: int = PERSISTED_SCHEMA_VERSION
+    app_version: str = field(default_factory=current_app_version)
     file_path: str = ""
     filename: str = ""
     language: str = ""
@@ -123,6 +145,8 @@ def to_qdrant_point(doc: DualIndexDocument, point_id: Optional[int] = None):
 
     # Build payload with all metadata
     payload = {
+        PERSISTED_SCHEMA_VERSION_FIELD: doc.schema_version,
+        PERSISTED_APP_VERSION_FIELD: doc.app_version,
         "text": doc.content,  # Content field for search snippets
         "file_path": doc.file_path,
         "filename": doc.filename,
@@ -250,6 +274,8 @@ def to_meilisearch_doc(doc: DualIndexDocument) -> Dict[str, Any]:
     """
     meili_doc = {
         "id": doc.id,
+        PERSISTED_SCHEMA_VERSION_FIELD: doc.schema_version,
+        PERSISTED_APP_VERSION_FIELD: doc.app_version,
         "content": doc.content,
         "file_path": doc.file_path,
         "filename": doc.filename,

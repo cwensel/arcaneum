@@ -388,11 +388,11 @@ class TestCorpusDescriptions:
             description="Project notes",
         )
 
-        assert updated == {
-            "collection_type": "markdown",
-            "model": "arctic-m",
-            "created_at": "2026-05-26T00:00:00",
-            "description": "Project notes",
-        }
+        assert updated["collection_type"] == "markdown"
+        assert updated["model"] == "arctic-m"
+        assert updated["created_at"] == "2026-05-26T00:00:00"
+        assert updated["description"] == "Project notes"
+        assert updated["schema_version"] == 1
+        assert updated["app_version"]
         assert qdrant.points[0].payload["is_metadata"] is True
         assert qdrant.points[0].payload["description"] == "Project notes"

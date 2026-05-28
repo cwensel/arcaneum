@@ -12,12 +12,61 @@ from typing import Any, Dict, Optional
 from qdrant_client import QdrantClient
 from qdrant_client.models import Condition, FieldCondition, Filter, MatchValue
 
+from arcaneum.schema.document import (
+    PERSISTED_APP_VERSION_FIELD,
+    PERSISTED_SCHEMA_VERSION,
+    PERSISTED_SCHEMA_VERSION_FIELD,
+    current_app_version,
+)
+
 logger = logging.getLogger(__name__)
 
 # Reserved UUID for collection metadata point
 # Using a fixed UUID so we can always find it
 METADATA_POINT_ID = "00000000-0000-0000-0000-000000000001"
 METADATA_PAYLOAD_KEY = "is_metadata"
+
+
+def persisted_schema_defaults() -> Dict[str, Any]:
+    """Return metadata fields required for persisted collection compatibility."""
+    return {
+        PERSISTED_SCHEMA_VERSION_FIELD: PERSISTED_SCHEMA_VERSION,
+        PERSISTED_APP_VERSION_FIELD: current_app_version(),
+    }
+
+
+def persisted_schema_issues(metadata: Dict[str, Any]) -> list[str]:
+    """Return compatibility issues for persisted collection metadata.
+
+    Missing schema_version is legacy v0. Versions older than the current schema
+    need repair/backfill; newer versions require a newer Arcaneum before use.
+    """
+    version = metadata.get(PERSISTED_SCHEMA_VERSION_FIELD)
+    if version is None:
+        return [
+            "collection metadata is legacy schema v0; reindex or backfill "
+            "schema_version/app_version before relying on persisted compatibility"
+        ]
+
+    try:
+        version_int = int(version)
+    except (TypeError, ValueError):
+        return [f"collection metadata has invalid schema_version {version!r}"]
+
+    if version_int < PERSISTED_SCHEMA_VERSION:
+        return [
+            f"collection metadata schema_version {version_int} is older than "
+            f"supported v{PERSISTED_SCHEMA_VERSION}; reindex or run a backfill"
+        ]
+    if version_int > PERSISTED_SCHEMA_VERSION:
+        return [
+            f"collection metadata schema_version {version_int} is newer than "
+            f"this Arcaneum supports (v{PERSISTED_SCHEMA_VERSION})"
+        ]
+
+    if not metadata.get(PERSISTED_APP_VERSION_FIELD):
+        return ["collection metadata is missing app_version"]
+    return []
 
 
 def _condition_list(
@@ -97,6 +146,7 @@ def set_collection_metadata(
     CollectionType.validate(collection_type)
 
     metadata = {
+        **persisted_schema_defaults(),
         "collection_type": collection_type,
         "model": model,
         "created_at": datetime.now().isoformat(),
@@ -170,7 +220,7 @@ def update_collection_metadata(
             f"Collection '{collection_name}' has no metadata point to update"
         )
 
-    metadata = {**existing}
+    metadata = {**persisted_schema_defaults(), **existing}
     for key, value in updates.items():
         if value is None:
             metadata.pop(key, None)

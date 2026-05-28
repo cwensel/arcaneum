@@ -26,8 +26,10 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 
 from arcaneum.indexing.collection_metadata import (
+    get_collection_metadata,
     get_collection_type,
     metadata_exclusion_filter,
+    persisted_schema_issues,
 )
 
 logger = logging.getLogger(__name__)
@@ -143,6 +145,8 @@ class CollectionVerificationResult:
     dropout_items: int = 0  # files with suspected extraction dropout
     dropout_at_floor: int = 0  # dropout files already marked extraction_floor (skipped)
     is_healthy: bool = True
+    schema_version: Optional[int] = None
+    app_version: Optional[str] = None
     # Detailed results by item
     projects: List[ProjectVerificationResult] = field(default_factory=list)  # for code
     files: List[FileVerificationResult] = field(default_factory=list)  # for pdf/markdown
@@ -199,22 +203,36 @@ class CollectionVerifier:
         Returns:
             CollectionVerificationResult with detailed verification data
         """
-        collection_type = get_collection_type(self.qdrant, collection_name)
+        collection_metadata = get_collection_metadata(self.qdrant, collection_name)
+        collection_type = collection_metadata.get("collection_type")
+        if collection_type is None:
+            collection_type = get_collection_type(self.qdrant, collection_name)
+        schema_errors = (
+            persisted_schema_issues(collection_metadata)
+            if collection_metadata
+            else []
+        )
 
         # Get total point count
         collection_info = self.qdrant.get_collection(collection_name)
         total_points = collection_info.points_count
 
         if collection_type == "code":
-            return self._verify_code_collection(
+            result = self._verify_code_collection(
                 collection_name, total_points, project_filter, verbose
             )
         else:
-            return self._verify_file_collection(
+            result = self._verify_file_collection(
                 collection_name, collection_type, total_points, verbose,
                 check_quality=check_quality,
                 quality_threshold=quality_threshold,
             )
+        result.schema_version = collection_metadata.get("schema_version")
+        result.app_version = collection_metadata.get("app_version")
+        if schema_errors:
+            result.errors.extend(schema_errors)
+            result.is_healthy = False
+        return result
 
     def _verify_code_collection(
         self,

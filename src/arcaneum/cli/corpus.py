@@ -1438,6 +1438,9 @@ def corpus_verify_command(
                     "total_items": qdrant_result.total_items,
                     "complete_items": qdrant_result.complete_items,
                     "incomplete_items": qdrant_result.incomplete_items,
+                    "schema_version": qdrant_result.schema_version,
+                    "app_version": qdrant_result.app_version,
+                    "errors": qdrant_result.errors,
                 }
                 if qdrant_result.collection_type != "code":
                     data["qdrant"]["files"] = [

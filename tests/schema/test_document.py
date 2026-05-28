@@ -3,6 +3,7 @@
 import pytest
 
 from arcaneum.schema.document import (
+    PERSISTED_SCHEMA_VERSION,
     DualIndexDocument,
     to_qdrant_point,
     to_meilisearch_doc,
@@ -20,6 +21,8 @@ class TestDualIndexDocument:
         assert doc.file_path == ""
         assert doc.chunk_index == 0
         assert doc.chunk_count == 1
+        assert doc.schema_version == PERSISTED_SCHEMA_VERSION
+        assert doc.app_version != ""
         assert doc.vectors == {}
         assert doc.function_names == []
 
@@ -91,6 +94,8 @@ class TestToQdrantPoint:
         assert point.id == "test-123"
         assert point.vector == {"stella": [0.1, 0.2, 0.3]}
         assert point.payload["text"] == "Sample content"
+        assert point.payload["schema_version"] == PERSISTED_SCHEMA_VERSION
+        assert point.payload["app_version"] != ""
         assert point.payload["file_path"] == "/path/to/file.py"
         assert point.payload["filename"] == "file.py"
         assert point.payload["programming_language"] == "python"
@@ -201,6 +206,8 @@ class TestToMeilisearchDoc:
         meili_doc = to_meilisearch_doc(doc)
 
         assert meili_doc["id"] == "test-456"
+        assert meili_doc["schema_version"] == PERSISTED_SCHEMA_VERSION
+        assert meili_doc["app_version"] != ""
         assert meili_doc["content"] == "Sample markdown content"
         assert meili_doc["file_path"] == "/path/to/file.md"
         assert meili_doc["filename"] == "file.md"

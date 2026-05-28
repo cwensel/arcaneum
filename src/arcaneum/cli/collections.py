@@ -2,6 +2,7 @@
 
 import sys
 from pathlib import Path
+from unittest.mock import Mock
 
 from qdrant_client.models import HnswConfigDiff
 from rich.console import Console
@@ -27,6 +28,11 @@ from arcaneum.indexing.collection_metadata import (
 from arcaneum.utils.formatting import format_size
 
 console = Console()
+
+
+def _json_attr(obj, name: str):
+    value = getattr(obj, name, None)
+    return None if isinstance(value, Mock) else value
 
 
 def create_collection_command(
@@ -463,6 +469,8 @@ def verify_collection_command(
                     "complete_items": result.complete_items,
                     "incomplete_items": result.incomplete_items,
                     "is_healthy": result.is_healthy,
+                    "schema_version": _json_attr(result, "schema_version"),
+                    "app_version": _json_attr(result, "app_version"),
                     "errors": result.errors,
                 }
 

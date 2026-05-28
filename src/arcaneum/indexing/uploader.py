@@ -234,9 +234,14 @@ class PDFBatchUploader:
 
                 return ([], 0, None, ocr_stats)
 
-            # Pre-deletion: Remove old chunks with same file_hash before reindexing
-            # This prevents partial data if indexing is interrupted mid-file
-            self.sync.delete_chunks_by_file_hash(collection_name, file_hash)
+            # Pre-deletion: Remove old chunks before reindexing.
+            # On force reindex, delete by stable identity (file_path) so a
+            # changed-content file (new file_hash) leaves no stale chunks.
+            # Otherwise keep hash-based delete for incremental partial-write safety.
+            if force_reindex:
+                self.sync.delete_chunks_by_file_path(collection_name, str(pdf_path.absolute()))
+            else:
+                self.sync.delete_chunks_by_file_hash(collection_name, file_hash)
 
             # Stage 1: Extract text
             if not verbose:

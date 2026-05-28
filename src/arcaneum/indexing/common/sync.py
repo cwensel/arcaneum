@@ -488,6 +488,63 @@ class MetadataBasedSync:
             logger.warning(f"Error deleting chunks by file_hash {file_hash}: {e}")
             return 0
 
+    def delete_chunks_by_file_path(self, collection_name: str, file_path: str) -> int:
+        """Delete all chunks for a file_path from collection.
+
+        Used on force reindex to remove a file's prior chunks by stable identity
+        (its path) so that changed-content files leave no stale-policy vectors.
+        Because the content hash changes when a file's contents change, deleting
+        by file_hash before re-embedding would orphan the old chunks; deleting by
+        file_path guarantees the prior version is fully replaced.
+
+        Args:
+            collection_name: Qdrant collection name
+            file_path: Absolute file path to delete chunks for
+
+        Returns:
+            Number of points deleted (0 if no chunks found)
+        """
+        path_filter = Filter(
+            must=[
+                FieldCondition(
+                    key="file_path",
+                    match=MatchValue(value=file_path)
+                )
+            ]
+        )
+        try:
+            # Count chunks before deletion by scrolling all matching points.
+            deleted_count = 0
+            offset = None
+            while True:
+                points, offset = self.qdrant.scroll(
+                    collection_name=collection_name,
+                    scroll_filter=path_filter,
+                    limit=1000,
+                    offset=offset,
+                    with_payload=False,
+                    with_vectors=False
+                )
+                deleted_count += len(points)
+                if offset is None:
+                    break
+
+            if deleted_count == 0:
+                return 0  # No chunks to delete
+
+            # Delete all points with this file_path
+            self.qdrant.delete(
+                collection_name=collection_name,
+                points_selector=FilterSelector(filter=path_filter)
+            )
+
+            logger.debug(f"Deleted {deleted_count} chunks for file_path {file_path} from {collection_name}")
+            return deleted_count
+
+        except Exception as e:
+            logger.warning(f"Error deleting chunks by file_path {file_path}: {e}")
+            return 0
+
     def find_file_by_content_hash(self, collection_name: str, file_hash: str) -> List[str]:
         """Find all file_paths in collection with given content hash.
 

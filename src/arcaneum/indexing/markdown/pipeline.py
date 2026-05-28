@@ -91,6 +91,7 @@ class MarkdownIndexingPipeline:
         verbose: bool,
         file_idx: int,
         total_files: int,
+        force_reindex: bool = False,
     ) -> Tuple[List[PointStruct], int, Optional[str]]:
         """Process a single markdown file: read, chunk, embed, create points.
 
@@ -128,7 +129,9 @@ class MarkdownIndexingPipeline:
 
             # Stage 1c: Check if content exists (by file_hash) - if so, handle as metadata update, not re-index
             # This prevents re-indexing files that just need metadata migration (file_quick_hashes dict)
-            old_paths = self.sync.find_file_by_content_hash(collection_name, file_hash)
+            # Skip content-hash dedup/rename handling on force reindex - we want
+            # to reindex regardless and replace prior chunks by path.
+            old_paths = self.sync.find_file_by_content_hash(collection_name, file_hash) if not force_reindex else []
             if old_paths:
                 # Check if any old paths still exist on filesystem
                 existing_old_paths = self.sync.filter_existing_paths(old_paths)
@@ -177,11 +180,16 @@ class MarkdownIndexingPipeline:
 
                 return ([], 0, None)
 
-            # Stage 1e: Pre-deletion - Remove old chunks with same file_hash before reindexing
-            # This prevents partial data if indexing is interrupted mid-file
+            # Stage 1e: Pre-deletion - Remove old chunks before reindexing.
+            # On force reindex, delete by stable identity (file_path) so a
+            # changed-content file (new file_hash) leaves no stale chunks.
+            # Otherwise keep hash-based delete for incremental partial-write safety.
             if verbose:
                 print(f"{timestamp()}   → pre-deletion: removing old chunks", flush=True)
-            self.sync.delete_chunks_by_file_hash(collection_name, file_hash)
+            if force_reindex:
+                self.sync.delete_chunks_by_file_path(collection_name, str(file_path.absolute()))
+            else:
+                self.sync.delete_chunks_by_file_hash(collection_name, file_hash)
 
             # Build base metadata
             file_path_abs = str(file_path.absolute())
@@ -512,6 +520,7 @@ class MarkdownIndexingPipeline:
                             verbose,
                             file_idx,
                             total_files,
+                            force_reindex,
                         )
                         future_to_file[future] = (file_idx, file_path)
 
@@ -563,6 +572,7 @@ class MarkdownIndexingPipeline:
                         verbose,
                         file_idx,
                         total_files,
+                        force_reindex,
                     )
 
                     if error:

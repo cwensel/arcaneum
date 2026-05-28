@@ -202,6 +202,64 @@ class TestSourceCodeIndexer:
         assert stats["projects_indexed"] == 1
         assert stats["projects_skipped"] == 0
 
+    def test_index_directory_force_deletes_branch_chunks_before_upload(
+        self, temp_git_repo, mock_qdrant_client, mock_embedder
+    ):
+        """Force reindex must delete the project's existing branch chunks
+        before uploading new ones, so no stale vectors survive.
+
+        Regression for job-1921: on plain force (no repair_targets) the
+        delete_branch_chunks call was gated on `identifier in indexed_projects`,
+        but force sets indexed_projects = {} so the delete never fired. Source
+        chunks use random uuid4 point IDs, so re-upload appends new chunks
+        beside stale ones rather than replacing them.
+        """
+        repo = git.Repo(temp_git_repo)
+        current_branch = repo.active_branch.name
+        identifier = f"test-repo#{current_branch}"
+
+        # Record call order so we can assert delete precedes upload.
+        call_order = []
+        mock_qdrant_client.delete.side_effect = (
+            lambda *a, **k: call_order.append("delete") or Mock(operation_id="op")
+        )
+        mock_qdrant_client.upsert.side_effect = (
+            lambda *a, **k: call_order.append("upsert")
+        )
+
+        indexer_obj = QdrantIndexer(mock_qdrant_client)
+
+        indexer = SourceCodeIndexer(
+            qdrant_indexer=indexer_obj,
+            embedding_client=mock_embedder,
+            embedding_model_id="test-model"
+        )
+
+        parent_dir = os.path.dirname(temp_git_repo)
+
+        stats = indexer.index_directory(
+            input_path=parent_dir,
+            collection_name="test-collection",
+            force=True,
+            show_progress=False
+        )
+
+        assert stats["projects_indexed"] == 1
+
+        # Old branch chunks must have been deleted on force...
+        assert mock_qdrant_client.delete.called, (
+            "force reindex did not delete existing branch chunks"
+        )
+        # ...by the project's composite identifier...
+        delete_filter = mock_qdrant_client.delete.call_args.kwargs["points_selector"]
+        assert delete_filter.must[0].match.value == identifier
+
+        # ...and before any new chunks were uploaded (no stale vectors survive).
+        assert "delete" in call_order and "upsert" in call_order
+        assert call_order.index("delete") < call_order.index("upsert"), (
+            f"delete must precede upload, got order: {call_order}"
+        )
+
     def test_index_directory_with_depth(self, mock_qdrant_client, mock_embedder):
         """Test indexing with depth limit."""
         indexer_obj = QdrantIndexer(mock_qdrant_client)

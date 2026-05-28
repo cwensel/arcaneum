@@ -357,7 +357,19 @@ class SourceCodeIndexer:
                 self.stats["projects_skipped"] += 1
                 continue
 
-            # Project needs indexing (new, changed, forced, or repair target)
+            # Project needs indexing (new, changed, forced, or repair target).
+            #
+            # We must delete the project's existing branch chunks before
+            # re-uploading whenever it is already present in the collection.
+            # In force mode `indexed_projects` is empty (we bypass the
+            # incremental scroll), so membership alone is insufficient: a
+            # plain `--force` would otherwise NEVER delete, and because source
+            # chunks use random uuid4 point IDs the re-upload would APPEND new
+            # chunks beside stale old ones rather than replacing them
+            # (job-1921). Therefore delete on force too. The filter-based
+            # delete is keyed on the composite project#branch identifier, so a
+            # no-op delete for a brand-new branch is harmless and only affects
+            # this branch.
             if identifier in indexed_projects:
                 if is_repair_target:
                     if verbose:
@@ -373,6 +385,15 @@ class SourceCodeIndexer:
                             f"(commit changed: {old_commit[:12]} → {git_metadata.commit_hash[:12]})"
                         )
                 # Delete old chunks (filter-based, fast)
+                self.qdrant_indexer.delete_branch_chunks(collection_name, identifier)
+            elif force:
+                if verbose:
+                    console.print(
+                        f"{timestamp()}   [yellow]↻[/yellow] {identifier} "
+                        f"(force reindex: clearing existing branch chunks)"
+                    )
+                # Delete old chunks before re-upload so no stale vectors
+                # survive into the stamped collection (job-1921).
                 self.qdrant_indexer.delete_branch_chunks(collection_name, identifier)
             else:
                 if verbose:

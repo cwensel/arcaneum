@@ -47,6 +47,7 @@ from arcaneum.indexing.collection_metadata import (
     metadata_exclusion_filter,
     set_collection_metadata,
 )
+from arcaneum.schema.document import persisted_metadata_fields
 
 logger = logging.getLogger(__name__)
 
@@ -707,7 +708,10 @@ class BinaryImporter:
             vectors[name] = vec
 
         # Process payload
-        payload = point_data.get("payload", {})
+        payload = {
+            **persisted_metadata_fields(),
+            **point_data.get("payload", {}),
+        }
 
         # Apply path transformations
         if header.detached and attach_root:
@@ -1002,7 +1006,10 @@ class JsonlImporter:
         vectors = point_data.get("vector", {})
 
         # Process payload
-        payload = point_data.get("payload", {})
+        payload = {
+            **persisted_metadata_fields(),
+            **point_data.get("payload", {}),
+        }
 
         # Apply path transformations
         if header.detached and attach_root:

@@ -492,6 +492,54 @@ class TestJsonlFormat:
                 pass
 
 
+class TestLegacyImportSchemaStamping:
+    """Tests for importing older exports without persisted schema fields."""
+
+    def _header(self) -> ExportHeader:
+        return ExportHeader(
+            collection_name="legacy",
+            collection_type="pdf",
+            model="stella",
+            vector_config={"stella": {"size": 2, "distance": "Cosine"}},
+            point_count=1,
+            root_prefix=None,
+            detached=False,
+            exported_at="2026-05-27T00:00:00",
+        )
+
+    def test_binary_importer_stamps_legacy_payload(self):
+        importer = BinaryImporter(client=None)
+        point = importer._deserialize_point(
+            {
+                "id": "point-1",
+                "vectors": {
+                    "stella": np.array([0.1, 0.2], dtype=np.float32).tobytes(),
+                },
+                "payload": {"file_path": "/docs/report.pdf"},
+            },
+            self._header(),
+        )
+
+        assert point.payload["schema_version"] == 1
+        assert point.payload["app_version"]
+        assert point.payload["file_path"] == "/docs/report.pdf"
+
+    def test_jsonl_importer_stamps_legacy_payload(self):
+        importer = JsonlImporter(client=None)
+        point = importer._deserialize_point(
+            {
+                "id": "point-1",
+                "vector": {"stella": [0.1, 0.2]},
+                "payload": {"file_path": "/docs/report.pdf"},
+            },
+            self._header(),
+        )
+
+        assert point.payload["schema_version"] == 1
+        assert point.payload["app_version"]
+        assert point.payload["file_path"] == "/docs/report.pdf"
+
+
 class TestDetachedExport:
     """Tests for detached export (relative paths)."""
 

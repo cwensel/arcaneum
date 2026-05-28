@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 from PIL import Image
 
+from arcaneum.indexing.common.sync import MetadataBasedSync
 from arcaneum.indexing.pdf.ocr import (
     OCREngine,
     _ocr_single_page_worker,
@@ -171,3 +172,35 @@ def test_pdf_batch_uploader_duplicate_path_preserves_return_contract(tmp_path):
             "ocr_confidence": None,
         },
     )
+
+
+def test_pdf_force_delete_failure_counts_file_error(tmp_path):
+    pdf_path = tmp_path / "broken-delete.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+
+    class FailingDeleteQdrant:
+        def get_collection(self, _name):
+            return MagicMock(points_count=0)
+
+        def scroll(self, **kwargs):
+            raise RuntimeError("delete unavailable")
+
+    uploader = object.__new__(PDFBatchUploader)
+    uploader.qdrant = FailingDeleteQdrant()
+    uploader.sync = MetadataBasedSync(uploader.qdrant)
+    uploader.file_workers = 1
+    uploader.pdf_timeout = 1
+    uploader.embedding_batch_size = 128
+
+    stats = uploader.index_directory(
+        pdf_dir=pdf_path.parent,
+        collection_name="docs",
+        model_name="stella",
+        model_config={"chunk_size": 512, "chunk_overlap": 50},
+        force_reindex=True,
+        file_list=[pdf_path],
+    )
+
+    assert stats["files"] == 0
+    assert stats["chunks"] == 0
+    assert stats["errors"] == 1

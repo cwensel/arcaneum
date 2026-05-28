@@ -8,9 +8,10 @@ potentially stale prompt policy.
 
 from types import SimpleNamespace
 
+import pytest
 from qdrant_client.models import FilterSelector
 
-from arcaneum.indexing.common.sync import MetadataBasedSync
+from arcaneum.indexing.common.sync import ChunkDeleteError, MetadataBasedSync
 
 
 class FakeQdrant:
@@ -53,6 +54,11 @@ class FakeQdrant:
         return True
 
 
+class RaisingQdrant(FakeQdrant):
+    def scroll(self, *args, **kwargs):
+        raise RuntimeError("qdrant unavailable")
+
+
 def test_delete_chunks_by_file_path_removes_regardless_of_hash():
     """A changed-content file (new hash) must still have its old chunks removed
     when deleting by file_path."""
@@ -87,3 +93,10 @@ def test_delete_chunks_by_file_path_no_match_returns_zero():
 
     assert deleted == 0
     assert qdrant.deleted_selectors == []
+
+
+def test_delete_chunks_by_file_path_failure_raises():
+    sync = MetadataBasedSync(RaisingQdrant([]))
+
+    with pytest.raises(ChunkDeleteError, match="qdrant unavailable"):
+        sync.delete_chunks_by_file_path("docs", "/abs/missing.md")

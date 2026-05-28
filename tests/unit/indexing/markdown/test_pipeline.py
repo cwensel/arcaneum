@@ -145,6 +145,11 @@ class FakeQdrant:
         self.upserted.extend(points)
 
 
+class FailingDeleteQdrant(FakeQdrant):
+    def scroll(self, **kwargs):
+        raise RuntimeError("delete unavailable")
+
+
 @pytest.fixture
 def md_file(tmp_path):
     f = tmp_path / "note.md"
@@ -200,3 +205,28 @@ def test_non_streaming_index_directory_still_counts_files(md_file):
     assert stats["files"] == 1
     assert stats["chunks"] > 0
     assert stats["errors"] == 0
+
+
+def test_streaming_force_delete_failure_counts_file_error(md_file):
+    """Force pre-delete failures must stop upload and count as errors."""
+    qdrant = FailingDeleteQdrant()
+    pipeline = MarkdownIndexingPipeline(
+        qdrant_client=qdrant,
+        embedding_client=FakeEmbeddingClient(),
+        streaming=True,
+        file_workers=1,
+    )
+
+    stats = pipeline.index_directory(
+        markdown_dir=md_file.parent,
+        collection_name="md",
+        model_name="stella",
+        model_config={"vector_name": None, "chunk_size": 512, "chunk_overlap": 50},
+        force_reindex=True,
+        file_list=[md_file],
+    )
+
+    assert stats["files"] == 0
+    assert stats["chunks"] == 0
+    assert stats["errors"] == 1
+    assert qdrant.upserted == []

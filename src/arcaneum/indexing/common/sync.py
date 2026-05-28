@@ -14,6 +14,10 @@ from .multiprocessing import get_mp_context, worker_init
 logger = logging.getLogger(__name__)
 
 
+class ChunkDeleteError(Exception):
+    """Raised when a chunk delete operation cannot verify completion."""
+
+
 def compute_quick_hash(file_path: Path) -> str:
     """Compute metadata-only hash using mtime and size (no file I/O).
 
@@ -542,8 +546,9 @@ class MetadataBasedSync:
             return deleted_count
 
         except Exception as e:
-            logger.warning(f"Error deleting chunks by file_path {file_path}: {e}")
-            return 0
+            message = f"Error deleting chunks by file_path {file_path}: {e}"
+            logger.warning(message)
+            raise ChunkDeleteError(message) from e
 
     def has_chunks_for_file_path(self, collection_name: str, file_path: str) -> bool:
         """Return True if any chunk for ``file_path`` still exists in the collection.
@@ -779,13 +784,13 @@ class MetadataBasedSync:
             # Lazy migration: if file_paths doesn't exist, create from file_path
             if not file_paths and "file_path" in current_payload:
                 file_paths = [current_payload["file_path"]]
-                logger.debug(f"Migrated old format: created file_paths array from file_path")
+                logger.debug("Migrated old format: created file_paths array from file_path")
 
             # IMPORTANT: Also migrate primary path's quick_hash if missing from dict
             primary_path = current_payload.get("file_path")
             if primary_path and primary_path not in file_quick_hashes and "quick_hash" in current_payload:
                 file_quick_hashes[primary_path] = current_payload["quick_hash"]
-                logger.debug(f"Migrated primary path quick_hash to file_quick_hashes dict")
+                logger.debug("Migrated primary path quick_hash to file_quick_hashes dict")
 
             # Ensure all paths in array have dict entries (migration for partially-migrated chunks)
             for existing_path in file_paths:

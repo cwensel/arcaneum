@@ -52,7 +52,7 @@ def test_collection_metadata_defaults_include_persisted_schema_fields():
 
 
 def test_persisted_schema_issues_flags_legacy_metadata():
-    issues = persisted_schema_issues({"collection_type": "markdown"})
+    issues = persisted_schema_issues({})
 
     assert issues == [
         "collection metadata is legacy schema v0; reindex or backfill "
@@ -60,8 +60,17 @@ def test_persisted_schema_issues_flags_legacy_metadata():
     ]
 
 
+def test_persisted_schema_issues_rejects_non_integer_version():
+    assert persisted_schema_issues({"schema_version": True}) == [
+        "collection metadata has invalid schema_version True"
+    ]
+    assert persisted_schema_issues({"schema_version": 1.9}) == [
+        "collection metadata has invalid schema_version 1.9"
+    ]
+
+
 def test_verify_marks_legacy_collection_unhealthy():
-    qdrant = Qdrant({"collection_type": "markdown", "model": "stella"})
+    qdrant = Qdrant()
     verifier = CollectionVerifier(qdrant)
 
     result = verifier.verify_collection("docs")

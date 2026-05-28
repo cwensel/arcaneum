@@ -207,11 +207,7 @@ class CollectionVerifier:
         collection_type = collection_metadata.get("collection_type")
         if collection_type is None:
             collection_type = get_collection_type(self.qdrant, collection_name)
-        schema_errors = (
-            persisted_schema_issues(collection_metadata)
-            if collection_metadata
-            else []
-        )
+        schema_errors = persisted_schema_issues(collection_metadata)
 
         # Get total point count
         collection_info = self.qdrant.get_collection(collection_name)

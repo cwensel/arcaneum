@@ -48,9 +48,13 @@ def persisted_schema_issues(metadata: Dict[str, Any]) -> list[str]:
             "schema_version/app_version before relying on persisted compatibility"
         ]
 
-    try:
+    if isinstance(version, bool):
+        return [f"collection metadata has invalid schema_version {version!r}"]
+    if isinstance(version, int):
+        version_int = version
+    elif isinstance(version, str) and version.isdecimal():
         version_int = int(version)
-    except (TypeError, ValueError):
+    else:
         return [f"collection metadata has invalid schema_version {version!r}"]
 
     if version_int < PERSISTED_SCHEMA_VERSION:

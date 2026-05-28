@@ -7,7 +7,7 @@ import platform
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, TimeoutError, wait
 from typing import Dict, List, Optional
 
 from fastembed import TextEmbedding
@@ -1653,36 +1653,85 @@ class EmbeddingClient:
             else:
                 all_embeddings = None
 
-            # Create batches with their start indices
-            batches = []
-            for start_idx in range(0, len(texts), batch_size):
-                end_idx = min(start_idx + batch_size, len(texts))
-                batch_texts = texts[start_idx:end_idx]
-                batches.append((start_idx, end_idx, batch_texts))
-
             # Process batches in parallel for CPU models
             # Use explicit max_workers if provided, otherwise use configured cpu_workers
             effective_workers = max_workers if max_workers is not None else self._cpu_workers
-            total_batches = len(batches)
+            total_batches = (len(texts) + batch_size - 1) // batch_size
             completed_batches = 0
-            logger.debug(f"CPU mode: processing {total_batches} batches with {effective_workers} workers")
+            logger.debug(
+                f"CPU mode: processing {total_batches} batches with {effective_workers} workers"
+            )
             with ThreadPoolExecutor(max_workers=effective_workers) as executor:
-                # Submit all batch jobs
+                # Keep only a bounded set of batch slices and futures live. This
+                # preserves streaming mode's O(batch_size) memory contract while
+                # still allowing CPU workers to overlap batches.
                 future_to_batch = {}
-                for batch_idx, (start_idx, end_idx, batch_texts) in enumerate(batches):
-                    future = executor.submit(self.embed, batch_texts, model_name)
-                    future_to_batch[future] = (batch_idx, start_idx, end_idx)
+                completed_by_batch = {}
+                next_batch_to_submit = 0
+                next_batch_to_emit = 0
 
-                # Collect results as they complete
-                for future in as_completed(future_to_batch):
-                    batch_idx, start_idx, end_idx = future_to_batch[future]
-                    try:
-                        batch_embeddings = future.result(timeout=timeout)
+                def submit_next_batch():
+                    nonlocal next_batch_to_submit
+                    if next_batch_to_submit >= total_batches:
+                        return
+                    start_idx = next_batch_to_submit * batch_size
+                    end_idx = min(start_idx + batch_size, len(texts))
+                    batch_texts = texts[start_idx:end_idx]
+                    future = executor.submit(self.embed, batch_texts, model_name)
+                    future_to_batch[future] = (next_batch_to_submit, start_idx, end_idx)
+                    next_batch_to_submit += 1
+
+                def replenish_window():
+                    while (
+                        len(future_to_batch) < effective_workers
+                        and len(completed_by_batch) < effective_workers
+                        and next_batch_to_submit < total_batches
+                    ):
+                        submit_next_batch()
+
+                replenish_window()
+
+                while future_to_batch:
+                    done, _ = wait(future_to_batch, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        batch_idx, start_idx, end_idx = future_to_batch.pop(future)
+                        try:
+                            completed_by_batch[batch_idx] = (
+                                start_idx,
+                                end_idx,
+                                future.result(timeout=timeout),
+                                None,
+                            )
+                        except KeyboardInterrupt:
+                            # User pressed Ctrl-C - cancel remaining futures and re-raise
+                            logger.debug("KeyboardInterrupt received during CPU embedding")
+                            executor.shutdown(wait=False, cancel_futures=True)
+                            raise
+                        except TimeoutError:
+                            logger.error(
+                                f"Batch {start_idx}-{end_idx} timed out (exceeded {timeout}s)"
+                            )
+                            completed_by_batch[batch_idx] = (start_idx, end_idx, None, "timeout")
+                        except Exception as e:
+                            logger.error(f"Batch {start_idx}-{end_idx} failed: {e}")
+                            completed_by_batch[batch_idx] = (start_idx, end_idx, None, "error")
+
+                    replenish_window()
+
+                    while next_batch_to_emit in completed_by_batch:
+                        start_idx, end_idx, batch_embeddings, error = completed_by_batch.pop(
+                            next_batch_to_emit
+                        )
+                        if error:
+                            if accumulate:
+                                all_embeddings[start_idx:end_idx] = [None] * (end_idx - start_idx)
+                            next_batch_to_emit += 1
+                            replenish_window()
+                            continue
 
                         # Call batch complete callback if provided (for streaming upload)
-                        # Note: batches may complete out of order with ThreadPoolExecutor
                         if on_batch_complete:
-                            on_batch_complete(batch_idx, start_idx, batch_embeddings)
+                            on_batch_complete(next_batch_to_emit, start_idx, batch_embeddings)
 
                         # Place results in correct position (only if accumulating)
                         if accumulate:
@@ -1690,28 +1739,13 @@ class EmbeddingClient:
                         completed_batches += 1
                         if progress_callback:
                             progress_callback(completed_batches, total_batches)
-                    except KeyboardInterrupt:
-                        # User pressed Ctrl-C - cancel remaining futures and re-raise
-                        logger.debug("KeyboardInterrupt received during CPU embedding")
-                        executor.shutdown(wait=False, cancel_futures=True)
-                        raise
-                    except TimeoutError:
-                        # Log timeout error
-                        logger.error(f"Batch {start_idx}-{end_idx} timed out (exceeded {timeout}s)")
-                        # Fill with None to indicate failure (only if accumulating)
-                        if accumulate:
-                            all_embeddings[start_idx:end_idx] = [None] * (end_idx - start_idx)
-                    except Exception as e:
-                        # Log error but don't fail entire batch
-                        logger.error(f"Batch {start_idx}-{end_idx} failed: {e}")
-                        # Fill with None to indicate failure (only if accumulating)
-                        if accumulate:
-                            all_embeddings[start_idx:end_idx] = [None] * (end_idx - start_idx)
+                        next_batch_to_emit += 1
+                        replenish_window()
 
             # Memory cleanup: Clear futures dictionary to release references (arcaneum-64yl)
             # Future objects hold references to results and callbacks that prevent GC
             del future_to_batch
-            del batches
+            del completed_by_batch
             import gc
             gc.collect()
 

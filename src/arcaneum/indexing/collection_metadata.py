@@ -175,6 +175,16 @@ def stamp_embedding_prompt_policy(
     """
     CollectionType.validate(collection_type)
     policy = get_embedding_prompt_policies(model)
+
+    metadata = _retrieve_collection_metadata(qdrant, collection_name)
+    if metadata is None:
+        set_collection_metadata(qdrant, collection_name, collection_type, model)
+        logger.info(
+            f"Initialized metadata point for legacy collection {collection_name} "
+            f"before stamping embedding prompt policy (model={model})"
+        )
+        return get_collection_metadata(qdrant, collection_name)
+
     updated = update_collection_metadata(
         qdrant,
         collection_name,
@@ -600,6 +610,28 @@ def update_collection_metadata(
         raise
 
 
+def _retrieve_collection_metadata(
+    client: QdrantClient, collection_name: str
+) -> Optional[Dict[str, Any]]:
+    """Return metadata payload, or None when the metadata point is absent.
+
+    Unlike ``get_collection_metadata``, retrieval errors propagate so callers
+    can distinguish a legacy collection from a failed metadata read.
+    """
+    points = client.retrieve(
+        collection_name=collection_name,
+        ids=[METADATA_POINT_ID],
+        with_payload=True,
+        with_vectors=False,
+    )
+
+    if points and len(points) > 0:
+        payload = points[0].payload
+        return {k: v for k, v in payload.items() if k != METADATA_PAYLOAD_KEY}
+
+    return None
+
+
 def get_collection_metadata(client: QdrantClient, collection_name: str) -> Dict[str, Any]:
     """Get collection-level metadata.
 
@@ -616,20 +648,7 @@ def get_collection_metadata(client: QdrantClient, collection_name: str) -> Dict[
         Exception: If collection doesn't exist
     """
     try:
-        # Retrieve the special metadata point
-        points = client.retrieve(
-            collection_name=collection_name,
-            ids=[METADATA_POINT_ID],
-            with_payload=True,
-            with_vectors=False,
-        )
-
-        if points and len(points) > 0:
-            payload = points[0].payload
-            # Return payload without the is_metadata flag
-            return {k: v for k, v in payload.items() if k != METADATA_PAYLOAD_KEY}
-
-        return {}
+        return _retrieve_collection_metadata(client, collection_name) or {}
 
     except Exception as e:
         # If retrieve fails, collection might not have metadata yet

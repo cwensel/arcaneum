@@ -19,8 +19,9 @@ from arcaneum.indexing.collection_metadata import (
 class StampQdrant:
     """Qdrant stand-in supporting metadata read/upsert."""
 
-    def __init__(self, metadata=None):
+    def __init__(self, metadata=None, retrieve_error=None):
         self.metadata = dict(metadata) if metadata else None
+        self.retrieve_error = retrieve_error
         self.upserted = None
 
     def get_collection(self, _name):
@@ -31,12 +32,15 @@ class StampQdrant:
         )
 
     def retrieve(self, collection_name, ids, with_payload, with_vectors):
+        if self.retrieve_error is not None:
+            raise self.retrieve_error
         if self.metadata is not None:
             return [SimpleNamespace(payload={**self.metadata, "is_metadata": True})]
         return []
 
     def upsert(self, collection_name, points):
         self.upserted = points[0].payload
+        self.metadata = dict(self.upserted)
 
 
 # ---- should_stamp_prompt_policy gate -----------------------------------------
@@ -96,3 +100,28 @@ def test_stamp_writes_prompt_policy_into_metadata():
     assert qdrant.upserted["embedding_prompt_policy"] == get_embedding_prompt_policies("stella")
     # Preserves existing metadata.
     assert qdrant.upserted["collection_type"] == "markdown"
+
+
+def test_stamp_initializes_legacy_collection_without_metadata_point():
+    qdrant = StampQdrant(metadata=None)
+
+    metadata = stamp_embedding_prompt_policy(qdrant, "md", "markdown", "stella")
+
+    assert qdrant.upserted is not None
+    assert qdrant.upserted["collection_type"] == "markdown"
+    assert qdrant.upserted["model"] == "stella"
+    assert qdrant.upserted["embedding_prompt_policy"] == get_embedding_prompt_policies("stella")
+    assert metadata["embedding_prompt_policy"] == get_embedding_prompt_policies("stella")
+
+
+def test_stamp_does_not_initialize_when_metadata_retrieve_fails():
+    qdrant = StampQdrant(metadata=None, retrieve_error=RuntimeError("qdrant unavailable"))
+
+    try:
+        stamp_embedding_prompt_policy(qdrant, "md", "markdown", "stella")
+    except RuntimeError as exc:
+        assert str(exc) == "qdrant unavailable"
+    else:
+        raise AssertionError("expected metadata retrieve failure to propagate")
+
+    assert qdrant.upserted is None

@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import FieldCondition, Filter, MatchValue
+from qdrant_client.models import Condition, FieldCondition, Filter, MatchValue
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +18,16 @@ logger = logging.getLogger(__name__)
 # Using a fixed UUID so we can always find it
 METADATA_POINT_ID = "00000000-0000-0000-0000-000000000001"
 METADATA_PAYLOAD_KEY = "is_metadata"
+
+
+def _condition_list(
+    conditions: Optional[Condition | list[Condition]],
+) -> list[Condition]:
+    if conditions is None:
+        return []
+    if isinstance(conditions, list):
+        return list(conditions)
+    return [conditions]
 
 
 def metadata_exclusion_filter(query_filter: Optional[Filter] = None) -> Filter:
@@ -30,7 +40,7 @@ def metadata_exclusion_filter(query_filter: Optional[Filter] = None) -> Filter:
     if query_filter is None:
         return Filter(must_not=[metadata_condition])
 
-    must_not = list(query_filter.must_not or [])
+    must_not = _condition_list(query_filter.must_not)
     if metadata_condition not in must_not:
         must_not.append(metadata_condition)
 

@@ -33,6 +33,18 @@ def test_metadata_exclusion_filter_preserves_existing_filter():
     assert _metadata_must_not(result)
 
 
+def test_metadata_exclusion_filter_preserves_single_must_not_condition():
+    archived_condition = FieldCondition(
+        key="archived",
+        match=MatchValue(value=True),
+    )
+
+    result = metadata_exclusion_filter(Filter(must_not=archived_condition))
+
+    assert archived_condition in result.must_not
+    assert _metadata_must_not(result)
+
+
 def test_search_collection_excludes_metadata_points_from_qdrant_query():
     client = MagicMock()
     client.query_points.return_value = SimpleNamespace(points=[])

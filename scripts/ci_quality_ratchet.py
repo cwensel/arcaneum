@@ -9,17 +9,7 @@ import re
 import subprocess
 import sys
 
-KNOWN_AUDIT_VULNS = {
-    ("transformers", "PYSEC-2025-217"),
-    ("transformers", "PYSEC-2025-214"),
-    ("transformers", "PYSEC-2025-218"),
-    ("transformers", "PYSEC-2025-211"),
-    ("transformers", "PYSEC-2025-212"),
-    ("transformers", "PYSEC-2025-213"),
-    ("transformers", "PYSEC-2025-215"),
-    ("transformers", "PYSEC-2025-216"),
-    ("transformers", "CVE-2026-1839"),
-}
+KNOWN_AUDIT_VULNS: set[tuple[str, str]] = set()
 
 
 def run_check(command: list[str]) -> subprocess.CompletedProcess[str]:

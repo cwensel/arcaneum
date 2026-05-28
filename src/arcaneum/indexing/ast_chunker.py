@@ -12,6 +12,7 @@ from pathlib import Path
 
 try:
     from llama_index.core.node_parser import CodeSplitter
+
     LLAMA_INDEX_AVAILABLE = True
 except ImportError:
     LLAMA_INDEX_AVAILABLE = False
@@ -61,7 +62,6 @@ class ASTCodeChunker:
         ".scala": "scala",
         ".sc": "scala",
         ".swift": "swift",
-
         # Additional supported languages
         ".html": "html",
         ".css": "css",
@@ -102,7 +102,7 @@ class ASTCodeChunker:
         chunk_size: int = 400,
         chunk_overlap: int = 20,
         max_chars: Optional[int] = None,
-        hard_max_chars: Optional[int] = None
+        hard_max_chars: Optional[int] = None,
     ):
         """Initialize AST code chunker.
 
@@ -127,12 +127,7 @@ class ASTCodeChunker:
                 "AST chunking will fall back to line-based for all files."
             )
 
-    def chunk_code(
-        self,
-        file_path: str,
-        code: str,
-        force_line_based: bool = False
-    ) -> List[Chunk]:
+    def chunk_code(self, file_path: str, code: str, force_line_based: bool = False) -> List[Chunk]:
         """Chunk code using AST with automatic fallback to line-based.
 
         Args:
@@ -203,7 +198,7 @@ class ASTCodeChunker:
                 language=language,
                 chunk_lines=self.chunk_size,  # Target lines (roughly equivalent to tokens)
                 chunk_lines_overlap=self.chunk_overlap,
-                max_chars=self.max_chars
+                max_chars=self.max_chars,
             )
 
             # Split code into chunks
@@ -255,7 +250,7 @@ class ASTCodeChunker:
                 search_start = pos + int(max_chars * 0.8)
                 best_break = -1
 
-                for break_char in [';', ',', '}', ')', ']']:
+                for break_char in [";", ",", "}", ")", "]"]:
                     break_pos = line.rfind(break_char, search_start, end)
                     if break_pos > best_break:
                         best_break = break_pos
@@ -283,7 +278,7 @@ class ASTCodeChunker:
         Returns:
             List of code chunk strings
         """
-        raw_lines = code.split('\n')
+        raw_lines = code.split("\n")
 
         if not raw_lines:
             return []
@@ -313,7 +308,7 @@ class ASTCodeChunker:
             # Check if adding this line would exceed chunk size
             if current_tokens + line_tokens > self.chunk_size and current_chunk:
                 # Save current chunk
-                chunks.append('\n'.join(current_chunk))
+                chunks.append("\n".join(current_chunk))
 
                 # Start new chunk with overlap
                 overlap_lines = max(0, self.chunk_overlap // 10)  # Rough overlap
@@ -329,7 +324,7 @@ class ASTCodeChunker:
 
         # Add final chunk
         if current_chunk:
-            chunks.append('\n'.join(current_chunk))
+            chunks.append("\n".join(current_chunk))
 
         # Filter out empty chunks
         chunks = [c for c in chunks if c and c.strip()]
@@ -378,7 +373,9 @@ class ASTCodeChunker:
 
         return result
 
-    def _split_oversized_chunk(self, text: str, max_chars: int, overlap_chars: int = 0) -> List[str]:
+    def _split_oversized_chunk(
+        self, text: str, max_chars: int, overlap_chars: int = 0
+    ) -> List[str]:
         """Split an oversized chunk into smaller pieces with overlap.
 
         Uses a sliding window approach to maintain context continuity across chunks.
@@ -411,7 +408,7 @@ class ASTCodeChunker:
             # Determine how much text to consider for this chunk
             # For first chunk, use full max_chars
             # For subsequent chunks, we'll prepend overlap from previous
-            is_first_chunk = (pos == 0)
+            is_first_chunk = pos == 0
 
             if is_first_chunk:
                 available_chars = max_chars
@@ -436,19 +433,19 @@ class ASTCodeChunker:
             split_offset = -1  # Offset within segment
 
             # Try double newline first (paragraph break)
-            nl_pos = segment.rfind('\n\n')
+            nl_pos = segment.rfind("\n\n")
             if nl_pos > available_chars * 0.5:  # Only if at least halfway through
                 split_offset = nl_pos + 2
 
             # Try single newline
             if split_offset == -1:
-                nl_pos = segment.rfind('\n')
+                nl_pos = segment.rfind("\n")
                 if nl_pos > available_chars * 0.3:
                     split_offset = nl_pos + 1
 
             # Try sentence endings
             if split_offset == -1:
-                for ending in ['. ', '.\n', '? ', '?\n', '! ', '!\n']:
+                for ending in [". ", ".\n", "? ", "?\n", "! ", "!\n"]:
                     end_pos_in_seg = segment.rfind(ending)
                     if end_pos_in_seg > available_chars * 0.3:
                         split_offset = end_pos_in_seg + len(ending)
@@ -456,7 +453,7 @@ class ASTCodeChunker:
 
             # Try code-specific break points
             if split_offset == -1:
-                for brk in [';\n', '},\n', '}\n', ',\n', '; ', '}, ', '} ']:
+                for brk in [";\n", "},\n", "}\n", ",\n", "; ", "}, ", "} "]:
                     brk_pos = segment.rfind(brk)
                     if brk_pos > available_chars * 0.3:
                         split_offset = brk_pos + len(brk)
@@ -468,11 +465,11 @@ class ASTCodeChunker:
 
             # Build the chunk content
             if is_first_chunk:
-                chunk_content = text[pos:pos + split_offset]
+                chunk_content = text[pos : pos + split_offset]
             else:
                 # Prepend overlap from previous chunk's end
                 overlap_start = max(0, pos - overlap_chars)
-                chunk_content = text[overlap_start:pos + split_offset]
+                chunk_content = text[overlap_start : pos + split_offset]
 
             result.append(chunk_content)
 
@@ -528,11 +525,7 @@ class ASTCodeChunker:
         return sorted(cls.LANGUAGE_MAP.keys())
 
 
-def chunk_code_file(
-    file_path: str,
-    chunk_size: int = 400,
-    chunk_overlap: int = 20
-) -> List[Chunk]:
+def chunk_code_file(file_path: str, chunk_size: int = 400, chunk_overlap: int = 20) -> List[Chunk]:
     """Convenience function to chunk a code file.
 
     Args:
@@ -551,11 +544,11 @@ def chunk_code_file(
         raise FileNotFoundError(f"File not found: {file_path}")
 
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             code = f.read()
     except UnicodeDecodeError:
         # Try with latin-1 as fallback
-        with open(file_path, 'r', encoding='latin-1') as f:
+        with open(file_path, "r", encoding="latin-1") as f:
             code = f.read()
 
     chunker = ASTCodeChunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)

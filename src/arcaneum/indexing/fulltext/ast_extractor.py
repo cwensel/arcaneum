@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Set
 
 try:
     from tree_sitter_language_pack import get_parser
+
     TREE_SITTER_AVAILABLE = True
 except ImportError:
     TREE_SITTER_AVAILABLE = False
@@ -31,6 +32,7 @@ class CodeDefinition:
     Represents a discrete code unit (function, class, method, or module)
     extracted from source code with precise line ranges.
     """
+
     name: str
     qualified_name: str
     code_type: str  # "function", "class", "method", "module", "interface"
@@ -173,7 +175,6 @@ class ASTFunctionExtractor:
         ".scala": "scala",
         ".sc": "scala",
         ".swift": "swift",
-
         # Additional supported languages
         ".sh": "bash",
         ".bash": "bash",
@@ -203,11 +204,7 @@ class ASTFunctionExtractor:
                 "AST extraction will fall back to module-level for all files."
             )
 
-    def extract_definitions(
-        self,
-        file_path: str,
-        code: str
-    ) -> List[CodeDefinition]:
+    def extract_definitions(self, file_path: str, code: str) -> List[CodeDefinition]:
         """Extract function/class definitions with line ranges.
 
         Uses tree-sitter directly (NOT LlamaIndex CodeSplitter) to parse
@@ -248,12 +245,7 @@ class ASTFunctionExtractor:
 
             definitions: List[CodeDefinition] = []
             self._extract_from_node(
-                root_node,
-                code,
-                language,
-                file_path,
-                definitions,
-                parent_name=None
+                root_node, code, language, file_path, definitions, parent_name=None
             )
 
             # Add module-level code if any exists outside definitions
@@ -278,7 +270,7 @@ class ASTFunctionExtractor:
         language: str,
         file_path: str,
         definitions: List[CodeDefinition],
-        parent_name: Optional[str]
+        parent_name: Optional[str],
     ):
         """Recursively extract definitions from AST nodes.
 
@@ -326,7 +318,7 @@ class ASTFunctionExtractor:
         file_path: str,
         definitions: List[CodeDefinition],
         parent_name: Optional[str],
-        def_types: Dict[str, str]
+        def_types: Dict[str, str],
     ):
         """Process a definition node and its nested definitions.
 
@@ -353,21 +345,22 @@ class ASTFunctionExtractor:
 
         code_type = def_types.get(self._node_type(definition_node), "unknown")
 
-        definitions.append(CodeDefinition(
-            name=name,
-            qualified_name=qualified,
-            code_type=code_type,
-            start_line=start_line,
-            end_line=end_line,
-            content=self._node_text(source_node, code),
-            file_path=file_path
-        ))
+        definitions.append(
+            CodeDefinition(
+                name=name,
+                qualified_name=qualified,
+                code_type=code_type,
+                start_line=start_line,
+                end_line=end_line,
+                content=self._node_text(source_node, code),
+                file_path=file_path,
+            )
+        )
 
         # Recurse into nested definitions (e.g., methods in classes)
         for child in self._node_children(definition_node):
             self._extract_from_node(
-                child, code, language, file_path,
-                definitions, parent_name=qualified
+                child, code, language, file_path, definitions, parent_name=qualified
             )
 
     def _extract_name(self, node, code: str) -> str:
@@ -442,10 +435,7 @@ class ASTFunctionExtractor:
         return code.encode("utf8")[start_byte:end_byte].decode("utf8")
 
     def _extract_module_code(
-        self,
-        code: str,
-        definitions: List[CodeDefinition],
-        file_path: str
+        self, code: str, definitions: List[CodeDefinition], file_path: str
     ) -> Optional[CodeDefinition]:
         """Extract module-level code not inside any definition.
 
@@ -505,14 +495,10 @@ class ASTFunctionExtractor:
             start_line=uncovered_start or 1,
             end_line=uncovered_end or len(lines),
             content=module_content,
-            file_path=file_path
+            file_path=file_path,
         )
 
-    def _create_module_definition(
-        self,
-        file_path: str,
-        code: str
-    ) -> CodeDefinition:
+    def _create_module_definition(self, file_path: str, code: str) -> CodeDefinition:
         """Create a module-level definition for the entire file.
 
         Used as fallback when AST parsing fails or for unsupported languages.
@@ -532,7 +518,7 @@ class ASTFunctionExtractor:
             start_line=1,
             end_line=len(lines) if lines else 1,
             content=code,
-            file_path=file_path
+            file_path=file_path,
         )
 
     def detect_language(self, file_path: str) -> Optional[str]:

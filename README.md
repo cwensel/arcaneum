@@ -110,6 +110,8 @@ arc search text "async def" --corpus Frameworks
 # Service Management
 arc container start          # Start Qdrant and MeiliSearch
 arc container status         # Check service health
+arc container backup         # Back up Qdrant and MeiliSearch data
+arc container restore DIR    # Restore a backup
 arc doctor                   # Verify setup
 
 # Corpus (Recommended - Dual Indexing to Both Systems)
@@ -251,6 +253,7 @@ information with rich metadata. Content is automatically persisted for durabilit
 ```bash
 arc container start    # Start Qdrant and MeiliSearch
 arc container status   # Check health
+arc container backup    # Create a timestamped backup
 arc container logs     # View logs
 arc container stop     # Stop services
 ```
@@ -345,8 +348,25 @@ steps.
 
 - Reliable data persistence across container restarts
 - Better performance compared to bind mounts
-- Easy backup via Qdrant snapshots
+- Easy backup via `arc container backup`
 - Native Linux filesystem (ext4) for data safety
+
+### Backup and Restore
+
+Use `arc container backup` before upgrades or migrations. It creates a
+timestamped directory under `~/.local/share/arcaneum/backups/` with Qdrant
+collection snapshots plus MeiliSearch index settings and JSONL document exports.
+Restore with `arc container restore <backup-directory>` while the container
+services are running. Restore recreates same-named MeiliSearch indexes from the
+backup.
+
+Run backups when indexing is idle. `arc container backup` checks MeiliSearch for
+active tasks before and after export and aborts if any MeiliSearch task appears
+during the backup window.
+
+Backups protect Arcaneum's indexed data and corpus metadata stored in Qdrant and
+MeiliSearch. They do not include source files referenced by indexes, cached
+embedding models, Docker images, or local configuration secrets.
 
 ### Corporate Networks
 

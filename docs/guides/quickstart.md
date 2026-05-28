@@ -227,7 +227,31 @@ meilisearch-arcaneum-data  # MeiliSearch full-text index
 
 - XDG-compliant paths (follows Linux/macOS standards)
 - Reliable data persistence across container restarts
-- Easy backup via Qdrant snapshots
+- Easy backup via `arc container backup`
+
+## Backup and Restore
+
+Create a backup before upgrades, machine moves, or destructive maintenance:
+
+```bash
+arc container backup
+```
+
+The backup directory contains Qdrant collection snapshots and MeiliSearch index
+settings plus JSONL document exports, including Arcaneum corpus metadata stored
+in those systems. It does not include source files, cached embedding models,
+Docker images, or local configuration secrets.
+
+Restore a backup with services running:
+
+```bash
+arc container restore ~/.local/share/arcaneum/backups/20260528T120000Z
+```
+
+Restore recreates same-named MeiliSearch indexes from the backup.
+Run backups when indexing is idle; the command checks MeiliSearch for active
+tasks before and after export and aborts if any MeiliSearch task appears during
+the backup window.
 
 ## Troubleshooting
 
@@ -453,6 +477,8 @@ See the [CLI Reference](cli-reference.md) for complete performance tuning docume
 arc container start          # Start services
 arc container stop           # Stop services
 arc container status         # Check status
+arc container backup         # Back up indexed data
+arc container restore DIR    # Restore indexed data
 
 # Corpus (Recommended - Dual Indexing)
 arc corpus create NAME --type TYPE       # pdf, code, or markdown

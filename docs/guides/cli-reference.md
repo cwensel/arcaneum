@@ -1392,6 +1392,12 @@ arc container stop
 # Check status
 arc container status
 
+# Back up indexed data
+arc container backup
+
+# Restore indexed data
+arc container restore BACKUP_DIRECTORY
+
 # View logs
 arc container logs
 
@@ -1423,6 +1429,12 @@ arc container logs --follow
 # Restart if having issues
 arc container restart
 
+# Back up Qdrant snapshots and MeiliSearch indexes
+arc container backup -o ./arcaneum-backup
+
+# Restore from a backup directory
+arc container restore ./arcaneum-backup
+
 # Nuclear option: delete everything and start fresh
 arc container reset --confirm
 ```
@@ -1431,7 +1443,16 @@ arc container reset --confirm
 
 - Qdrant and MeiliSearch use Docker named volumes for persistence
 - Survives container restarts
-- Easy backup via Qdrant snapshots
+- `arc container backup` protects Qdrant collection snapshots and MeiliSearch
+  index settings plus JSONL document exports, including Arcaneum corpus metadata
+  stored there
+- Run backups when indexing is idle; the command checks MeiliSearch for active
+  tasks before and after export and aborts if any MeiliSearch task appears
+  during the backup window
+- `arc container restore` recreates same-named MeiliSearch indexes from the
+  backup
+- Backups do not include source files, cached embedding models, Docker images, or
+  local configuration secrets
 
 ## Configuration & Cache Management
 

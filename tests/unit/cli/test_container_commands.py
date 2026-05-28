@@ -233,6 +233,186 @@ class TestContainerLogs:
                 assert any('--tail=50' in str(c) for c in compose_calls)
 
 
+class TestContainerBackupRestore:
+    """Test 'arc container backup' and 'arc container restore' commands."""
+
+    def test_backup_writes_manifest_and_exports_services(self, temp_dir):
+        """Test that backup snapshots Qdrant and exports MeiliSearch metadata."""
+        from arcaneum.cli.docker import backup_command
+
+        responses = [
+            {"results": [{"uid": 42}]},
+            {"results": []},
+            {"result": {"collections": [{"name": "Docs"}]}},
+            {"result": {"name": "Docs-123.snapshot"}},
+            {"status": "ok"},
+            {"results": [{"uid": "DocsText", "primaryKey": "id"}]},
+            {"searchableAttributes": ["content"]},
+            {"results": [{"id": "1", "content": "hello"}]},
+            {"results": []},
+            {"results": [{"uid": 42}]},
+        ]
+
+        def fake_request(method, url, **kwargs):
+            response = MagicMock()
+            response.json.return_value = responses.pop(0)
+            response.raise_for_status.return_value = None
+            return response
+
+        backup_path = temp_dir / "backup"
+
+        with patch('shutil.which', return_value='/usr/bin/docker'):
+            with patch('subprocess.run') as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
+                with patch('requests.request', side_effect=fake_request):
+                    with patch('arcaneum.paths.get_meilisearch_api_key', return_value='secret-key'):
+                        backup_command.callback(
+                            output=str(backup_path),
+                            qdrant_url='http://qdrant',
+                            meilisearch_url='http://meili',
+                            qdrant_container='qdrant',
+                            qdrant_timeout=300,
+                            skip_meilisearch=False,
+                            output_json=False,
+                        )
+
+        manifest = json.loads((backup_path / "manifest.json").read_text())
+        assert manifest["qdrant"][0]["collection"] == "Docs"
+        assert manifest["meilisearch"][0]["index"] == "DocsText"
+        assert "Embedding model cache" in manifest["not_protected"]
+
+        meili_metadata = json.loads(
+            (backup_path / "meilisearch" / "DocsText.metadata.json").read_text()
+        )
+        meili_documents = (backup_path / "meilisearch" / "DocsText.documents.jsonl").read_text()
+        assert meili_metadata["settings"] == {"searchableAttributes": ["content"]}
+        assert meili_metadata["documents"] == 1
+        assert json.loads(meili_documents) == {"id": "1", "content": "hello"}
+
+        docker_cp_calls = [c for c in mock_run.call_args_list if "cp" in c.args[0]]
+        assert docker_cp_calls
+        assert "qdrant:/qdrant/snapshots/Docs/Docs-123.snapshot" in docker_cp_calls[0].args[0]
+
+    def test_restore_recovers_qdrant_and_recreates_meilisearch(self, temp_dir):
+        """Test that restore uses manifest entries for both services."""
+        from arcaneum.cli.docker import restore_command
+
+        backup_path = temp_dir / "backup"
+        (backup_path / "qdrant").mkdir(parents=True)
+        (backup_path / "meilisearch").mkdir()
+        (backup_path / "qdrant" / "Docs-123.snapshot").write_text("snapshot")
+        (backup_path / "meilisearch" / "DocsText.metadata.json").write_text(json.dumps({
+            "uid": "DocsText",
+            "primaryKey": "id",
+            "settings": {"searchableAttributes": ["content"]},
+            "documents": 1,
+        }))
+        (backup_path / "meilisearch" / "DocsText.documents.jsonl").write_text(
+            json.dumps({"id": "1", "content": "hello"}) + "\n"
+        )
+        (backup_path / "manifest.json").write_text(json.dumps({
+            "qdrant": [{
+                "collection": "Docs",
+                "snapshot": "Docs-123.snapshot",
+                "file": "qdrant/Docs-123.snapshot",
+            }],
+            "meilisearch": [{
+                "index": "DocsText",
+                "primaryKey": "id",
+                "documents": 1,
+                "metadata_file": "meilisearch/DocsText.metadata.json",
+                "documents_file": "meilisearch/DocsText.documents.jsonl",
+            }],
+        }))
+
+        requests_seen = []
+
+        def fake_request(method, url, **kwargs):
+            requests_seen.append((method, url, kwargs.get("json")))
+            response = MagicMock()
+            if "/tasks/" in url:
+                response.json.return_value = {"status": "succeeded"}
+            elif method in {"DELETE", "POST", "PATCH"} and "meili" in url:
+                task_count = len([
+                    r for r in requests_seen
+                    if "meili" in r[1] and r[0] in {"DELETE", "POST", "PATCH"}
+                ])
+                response.json.return_value = {"taskUid": task_count}
+            else:
+                response.json.return_value = {"status": "ok"}
+            response.raise_for_status.return_value = None
+            return response
+
+        with patch('shutil.which', return_value='/usr/bin/docker'):
+            with patch('subprocess.run') as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
+                with patch('requests.request', side_effect=fake_request):
+                    with patch('arcaneum.paths.get_meilisearch_api_key', return_value='secret-key'):
+                        restore_command.callback(
+                            backup_directory=str(backup_path),
+                            qdrant_url='http://qdrant',
+                            meilisearch_url='http://meili',
+                            qdrant_container='qdrant',
+                            qdrant_timeout=300,
+                            meilisearch_timeout=1800,
+                            skip_meilisearch=False,
+                            output_json=False,
+                        )
+
+        assert ("PUT", "http://qdrant/collections/Docs/snapshots/recover", {
+            "location": "file:///qdrant/snapshots/Docs/Docs-123.snapshot",
+        }) in requests_seen
+        docker_calls = [call.args[0] for call in mock_run.call_args_list]
+        assert [
+            "docker", "exec", "qdrant", "mkdir", "-p", "/qdrant/snapshots/Docs",
+        ] in docker_calls
+        assert ("DELETE", "http://meili/indexes/DocsText", None) in requests_seen
+        assert ("PATCH", "http://meili/indexes/DocsText/settings", {
+            "searchableAttributes": ["content"],
+        }) in requests_seen
+        assert any(
+            method == "POST" and url == "http://meili/indexes/DocsText/documents"
+            for method, url, _ in requests_seen
+        )
+
+    def test_backup_rejects_meili_task_created_during_qdrant_snapshot(self, temp_dir):
+        """Test that an empty starting task history is still a real baseline."""
+        from arcaneum.cli.docker import backup_command
+
+        responses = [
+            {"results": []},
+            {"results": []},
+            {"result": {"collections": [{"name": "Docs"}]}},
+            {"result": {"name": "Docs-123.snapshot"}},
+            {"status": "ok"},
+            {"results": []},
+            {"results": []},
+            {"results": [{"uid": 99}]},
+        ]
+
+        def fake_request(method, url, **kwargs):
+            response = MagicMock()
+            response.json.return_value = responses.pop(0)
+            response.raise_for_status.return_value = None
+            return response
+
+        with patch('shutil.which', return_value='/usr/bin/docker'):
+            with patch('subprocess.run') as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
+                with patch('requests.request', side_effect=fake_request):
+                    with patch('arcaneum.paths.get_meilisearch_api_key', return_value='secret-key'):
+                        with pytest.raises(RuntimeError, match="task history changed"):
+                            backup_command.callback(
+                                output=str(temp_dir / "backup"),
+                                qdrant_url='http://qdrant',
+                                meilisearch_url='http://meili',
+                                qdrant_container='qdrant',
+                                qdrant_timeout=300,
+                                skip_meilisearch=False,
+                                output_json=False,
+                            )
+
+
 class TestContainerReset:
     """Test 'arc container reset' command."""
 

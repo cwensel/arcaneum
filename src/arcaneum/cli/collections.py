@@ -2,22 +2,28 @@
 
 import sys
 from pathlib import Path
+
+from qdrant_client.models import HnswConfigDiff
 from rich.console import Console
 from rich.table import Table
-from qdrant_client.models import HnswConfigDiff
 
-from arcaneum.embeddings.client import EMBEDDING_MODELS
 from arcaneum.cli.corpus import DEFAULT_MODELS_BY_CORPUS_TYPE
-from arcaneum.indexing.collection_metadata import (
-    set_collection_metadata,
-    get_collection_metadata,
-    get_collection_type,
-    CollectionType,
-)
 from arcaneum.cli.errors import InvalidArgumentError, ResourceNotFoundError
 from arcaneum.cli.interaction_logger import interaction_logger
-from arcaneum.cli.output import print_json, print_error
-from arcaneum.cli.utils import create_qdrant_client, build_vectors_config, extract_vectors_info
+from arcaneum.cli.output import print_error, print_json
+from arcaneum.cli.utils import (
+    build_vectors_config,
+    create_qdrant_client,
+    extract_vectors_info,
+)
+from arcaneum.embeddings.client import EMBEDDING_MODELS
+from arcaneum.indexing.collection_metadata import (
+    CollectionType,
+    get_collection_metadata,
+    get_collection_type,
+    metadata_exclusion_filter,
+    set_collection_metadata,
+)
 from arcaneum.utils.formatting import format_size
 
 console = Console()
@@ -312,6 +318,7 @@ def items_collection_command(name: str, output_json: bool):
 
                 points, offset = client.scroll(
                     collection_name=name,
+                    scroll_filter=metadata_exclusion_filter(),
                     limit=1000,
                     offset=offset,
                     with_payload=payload_fields,

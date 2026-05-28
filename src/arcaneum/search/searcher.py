@@ -1,17 +1,20 @@
 """Core search functionality for Qdrant collections (RDR-007)."""
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
-import logging
+
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from tenacity import (
+    before_sleep_log,
     retry,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
-    before_sleep_log
 )
+
+from arcaneum.indexing.collection_metadata import metadata_exclusion_filter
 
 from .embedder import SearchEmbedder
 
@@ -118,7 +121,7 @@ def search_collection(
             collection_name=collection_name,
             query=query_vector,
             using=model_key,  # Named vector to search
-            query_filter=query_filter,
+            query_filter=metadata_exclusion_filter(query_filter),
             limit=limit,
             offset=offset,
             score_threshold=score_threshold,

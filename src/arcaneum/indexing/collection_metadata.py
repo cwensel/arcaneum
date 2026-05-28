@@ -6,16 +6,40 @@ ensuring PDFs, source code, and markdown are not mixed in the same collection.
 """
 
 import logging
-from typing import Optional, Dict, Any
 from datetime import datetime
+from typing import Any, Dict, Optional
 
 from qdrant_client import QdrantClient
+from qdrant_client.models import FieldCondition, Filter, MatchValue
 
 logger = logging.getLogger(__name__)
 
 # Reserved UUID for collection metadata point
 # Using a fixed UUID so we can always find it
 METADATA_POINT_ID = "00000000-0000-0000-0000-000000000001"
+METADATA_PAYLOAD_KEY = "is_metadata"
+
+
+def metadata_exclusion_filter(query_filter: Optional[Filter] = None) -> Filter:
+    """Return a Qdrant filter that excludes reserved metadata points."""
+    metadata_condition = FieldCondition(
+        key=METADATA_PAYLOAD_KEY,
+        match=MatchValue(value=True),
+    )
+
+    if query_filter is None:
+        return Filter(must_not=[metadata_condition])
+
+    must_not = list(query_filter.must_not or [])
+    if metadata_condition not in must_not:
+        must_not.append(metadata_condition)
+
+    return Filter(
+        must=query_filter.must,
+        should=query_filter.should,
+        must_not=must_not,
+        min_should=query_filter.min_should,
+    )
 
 
 class CollectionType:
@@ -67,7 +91,7 @@ def set_collection_metadata(
         "model": model,
         "created_at": datetime.now().isoformat(),
         "created_by": "arcaneum",
-        "is_metadata": True,  # Flag to identify metadata point
+        METADATA_PAYLOAD_KEY: True,  # Flag to identify metadata point
         **extra_metadata
     }
 
@@ -168,7 +192,7 @@ def update_collection_metadata(
             points=[PointStruct(
                 id=METADATA_POINT_ID,
                 vector=vectors,
-                payload={**metadata, "is_metadata": True},
+                payload={**metadata, METADATA_PAYLOAD_KEY: True},
             )],
         )
         logger.info(f"Updated collection metadata for {collection_name}")
@@ -209,7 +233,7 @@ def get_collection_metadata(
         if points and len(points) > 0:
             payload = points[0].payload
             # Return payload without the is_metadata flag
-            return {k: v for k, v in payload.items() if k != "is_metadata"}
+            return {k: v for k, v in payload.items() if k != METADATA_PAYLOAD_KEY}
 
         return {}
 

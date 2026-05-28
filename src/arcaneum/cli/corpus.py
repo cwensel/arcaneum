@@ -22,6 +22,7 @@ from ..embeddings.client import EMBEDDING_MODELS
 from ..fulltext.indexes import get_index_settings
 from ..indexing.collection_metadata import (
     get_collection_metadata,
+    metadata_exclusion_filter,
     set_collection_metadata,
     update_collection_metadata,
 )
@@ -726,6 +727,7 @@ def _get_qdrant_item_count(client, collection_name: str, collection_type: str) -
     while True:
         points, offset = client.scroll(
             collection_name=collection_name,
+            scroll_filter=metadata_exclusion_filter(),
             limit=1000,
             offset=offset,
             with_payload=[id_field],
@@ -990,6 +992,7 @@ def corpus_items_command(name: str, output_json: bool):
             while True:
                 points, offset = qdrant.scroll(
                     collection_name=name,
+                    scroll_filter=metadata_exclusion_filter(),
                     limit=1000,
                     offset=offset,
                     with_payload=payload_fields,

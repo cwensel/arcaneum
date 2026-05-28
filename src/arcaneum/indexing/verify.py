@@ -17,15 +17,18 @@ Usage:
 import hashlib
 import logging
 import os
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
-from collections import defaultdict
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 
-from arcaneum.indexing.collection_metadata import get_collection_type
+from arcaneum.indexing.collection_metadata import (
+    get_collection_type,
+    metadata_exclusion_filter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -243,7 +246,8 @@ class CollectionVerifier:
                 ]
             )
 
-        # Scroll through all points
+        # Scroll through user points
+        scroll_filter = metadata_exclusion_filter(scroll_filter)
         offset = None
         batch_count = 0
         payload_fields = [
@@ -356,7 +360,9 @@ class CollectionVerifier:
         return CollectionVerificationResult(
             collection_name=collection_name,
             collection_type="code",
-            total_points=total_points,
+            total_points=sum(
+                project.total_actual_chunks for project in project_results
+            ),
             total_items=len(project_results),
             complete_items=total_complete,
             incomplete_items=total_incomplete,
@@ -429,6 +435,7 @@ class CollectionVerifier:
         while True:
             points, offset = self.qdrant.scroll(
                 collection_name=collection_name,
+                scroll_filter=metadata_exclusion_filter(),
                 with_payload=payload_fields,
                 with_vectors=False,
                 limit=500,
@@ -660,7 +667,9 @@ class CollectionVerifier:
         return CollectionVerificationResult(
             collection_name=collection_name,
             collection_type=collection_type,
-            total_points=total_points,
+            total_points=sum(
+                len(file_data["indices"]) for file_data in file_chunks.values()
+            ),
             total_items=len(file_results),
             complete_items=complete_count,
             incomplete_items=incomplete_count,

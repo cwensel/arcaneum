@@ -44,6 +44,7 @@ from qdrant_client.models import (
 from arcaneum.indexing.collection_metadata import (
     METADATA_POINT_ID,
     get_collection_metadata,
+    metadata_exclusion_filter,
     set_collection_metadata,
 )
 
@@ -371,12 +372,13 @@ class BaseExporter(ABC):
             if metadata_points:
                 yield metadata_points[0]
 
-        # Scroll through remaining points
+        # Scroll through remaining user points
+        user_scroll_filter = metadata_exclusion_filter(scroll_filter)
         offset = None
         while True:
             points, offset = self.client.scroll(
                 collection_name=collection_name,
-                scroll_filter=scroll_filter,
+                scroll_filter=user_scroll_filter,
                 with_vectors=True,
                 with_payload=True,
                 limit=100,

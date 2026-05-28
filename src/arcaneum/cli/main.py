@@ -254,6 +254,7 @@ def index():
 @click.option('--process-priority', type=click.Choice(['low', 'normal', 'high']), default='normal', help='Process scheduling priority (default: normal). Use low for background indexing.')
 @click.option('--not-nice', is_flag=True, help='Disable process priority reduction for worker processes (use normal priority)')
 @click.option('--force', is_flag=True, help='Force reindex all files')
+@click.option('--prune', is_flag=True, help='Delete indexed entries whose source file no longer exists on disk')
 @click.option('--no-gpu/--gpu', default=True, help='Use CPU by default; pass --gpu to opt into accelerator embedding')
 @click.option('--offline', is_flag=True, help='Offline mode (use cached models only, no network)')
 @click.option('--randomize', is_flag=True, help='Randomize file processing order (useful for parallel indexing)')
@@ -262,14 +263,14 @@ def index():
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 @click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_pdf(path, from_file, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, no_gpu, offline, randomize, verify, no_streaming, verbose, debug, output_json):
+def index_pdf(path, from_file, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, prune, no_gpu, offline, randomize, verify, no_streaming, verbose, debug, output_json):
     """Index PDF files"""
     # Validate that exactly one of path or from_file is provided
     validate_path_or_from_file(path, from_file)
 
     from arcaneum.cli.index_pdfs import index_pdfs_command
     streaming = not no_streaming  # Default is streaming=True (--no-streaming disables it)
-    index_pdfs_command(path, from_file, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, no_gpu, offline, randomize, verify, streaming, verbose, debug, output_json)
+    index_pdfs_command(path, from_file, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, prune, no_gpu, offline, randomize, verify, streaming, verbose, debug, output_json)
 
 
 @index.command('code')
@@ -284,6 +285,7 @@ def index_pdf(path, from_file, collection, model, embedding_batch_size, no_ocr, 
 @click.option('--process-priority', type=click.Choice(['low', 'normal', 'high']), default='normal', help='Process scheduling priority (default: normal). Use low for background indexing.')
 @click.option('--not-nice', is_flag=True, help='Disable process priority reduction for worker processes (use normal priority)')
 @click.option('--force', is_flag=True, help='Force reindex all projects')
+@click.option('--prune', is_flag=True, help='Delete indexed entries whose source file no longer exists on disk')
 @click.option('--no-gpu/--gpu', default=True, help='Use CPU by default; pass --gpu to opt into accelerator embedding')
 @click.option('--verify', is_flag=True, help='Verify and repair incomplete items after indexing (fsck-like check)')
 @click.option('--no-streaming', is_flag=True, help='Disable streaming mode (accumulate all embeddings before upload, uses more memory)')
@@ -291,14 +293,14 @@ def index_pdf(path, from_file, collection, model, embedding_batch_size, no_ocr, 
 @click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
 @click.option('--profile', is_flag=True, help='Show pipeline performance profiling (stage breakdown, throughput)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_code(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, depth, process_priority, not_nice, force, no_gpu, verify, no_streaming, verbose, debug, profile, output_json):
+def index_code(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, depth, process_priority, not_nice, force, prune, no_gpu, verify, no_streaming, verbose, debug, profile, output_json):
     """Index source code"""
     # Validate that exactly one of path or from_file is provided
     validate_path_or_from_file(path, from_file)
 
     from arcaneum.cli.index_source import index_source_command
     streaming = not no_streaming  # Default is streaming=True (--no-streaming disables it)
-    index_source_command(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, depth, process_priority, not_nice, force, no_gpu, verify, streaming, verbose, debug, profile, output_json)
+    index_source_command(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, depth, process_priority, not_nice, force, prune, no_gpu, verify, streaming, verbose, debug, profile, output_json)
 
 
 @index.command('markdown')
@@ -315,6 +317,7 @@ def index_code(path, from_file, collection, model, embedding_batch_size, chunk_s
 @click.option('--process-priority', type=click.Choice(['low', 'normal', 'high']), default='normal', help='Process scheduling priority (default: normal). Use low for background indexing.')
 @click.option('--not-nice', is_flag=True, help='Disable process priority reduction for worker processes (use normal priority)')
 @click.option('--force', is_flag=True, help='Force reindex all files')
+@click.option('--prune', is_flag=True, help='Delete indexed entries whose source file no longer exists on disk')
 @click.option('--no-gpu/--gpu', default=True, help='Use CPU by default; pass --gpu to opt into accelerator embedding')
 @click.option('--offline', is_flag=True, help='Offline mode (use cached models only, no network)')
 @click.option('--randomize', is_flag=True, help='Randomize file processing order (useful for parallel indexing)')
@@ -323,14 +326,14 @@ def index_code(path, from_file, collection, model, embedding_batch_size, chunk_s
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 @click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_markdown(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, no_gpu, offline, randomize, verify, no_streaming, verbose, debug, output_json):
+def index_markdown(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, prune, no_gpu, offline, randomize, verify, no_streaming, verbose, debug, output_json):
     """Index markdown files"""
     # Validate that exactly one of path or from_file is provided
     validate_path_or_from_file(path, from_file)
 
     from arcaneum.cli.index_markdown import index_markdown_command
     streaming = not no_streaming  # Default is streaming=True (--no-streaming disables it)
-    index_markdown_command(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, no_gpu, offline, randomize, verify, streaming, verbose, debug, output_json)
+    index_markdown_command(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, prune, no_gpu, offline, randomize, verify, streaming, verbose, debug, output_json)
 
 
 # Full-text indexing subgroup (RDR-010: arc index text ...)

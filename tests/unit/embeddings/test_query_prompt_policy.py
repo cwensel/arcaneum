@@ -56,6 +56,7 @@ def test_prompt_prefix_length_is_reserved_when_clipping(monkeypatch):
     monkeypatch.setitem(EMBEDDING_MODELS, "e5-base", config)
 
     client = EmbeddingClient.__new__(EmbeddingClient)
+    client.use_gpu = False
     client._device = "cpu"
     client._gpu_poisoned = False
     client.get_model = MagicMock(return_value=SimpleNamespace(_backend="sentence-transformers"))

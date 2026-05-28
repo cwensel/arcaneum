@@ -35,6 +35,7 @@ def index_pdfs_command(
     process_priority: str,
     not_nice: bool,
     force: bool,
+    prune: bool,
     no_gpu: bool,
     offline: bool,
     randomize: bool,
@@ -349,6 +350,12 @@ def index_pdfs_command(
                 console.print(f"  [yellow]Mode: Offline (HF_HUB_OFFLINE=1)[/yellow]")
             console.print()
 
+        # Capture indexed paths BEFORE indexing so we can detect orphans
+        # (indexed files no longer on disk) on a force, full-directory run.
+        pre_run_paths = set()
+        if force and file_list is None:
+            pre_run_paths = uploader.sync._get_indexed_file_paths_set(collection)
+
         # Index PDFs
         stats = uploader.index_directory(
             pdf_dir=pdf_dir,
@@ -360,6 +367,26 @@ def index_pdfs_command(
             verbose=verbose,
             file_list=file_list
         )
+
+        # Orphan-aware prompt-policy stamp gate (C3/C4)
+        if force and file_list is None:
+            from ..indexing.collection_metadata import prune_orphans_and_stamp
+
+            on_disk_paths = {str(p.absolute()) for p in pdf_dir.rglob("*.pdf")}
+            prune_orphans_and_stamp(
+                qdrant=qdrant,
+                sync=uploader.sync,
+                collection_name=collection,
+                collection_type=CollectionType.PDF,
+                model=model,
+                force=force,
+                file_list=file_list,
+                stats=stats,
+                on_disk_paths=on_disk_paths,
+                pre_run_paths=pre_run_paths,
+                prune=prune,
+                warn=lambda m: console.print(f"[yellow]⚠ {m}[/yellow]"),
+            )
 
         # Post-verify if requested
         verification_result = None

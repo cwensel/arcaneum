@@ -181,6 +181,93 @@ def stamp_embedding_prompt_policy(
     return updated
 
 
+def prune_orphans_and_stamp(
+    qdrant: QdrantClient,
+    sync: Any,
+    collection_name: str,
+    collection_type: str,
+    model: str,
+    force: bool,
+    file_list: Optional[list],
+    stats: Dict[str, Any],
+    on_disk_paths: set,
+    pre_run_paths: set,
+    prune: bool,
+    warn: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """Shared post-indexing orphan handling + prompt-policy stamp for force runs.
+
+    Orphans are indexed files that no longer exist on disk; their vectors may
+    have been produced under a now-stale prompt policy. Orphan detection is only
+    meaningful for a full-directory force run (``force`` true, ``file_list``
+    None). When ``prune`` is set, orphan chunks are deleted by ``file_path``
+    (the C1 primitive) so the collection can be certified. The prompt policy is
+    stamped only when :func:`should_stamp_prompt_policy` allows it (no orphans
+    remain). If orphans remain and ``prune`` is off, the stamp is skipped and a
+    warning is emitted.
+
+    Args:
+        qdrant: Qdrant client.
+        sync: MetadataBasedSync (provides delete_chunks_by_file_path).
+        collection_name: Collection being indexed.
+        collection_type: Collection type ("pdf", "code", "markdown").
+        model: Embedding model name(s).
+        force: Whether this was a force/full reindex run.
+        file_list: Explicit file list, or None for full-directory runs.
+        stats: Run statistics dict with "files" and "errors".
+        on_disk_paths: Absolute path strings the run covered that exist on disk.
+        pre_run_paths: Indexed file_path set captured BEFORE indexing.
+        prune: Whether to delete orphan chunks.
+        warn: Optional callable(str) used to surface the stale-policy warning.
+
+    Returns:
+        Dict with keys: orphans (list), orphans_pruned (int),
+        orphans_remaining (int), stamped (bool).
+    """
+    result = {
+        "orphans": [],
+        "orphans_pruned": 0,
+        "orphans_remaining": 0,
+        "stamped": False,
+    }
+
+    # Orphan detection only applies to full-directory force runs.
+    if force and file_list is None:
+        orphans = sorted(set(pre_run_paths) - set(on_disk_paths))
+        result["orphans"] = orphans
+
+        if orphans and prune:
+            pruned = 0
+            for orphan in orphans:
+                try:
+                    if sync.delete_chunks_by_file_path(collection_name, orphan) >= 0:
+                        pruned += 1
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.warning(f"Failed to prune orphan {orphan}: {exc}")
+            result["orphans_pruned"] = pruned
+            result["orphans_remaining"] = 0
+        else:
+            result["orphans_remaining"] = len(orphans)
+
+    orphans_remaining = result["orphans_remaining"]
+
+    if should_stamp_prompt_policy(force, file_list, stats, orphans_remaining):
+        stamp_embedding_prompt_policy(qdrant, collection_name, collection_type, model)
+        result["stamped"] = True
+    elif force and file_list is None and orphans_remaining > 0 and not prune:
+        message = (
+            f"{orphans_remaining} indexed file(s) no longer on disk; their "
+            "vectors may use a stale prompt policy. Re-run with --prune to "
+            "remove them and certify the collection."
+        )
+        if warn is not None:
+            warn(message)
+        else:
+            logger.warning(message)
+
+    return result
+
+
 def _condition_list(
     conditions: Optional[Condition | list[Condition]],
 ) -> list[Condition]:

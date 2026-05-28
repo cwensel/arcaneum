@@ -269,6 +269,7 @@ def test_index_source_uses_shared_qdrant_resolution(tmp_path):
                         process_priority='normal',
                         not_nice=True,
                         force=False,
+                        prune=False,
                         no_gpu=True,
                         verify=False,
                         streaming=True,
@@ -283,3 +284,85 @@ def test_index_source_uses_shared_qdrant_resolution(tmp_path):
     assert result is not None
     assert result.code == 1
     mock_create.assert_called_once_with()
+
+
+def test_index_markdown_prune_flag_is_threaded(tmp_path):
+    """`arc index markdown --prune` forwards prune=True to the command."""
+    called = {}
+    docs = tmp_path / "docs"
+    docs.mkdir()
+
+    def fake_cmd(*args, **kwargs):
+        # force at index 12, prune at index 13
+        called['force'] = args[12]
+        called['prune'] = args[13]
+        raise SystemExit(0)
+
+    result = _run(
+        ['index', 'markdown', str(docs), '--collection', 'Docs', '--force', '--prune'],
+        **{'arcaneum.cli.index_markdown.index_markdown_command': fake_cmd},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert called['force'] is True
+    assert called['prune'] is True
+
+
+def test_index_markdown_prune_defaults_off(tmp_path):
+    """Without --prune, prune must default to False."""
+    called = {}
+    docs = tmp_path / "docs"
+    docs.mkdir()
+
+    def fake_cmd(*args, **kwargs):
+        called['prune'] = args[13]
+        raise SystemExit(0)
+
+    result = _run(
+        ['index', 'markdown', str(docs), '--collection', 'Docs', '--force'],
+        **{'arcaneum.cli.index_markdown.index_markdown_command': fake_cmd},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert called['prune'] is False
+
+
+def test_index_pdf_prune_flag_is_threaded(tmp_path):
+    """`arc index pdf --prune` forwards prune=True."""
+    called = {}
+    docs = tmp_path / "pdfs"
+    docs.mkdir()
+
+    def fake_cmd(*args, **kwargs):
+        called['prune'] = args[13]
+        raise SystemExit(0)
+
+    result = _run(
+        ['index', 'pdf', str(docs), '--collection', 'Docs', '--force', '--prune'],
+        **{'arcaneum.cli.index_pdfs.index_pdfs_command': fake_cmd},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert called['prune'] is True
+
+
+def test_index_code_prune_flag_is_threaded(tmp_path):
+    """`arc index code --prune` forwards prune=True."""
+    called = {}
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def fake_cmd(*args, **kwargs):
+        # force at index 10, prune at index 11
+        called['force'] = args[10]
+        called['prune'] = args[11]
+        raise SystemExit(0)
+
+    result = _run(
+        ['index', 'code', str(repo), '--collection', 'Code', '--force', '--prune'],
+        **{'arcaneum.cli.index_source.index_source_command': fake_cmd},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert called['force'] is True
+    assert called['prune'] is True

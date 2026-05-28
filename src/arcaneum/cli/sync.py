@@ -1530,6 +1530,10 @@ def sync_directory_command(
                 else:
                     print_info(f"Found {len(files)} files across {loc_word}")
 
+        # Snapshot the full discovered on-disk set before change detection
+        # narrows `files`; used for orphan detection in the stamp gate.
+        all_discovered_paths = {str(f.absolute()) for f in files}
+
         # Apply change detection (skip already indexed files) unless --force
         already_indexed_count = 0
         total_corpus_files = len(files)  # Default: all discovered files
@@ -1769,6 +1773,16 @@ def sync_directory_command(
         total_chunks = 0
         total_qdrant = 0
         total_meili = 0
+        files_failed = 0  # Per-file processing failures (gates prompt-policy stamp)
+
+        # Capture indexed paths BEFORE indexing so we can detect orphans
+        # (indexed files no longer on disk) on a force, full-directory sync.
+        full_directory_force = (
+            force and not from_file and not single_files and bool(dir_paths)
+        )
+        sync_pre_run_paths = set()
+        if full_directory_force:
+            sync_pre_run_paths = MetadataBasedSync(qdrant)._get_indexed_file_paths_set(corpus)
 
         # Dry-run mode: report what would happen and exit
         if dry_run:
@@ -2269,6 +2283,7 @@ def sync_directory_command(
                             logger.debug("memory probe failed", exc_info=True)
 
                     except Exception as e:
+                        files_failed += 1
                         logger.error(f"Failed to process {file_path}: {e}")
                         if not output_json:
                             progress.console.print(f"[yellow]Warning: Failed to process {file_path.name}: {e}[/yellow]")
@@ -2524,6 +2539,27 @@ def sync_directory_command(
                     progress.advance(backfill_task)
 
             total_qdrant += qdrant_backfill_chunks
+
+        # Orphan-aware prompt-policy stamp gate (C4) for full-directory force sync.
+        if full_directory_force and not dry_run:
+            from ..indexing.collection_metadata import prune_orphans_and_stamp
+
+            stamp_sync = MetadataBasedSync(qdrant)
+            gate_stats = {"files": total_indexed, "errors": files_failed}
+            prune_orphans_and_stamp(
+                qdrant=qdrant,
+                sync=stamp_sync,
+                collection_name=corpus,
+                collection_type=corpus_type,
+                model=model_list,
+                force=force,
+                file_list=None,
+                stats=gate_stats,
+                on_disk_paths=all_discovered_paths,
+                pre_run_paths=sync_pre_run_paths,
+                prune=False,  # corpus sync uses --parity for orphan cleanup
+                warn=(None if output_json else (lambda m: console.print(f"[yellow]⚠ {m}[/yellow]"))),
+            )
 
         # Output results
         data = {

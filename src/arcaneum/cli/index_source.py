@@ -3,6 +3,7 @@
 import sys
 import logging
 import signal
+from pathlib import Path
 from typing import Optional
 
 from rich.console import Console
@@ -36,6 +37,7 @@ def index_source_command(
     process_priority: str,
     not_nice: bool,
     force: bool,
+    prune: bool,
     no_gpu: bool,
     verify: bool,
     streaming: bool,
@@ -327,6 +329,14 @@ def index_source_command(
                     if verbose or not output_json:
                         console.print(f"[yellow]Found {len(repair_targets)} incomplete items to repair: {list(repair_targets)}[/yellow]\n")
 
+        # Capture indexed paths BEFORE indexing so we can detect orphans
+        # (indexed files no longer on disk) on a force, full-directory run.
+        from arcaneum.indexing.common.sync import MetadataBasedSync
+        path_sync = MetadataBasedSync(qdrant_client)
+        pre_run_paths = set()
+        if force and file_list is None:
+            pre_run_paths = path_sync._get_indexed_file_paths_set(collection)
+
         # Index directory (include repair targets if any)
         stats = indexer.index_directory(
             input_path=source_dir,
@@ -339,6 +349,31 @@ def index_source_command(
             profile=profile,
             repair_targets=repair_targets  # Projects to force re-index even if commit unchanged
         )
+
+        # Orphan-aware prompt-policy stamp gate (C3/C4)
+        if force and file_list is None:
+            from ..indexing.collection_metadata import prune_orphans_and_stamp
+
+            on_disk_paths = path_sync._get_indexed_file_paths_set(collection)
+            on_disk_paths = {p for p in on_disk_paths if Path(p).exists()}
+            gate_stats = {
+                "files": stats.get("files_processed", 0),
+                "errors": 0,
+            }
+            prune_orphans_and_stamp(
+                qdrant=qdrant_client,
+                sync=path_sync,
+                collection_name=collection,
+                collection_type=CollectionType.CODE,
+                model=model,
+                force=force,
+                file_list=file_list,
+                stats=gate_stats,
+                on_disk_paths=on_disk_paths,
+                pre_run_paths=pre_run_paths,
+                prune=prune,
+                warn=lambda m: console.print(f"[yellow]⚠ {m}[/yellow]"),
+            )
 
         # Post-verify if requested
         verification_result = None

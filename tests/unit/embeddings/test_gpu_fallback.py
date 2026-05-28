@@ -336,7 +336,9 @@ class TestGpuPoisonStaysSticky:
         assert embedding_client._gpu_poisoned is True
         assert embedding_client._pending_gpu_cleanup == {}
         get_cpu.assert_called_once_with("jina-code")
-        encode_cpu.assert_called_once_with(cpu_model, ["text1", "text2"])
+        encode_cpu.assert_called_once_with(
+            cpu_model, ["text1", "text2"], "jina-code", "document"
+        )
 
     def test_poison_stays_set_with_alive_thread(self, embedding_client):
         embedding_client._gpu_poisoned = True
@@ -442,7 +444,9 @@ class TestCpuFallbackBounded:
         cpu_model = MagicMock()
         cpu_model.encode.return_value = np.random.rand(2, 768).astype(np.float32)
 
-        embedding_client._encode_on_cpu_fallback(cpu_model, ["a", "b"])
+        embedding_client._encode_on_cpu_fallback(
+            cpu_model, ["a", "b"], "jina-code", "document"
+        )
 
         assert cpu_model.encode.call_count == 1
         kwargs = cpu_model.encode.call_args.kwargs
@@ -460,7 +464,7 @@ class TestCpuFallbackBounded:
         ]
 
         result = embedding_client._encode_on_cpu_fallback(
-            cpu_model, [f"t{i}" for i in range(n)]
+            cpu_model, [f"t{i}" for i in range(n)], "jina-code", "document"
         )
 
         assert cpu_model.encode.call_count == 3
@@ -477,7 +481,9 @@ class TestCpuFallbackBounded:
         with patch.object(
             embedding_client, '_configure_cpu_threading'
         ) as mock_configure:
-            embedding_client._encode_on_cpu_fallback(cpu_model, ["a"])
+            embedding_client._encode_on_cpu_fallback(
+                cpu_model, ["a"], "jina-code", "document"
+            )
 
         mock_configure.assert_called_once()
 
@@ -559,7 +565,7 @@ class TestEmbedSortsByLength:
         # _encode_with_oom_recovery on MPS would spawn a daemon thread; bypass it
         with patch.object(
             embedding_client, '_encode_with_oom_recovery',
-            side_effect=lambda model, t, ibs, mn: encode_side_effect(t),
+            side_effect=lambda model, t, ibs, mn, pt: encode_side_effect(t),
         ) as mock_recover:
             result = embedding_client.embed(texts, "jina-code")
 
@@ -594,7 +600,7 @@ class TestEmbedSortsByLength:
 
         with patch.object(
             embedding_client, '_encode_with_oom_recovery',
-            side_effect=lambda model, t, ibs, mn: encode_side_effect(t),
+            side_effect=lambda model, t, ibs, mn, pt: encode_side_effect(t),
         ):
             result = embedding_client.embed(texts, "jina-code")
 

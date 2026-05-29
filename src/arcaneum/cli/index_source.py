@@ -1,32 +1,32 @@
 """CLI command for source code indexing (RDR-005)."""
 
-import sys
 import logging
 import signal
-from pathlib import Path
+import sys
 from typing import Optional
 
 from rich.console import Console
 
-from .interaction_logger import interaction_logger
-from .logging_config import setup_logging_default, setup_logging_verbose, setup_logging_debug
-from .utils import set_process_priority, create_qdrant_client
-from arcaneum.indexing.source_code_pipeline import SourceCodeIndexer
-from arcaneum.indexing.qdrant_indexer import QdrantIndexer
-from arcaneum.indexing.collection_metadata import (
-    backfill_embedding_prompt_policy,
-    validate_collection_type,
-    set_collection_metadata,
-    get_collection_metadata,
-    get_vector_names,
-    CollectionType,
-    prompt_policy_can_be_backfilled,
-    prompt_policy_issues,
-    update_collection_metadata,
-)
 from arcaneum.embeddings.client import prompt_policy_model_key_for_name
 from arcaneum.embeddings.model_cache import get_cached_model
+from arcaneum.indexing.collection_metadata import (
+    CollectionType,
+    backfill_embedding_prompt_policy,
+    get_collection_metadata,
+    get_vector_names,
+    prompt_policy_can_be_backfilled,
+    prompt_policy_issues,
+    set_collection_metadata,
+    update_collection_metadata,
+    validate_collection_type,
+)
+from arcaneum.indexing.qdrant_indexer import QdrantIndexer
+from arcaneum.indexing.source_code_pipeline import SourceCodeIndexer
 from arcaneum.paths import get_models_dir
+
+from .interaction_logger import interaction_logger
+from .logging_config import setup_logging_debug, setup_logging_default, setup_logging_verbose
+from .utils import create_qdrant_client, set_process_priority
 
 console = Console()
 
@@ -171,8 +171,8 @@ def index_source_command(
                 # GPU mode: auto-tune based on available memory
                 try:
                     from arcaneum.utils.memory import (
-                        get_gpu_memory_info,
                         estimate_safe_batch_size_v2,
+                        get_gpu_memory_info,
                     )
 
                     available_bytes, total_bytes, device_type = get_gpu_memory_info()
@@ -205,25 +205,27 @@ def index_source_command(
 
         # Show configuration at start (if verbose)
         if verbose:
-            console.print(f"\n[bold blue]Source Code Indexing Configuration[/bold blue]")
+            console.print("\n[bold blue]Source Code Indexing Configuration[/bold blue]")
             console.print(f"  Collection: {collection} (type: code)")
             console.print(f"  Model: {model}")
 
             # Show GPU/CPU info
             device_info = embedding_client.get_device_info()
             if no_gpu:
-                console.print(f"  Device: CPU (GPU acceleration disabled)")
+                console.print("  Device: CPU (GPU acceleration disabled)")
             elif device_info["gpu_available"]:
                 console.print(
-                    f"  [green]Device: {device_info['device'].upper()} (GPU acceleration enabled)[/green]"
+                    f"  [green]Device: {device_info['device'].upper()} "
+                    "(GPU acceleration enabled)[/green]"
                 )
             else:
-                console.print(f"  Device: CPU (GPU not available)")
+                console.print("  Device: CPU (GPU not available)")
 
             # Show parallelism configuration
             console.print(f"  File processing: {actual_file_workers} workers")
             console.print(
-                f"  Embedding: {actual_embedding_workers} workers, batch size {embedding_batch_size}"
+                f"  Embedding: {actual_embedding_workers} workers, "
+                f"batch size {embedding_batch_size}"
             )
 
             # Show process priority
@@ -383,7 +385,8 @@ def index_source_command(
                     repair_targets = set(incomplete_identifiers)
                     if verbose or not output_json:
                         console.print(
-                            f"[yellow]Found {len(repair_targets)} incomplete items to repair: {list(repair_targets)}[/yellow]\n"
+                            f"[yellow]Found {len(repair_targets)} incomplete items "
+                            f"to repair: {list(repair_targets)}[/yellow]\n"
                         )
 
         # Capture indexed paths BEFORE indexing so we can detect orphans
@@ -481,13 +484,15 @@ def index_source_command(
             if verification_result.is_healthy:
                 if verbose or not output_json:
                     console.print(
-                        f"[green]Collection verified - all {verification_result.complete_items} items complete[/green]"
+                        "[green]Collection verified - all "
+                        f"{verification_result.complete_items} items complete[/green]"
                     )
             else:
                 if verbose or not output_json:
                     still_incomplete = verification_result.get_items_needing_repair()
                     console.print(
-                        f"[yellow]Warning: {len(still_incomplete)} items still incomplete after indexing[/yellow]"
+                        f"[yellow]Warning: {len(still_incomplete)} items still "
+                        "incomplete after indexing[/yellow]"
                     )
                     for item in still_incomplete[:5]:
                         console.print(f"  [yellow]{item}[/yellow]")

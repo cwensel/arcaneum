@@ -21,6 +21,7 @@ full-text search (MeiliSearch) for the same content.
 **Common Options:**
 
 - --json: Output in JSON format
+- --details: Show extended list columns, including exact item counts
 
 **Create Options:**
 

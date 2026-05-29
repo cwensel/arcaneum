@@ -70,12 +70,14 @@ def _item_unit_for_corpus_type(collection_type):
     return UNKNOWN_LEGACY
 
 
-def _last_sync_state(metadata):
+def _last_sync_state(metadata, chunk_count: int = 0):
     """Normalize sync metadata into stable JSON fields."""
     if not metadata:
         return None, "unknown"
     last_sync = metadata.get("last_sync")
     if not last_sync:
+        if chunk_count > 0:
+            return None, "unknown"
         return None, "never_synced"
     return last_sync, "synced"
 
@@ -283,14 +285,14 @@ def _payload_file_paths(payload):
         yield file_path
 
 
-def list_corpora_command(verbose: bool, output_json: bool):
+def list_corpora_command(details: bool, output_json: bool):
     """List all corpora with parity status.
 
     A corpus is a paired Qdrant collection + MeiliSearch index.
     This command discovers all such pairs and shows their sync status.
 
     Args:
-        verbose: Show detailed information (models, chunks)
+        details: Show extended listing columns, including exact item counts
         output_json: Output as JSON
     """
     from rich.table import Table
@@ -310,10 +312,16 @@ def list_corpora_command(verbose: bool, output_json: bool):
                 chunk_count = col_info.points_count - 1 if col_info.points_count > 0 else 0
                 models = _build_corpus_model_info(metadata, col_info)
                 collection_type = metadata.get("collection_type")
-                last_sync, last_sync_status = _last_sync_state(metadata)
-                item_count, item_unit = _get_qdrant_list_item_count(
-                    qdrant, col.name, collection_type
-                )
+                last_sync, last_sync_status = _last_sync_state(metadata, chunk_count)
+                if details:
+                    item_count, item_unit = _get_qdrant_list_item_count(
+                        qdrant, col.name, collection_type
+                    )
+                    item_count_status = "exact"
+                else:
+                    item_count = None
+                    item_unit = _item_unit_for_corpus_type(collection_type)
+                    item_count_status = "not_requested"
                 qdrant_collections[col.name] = {
                     "type": collection_type,
                     "model": metadata.get("model"),
@@ -325,6 +333,7 @@ def list_corpora_command(verbose: bool, output_json: bool):
                     "last_sync_status": last_sync_status,
                     "item_count": item_count,
                     "item_unit": item_unit,
+                    "item_count_status": item_count_status,
                 }
         except Exception as e:
             if not output_json:
@@ -387,6 +396,9 @@ def list_corpora_command(verbose: bool, output_json: bool):
             last_sync_status = q_info.get("last_sync_status") if q_info else "unknown"
             item_count = q_info.get("item_count") if q_info else None
             item_unit = q_info.get("item_unit") if q_info else UNKNOWN_LEGACY
+            item_count_status = (
+                q_info.get("item_count_status") if q_info else "unavailable"
+            )
 
             corpora.append({
                 "name": name,
@@ -402,6 +414,7 @@ def list_corpora_command(verbose: bool, output_json: bool):
                 "last_sync_status": last_sync_status,
                 "item_count": item_count,
                 "item_unit": item_unit,
+                "item_count_status": item_count_status,
             })
 
         # Output
@@ -418,10 +431,10 @@ def list_corpora_command(verbose: bool, output_json: bool):
                 table.add_column("Model", style="magenta")
                 table.add_column("Status", style="green")
                 table.add_column("Last Sync", style="yellow")
-                table.add_column("Items", style="yellow")
-                if verbose:
-                    table.add_column("Q Chunks", style="yellow")
-                    table.add_column("M Chunks", style="yellow")
+                table.add_column("Q Chunks", style="yellow")
+                table.add_column("M Chunks", style="yellow")
+                if details:
+                    table.add_column("Items", style="yellow")
 
                 for c in corpora:
                     # Format status with color
@@ -443,17 +456,15 @@ def list_corpora_command(verbose: bool, output_json: bool):
                             if c["last_sync_status"] == "never_synced"
                             else UNKNOWN_LEGACY
                         ),
-                        (
+                        str(c["qdrant_chunks"]),
+                        str(c["meili_chunks"]),
+                    ]
+                    if details:
+                        row.append(
                             f"{c['item_count']} {c['item_unit']}"
                             if c["item_count"] is not None
                             else UNKNOWN_LEGACY
-                        ),
-                    ]
-                    if verbose:
-                        row.extend([
-                            str(c["qdrant_chunks"]),
-                            str(c["meili_chunks"]),
-                        ])
+                        )
                     table.add_row(*row)
 
                 console.print(table)

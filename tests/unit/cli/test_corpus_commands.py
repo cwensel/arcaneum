@@ -22,6 +22,7 @@ def _mock_corpus_list_clients(
     collection_info_by_name,
     meili_chunks=None,
     qdrant_payloads_by_name=None,
+    qdrant_scroll_calls=None,
 ):
     from arcaneum.cli import corpus
 
@@ -38,6 +39,10 @@ def _mock_corpus_list_clients(
             return collection_info_by_name[name]
 
         def scroll(self, collection_name, **_kwargs):
+            if qdrant_scroll_calls is not None:
+                qdrant_scroll_calls[collection_name] = (
+                    qdrant_scroll_calls.get(collection_name, 0) + 1
+                )
             payloads = qdrant_payloads_by_name.get(collection_name, [])
             return [SimpleNamespace(payload=payload) for payload in payloads], None
 
@@ -173,7 +178,7 @@ class TestCorpusListModelInfo:
             meili_chunks={"docs": 5},
         )
 
-        list_corpora_command(verbose=False, output_json=True)
+        list_corpora_command(details=False, output_json=True)
 
         payload = json.loads(capsys.readouterr().out)
         corpus = payload["data"]["corpora"][0]
@@ -214,7 +219,7 @@ class TestCorpusListModelInfo:
             meili_chunks={"code": 5},
         )
 
-        list_corpora_command(verbose=False, output_json=True)
+        list_corpora_command(details=False, output_json=True)
 
         corpus = json.loads(capsys.readouterr().out)["data"]["corpora"][0]
         assert corpus["model_summary"] == (
@@ -241,7 +246,7 @@ class TestCorpusListModelInfo:
             },
         )
 
-        list_corpora_command(verbose=False, output_json=True)
+        list_corpora_command(details=False, output_json=True)
 
         corpus = json.loads(capsys.readouterr().out)["data"]["corpora"][0]
         assert corpus["model"] is None
@@ -264,7 +269,7 @@ class TestCorpusListModelInfo:
             },
         )
 
-        list_corpora_command(verbose=False, output_json=True)
+        list_corpora_command(details=False, output_json=True)
 
         corpus = json.loads(capsys.readouterr().out)["data"]["corpora"][0]
         assert corpus["model_summary"] == "jina-code (fastembed)"
@@ -282,13 +287,84 @@ class TestCorpusListModelInfo:
             collection_info_by_name={"docs": _collection_info()},
         )
 
-        list_corpora_command(verbose=False, output_json=False)
+        list_corpora_command(details=False, output_json=False)
 
         output = capsys.readouterr().out
         assert "arctic-m" in output
         assert "fastembed" in output
 
-    def test_json_includes_last_sync_and_type_specific_item_counts(self, monkeypatch, capsys):
+    def test_json_default_skips_exact_item_counts(self, monkeypatch, capsys):
+        from arcaneum.cli.corpus import UNKNOWN_LEGACY, list_corpora_command
+
+        scroll_calls = {}
+        _mock_corpus_list_clients(
+            monkeypatch,
+            metadata_by_name={
+                "code": {
+                    "collection_type": "code",
+                    "model": "jina-code",
+                    "last_sync": "2026-05-28T22:01:02+00:00",
+                },
+                "docs": {
+                    "collection_type": "pdf",
+                    "model": "arctic-m",
+                    "last_sync": "2026-05-28T22:03:04+00:00",
+                },
+                "legacy": {},
+                "markdown": {
+                    "collection_type": "markdown",
+                    "model": "arctic-m",
+                },
+            },
+            collection_info_by_name={
+                "code": _collection_info(points_count=4),
+                "docs": _collection_info(points_count=4),
+                "legacy": _collection_info(points_count=1, vectors=None),
+                "markdown": _collection_info(points_count=3),
+            },
+            qdrant_payloads_by_name={
+                "code": [
+                    {"file_path": "/repo/a.py", "file_paths": ["/repo/a.py", "/repo/c.py"]},
+                    {"file_path": "/repo/a.py"},
+                    {"file_path": "/repo/b.py"},
+                ],
+                "docs": [
+                    {"file_path": "/docs/guide.pdf"},
+                    {"file_path": "/docs/guide.pdf"},
+                    {"file_path": "/docs/spec.pdf"},
+                ],
+                "markdown": [
+                    {"file_path": "/notes/a.md"},
+                    {"file_path": "/notes/b.md"},
+                ],
+            },
+            qdrant_scroll_calls=scroll_calls,
+        )
+
+        list_corpora_command(details=False, output_json=True)
+
+        corpora = {
+            item["name"]: item
+            for item in json.loads(capsys.readouterr().out)["data"]["corpora"]
+        }
+        assert corpora["code"]["last_sync"] == "2026-05-28T22:01:02+00:00"
+        assert corpora["code"]["item_count"] is None
+        assert corpora["code"]["item_unit"] == "source files"
+        assert corpora["code"]["item_count_status"] == "not_requested"
+        assert corpora["docs"]["item_count"] is None
+        assert corpora["docs"]["item_unit"] == "documents"
+        assert corpora["markdown"]["last_sync"] is None
+        assert corpora["markdown"]["last_sync_status"] == "unknown"
+        assert corpora["markdown"]["item_count"] is None
+        assert corpora["markdown"]["item_unit"] == "files"
+        assert corpora["legacy"]["last_sync_status"] == "unknown"
+        assert corpora["legacy"]["item_count"] is None
+        assert corpora["legacy"]["item_unit"] == UNKNOWN_LEGACY
+        assert scroll_calls == {}
+
+    def test_json_details_includes_last_sync_and_type_specific_item_counts(
+        self, monkeypatch, capsys
+    ):
         from arcaneum.cli.corpus import UNKNOWN_LEGACY, list_corpora_command
 
         _mock_corpus_list_clients(
@@ -334,7 +410,7 @@ class TestCorpusListModelInfo:
             },
         )
 
-        list_corpora_command(verbose=False, output_json=True)
+        list_corpora_command(details=True, output_json=True)
 
         corpora = {
             item["name"]: item
@@ -343,10 +419,11 @@ class TestCorpusListModelInfo:
         assert corpora["code"]["last_sync"] == "2026-05-28T22:01:02+00:00"
         assert corpora["code"]["item_count"] == 3
         assert corpora["code"]["item_unit"] == "source files"
+        assert corpora["code"]["item_count_status"] == "exact"
         assert corpora["docs"]["item_count"] == 2
         assert corpora["docs"]["item_unit"] == "documents"
         assert corpora["markdown"]["last_sync"] is None
-        assert corpora["markdown"]["last_sync_status"] == "never_synced"
+        assert corpora["markdown"]["last_sync_status"] == "unknown"
         assert corpora["markdown"]["item_count"] == 2
         assert corpora["markdown"]["item_unit"] == "files"
         assert corpora["legacy"]["last_sync_status"] == "unknown"
@@ -387,7 +464,7 @@ class TestCorpusDescriptions:
             collection_info_by_name={"docs": _collection_info()},
         )
 
-        list_corpora_command(verbose=False, output_json=True)
+        list_corpora_command(details=False, output_json=True)
 
         corpus = json.loads(capsys.readouterr().out)["data"]["corpora"][0]
         assert corpus["description"] == "Design notes and decision records"

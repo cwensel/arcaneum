@@ -255,6 +255,24 @@ def test_corpus_update_description_dispatches():
     }
 
 
+def test_corpus_list_details_dispatches():
+    """`arc corpus list --details` enables extended list output."""
+    called = {}
+
+    def fake_list_corpora_command(details, output_json):
+        called['details'] = details
+        called['output_json'] = output_json
+        raise SystemExit(0)
+
+    result = _run(
+        ['corpus', 'list', '--details', '--json'],
+        **{'arcaneum.cli.corpus.list_corpora_command': fake_list_corpora_command},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert called == {'details': True, 'output_json': True}
+
+
 def test_corpus_sync_defaults_to_cpu_and_gpu_is_opt_in():
     """`arc corpus sync` defaults to no_gpu=True but accepts --gpu."""
     calls = []

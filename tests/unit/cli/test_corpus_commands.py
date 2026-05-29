@@ -23,11 +23,15 @@ def _mock_corpus_list_clients(
     meili_chunks=None,
     qdrant_payloads_by_name=None,
     qdrant_scroll_calls=None,
+    qdrant_facets_by_name=None,
+    qdrant_facet_calls=None,
+    global_meili_stats=None,
 ):
     from arcaneum.cli import corpus
 
     meili_chunks = meili_chunks or {}
     qdrant_payloads_by_name = qdrant_payloads_by_name or {}
+    qdrant_facets_by_name = qdrant_facets_by_name or {}
 
     class Qdrant:
         def get_collections(self):
@@ -46,6 +50,14 @@ def _mock_corpus_list_clients(
             payloads = qdrant_payloads_by_name.get(collection_name, [])
             return [SimpleNamespace(payload=payload) for payload in payloads], None
 
+        def facet(self, collection_name, key, **_kwargs):
+            if qdrant_facet_calls is not None:
+                qdrant_facet_calls.append((collection_name, key))
+            counts = qdrant_facets_by_name.get(collection_name, {}).get(key, [])
+            return SimpleNamespace(
+                hits=[SimpleNamespace(value=value, count=count) for value, count in counts]
+            )
+
     class Meili:
         def health_check(self):
             return True
@@ -55,6 +67,15 @@ def _mock_corpus_list_clients(
 
         def get_index_stats(self, name):
             return {"numberOfDocuments": meili_chunks[name]}
+
+        def get_stats(self):
+            if global_meili_stats is not None:
+                return global_meili_stats
+            return {
+                "indexes": {
+                    name: {"numberOfDocuments": count} for name, count in meili_chunks.items()
+                }
+            }
 
     monkeypatch.setattr(corpus, "create_qdrant_client", lambda: Qdrant())
     monkeypatch.setattr(corpus, "create_meili_client", lambda: Meili())
@@ -78,6 +99,62 @@ def _mock_corpus_update_clients(monkeypatch, metadata):
         "update_collection_metadata",
         lambda _client, _name, **_updates: metadata,
     )
+
+
+def test_full_directory_sync_stamps_exact_count_metadata(monkeypatch):
+    from arcaneum.cli import sync
+
+    updates = []
+    monkeypatch.setattr(
+        sync,
+        "update_collection_metadata",
+        lambda _client, name, **metadata: updates.append((name, metadata)),
+    )
+
+    sync._stamp_full_directory_count_metadata(
+        object(),
+        "code-corpus",
+        "code",
+        {"/repo/a.py", "/repo/b.py", "/other/c.py"},
+        ["/repo", "/other"],
+        files_failed=0,
+    )
+
+    assert updates == [
+        (
+            "code-corpus",
+            {
+                "item_count": 2,
+                "item_unit": "repositories",
+                "file_count": 3,
+                "file_unit": "source files",
+                "count_source": "sync",
+                "counts_updated_at": updates[0][1]["counts_updated_at"],
+            },
+        )
+    ]
+
+
+def test_full_directory_sync_skips_count_metadata_when_files_failed(monkeypatch):
+    from arcaneum.cli import sync
+
+    updates = []
+    monkeypatch.setattr(
+        sync,
+        "update_collection_metadata",
+        lambda _client, name, **metadata: updates.append((name, metadata)),
+    )
+
+    sync._stamp_full_directory_count_metadata(
+        object(),
+        "docs",
+        "markdown",
+        {"/docs/a.md"},
+        [],
+        files_failed=1,
+    )
+
+    assert updates == []
 
 
 def test_corpus_module_exports_expected_commands():
@@ -410,6 +487,8 @@ class TestCorpusListModelInfo:
     ):
         from arcaneum.cli.corpus import UNKNOWN_LEGACY, list_corpora_command
 
+        facet_calls = []
+        scroll_calls = {}
         _mock_corpus_list_clients(
             monkeypatch,
             metadata_by_name={
@@ -417,16 +496,20 @@ class TestCorpusListModelInfo:
                     "collection_type": "code",
                     "model": "jina-code",
                     "last_sync": "2026-05-28T22:01:02+00:00",
+                    "item_count": 2,
+                    "file_count": 3,
                 },
                 "docs": {
                     "collection_type": "pdf",
                     "model": "arctic-m",
                     "last_sync": "2026-05-28T22:03:04+00:00",
+                    "item_count": 2,
                 },
                 "legacy": {},
                 "markdown": {
                     "collection_type": "markdown",
                     "model": "arctic-m",
+                    "item_count": 2,
                 },
             },
             collection_info_by_name={
@@ -435,32 +518,8 @@ class TestCorpusListModelInfo:
                 "legacy": _collection_info(points_count=1, vectors=None),
                 "markdown": _collection_info(points_count=3),
             },
-            qdrant_payloads_by_name={
-                "code": [
-                    {
-                        "git_project_identifier": "repo-a#main",
-                        "file_path": "/repo-a/a.py",
-                        "file_paths": ["/repo-a/a.py", "/repo-a/c.py"],
-                    },
-                    {
-                        "git_project_identifier": "repo-a#main",
-                        "file_path": "/repo-a/a.py",
-                    },
-                    {
-                        "git_project_identifier": "repo-b#main",
-                        "file_path": "/repo-b/b.py",
-                    },
-                ],
-                "docs": [
-                    {"file_path": "/docs/guide.pdf"},
-                    {"file_path": "/docs/guide.pdf"},
-                    {"file_path": "/docs/spec.pdf"},
-                ],
-                "markdown": [
-                    {"file_path": "/notes/a.md"},
-                    {"file_path": "/notes/b.md"},
-                ],
-            },
+            qdrant_scroll_calls=scroll_calls,
+            qdrant_facet_calls=facet_calls,
         )
 
         list_corpora_command(details=True, output_json=True)
@@ -473,7 +532,7 @@ class TestCorpusListModelInfo:
         assert corpora["code"]["item_unit"] == "repositories"
         assert corpora["code"]["file_count"] == 3
         assert corpora["code"]["file_unit"] == "source files"
-        assert corpora["code"]["item_count_status"] == "exact"
+        assert corpora["code"]["item_count_status"] == "metadata"
         assert corpora["docs"]["item_count"] == 2
         assert corpora["docs"]["item_unit"] == "documents"
         assert corpora["markdown"]["last_sync"] is None
@@ -483,6 +542,77 @@ class TestCorpusListModelInfo:
         assert corpora["legacy"]["last_sync_status"] == "unknown"
         assert corpora["legacy"]["item_count"] is None
         assert corpora["legacy"]["item_unit"] == UNKNOWN_LEGACY
+        assert scroll_calls == {}
+        assert facet_calls == []
+
+    def test_json_details_uses_bounded_qdrant_facets_for_legacy_counts(
+        self, monkeypatch, capsys
+    ):
+        from arcaneum.cli.corpus import list_corpora_command
+
+        scroll_calls = {}
+        facet_calls = []
+        _mock_corpus_list_clients(
+            monkeypatch,
+            metadata_by_name={
+                "code": {"collection_type": "code", "model": "jina-code"},
+                "docs": {"collection_type": "pdf", "model": "arctic-m"},
+            },
+            collection_info_by_name={
+                "code": _collection_info(points_count=4),
+                "docs": _collection_info(points_count=4),
+            },
+            qdrant_facets_by_name={
+                "code": {
+                    "git_project_identifier": [("repo-a#main", 2), ("repo-b#main", 1)],
+                    "file_path": [("/repo/a.py", 2), ("/repo/b.py", 1), ("/repo/c.py", 1)],
+                },
+                "docs": {
+                    "file_path": [("/docs/guide.pdf", 2), ("/docs/spec.pdf", 1)],
+                },
+            },
+            qdrant_scroll_calls=scroll_calls,
+            qdrant_facet_calls=facet_calls,
+        )
+
+        list_corpora_command(details=True, output_json=True)
+
+        corpora = {
+            item["name"]: item for item in json.loads(capsys.readouterr().out)["data"]["corpora"]
+        }
+        assert corpora["code"]["item_count"] == 2
+        assert corpora["code"]["file_count"] == 3
+        assert corpora["code"]["item_count_status"] == "facet"
+        assert corpora["docs"]["item_count"] == 2
+        assert corpora["docs"]["item_count_status"] == "facet"
+        assert scroll_calls == {}
+        assert facet_calls == [
+            ("code", "git_project_identifier"),
+            ("code", "file_path"),
+            ("docs", "file_path"),
+        ]
+
+    def test_json_details_marks_capped_facets_unavailable(self, monkeypatch, capsys):
+        from arcaneum.cli.corpus import list_corpora_command
+
+        _mock_corpus_list_clients(
+            monkeypatch,
+            metadata_by_name={
+                "docs": {"collection_type": "pdf", "model": "arctic-m"},
+            },
+            collection_info_by_name={"docs": _collection_info(points_count=11_000)},
+            qdrant_facets_by_name={
+                "docs": {
+                    "file_path": [(f"/docs/{i}.pdf", 1) for i in range(10_000)],
+                },
+            },
+        )
+
+        list_corpora_command(details=True, output_json=True)
+
+        corpus = json.loads(capsys.readouterr().out)["data"]["corpora"][0]
+        assert corpus["item_count"] is None
+        assert corpus["item_count_status"] == "unavailable"
 
     def test_qdrant_item_count_uses_repositories_for_code(self):
         from arcaneum.cli.corpus import _get_qdrant_item_count
@@ -530,34 +660,29 @@ class TestCorpusListModelInfo:
         from arcaneum.cli.corpus import _get_qdrant_list_item_count
 
         class Qdrant:
-            def scroll(self, **_kwargs):
-                return [
-                    SimpleNamespace(
-                        payload={
-                            "git_project_identifier": "repo-a#main",
-                            "file_path": "/repo-a/renamed-a.py",
-                            "file_paths": ["/repo-a/a.py", "/repo-a/b.py"],
-                        }
-                    ),
-                    SimpleNamespace(
-                        payload={
-                            "git_project_identifier": "repo-a#main",
-                            "file_path": "/repo-a/c.py",
-                        }
-                    ),
-                    SimpleNamespace(
-                        payload={
-                            "git_project_identifier": "repo-b#main",
-                            "file_path": "/repo-b/d.py",
-                        }
-                    ),
-                ], None
+            def facet(self, collection_name, key, **_kwargs):
+                counts = {
+                    "git_project_identifier": [("repo-a#main", 2), ("repo-b#main", 1)],
+                    "file_path": [
+                        ("/repo-a/a.py", 1),
+                        ("/repo-a/b.py", 1),
+                        ("/repo-a/c.py", 1),
+                        ("/repo-b/d.py", 1),
+                    ],
+                }
+                return SimpleNamespace(
+                    hits=[
+                        SimpleNamespace(value=value, count=count)
+                        for value, count in counts[key]
+                    ]
+                )
 
         assert _get_qdrant_list_item_count(Qdrant(), "code", "code") == {
             "item_count": 2,
             "item_unit": "repositories",
             "file_count": 4,
             "file_unit": "source files",
+            "item_count_status": "facet",
         }
 
 

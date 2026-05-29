@@ -128,6 +128,49 @@ def _stamp_last_sync_metadata(qdrant, corpus: str) -> None:
         logger.warning("Failed to update last sync metadata for %s: %s", corpus, e)
 
 
+def _stamp_full_directory_count_metadata(
+    qdrant,
+    corpus: str,
+    corpus_type: str,
+    all_discovered_paths: set[str],
+    discovered_git_roots: list[str],
+    files_failed: int,
+) -> None:
+    """Persist exact list-view counters when a full directory sync succeeded."""
+    if files_failed:
+        return
+    if corpus_type not in {"code", "markdown", "pdf"}:
+        return
+
+    count_metadata: dict[str, Any] = {
+        "item_count": len(all_discovered_paths),
+        "item_unit": "files" if corpus_type == "markdown" else "documents",
+        "count_source": "sync",
+        "counts_updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if corpus_type == "code":
+        repo_roots = set(discovered_git_roots)
+        if not repo_roots:
+            repo_roots = {
+                root
+                for path in all_discovered_paths
+                if (root := _find_git_root(Path(path))) is not None
+            }
+        count_metadata.update(
+            {
+                "item_count": len(repo_roots) if repo_roots else len(all_discovered_paths),
+                "item_unit": "repositories",
+                "file_count": len(all_discovered_paths),
+                "file_unit": "source files",
+            }
+        )
+
+    try:
+        update_collection_metadata(qdrant, corpus, **count_metadata)
+    except Exception as e:
+        logger.warning("Failed to update count metadata for %s: %s", corpus, e)
+
+
 def _stale_policy_error(policy_issues: list[str], action: str) -> str:
     return (
         f"Collection embedding policy is stale before {action}: "
@@ -1733,6 +1776,7 @@ def sync_directory_command(
         # Snapshot the full discovered on-disk set before change detection
         # narrows `files`; used for orphan detection in the stamp gate.
         all_discovered_paths = {str(f.absolute()) for f in files}
+        full_directory_count_sync = not from_file and not single_files and bool(dir_paths)
 
         # Apply change detection (skip already indexed files) unless --force
         already_indexed_count = 0
@@ -1979,11 +2023,29 @@ def sync_directory_command(
                     if already_indexed_count > 0:
                         console.print(f"   Already synced:           {already_indexed_count} files")
                 if not dry_run:
+                    if full_directory_count_sync:
+                        _stamp_full_directory_count_metadata(
+                            qdrant,
+                            corpus,
+                            corpus_type,
+                            all_discovered_paths,
+                            discovered_git_roots,
+                            files_failed=0,
+                        )
                     _stamp_last_sync_metadata(qdrant, corpus)
                 interaction_logger.finish(result_count=files_renamed)
                 return
 
             if not dry_run:
+                if full_directory_count_sync:
+                    _stamp_full_directory_count_metadata(
+                        qdrant,
+                        corpus,
+                        corpus_type,
+                        all_discovered_paths,
+                        discovered_git_roots,
+                        files_failed=0,
+                    )
                 _stamp_last_sync_metadata(qdrant, corpus)
             if output_json:
                 print_json(
@@ -2900,6 +2962,15 @@ def sync_directory_command(
                 update_collection_metadata(qdrant, corpus, model=normalized_configured_models)
 
         if not dry_run:
+            if full_directory_count_sync:
+                _stamp_full_directory_count_metadata(
+                    qdrant,
+                    corpus,
+                    corpus_type,
+                    all_discovered_paths,
+                    discovered_git_roots,
+                    files_failed,
+                )
             _stamp_last_sync_metadata(qdrant, corpus)
 
         # Output results

@@ -5,6 +5,7 @@ collection and a MeiliSearch index in a single operation.
 """
 
 import sys
+from typing import Any
 
 from qdrant_client.models import HnswConfigDiff
 from rich.console import Console
@@ -57,6 +58,7 @@ def map_corpus_type_to_canonical(corpus_type: str) -> str:
 
 
 UNKNOWN_LEGACY = "unknown/legacy"
+LIST_COUNT_FACET_LIMIT = 10_000
 
 
 def _item_unit_for_corpus_type(collection_type):
@@ -239,58 +241,94 @@ def _format_model_summary(models):
     return ", ".join(parts)
 
 
-def _get_qdrant_list_item_count(client, collection_name: str, collection_type: str):
-    """Count corpus-list items using the natural unit for each corpus type."""
+def _metadata_int(metadata: dict[str, Any], key: str) -> int | None:
+    """Return a non-negative integer metadata value, if present."""
+    value = metadata.get(key)
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value >= 0:
+        return value
+    if isinstance(value, str) and value.isdecimal():
+        return int(value)
+    return None
+
+
+def _facet_hit_count(result) -> int:
+    """Return the number of unique facet values in a Qdrant facet response."""
+    hits = getattr(result, "hits", None)
+    if hits is None and isinstance(result, dict):
+        hits = result.get("hits")
+    return len(hits or [])
+
+
+def _bounded_qdrant_facet_count(client, collection_name: str, key: str) -> tuple[int | None, str]:
+    """Count unique payload values without scrolling every point.
+
+    Qdrant facets are limited but not paginated. A response that reaches the cap
+    may be truncated, so callers treat it as unavailable instead of exact.
+    """
+    result = client.facet(
+        collection_name=collection_name,
+        key=key,
+        facet_filter=metadata_exclusion_filter(),
+        limit=LIST_COUNT_FACET_LIMIT,
+        exact=True,
+    )
+    count = _facet_hit_count(result)
+    if count >= LIST_COUNT_FACET_LIMIT:
+        return None, "unavailable"
+    return count, "facet"
+
+
+def _get_qdrant_list_item_count(
+    client, collection_name: str, collection_type: str, metadata: dict[str, Any] | None = None
+):
+    """Count corpus-list items using persisted metadata or bounded facets."""
     if collection_type not in {"code", "markdown", "pdf"}:
         return {
             "item_count": None,
             "item_unit": UNKNOWN_LEGACY,
             "file_count": None,
             "file_unit": None,
+            "item_count_status": "unavailable",
         }
 
-    unique_items = set()
-    unique_files = set()
-    offset = None
-    payload_fields = (
-        ["git_project_identifier", "file_path", "file_paths"]
-        if collection_type == "code"
-        else ["file_path", "file_paths"]
-    )
+    metadata = metadata or {}
+    item_count = _metadata_int(metadata, "item_count")
+    file_count = _metadata_int(metadata, "file_count") if collection_type == "code" else None
+    if item_count is not None and (collection_type != "code" or file_count is not None):
+        return {
+            "item_count": item_count,
+            "item_unit": _item_unit_for_corpus_type(collection_type),
+            "file_count": file_count,
+            "file_unit": "source files" if collection_type == "code" else None,
+            "item_count_status": metadata.get("count_source") or "metadata",
+        }
 
-    while True:
-        points, offset = client.scroll(
-            collection_name=collection_name,
-            scroll_filter=metadata_exclusion_filter(),
-            limit=1000,
-            offset=offset,
-            with_payload=payload_fields,
-            with_vectors=False,
-        )
-
-        if not points:
-            break
-
-        for point in points:
-            if point.payload:
-                if collection_type == "code":
-                    item_id = point.payload.get("git_project_identifier")
-                    if item_id:
-                        unique_items.add(item_id)
-                    for file_path in _payload_file_paths(point.payload):
-                        unique_files.add(file_path)
-                else:
-                    for item_id in _payload_file_paths(point.payload):
-                        unique_items.add(item_id)
-
-        if offset is None:
-            break
+    item_key = "git_project_identifier" if collection_type == "code" else "file_path"
+    try:
+        item_count, item_status = _bounded_qdrant_facet_count(client, collection_name, item_key)
+        if collection_type == "code" and item_status != "unavailable":
+            file_count, file_status = _bounded_qdrant_facet_count(
+                client, collection_name, "file_path"
+            )
+            if file_status == "unavailable":
+                item_status = "unavailable"
+                item_count = None
+                file_count = None
+        else:
+            file_count = None
+    except Exception:
+        item_count = None
+        file_count = None
+        item_status = "unavailable"
 
     return {
-        "item_count": len(unique_items),
+        "item_count": item_count,
         "item_unit": _item_unit_for_corpus_type(collection_type),
-        "file_count": len(unique_files) if collection_type == "code" else None,
+        "file_count": file_count if collection_type == "code" else None,
         "file_unit": "source files" if collection_type == "code" else None,
+        "item_count_status": item_status,
     }
 
 
@@ -358,16 +396,17 @@ def list_corpora_command(details: bool, output_json: bool):
                 collection_type = metadata.get("collection_type")
                 last_sync, last_sync_status = _last_sync_state(metadata, chunk_count)
                 if details:
-                    item_counts = _get_qdrant_list_item_count(qdrant, col.name, collection_type)
-                    item_count_status = "exact"
+                    item_counts = _get_qdrant_list_item_count(
+                        qdrant, col.name, collection_type, metadata
+                    )
                 else:
                     item_counts = {
                         "item_count": None,
                         "item_unit": _item_unit_for_corpus_type(collection_type),
                         "file_count": None,
                         "file_unit": None,
+                        "item_count_status": "not_requested",
                     }
-                    item_count_status = "not_requested"
                 qdrant_collections[col.name] = {
                     "type": collection_type,
                     "model": metadata.get("model"),
@@ -378,7 +417,6 @@ def list_corpora_command(details: bool, output_json: bool):
                     "last_sync": last_sync,
                     "last_sync_status": last_sync_status,
                     **item_counts,
-                    "item_count_status": item_count_status,
                 }
         except Exception as e:
             if not output_json:
@@ -390,10 +428,17 @@ def list_corpora_command(details: bool, output_json: bool):
             meili = create_meili_client()
             if meili.health_check():
                 indexes = meili.list_indexes()
+                all_stats = None
+                try:
+                    all_stats = meili.get_stats().get("indexes", {})
+                except Exception:
+                    all_stats = None
                 for idx in indexes:
                     name = idx["uid"]
                     try:
-                        stats = meili.get_index_stats(name)
+                        stats = all_stats.get(name, {}) if all_stats is not None else None
+                        if stats is None:
+                            stats = meili.get_index_stats(name)
                         meili_indexes[name] = {
                             "chunks": stats.get("numberOfDocuments", 0),
                         }

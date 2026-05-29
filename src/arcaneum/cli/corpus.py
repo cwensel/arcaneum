@@ -302,6 +302,15 @@ def _format_list_item_count(corpus):
     return ", ".join(parts)
 
 
+def _format_chunk_summary(corpus):
+    """Format corpus-list chunk counts in one column."""
+    q_chunks = corpus["qdrant_chunks"]
+    m_chunks = corpus["meili_chunks"]
+    if q_chunks == m_chunks:
+        return str(q_chunks)
+    return f"Q: {q_chunks} / M: {m_chunks}"
+
+
 def _payload_file_paths(payload):
     """Yield every indexed file path represented by a point payload."""
     file_paths = payload.get("file_paths")
@@ -403,8 +412,10 @@ def list_corpora_command(details: bool, output_json: bool):
             m_info = meili_indexes.get(name)
 
             # Determine parity status
+            q_chunks = q_info.get("chunks", 0) if q_info else 0
+            m_chunks = m_info.get("chunks", 0) if m_info else 0
             if q_info and m_info:
-                status = "synced"
+                status = "synced" if q_chunks == m_chunks else "chunk_mismatch"
             elif q_info:
                 status = "qdrant_only"
             else:
@@ -426,8 +437,6 @@ def list_corpora_command(details: bool, output_json: bool):
                 },
             }]
             model_summary = q_info.get("model_summary") if q_info else UNKNOWN_LEGACY
-            q_chunks = q_info.get("chunks", 0) if q_info else 0
-            m_chunks = m_info.get("chunks", 0) if m_info else 0
             last_sync = q_info.get("last_sync") if q_info else None
             last_sync_status = q_info.get("last_sync_status") if q_info else "unknown"
             item_count = q_info.get("item_count") if q_info else None
@@ -471,8 +480,7 @@ def list_corpora_command(details: bool, output_json: bool):
                 table.add_column("Model", style="magenta")
                 table.add_column("Status", style="green")
                 table.add_column("Last Sync", style="yellow")
-                table.add_column("Q Chunks", style="yellow")
-                table.add_column("M Chunks", style="yellow")
+                table.add_column("Chunks", style="yellow")
                 if details:
                     table.add_column("Items", style="yellow")
 
@@ -481,6 +489,8 @@ def list_corpora_command(details: bool, output_json: bool):
                     status = c["status"]
                     if status == "synced":
                         status_str = "[green]synced[/green]"
+                    elif status == "chunk_mismatch":
+                        status_str = "[yellow]chunk_mismatch[/yellow]"
                     elif status == "qdrant_only":
                         status_str = "[yellow]qdrant_only[/yellow]"
                     else:
@@ -496,8 +506,7 @@ def list_corpora_command(details: bool, output_json: bool):
                             if c["last_sync_status"] == "never_synced"
                             else UNKNOWN_LEGACY
                         ),
-                        str(c["qdrant_chunks"]),
-                        str(c["meili_chunks"]),
+                        _format_chunk_summary(c),
                     ]
                     if details:
                         row.append(_format_list_item_count(c))

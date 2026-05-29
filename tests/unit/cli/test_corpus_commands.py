@@ -364,6 +364,42 @@ class TestCorpusListModelInfo:
         assert corpora["legacy"]["item_unit"] == UNKNOWN_LEGACY
         assert scroll_calls == {}
 
+    def test_json_marks_chunk_mismatches(self, monkeypatch, capsys):
+        from arcaneum.cli.corpus import list_corpora_command
+
+        _mock_corpus_list_clients(
+            monkeypatch,
+            metadata_by_name={
+                "docs": {
+                    "collection_type": "pdf",
+                    "model": "arctic-m",
+                }
+            },
+            collection_info_by_name={
+                "docs": _collection_info(points_count=6),
+            },
+            meili_chunks={"docs": 4},
+        )
+
+        list_corpora_command(details=False, output_json=True)
+
+        corpus = json.loads(capsys.readouterr().out)["data"]["corpora"][0]
+        assert corpus["status"] == "chunk_mismatch"
+        assert corpus["qdrant_chunks"] == 5
+        assert corpus["meili_chunks"] == 4
+
+    def test_chunk_summary_collapses_equal_counts(self):
+        from arcaneum.cli.corpus import _format_chunk_summary
+
+        assert _format_chunk_summary({
+            "qdrant_chunks": 5,
+            "meili_chunks": 5,
+        }) == "5"
+        assert _format_chunk_summary({
+            "qdrant_chunks": 5,
+            "meili_chunks": 4,
+        }) == "Q: 5 / M: 4"
+
     def test_json_details_includes_last_sync_and_type_specific_item_counts(
         self, monkeypatch, capsys
     ):

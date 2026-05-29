@@ -43,12 +43,13 @@ The system supports PDF documents and source code with git-aware, AST-based chun
 ### Multiple Embedding Models
 
 - **arctic-m** (768D) - **DEFAULT** for PDFs/markdown - stable FastEmbed retrieval model
-- **stella** (1024D) - High-quality opt-in document model
+- **stella** (1024D) - High-quality opt-in document model, requires `arcaneum[sentence-transformers]`
 - **mxbai-large** (1024D) - High-quality FastEmbed document model
-- **jina-code** (768D) - **DEFAULT** for code - stable lightweight code model
-- **jina-code-0.5b** (896D) - Higher-quality opt-in code model, 32K context
-- **jina-code-1.5b** (1536D) - Highest quality code embeddings, SOTA Sept 2025
-- **codesage-large** (1024D) - CodeSage V2, 9 programming languages
+- **jina-code** (768D) - **DEFAULT** for code - stable FastEmbed code model
+- **jina-code-st** (768D) - Legacy SentenceTransformers code path, requires `arcaneum[sentence-transformers]`
+- **jina-code-0.5b** (896D) - Higher-quality opt-in code model, 32K context, requires `arcaneum[sentence-transformers]`
+- **jina-code-1.5b** (1536D) - Highest quality code embeddings, SOTA Sept 2025, requires `arcaneum[sentence-transformers]`
+- **codesage-large** (1024D) - CodeSage V2, 9 programming languages, requires `arcaneum[sentence-transformers]`
 - **bge-large** (1024D) - BGE large embeddings, balanced performance
 - **jina-v3** (1024D) - Multilingual embeddings with extended 8K context
 - **bge-base** (768D) - BGE base embeddings, balanced performance and speed

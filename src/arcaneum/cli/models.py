@@ -146,7 +146,7 @@ def _model_catalog_row(alias: str, config: dict) -> dict:
         "recommended_for": config.get("recommended_for"),
         "default_for": default_for,
         "support_tier": _support_tier(config, default_for),
-        "install_extra": "core",
+        "install_extra": config.get("install_extra", "core"),
         "prompt_policy": _prompt_policy_summary(config),
         "context_limit": config.get("max_seq_length"),
         "dimensions": config["dimensions"],

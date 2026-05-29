@@ -137,6 +137,13 @@ class TestModelsList:
                 'description': 'stable docs model',
                 'recommended_for': 'docs',
             },
+            'stella': {
+                'name': 'dunzhang/stella_en_1.5B_v5',
+                'dimensions': 1024,
+                'backend': 'sentence-transformers',
+                'install_extra': 'sentence-transformers',
+                'recommended_for': 'pdf',
+            },
             'nomic-code': {
                 'name': 'nomic-ai/nomic-embed-code',
                 'dimensions': 3584,
@@ -162,6 +169,8 @@ class TestModelsList:
             'mps': 512,
         }
         assert models['arctic-m']['suggested_batches']['sentence_transformers_encode'] is None
+        assert models['arctic-m']['install_extra'] == 'core'
+        assert models['stella']['install_extra'] == 'sentence-transformers'
 
         assert models['nomic-code']['risk_tier'] == 'very-high'
         assert models['nomic-code']['support_tier'] == 'gpu-opt-in'

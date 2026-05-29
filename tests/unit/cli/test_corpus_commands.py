@@ -218,7 +218,7 @@ class TestCorpusListModelInfo:
 
         corpus = json.loads(capsys.readouterr().out)["data"]["corpora"][0]
         assert corpus["model_summary"] == (
-            "jina-code (sentence-transformers), "
+            "jina-code (fastembed), "
             "codesage-large (sentence-transformers)"
         )
         assert [model["vector_name"] for model in corpus["models"]] == [
@@ -226,7 +226,7 @@ class TestCorpusListModelInfo:
             "codesage-large",
         ]
         assert [model["backend"] for model in corpus["models"]] == [
-            "sentence-transformers",
+            "fastembed",
             "sentence-transformers",
         ]
 
@@ -267,7 +267,7 @@ class TestCorpusListModelInfo:
         list_corpora_command(verbose=False, output_json=True)
 
         corpus = json.loads(capsys.readouterr().out)["data"]["corpora"][0]
-        assert corpus["model_summary"] == "jina-code (sentence-transformers)"
+        assert corpus["model_summary"] == "jina-code (fastembed)"
         assert corpus["models"][0]["alias"] == "jina-code"
         assert corpus["models"][0]["vector_name"] == "jina-code"
 

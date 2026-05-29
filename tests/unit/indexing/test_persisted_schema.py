@@ -82,6 +82,31 @@ def test_prompt_policy_issues_flag_missing_and_changed_policy():
     ) == []
 
 
+def test_prompt_policy_issues_reject_legacy_jina_code_backend():
+    legacy_jina_code_policy = {
+        **get_embedding_prompt_policy("jina-code-st"),
+        "model": "jina-code",
+    }
+
+    issues = prompt_policy_issues(
+        {"embedding_prompt_policy": {"jina-code": legacy_jina_code_policy}},
+        "jina-code",
+    )
+
+    assert "differs" in issues[0]
+
+
+def test_prompt_policy_issues_accept_legacy_jina_provider_id():
+    metadata = {
+        "embedding_prompt_policy": {"jina-code": get_embedding_prompt_policy("jina-code")}
+    }
+
+    assert prompt_policy_issues(
+        metadata,
+        "jinaai/jina-embeddings-v2-base-code",
+    ) == []
+
+
 def test_persisted_schema_issues_rejects_non_integer_version():
     assert persisted_schema_issues({"schema_version": True}) == [
         "collection metadata has invalid schema_version True"

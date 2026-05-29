@@ -16,7 +16,7 @@ from qdrant_client.models import Condition, FieldCondition, Filter, MatchValue
 from arcaneum.embeddings.client import (
     get_embedding_prompt_policies,
     get_embedding_prompt_policy,
-    model_key_for_name,
+    prompt_policy_model_key_for_name,
 )
 from arcaneum.schema.document import (
     PERSISTED_SCHEMA_VERSION,
@@ -77,7 +77,7 @@ def persisted_schema_issues(metadata: Dict[str, Any]) -> list[str]:
 
 def prompt_policy_issues(metadata: Dict[str, Any], model_name: str) -> list[str]:
     """Return issues when stored prompt policy differs from current model policy."""
-    model_key = model_key_for_name(model_name)
+    model_key = prompt_policy_model_key_for_name(model_name)
     if model_key is None:
         return [f"embedding model '{model_name}' is not configured"]
 

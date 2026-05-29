@@ -16,9 +16,13 @@ from arcaneum.indexing.qdrant_indexer import QdrantIndexer
 from arcaneum.indexing.collection_metadata import (
     validate_collection_type,
     set_collection_metadata,
+    get_collection_metadata,
     get_vector_names,
     CollectionType,
+    prompt_policy_issues,
+    update_collection_metadata,
 )
+from arcaneum.embeddings.client import prompt_policy_model_key_for_name
 from arcaneum.embeddings.model_cache import get_cached_model
 from arcaneum.paths import get_models_dir
 
@@ -139,18 +143,17 @@ def index_source_command(
             console.print("[cyan]Connecting to Qdrant[/cyan]")
 
         qdrant_client = create_qdrant_client()
+        explicit_model = model is not None
 
         # Retrieve model from collection metadata if not provided
         if model is None:
-            from arcaneum.indexing.collection_metadata import get_collection_metadata
-
             metadata = get_collection_metadata(qdrant_client, collection)
             if not metadata or "model" not in metadata:
                 raise ValueError(
                     f"Collection '{collection}' has no model metadata. "
                     "Please create the collection with 'arc collection create --type code' first."
                 )
-            model = metadata["model"]
+            model = prompt_policy_model_key_for_name(metadata["model"]) or metadata["model"]
         else:
             # Warn about deprecated --model flag
             console.print(
@@ -257,6 +260,9 @@ def index_source_command(
                 "dunzhang/stella_en_1.5B_v5": 1024,
             }
             vector_size = vector_sizes.get(embedding_model, 768)
+            metadata_model = {
+                "jina-v2-code": "jina-code",
+            }.get(model, model)
 
             qdrant_indexer.create_collection(collection, vector_size=vector_size)
 
@@ -265,7 +271,7 @@ def index_source_command(
                 client=qdrant_client,
                 collection_name=collection,
                 collection_type=CollectionType.CODE,
-                model=embedding_model,
+                model=metadata_model,
             )
             vector_name = model  # Use specified model for new collection
             if verbose:
@@ -312,6 +318,25 @@ def index_source_command(
                 embedding_model = model_map.get(model, model)
                 console.print(f"[green]✓ Collection '{collection}' exists (type: code)[/green]")
 
+            if explicit_model and vector_names and model != vector_name:
+                raise ValueError(
+                    f"Explicit model '{model}' does not match existing vector "
+                    f"'{vector_name}' for collection '{collection}'. Create a "
+                    "new collection for a different embedding model."
+                )
+
+        metadata = get_collection_metadata(qdrant_client, collection)
+        issues = prompt_policy_issues(metadata, model)
+        full_force_candidate = force and file_list is None and depth is None
+        if issues and not full_force_candidate:
+            raise ValueError(
+                "Collection embedding policy is stale before source indexing: "
+                + "; ".join(issues)
+                + ". Run an unrestricted full directory index with --force to "
+                "reindex and recertify the corpus before incremental indexing "
+                "or repair."
+            )
+
         # Create indexer (pass embedding client for GPU support)
         indexer = SourceCodeIndexer(
             qdrant_indexer=qdrant_indexer,
@@ -354,6 +379,20 @@ def index_source_command(
         pre_run_paths = set()
         if force and file_list is None:
             pre_run_paths = path_sync._get_indexed_file_paths_set(collection)
+            if issues:
+                source_root = source_dir.resolve()
+                outside_root = [
+                    p
+                    for p in pre_run_paths
+                    if not Path(p).resolve().is_relative_to(source_root)
+                ]
+                if outside_root:
+                    raise ValueError(
+                        "Collection embedding policy is stale before source "
+                        "indexing: existing indexed files are outside the "
+                        "requested source root. Re-run --force from the full "
+                        "corpus root before incremental indexing or repair."
+                    )
 
         # Index directory (include repair targets if any)
         stats = indexer.index_directory(
@@ -390,7 +429,7 @@ def index_source_command(
             prune_warn = (
                 None if output_json else (lambda m: console.print(f"[yellow]⚠ {m}[/yellow]"))
             )
-            prune_orphans_and_stamp(
+            certification = prune_orphans_and_stamp(
                 qdrant=qdrant_client,
                 sync=path_sync,
                 collection_name=collection,
@@ -405,6 +444,16 @@ def index_source_command(
                 covered_paths=covered_paths,
                 warn=prune_warn,
             )
+            if issues and not certification.get("stamped"):
+                raise ValueError(
+                    "Full force source indexing did not certify the updated "
+                    "embedding policy: "
+                    + "; ".join(issues)
+                    + ". Remove stale/orphaned vectors and rerun --force before "
+                    "incremental indexing."
+                )
+            if certification.get("stamped") and metadata.get("model") != model:
+                update_collection_metadata(qdrant_client, collection, model=model)
 
         # Post-verify if requested
         verification_result = None

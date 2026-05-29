@@ -1,11 +1,20 @@
 """Unit tests for GPU fallback stability (RDR-020)."""
 
 import threading
+import sys
+from types import ModuleType
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+
+
+def _install_fake_sentence_transformers(monkeypatch, side_effect=None, return_value=None):
+    module = ModuleType("sentence_transformers")
+    module.SentenceTransformer = MagicMock(side_effect=side_effect, return_value=return_value)
+    monkeypatch.setitem(sys.modules, "sentence_transformers", module)
+    return module.SentenceTransformer
 
 
 @pytest.fixture
@@ -29,10 +38,10 @@ class TestGetModelReturnsCPUWhenPoisoned:
     def test_returns_cpu_model_when_poisoned(self, embedding_client):
         cpu_model = MagicMock()
         cpu_model.device = "cpu"
-        embedding_client._cpu_fallback_models["jina-code"] = cpu_model
+        embedding_client._cpu_fallback_models["jina-code-st"] = cpu_model
         embedding_client._gpu_poisoned = True
 
-        result = embedding_client.get_model("jina-code")
+        result = embedding_client.get_model("jina-code-st")
 
         assert result is cpu_model
 
@@ -44,34 +53,34 @@ class TestGetModelReturnsCPUWhenPoisoned:
             'arcaneum.embeddings.client.EmbeddingClient._get_cpu_fallback_model',
             return_value=mock_model
         ) as mock_get_fallback:
-            result = embedding_client.get_model("jina-code")
+            result = embedding_client.get_model("jina-code-st")
 
-        mock_get_fallback.assert_called_once_with("jina-code")
+        mock_get_fallback.assert_called_once_with("jina-code-st")
         assert result is mock_model
 
-    def test_cpu_fallback_tries_local_model_before_download(self, embedding_client):
+    def test_cpu_fallback_tries_local_model_before_download(self, embedding_client, monkeypatch):
         embedding_client._gpu_poisoned = True
         mock_model = MagicMock()
+        st = _install_fake_sentence_transformers(monkeypatch, return_value=mock_model)
 
         with patch.object(embedding_client, "is_model_cached", return_value=False):
-            with patch("sentence_transformers.SentenceTransformer", return_value=mock_model) as st:
-                result = embedding_client.get_model("jina-code")
+            result = embedding_client.get_model("jina-code-st")
 
         assert result is mock_model
         assert st.call_count == 1
         assert st.call_args.kwargs["local_files_only"] is True
         assert st.call_args.kwargs["device"] == "cpu"
 
-    def test_cpu_fallback_downloads_after_local_load_failure(self, embedding_client):
+    def test_cpu_fallback_downloads_after_local_load_failure(self, embedding_client, monkeypatch):
         embedding_client._gpu_poisoned = True
         mock_model = MagicMock()
+        st = _install_fake_sentence_transformers(
+            monkeypatch,
+            side_effect=[OSError("incomplete cache"), mock_model],
+        )
 
         with patch.object(embedding_client, "is_model_cached", return_value=True):
-            with patch(
-                "sentence_transformers.SentenceTransformer",
-                side_effect=[OSError("incomplete cache"), mock_model],
-            ) as st:
-                result = embedding_client.get_model("jina-code")
+            result = embedding_client.get_model("jina-code-st")
 
         assert result is mock_model
         assert st.call_count == 2
@@ -82,25 +91,40 @@ class TestGetModelReturnsCPUWhenPoisoned:
     def test_does_not_load_gpu_model_when_poisoned(self, embedding_client):
         """Poisoned client should not attempt to create a new GPU model."""
         embedding_client._gpu_poisoned = True
-        embedding_client._cpu_fallback_models["jina-code"] = MagicMock()
+        embedding_client._cpu_fallback_models["jina-code-st"] = MagicMock()
 
-        embedding_client.get_model("jina-code")
+        embedding_client.get_model("jina-code-st")
 
         # Should NOT have added to _models (GPU model dict)
-        assert "jina-code" not in embedding_client._models
+        assert "jina-code-st" not in embedding_client._models
 
     def test_fastembed_model_not_affected_by_poison(self, embedding_client):
         """FastEmbed models (non-sentence-transformers) should load normally even when poisoned."""
         embedding_client._gpu_poisoned = True
 
-        # bge-small is fastembed backend — get_model should try to load it normally
+        # jina-code is a FastEmbed default — get_model should try to load it normally
         # We mock the actual loading to avoid needing the model files
         mock_model = MagicMock()
         with patch('arcaneum.embeddings.client.TextEmbedding', return_value=mock_model):
             with patch.object(embedding_client, 'is_model_cached', return_value=True):
-                result = embedding_client.get_model("bge-small")
+                result = embedding_client.get_model("jina-code")
 
         assert result is mock_model
+
+    def test_fastembed_downloads_after_local_load_failure(self, embedding_client):
+        """FastEmbed cache may exist without backend-specific ONNX artifacts."""
+        mock_model = MagicMock()
+        with patch(
+            'arcaneum.embeddings.client.TextEmbedding',
+            side_effect=[OSError("incomplete onnx cache"), mock_model],
+        ) as mock_text_embedding:
+            with patch.object(embedding_client, 'is_model_cached', return_value=True):
+                result = embedding_client.get_model("jina-code")
+
+        assert result is mock_model
+        assert mock_text_embedding.call_count == 2
+        assert mock_text_embedding.call_args_list[0].kwargs["local_files_only"] is True
+        assert mock_text_embedding.call_args_list[1].kwargs["local_files_only"] is False
 
 
 class TestFastEmbedCoreMLPolicy:
@@ -160,25 +184,25 @@ class TestSystemMemoryPressureGuard:
 
     def test_low_available_memory_poisons_gpu_and_drops_model(self, embedding_client, monkeypatch):
         monkeypatch.setenv("ARC_MIN_SYSTEM_AVAILABLE_GB", "4")
-        embedding_client._models["jina-code"] = MagicMock()
+        embedding_client._models["jina-code-st"] = MagicMock()
 
         with patch.object(embedding_client, "_system_memory_available_gb", return_value=2.5):
-            disabled = embedding_client._maybe_disable_gpu_for_memory_pressure("jina-code")
+            disabled = embedding_client._maybe_disable_gpu_for_memory_pressure("jina-code-st")
 
         assert disabled is True
         assert embedding_client._gpu_poisoned is True
-        assert "jina-code" not in embedding_client._models
+        assert "jina-code-st" not in embedding_client._models
 
     def test_healthy_available_memory_keeps_gpu_enabled(self, embedding_client, monkeypatch):
         monkeypatch.setenv("ARC_MIN_SYSTEM_AVAILABLE_GB", "4")
-        embedding_client._models["jina-code"] = MagicMock()
+        embedding_client._models["jina-code-st"] = MagicMock()
 
         with patch.object(embedding_client, "_system_memory_available_gb", return_value=8.0):
-            disabled = embedding_client._maybe_disable_gpu_for_memory_pressure("jina-code")
+            disabled = embedding_client._maybe_disable_gpu_for_memory_pressure("jina-code-st")
 
         assert disabled is False
         assert embedding_client._gpu_poisoned is False
-        assert "jina-code" in embedding_client._models
+        assert "jina-code-st" in embedding_client._models
 
     def test_invalid_memory_floor_uses_default(self, embedding_client, monkeypatch):
         monkeypatch.setenv("ARC_MIN_SYSTEM_AVAILABLE_GB", "invalid")
@@ -189,7 +213,7 @@ class TestSystemMemoryPressureGuard:
         self, embedding_client, monkeypatch
     ):
         monkeypatch.setenv("ARC_MIN_SYSTEM_AVAILABLE_GB", "4")
-        embedding_client._models["jina-code"] = MagicMock()
+        embedding_client._models["jina-code-st"] = MagicMock()
 
         cpu_model = SimpleNamespace(_backend="sentence-transformers")
 
@@ -199,11 +223,11 @@ class TestSystemMemoryPressureGuard:
                     mock_encode.return_value = np.random.rand(1, 768).astype(np.float32)
                     with patch.object(embedding_client, "_validate_embeddings", return_value=True):
                         with patch("arcaneum.utils.memory.get_gpu_memory_info") as mock_gpu_mem:
-                            embeddings = embedding_client.embed(["text"], "jina-code")
+                            embeddings = embedding_client.embed(["text"], "jina-code-st")
 
         assert embeddings.shape == (1, 768)
         assert embedding_client._gpu_poisoned is True
-        assert "jina-code" not in embedding_client._models
+        assert "jina-code-st" not in embedding_client._models
         assert mock_encode.call_args.args[0] is cpu_model
         mock_gpu_mem.assert_not_called()
 
@@ -213,17 +237,17 @@ class TestSystemMemoryPressureGuard:
 
         mock_model = MagicMock()
         mock_model._backend = "sentence-transformers"
-        embedding_client._models["jina-code"] = mock_model
+        embedding_client._models["jina-code-st"] = mock_model
 
         with patch.object(embedding_client, "_system_memory_available_gb", return_value=2.5):
             with patch.object(embedding_client, "_encode_with_oom_recovery") as mock_encode:
                 mock_encode.return_value = np.random.rand(1, 768).astype(np.float32)
                 with patch.object(embedding_client, "_validate_embeddings", return_value=True):
-                    embeddings = embedding_client.embed(["text"], "jina-code")
+                    embeddings = embedding_client.embed(["text"], "jina-code-st")
 
         assert embeddings.shape == (1, 768)
         assert embedding_client._gpu_poisoned is False
-        assert embedding_client._models["jina-code"] is mock_model
+        assert embedding_client._models["jina-code-st"] is mock_model
 
 
 class TestDeferredGpuCleanup:
@@ -234,25 +258,25 @@ class TestDeferredGpuCleanup:
         dead_thread.is_alive.return_value = False
         model_ref = MagicMock()
 
-        embedding_client._pending_gpu_cleanup["jina-code"] = (dead_thread, model_ref)
+        embedding_client._pending_gpu_cleanup["jina-code-st"] = (dead_thread, model_ref)
 
         with patch.object(embedding_client, '_clear_gpu_cache'):
             result = embedding_client._try_deferred_gpu_cleanup()
 
         assert result is True
-        assert "jina-code" not in embedding_client._pending_gpu_cleanup
+        assert "jina-code-st" not in embedding_client._pending_gpu_cleanup
 
     def test_no_cleanup_alive_thread(self, embedding_client):
         alive_thread = MagicMock(spec=threading.Thread)
         alive_thread.is_alive.return_value = True
         model_ref = MagicMock()
 
-        embedding_client._pending_gpu_cleanup["jina-code"] = (alive_thread, model_ref)
+        embedding_client._pending_gpu_cleanup["jina-code-st"] = (alive_thread, model_ref)
 
         result = embedding_client._try_deferred_gpu_cleanup()
 
         assert result is False
-        assert "jina-code" in embedding_client._pending_gpu_cleanup
+        assert "jina-code-st" in embedding_client._pending_gpu_cleanup
 
     def test_no_pending_cleanup(self, embedding_client):
         result = embedding_client._try_deferred_gpu_cleanup()
@@ -288,7 +312,7 @@ class TestEmbedImplCpuBatchSizingWhenPoisoned:
         mock_model.encode.return_value = np.random.rand(2, 768).astype(np.float32)
 
         # Put the mock model in the client so get_model returns it
-        embedding_client._cpu_fallback_models["jina-code"] = mock_model
+        embedding_client._cpu_fallback_models["jina-code-st"] = mock_model
 
         # Mock _encode_with_oom_recovery to capture that CPU path is used
         with patch.object(embedding_client, '_encode_with_oom_recovery') as mock_encode:
@@ -299,7 +323,7 @@ class TestEmbedImplCpuBatchSizingWhenPoisoned:
                 ) as mock_gpu_mem:
                     embedding_client._embed_impl(
                         ["text1", "text2"],
-                        model_name="jina-code",
+                        model_name="jina-code-st",
                         batch_size=32,
                     )
 
@@ -314,7 +338,7 @@ class TestGpuPoisonStaysSticky:
         embedding_client._gpu_poisoned = True
         finished_thread = MagicMock(spec=threading.Thread)
         finished_thread.is_alive.return_value = False
-        embedding_client._pending_gpu_cleanup["jina-code"] = (finished_thread, MagicMock())
+        embedding_client._pending_gpu_cleanup["jina-code-st"] = (finished_thread, MagicMock())
         cpu_model = MagicMock()
 
         with patch.object(
@@ -329,22 +353,22 @@ class TestGpuPoisonStaysSticky:
                     MagicMock(),
                     ["text1", "text2"],
                     internal_batch_size=8,
-                    model_name="jina-code",
+                    model_name="jina-code-st",
                 )
 
         assert result is encode_cpu.return_value
         assert embedding_client._gpu_poisoned is True
         assert embedding_client._pending_gpu_cleanup == {}
-        get_cpu.assert_called_once_with("jina-code")
+        get_cpu.assert_called_once_with("jina-code-st")
         encode_cpu.assert_called_once_with(
-            cpu_model, ["text1", "text2"], "jina-code", "document"
+            cpu_model, ["text1", "text2"], "jina-code-st", "document"
         )
 
     def test_poison_stays_set_with_alive_thread(self, embedding_client):
         embedding_client._gpu_poisoned = True
         alive_thread = MagicMock(spec=threading.Thread)
         alive_thread.is_alive.return_value = True
-        embedding_client._pending_gpu_cleanup["jina-code"] = (alive_thread, MagicMock())
+        embedding_client._pending_gpu_cleanup["jina-code-st"] = (alive_thread, MagicMock())
         cpu_model = MagicMock()
 
         with patch.object(embedding_client, "_get_cpu_fallback_model", return_value=cpu_model):
@@ -355,11 +379,11 @@ class TestGpuPoisonStaysSticky:
                     MagicMock(),
                     ["text1", "text2"],
                     internal_batch_size=8,
-                    model_name="jina-code",
+                    model_name="jina-code-st",
                 )
 
         assert embedding_client._gpu_poisoned is True
-        assert "jina-code" in embedding_client._pending_gpu_cleanup
+        assert "jina-code-st" in embedding_client._pending_gpu_cleanup
 
 
 class TestTimeoutHandlerReleasesModel:
@@ -369,7 +393,7 @@ class TestTimeoutHandlerReleasesModel:
         """When encode times out, GPU model is removed from _models and stored in _pending_gpu_cleanup."""
         mock_model = MagicMock()
         mock_model._backend = "sentence-transformers"
-        embedding_client._models["jina-code"] = mock_model
+        embedding_client._models["jina-code-st"] = mock_model
 
         # Make the encode thread hang (never complete within timeout)
         original_thread_init = threading.Thread.__init__
@@ -390,16 +414,16 @@ class TestTimeoutHandlerReleasesModel:
                     embedding_client._encode_with_oom_recovery(
                         mock_model, ["text1", "text2"],
                         internal_batch_size=8,
-                        model_name="jina-code",
+                        model_name="jina-code-st",
                         encode_timeout=0  # Immediate timeout
                     )
 
         # Model should be removed from _models
-        assert "jina-code" not in embedding_client._models
+        assert "jina-code-st" not in embedding_client._models
 
         # Model should be in pending cleanup
-        assert "jina-code" in embedding_client._pending_gpu_cleanup
-        thread, model_ref = embedding_client._pending_gpu_cleanup["jina-code"]
+        assert "jina-code-st" in embedding_client._pending_gpu_cleanup
+        thread, model_ref = embedding_client._pending_gpu_cleanup["jina-code-st"]
         assert model_ref is mock_model
 
         # GPU should be poisoned
@@ -412,7 +436,7 @@ class TestAtexitJoinGpuThreads:
     def test_joins_alive_thread(self, embedding_client):
         thread = MagicMock(spec=threading.Thread)
         thread.is_alive.return_value = True
-        embedding_client._pending_gpu_cleanup["jina-code"] = (thread, MagicMock())
+        embedding_client._pending_gpu_cleanup["jina-code-st"] = (thread, MagicMock())
 
         embedding_client._atexit_join_gpu_threads()
 
@@ -421,7 +445,7 @@ class TestAtexitJoinGpuThreads:
     def test_skips_dead_thread(self, embedding_client):
         thread = MagicMock(spec=threading.Thread)
         thread.is_alive.return_value = False
-        embedding_client._pending_gpu_cleanup["jina-code"] = (thread, MagicMock())
+        embedding_client._pending_gpu_cleanup["jina-code-st"] = (thread, MagicMock())
 
         embedding_client._atexit_join_gpu_threads()
 
@@ -445,7 +469,7 @@ class TestCpuFallbackBounded:
         cpu_model.encode.return_value = np.random.rand(2, 768).astype(np.float32)
 
         embedding_client._encode_on_cpu_fallback(
-            cpu_model, ["a", "b"], "jina-code", "document"
+            cpu_model, ["a", "b"], "jina-code-st", "document"
         )
 
         assert cpu_model.encode.call_count == 1
@@ -464,7 +488,7 @@ class TestCpuFallbackBounded:
         ]
 
         result = embedding_client._encode_on_cpu_fallback(
-            cpu_model, [f"t{i}" for i in range(n)], "jina-code", "document"
+            cpu_model, [f"t{i}" for i in range(n)], "jina-code-st", "document"
         )
 
         assert cpu_model.encode.call_count == 3
@@ -482,7 +506,7 @@ class TestCpuFallbackBounded:
             embedding_client, '_configure_cpu_threading'
         ) as mock_configure:
             embedding_client._encode_on_cpu_fallback(
-                cpu_model, ["a"], "jina-code", "document"
+                cpu_model, ["a"], "jina-code-st", "document"
             )
 
         mock_configure.assert_called_once()
@@ -504,7 +528,7 @@ class TestCpuShortCircuit:
                 mock_model,
                 ["a", "b", "c"],
                 internal_batch_size=256,
-                model_name="jina-code",
+                model_name="jina-code-st",
             )
 
         mock_thread_ctor.assert_not_called()
@@ -524,7 +548,7 @@ class TestCpuShortCircuit:
         embedding_client._encode_with_oom_recovery(
             mock_model, ["a"],
             internal_batch_size=256,
-            model_name="jina-code",
+            model_name="jina-code-st",
         )
 
         assert embedding_client._gpu_poisoned is False
@@ -545,7 +569,7 @@ class TestEmbedSortsByLength:
         from arcaneum.embeddings.client import EMBEDDING_MODELS  # noqa: F401
         mock_model = MagicMock()
         mock_model._backend = "sentence-transformers"
-        embedding_client._models["jina-code"] = mock_model
+        embedding_client._models["jina-code-st"] = mock_model
         return mock_model
 
     def test_sorted_input_to_encode(self, embedding_client):
@@ -567,7 +591,7 @@ class TestEmbedSortsByLength:
             embedding_client, '_encode_with_oom_recovery',
             side_effect=lambda model, t, ibs, mn, pt: encode_side_effect(t),
         ) as mock_recover:
-            result = embedding_client.embed(texts, "jina-code")
+            result = embedding_client.embed(texts, "jina-code-st")
 
         # _encode_with_oom_recovery must have been handed length-sorted texts
         sent_texts = mock_recover.call_args.args[1]
@@ -602,7 +626,7 @@ class TestEmbedSortsByLength:
             embedding_client, '_encode_with_oom_recovery',
             side_effect=lambda model, t, ibs, mn, pt: encode_side_effect(t),
         ):
-            result = embedding_client.embed(texts, "jina-code")
+            result = embedding_client.embed(texts, "jina-code-st")
 
         # Each row's argmax should equal its original index, not the sorted index
         for i in range(3):

@@ -54,7 +54,7 @@ jobs:
             gpu-smoke-${{ runner.os }}-py${{ inputs.python_version || '3.12' }}-
 
       - name: Install package
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev,sentence-transformers]"
 
       - name: Require accelerator
         run: |

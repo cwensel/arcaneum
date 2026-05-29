@@ -43,17 +43,18 @@ The list command shows:
 **For Documents/PDFs:**
 
 - **arctic-m** (768D): **DEFAULT** - stable FastEmbed retrieval model
-- **stella** (1024D): Highest-quality opt-in document model
+- **stella** (1024D): Highest-quality opt-in document model, requires `arcaneum[sentence-transformers]`
 - **mxbai-large** (1024D): High-quality FastEmbed document model
 - **bge-large** (1024D): Legacy BGE document model
 
 **For Source Code:**
 
-- **jina-code** (768D): **DEFAULT** - stable lightweight code model
-- **jina-code-0.5b** (896D): Higher-quality opt-in code model, 32K context
-- **jina-code-1.5b** (1536D): SOTA Sept 2025, 32K context, highest quality
-- **codesage-large** (1024D): CodeSage V2, Dec 2024, 9 languages
-- **nomic-code** (3584D): 7B params, 6 languages, slower but comprehensive
+- **jina-code** (768D): **DEFAULT** - stable FastEmbed code model
+- **jina-code-st** (768D): Legacy SentenceTransformers code path, requires `arcaneum[sentence-transformers]`
+- **jina-code-0.5b** (896D): Higher-quality opt-in code model, 32K context, requires `arcaneum[sentence-transformers]`
+- **jina-code-1.5b** (1536D): SOTA Sept 2025, 32K context, highest quality, requires `arcaneum[sentence-transformers]`
+- **codesage-large** (1024D): CodeSage V2, Dec 2024, 9 languages, requires `arcaneum[sentence-transformers]`
+- **nomic-code** (3584D): 7B params, 6 languages, slower but comprehensive, requires `arcaneum[sentence-transformers]`
 
 **For General Use:**
 
@@ -64,7 +65,7 @@ The list command shows:
 
 1. **Match content type:**
    - PDFs/docs → arctic-m (stable default), stella (quality), or mxbai-large (FastEmbed quality)
-   - Source code → jina-code (stable default), jina-code-0.5b or jina-code-1.5b (quality)
+   - Source code → jina-code (stable FastEmbed default), jina-code-0.5b or jina-code-1.5b (quality extra)
    - Mixed → arctic-m or mxbai-large
 
 2. **Consider dimensions:**
@@ -81,7 +82,8 @@ The list command shows:
 
 **Downloading Models:**
 
-Models auto-download on first use (~1-2GB):
+Models auto-download on first use. FastEmbed defaults are part of the core install;
+SentenceTransformers models require `arcaneum[sentence-transformers]`.
 
 - Cached in `~/.cache/arcaneum/models` (XDG-compliant)
 - Reused across indexing operations
@@ -93,7 +95,7 @@ Models auto-download on first use (~1-2GB):
 # Download the recommended code model
 python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('jinaai/jina-code-embeddings-0.5b')"
 
-# Or the legacy v2 model
+# Or the legacy v2 SentenceTransformers model
 python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('jinaai/jina-embeddings-v2-base-code')"
 ```
 

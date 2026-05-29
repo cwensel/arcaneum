@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import json
 import click
+import pytest
 from click.testing import CliRunner
 
 from arcaneum.cli.main import cli, main
@@ -388,6 +389,200 @@ def test_index_source_uses_shared_qdrant_resolution(tmp_path):
     assert result is not None
     assert result.code == 1
     mock_create.assert_called_once_with()
+
+
+def test_index_source_blocks_stale_prompt_policy_before_indexing(tmp_path):
+    from types import SimpleNamespace
+
+    from arcaneum.cli.index_source import index_source_command
+    from arcaneum.embeddings.client import get_embedding_prompt_policy
+
+    stale_policy = {
+        **get_embedding_prompt_policy("jina-code-st"),
+        "model": "jina-code",
+    }
+    mock_indexer = MagicMock()
+    mock_indexer.collection_exists.return_value = True
+
+    with patch('arcaneum.cli.index_source.interaction_logger'):
+        with patch('arcaneum.cli.index_source.create_qdrant_client', return_value=object()):
+            with patch('arcaneum.cli.index_source.QdrantIndexer', return_value=mock_indexer):
+                with patch('arcaneum.cli.index_source.get_vector_names', return_value=["jina-code"]):
+                    with patch(
+                        'arcaneum.cli.index_source.get_cached_model',
+                        return_value=SimpleNamespace(get_device_info=lambda: {"gpu_available": False}),
+                    ):
+                        with patch('arcaneum.cli.index_source.validate_collection_type'):
+                            with patch(
+                                'arcaneum.cli.index_source.get_collection_metadata',
+                                return_value={
+                                    "model": "jina-code",
+                                    "embedding_prompt_policy": {"jina-code": stale_policy},
+                                },
+                            ):
+                                with pytest.raises(SystemExit) as exc:
+                                    index_source_command(
+                                        path=str(tmp_path),
+                                        from_file=None,
+                                        collection='Code',
+                                        model=None,
+                                        embedding_batch_size=128,
+                                        chunk_size=None,
+                                        chunk_overlap=None,
+                                        depth=None,
+                                        process_priority='normal',
+                                        not_nice=True,
+                                        force=False,
+                                        prune=False,
+                                        no_gpu=True,
+                                        verify=False,
+                                        streaming=True,
+                                        verbose=False,
+                                        debug=False,
+                                        profile=False,
+                                        output_json=True,
+                                    )
+
+    assert exc.value.code == 1
+    mock_indexer.index_directory.assert_not_called()
+
+
+def test_index_source_force_requires_prompt_policy_certification(tmp_path):
+    from types import SimpleNamespace
+
+    from arcaneum.cli.index_source import index_source_command
+    from arcaneum.embeddings.client import get_embedding_prompt_policy
+
+    source_file = tmp_path / "app.py"
+    source_file.write_text("print('ok')\n")
+    stale_policy = {
+        **get_embedding_prompt_policy("jina-code-st"),
+        "model": "jina-code",
+    }
+    mock_qdrant_indexer = MagicMock()
+    mock_qdrant_indexer.collection_exists.return_value = True
+    mock_source_indexer = MagicMock()
+    mock_source_indexer.index_directory.return_value = {
+        "covered_paths": [str(source_file)],
+        "files_processed": 1,
+        "errors": 0,
+        "projects_processed": 1,
+        "chunks_uploaded": 1,
+    }
+    mock_sync = MagicMock()
+    mock_sync._get_indexed_file_paths_set.return_value = {str(source_file)}
+    mock_cached_model = MagicMock(
+        return_value=SimpleNamespace(get_device_info=lambda: {"gpu_available": False})
+    )
+
+    with patch('arcaneum.cli.index_source.interaction_logger'):
+        with patch('arcaneum.cli.index_source.create_qdrant_client', return_value=object()):
+            with patch('arcaneum.cli.index_source.QdrantIndexer', return_value=mock_qdrant_indexer):
+                with patch('arcaneum.cli.index_source.SourceCodeIndexer', return_value=mock_source_indexer):
+                    with patch('arcaneum.cli.index_source.get_vector_names', return_value=["jina-code"]):
+                        with patch(
+                            'arcaneum.cli.index_source.get_cached_model',
+                            mock_cached_model,
+                        ):
+                            with patch('arcaneum.cli.index_source.validate_collection_type'):
+                                with patch(
+                                    'arcaneum.cli.index_source.get_collection_metadata',
+                                    return_value={
+                                        "model": "jinaai/jina-embeddings-v2-base-code",
+                                        "embedding_prompt_policy": {"jina-code": stale_policy},
+                                    },
+                                ):
+                                    with patch(
+                                        'arcaneum.indexing.common.sync.MetadataBasedSync',
+                                        return_value=mock_sync,
+                                    ):
+                                        with patch(
+                                            'arcaneum.indexing.collection_metadata.prune_orphans_and_stamp',
+                                            return_value={"stamped": False},
+                                        ):
+                                            with pytest.raises(SystemExit) as exc:
+                                                index_source_command(
+                                                    path=str(tmp_path),
+                                                    from_file=None,
+                                                    collection='Code',
+                                                    model=None,
+                                                    embedding_batch_size=128,
+                                                    chunk_size=None,
+                                                    chunk_overlap=None,
+                                                    depth=None,
+                                                    process_priority='normal',
+                                                    not_nice=True,
+                                                    force=True,
+                                                    prune=False,
+                                                    no_gpu=True,
+                                                    verify=False,
+                                                    streaming=True,
+                                                    verbose=False,
+                                                    debug=False,
+                                                    profile=False,
+                                                    output_json=True,
+                                                )
+
+    assert exc.value.code == 1
+    assert mock_cached_model.call_args.kwargs["model_name"] == "jina-code"
+    mock_source_indexer.index_directory.assert_called_once()
+
+
+def test_index_source_rejects_explicit_model_vector_mismatch(tmp_path):
+    from types import SimpleNamespace
+
+    from arcaneum.cli.index_source import index_source_command
+    from arcaneum.embeddings.client import get_embedding_prompt_policy
+
+    mock_qdrant_indexer = MagicMock()
+    mock_qdrant_indexer.collection_exists.return_value = True
+
+    with patch('arcaneum.cli.index_source.interaction_logger'):
+        with patch('arcaneum.cli.index_source.create_qdrant_client', return_value=object()):
+            with patch('arcaneum.cli.index_source.QdrantIndexer', return_value=mock_qdrant_indexer):
+                with patch('arcaneum.cli.index_source.SourceCodeIndexer') as source_indexer:
+                    with patch('arcaneum.cli.index_source.get_vector_names', return_value=["jina-code"]):
+                        with patch(
+                            'arcaneum.cli.index_source.get_cached_model',
+                            return_value=SimpleNamespace(
+                                get_device_info=lambda: {"gpu_available": False}
+                            ),
+                        ):
+                            with patch('arcaneum.cli.index_source.validate_collection_type'):
+                                with patch(
+                                    'arcaneum.cli.index_source.get_collection_metadata',
+                                    return_value={
+                                        "model": "jina-code",
+                                        "embedding_prompt_policy": {
+                                            "jina-code": get_embedding_prompt_policy("jina-code")
+                                        },
+                                    },
+                                ):
+                                    with pytest.raises(SystemExit) as exc:
+                                        index_source_command(
+                                            path=str(tmp_path),
+                                            from_file=None,
+                                            collection='Code',
+                                            model="jina-code-st",
+                                            embedding_batch_size=128,
+                                            chunk_size=None,
+                                            chunk_overlap=None,
+                                            depth=None,
+                                            process_priority='normal',
+                                            not_nice=True,
+                                            force=True,
+                                            prune=False,
+                                            no_gpu=True,
+                                            verify=False,
+                                            streaming=True,
+                                            verbose=False,
+                                            debug=False,
+                                            profile=False,
+                                            output_json=True,
+                                        )
+
+    assert exc.value.code == 1
+    source_indexer.assert_not_called()
 
 
 def test_index_markdown_prune_flag_is_threaded(tmp_path):

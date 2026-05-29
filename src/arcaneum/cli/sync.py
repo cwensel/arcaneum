@@ -72,13 +72,18 @@ from ..cli.output import print_json, print_error, print_info
 from ..cli.utils import create_qdrant_client
 from ..cli.interaction_logger import interaction_logger
 from ..cli.errors import InvalidArgumentError, ResourceNotFoundError
-from ..embeddings.client import EmbeddingClient, EMBEDDING_MODELS
+from ..embeddings.client import (
+    EmbeddingClient,
+    EMBEDDING_MODELS,
+    prompt_policy_model_key_for_name,
+)
 from ..fulltext.client import FullTextClient
 from ..schema.document import DualIndexDocument, persisted_metadata_fields
 from ..indexing.dual_indexer import DualIndexer
 from ..indexing.collection_metadata import (
     get_collection_type,
     get_collection_metadata,
+    prompt_policy_issues,
     update_collection_metadata,
 )
 from ..indexing.common.sync import MetadataBasedSync, compute_quick_hash
@@ -102,6 +107,15 @@ def _stamp_last_sync_metadata(qdrant, corpus: str) -> None:
         )
     except Exception as e:
         logger.warning("Failed to update last sync metadata for %s: %s", corpus, e)
+
+
+def _stale_policy_error(policy_issues: list[str], action: str) -> str:
+    return (
+        f"Collection embedding policy is stale before {action}: "
+        + "; ".join(policy_issues)
+        + ". Run a full directory sync with --force to reindex and recertify "
+        "the corpus before incremental sync or backfill."
+    )
 
 # Default patterns for files to exclude from indexing
 # These are typically generated, minified, or machine-readable files
@@ -1258,6 +1272,20 @@ def sync_directory_command(
             corpus_type = 'pdf'  # Default
             logger.warning(f"Collection type not set, defaulting to {corpus_type}")
 
+        # Parse models before any repair/sync/backfill path can embed. If an
+        # existing collection was indexed under an older prompt/backend policy
+        # for the same alias, incremental sync would silently mix vector spaces.
+        raw_model_list = [m.strip() for m in configured_models.split(',') if m.strip()]
+        model_list = [
+            prompt_policy_model_key_for_name(model_name) or model_name
+            for model_name in raw_model_list
+        ]
+        normalized_configured_models = ",".join(model_list)
+        policy_issues = [
+            issue
+            for model_name in model_list
+            for issue in prompt_policy_issues(metadata, model_name)
+        ]
         # Old quality scores map: populated during repair for garbled file comparison
         old_quality_scores = {}
 
@@ -1410,9 +1438,6 @@ def sync_directory_command(
             print_info(f"Dual indexing to:")
             print_info(f"  - Qdrant collection: {corpus} (semantic search)")
             print_info(f"  - MeiliSearch index: {corpus} (full-text search)")
-
-        # Parse models
-        model_list = [m.strip() for m in configured_models.split(',')]
 
         # Git-aware sync: skip repos based on commit hash
         # Track repos to skip and version identifiers to apply
@@ -1599,6 +1624,9 @@ def sync_directory_command(
             discovered_file_paths = {str(f.absolute()) for f in files}
             all_indexed_paths = qdrant_file_paths | meili_file_paths
             new_file_paths = discovered_file_paths - all_indexed_paths
+
+            if policy_issues and not dry_run:
+                raise InvalidArgumentError(_stale_policy_error(policy_issues, "parity sync"))
 
             # Detect renames: files that appear "new" but match existing content
             detected_renames = _detect_renames(
@@ -1866,6 +1894,13 @@ def sync_directory_command(
                             console.print(f"  {p}")
             interaction_logger.finish(result_count=0)
             return
+
+        if (
+            policy_issues
+            and not full_directory_force
+            and (files or (qdrant_backfill_paths and not force))
+        ):
+            raise InvalidArgumentError(_stale_policy_error(policy_issues, "sync"))
 
         # Only initialize embedding infrastructure if there are new files to process
         if files:
@@ -2574,7 +2609,7 @@ def sync_directory_command(
                 if output_json
                 else (lambda m: console.print(f"[yellow]⚠ {m}[/yellow]"))
             )
-            prune_orphans_and_stamp(
+            certification = prune_orphans_and_stamp(
                 qdrant=qdrant,
                 sync=stamp_sync,
                 collection_name=corpus,
@@ -2588,6 +2623,15 @@ def sync_directory_command(
                 prune=False,  # corpus sync uses --parity for orphan cleanup
                 warn=prune_warn,
             )
+            if policy_issues and not certification.get("stamped"):
+                raise InvalidArgumentError(
+                    "Full force sync did not certify the updated embedding policy: "
+                    + "; ".join(policy_issues)
+                    + ". Remove stale/orphaned vectors and rerun --force before "
+                    "incremental sync."
+                )
+            if certification.get("stamped") and configured_models != normalized_configured_models:
+                update_collection_metadata(qdrant, corpus, model=normalized_configured_models)
 
         if not dry_run:
             _stamp_last_sync_metadata(qdrant, corpus)
@@ -4248,6 +4292,17 @@ def _parity_single_corpus(
             if not all_corpora_mode:
                 interaction_logger.finish(result_count=0)
             return
+
+        if qdrant_backfill_paths:
+            policy_issues = [
+                issue
+                for model_name in model_list
+                for issue in prompt_policy_issues(metadata, model_name)
+            ]
+            if policy_issues:
+                raise InvalidArgumentError(
+                    _stale_policy_error(policy_issues, "Qdrant parity backfill")
+                )
 
         # Nothing to do (unless repair_metadata is requested)
         if not meili_backfill_paths and not qdrant_backfill_paths and not repair_metadata:

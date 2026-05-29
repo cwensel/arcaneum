@@ -36,16 +36,25 @@ logger = logging.getLogger(__name__)
 #
 # See also: memory.py for the batch size derivation logic
 EMBEDDING_MODELS = {
-    # Code-specific models (SentenceTransformers)
+    # Code-specific models
     "jina-code": {
+        "name": "jinaai/jina-embeddings-v2-base-code",
+        "dimensions": 768,
+        "backend": "fastembed",
+        "description": "Code-specific FastEmbed default (768D, lightweight v2 model)",
+        "available": True,
+        "recommended_for": "code",
+    },
+    "jina-code-st": {
         "name": "jinaai/jina-embeddings-v2-base-code",
         "revision": "516f4baf13dec4ddddda8631e019b5737c8bc250",
         "trust_remote_code": True,
         "dimensions": 768,
         "backend": "sentence-transformers",
-        "description": "Code-specific (768D, 2K effective context, legacy v2 model)",
+        "description": "Code-specific legacy SentenceTransformers path (768D, 2K context)",
         "available": True,
         "recommended_for": "code",
+        "install_extra": "sentence-transformers",
         "params_billions": 0.137,  # ~137M params
         "query_task": "retrieval.query",
         "document_task": "retrieval.passage",
@@ -66,6 +75,7 @@ EMBEDDING_MODELS = {
         "description": "Code-specific SOTA (896D, 32K context, Sept 2025, fast)",
         "available": True,
         "recommended_for": "code",
+        "install_extra": "sentence-transformers",
         "params_billions": 0.5,  # 500M params, Qwen2 attention needs ~4GB per batch
         "query_task": "retrieval.query",
         "document_task": "retrieval.passage",
@@ -83,6 +93,7 @@ EMBEDDING_MODELS = {
         "description": "Code-specific SOTA (1536D, 32K context, Sept 2025, highest quality)",
         "available": True,
         "recommended_for": "code",
+        "install_extra": "sentence-transformers",
         "params_billions": 1.5,  # 1.5B params
         "query_task": "retrieval.query",
         "document_task": "retrieval.passage",
@@ -98,6 +109,7 @@ EMBEDDING_MODELS = {
         "description": "CodeSage V2 (1024D, 9 languages, Dec 2024)",
         "available": True,
         "recommended_for": "code",
+        "install_extra": "sentence-transformers",
         "params_billions": 0.4,  # ~400M params
         "max_seq_length": 8192,  # Limit attention memory: O(batch × seq_len²)
         "mps_max_batch": 8,  # MPS needs conservative batches due to unified memory
@@ -110,6 +122,7 @@ EMBEDDING_MODELS = {
         "description": "Nomic Code (3584D, 7B params, 6 languages, 2025)",
         "available": True,
         "recommended_for": "code",
+        "install_extra": "sentence-transformers",
         "params_billions": 7.0,  # 7B params - very large
         "max_seq_length": 8192,  # Limit attention memory: O(batch × seq_len²)
         "mps_max_batch": 1,  # MPS: 7B model needs single-item batches to avoid OOM
@@ -125,6 +138,7 @@ EMBEDDING_MODELS = {
         "description": "General purpose (1024D, high quality for docs/PDFs)",
         "available": True,
         "recommended_for": "pdf",
+        "install_extra": "sentence-transformers",
         "params_billions": 1.5,  # 1.5B params
         "query_prompt_name": "s2p_query",
         "mps_max_batch": 2,  # MPS needs small batches to avoid system lockups on unified memory
@@ -202,6 +216,7 @@ EMBEDDING_MODELS = {
         "backend": "sentence-transformers",
         "description": "MiniLM (384D, lightweight, fast)",
         "available": True,
+        "install_extra": "sentence-transformers",
         "params_billions": 0.022,  # ~22M params
     },
     "gte-base": {
@@ -211,6 +226,7 @@ EMBEDDING_MODELS = {
         "backend": "sentence-transformers",
         "description": "GTE Base (768D, general purpose retrieval)",
         "available": True,
+        "install_extra": "sentence-transformers",
         "params_billions": 0.110,  # ~110M params
     },
     "e5-base": {
@@ -220,10 +236,16 @@ EMBEDDING_MODELS = {
         "backend": "sentence-transformers",
         "description": "E5 Base v2 (768D, multilingual, strong performance)",
         "available": True,
+        "install_extra": "sentence-transformers",
         "params_billions": 0.110,  # ~110M params
         "query_prompt": "query: ",
         "document_prompt": "passage: ",
     },
+}
+
+LEGACY_PROMPT_POLICY_MODEL_ALIASES = {
+    "jinaai/jina-embeddings-v2-base-code": "jina-code",
+    "BAAI/bge-large-en-v1.5": "bge-large",
 }
 
 
@@ -283,15 +305,26 @@ def model_key_for_name(model_name: str) -> Optional[str]:
     """Return the registry key for either a model key or provider model name."""
     if model_name in EMBEDDING_MODELS:
         return model_name
-    for key, config in EMBEDDING_MODELS.items():
-        if config.get("name") == model_name:
-            return key
+    matches = [
+        key
+        for key, config in EMBEDDING_MODELS.items()
+        if config.get("name") == model_name
+    ]
+    if len(matches) == 1:
+        return matches[0]
     return None
+
+
+def prompt_policy_model_key_for_name(model_name: str) -> Optional[str]:
+    """Return the prompt-policy model key, including migration aliases."""
+    return model_key_for_name(model_name) or LEGACY_PROMPT_POLICY_MODEL_ALIASES.get(
+        model_name
+    )
 
 
 def get_embedding_prompt_policy(model_name: str) -> Dict[str, Any]:
     """Return the stable query/document prompt policy for a configured model."""
-    model_key = model_key_for_name(model_name)
+    model_key = prompt_policy_model_key_for_name(model_name)
     if model_key is None:
         raise _unknown_model_error(model_name)
 
@@ -330,9 +363,10 @@ def get_embedding_prompt_policies(model_names: str | List[str]) -> Dict[str, Dic
 
     policies: Dict[str, Dict[str, Any]] = {}
     for name in names:
-        model_key = model_key_for_name(name)
-        if model_key is not None:
-            policies[model_key] = get_embedding_prompt_policy(model_key)
+        model_key = prompt_policy_model_key_for_name(name)
+        if model_key is None:
+            raise _unknown_model_error(name)
+        policies[model_key] = get_embedding_prompt_policy(model_key)
     return policies
 
 
@@ -356,6 +390,16 @@ def _sentence_transformer_encode_kwargs(
     if role_policy.get("task"):
         kwargs["task"] = role_policy["task"]
     return kwargs
+
+
+def _sentence_transformers_missing_error(model_name: str, config: Dict) -> RuntimeError:
+    """Build the install guidance for optional SentenceTransformers models."""
+    extra = config.get("install_extra", "sentence-transformers")
+    return RuntimeError(
+        f"Embedding model '{model_name}' uses the optional sentence-transformers backend. "
+        f"Install it with 'arcaneum[{extra}]' or choose a FastEmbed model such as "
+        "'jina-code' or 'arctic-m'."
+    )
 
 
 class EmbeddingClient:
@@ -549,8 +593,11 @@ class EmbeddingClient:
         if model_name in self._cpu_fallback_models:
             return self._cpu_fallback_models[model_name]
 
-        from sentence_transformers import SentenceTransformer
         config = EMBEDDING_MODELS[model_name]
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as e:
+            raise _sentence_transformers_missing_error(model_name, config) from e
         try:
             model = SentenceTransformer(
                 config["name"],
@@ -895,38 +942,61 @@ class EmbeddingClient:
                 # memory outside Python's RSS accounting.
                 providers = self._resolve_fastembed_providers(model_name)
 
-                # Use local_files_only if model is cached to prevent network calls
-                # This is the official FastEmbed parameter for offline mode
-                try:
-                    self._models[model_name] = TextEmbedding(
-                        model_name=config["name"],
-                        cache_dir=self.cache_dir,
-                        local_files_only=is_cached,  # Skip network access if cached
-                        providers=providers  # GPU acceleration if available
-                    )
-                except Exception as e:
+                model_obj = None
+                last_error = None
+
+                if is_cached:
+                    try:
+                        model_obj = TextEmbedding(
+                            model_name=config["name"],
+                            cache_dir=self.cache_dir,
+                            local_files_only=True,
+                            providers=providers  # GPU acceleration if available
+                        )
+                    except Exception as e:
+                        last_error = e
+
+                if model_obj is None:
+                    if last_error is not None:
+                        print("   Downloading additional model files...", flush=True, file=sys.stderr)
+                    try:
+                        model_obj = TextEmbedding(
+                            model_name=config["name"],
+                            cache_dir=self.cache_dir,
+                            local_files_only=False,
+                            providers=providers  # GPU acceleration if available
+                        )
+                    except Exception as e:
+                        last_error = e
+
+                if model_obj is not None:
+                    self._models[model_name] = model_obj
+                else:
                     # Detect and report network/SSL errors with helpful messages
-                    error_msg = str(e).lower()
+                    error_msg = str(last_error).lower()
                     if "ssl" in error_msg or "certificate" in error_msg:
                         raise RuntimeError(
                             f"SSL certificate verification failed while downloading model '{model_name}'.\n"
                             f"For corporate proxies with self-signed certificates, run:\n"
                             f"  export ARC_SSL_VERIFY=false\n\n"
-                            f"Original error: {e}"
-                        ) from e
+                            f"Original error: {last_error}"
+                        ) from last_error
                     elif "connection" in error_msg or "network" in error_msg or "timeout" in error_msg:
                         raise RuntimeError(
                             f"Network connection failed while downloading model '{model_name}'.\n"
                             f"Please check your internet connection. If using a VPN, try disabling it.\n\n"
-                            f"Original error: {e}"
-                        ) from e
+                            f"Original error: {last_error}"
+                        ) from last_error
                     else:
                         # Re-raise other errors as-is
-                        raise
+                        raise last_error
             elif backend == "sentence-transformers":
                 import sys
 
-                from sentence_transformers import SentenceTransformer
+                try:
+                    from sentence_transformers import SentenceTransformer
+                except ImportError as e:
+                    raise _sentence_transformers_missing_error(model_name, config) from e
 
                 # Warn about large models on MPS - risk of system lockup
                 params_billions = config.get("params_billions", 0)

@@ -49,9 +49,9 @@ Collections should specify a type (pdf or code) to ensure content matches:
 **Available Models:**
 
 - arctic-m: 768D, stable document/PDF/markdown default
-- stella: 1024D, high-quality opt-in document model
+- stella: 1024D, high-quality opt-in document model (requires `arcaneum[sentence-transformers]`)
 - mxbai-large: 1024D, high-quality FastEmbed document model
-- jina-code: 768D, stable source-code default
+- jina-code: 768D, stable FastEmbed source-code default
 - bge: 1024D, general purpose
 
 **Related Commands:**

@@ -40,6 +40,14 @@ def check_dependency(package_name: str, import_name: str = None) -> Tuple[bool, 
         return False, f"{package_name} not installed"
 
 
+def check_optional_dependency(package_name: str, import_name: str = None) -> Tuple[bool | None, str]:
+    """Check an optional Python dependency without failing diagnostics."""
+    success, message = check_dependency(package_name, import_name)
+    if success:
+        return success, message
+    return None, f"{package_name} not installed (optional extra)"
+
+
 def check_qdrant_connection(verbose: bool = False) -> Tuple[bool, str]:
     """Check Qdrant server connectivity."""
     try:
@@ -168,7 +176,10 @@ def doctor_command(verbose: bool = False, output_json: bool = False):
     checks: Dict[str, Tuple[bool | None, str]] = {
         "Python Version": check_python_version(),
         "qdrant-client": check_dependency("qdrant-client", "qdrant_client"),
-        "sentence-transformers": check_dependency("sentence-transformers", "sentence_transformers"),
+        "sentence-transformers": check_optional_dependency(
+            "sentence-transformers",
+            "sentence_transformers",
+        ),
         "PyMuPDF": check_dependency("PyMuPDF", "fitz"),
         "pytesseract": check_dependency("pytesseract"),
         "Qdrant Connection": check_qdrant_connection(verbose),

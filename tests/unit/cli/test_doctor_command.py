@@ -52,6 +52,15 @@ class TestDoctorChecks:
         assert success is False
         assert "not installed" in message
 
+    def test_optional_dependency_check_not_installed(self):
+        """Test optional dependency check does not fail diagnostics."""
+        from arcaneum.cli.doctor import check_optional_dependency
+
+        success, message = check_optional_dependency("nonexistent_package_xyz")
+
+        assert success is None
+        assert "optional extra" in message
+
     def test_qdrant_connection_success(self):
         """Test Qdrant connection check when server is available."""
         from arcaneum.cli.doctor import check_qdrant_connection

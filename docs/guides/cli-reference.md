@@ -193,7 +193,7 @@ arc corpus repair MyCorpus --verbose                  # Show per-file quality sc
 
 - `--quality-threshold`: Text quality score threshold (0.0-1.0, default: 0.9)
 - `--dry-run`: Show what would be repaired without making changes
-- `--no-gpu`: Disable GPU acceleration
+- `--gpu`: Opt into accelerator embedding. CPU is the stable default.
 - `--max-embedding-batch`: Cap embedding batch size
 - `--verbose`: Show per-file old → new quality scores
 - `--json`: Output JSON format
@@ -209,7 +209,8 @@ arc corpus repair MyCorpus --verbose                  # Show per-file quality sc
 **GPU and Apple Silicon:**
 
 Large models like `stella` (1.5B params) may cause system instability on Macs with
-limited unified memory. If you experience lockups, use `--no-gpu` or switch to a
+limited unified memory when GPU is enabled. CPU is the stable default; use `--gpu`
+only when accelerator throughput is worth the memory-risk tradeoff, or switch to a
 smaller model like `bge` (0.3B params).
 
 **Memory Diagnostics:**
@@ -781,11 +782,11 @@ Note: Larger embedding batches (300-500) improve throughput 10-20%. Process prio
 ### GPU Control
 
 ```bash
-# Default: GPU acceleration enabled (MPS on Apple Silicon, CUDA on NVIDIA)
+# Default: CPU embedding for stable unattended indexing
 arc index pdf /path/to/pdfs --collection pdf-docs
 
-# Disable GPU for CPU-only mode
-arc index pdf /path/to/pdfs --collection pdf-docs --no-gpu
+# Opt into accelerator embedding (MPS on Apple Silicon, CUDA on NVIDIA)
+arc index pdf /path/to/pdfs --collection pdf-docs --gpu
 ```
 
 **Note:** The `--model` flag is deprecated. Models are now set at collection
@@ -1532,8 +1533,8 @@ RuntimeError: MPS backend out of memory (MPS allocated: 12.25 GiB...)
 **Solutions:**
 
 1. The system uses adaptive batch sizes based on model size (automatic)
-2. Use `--no-gpu` to force CPU mode
-3. Use `--embedding-batch-size 100` to reduce memory usage
+2. Omit `--gpu` to stay on the stable CPU default
+3. When using `--gpu`, use `--embedding-batch-size 100` to reduce GPU memory usage
 4. Try a smaller model (e.g., `minilm` instead of `stella`)
 
 See [PDF Indexing Guide](pdf-indexing.md#gpu-memory-errors-mpscuda) for model memory requirements.

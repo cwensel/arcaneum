@@ -340,23 +340,23 @@ ERROR: MPS backend out of memory (MPS allocated: X GiB, ...)
 
 **Quick fixes:**
 
-1. **Allow unlimited GPU memory** (recommended for most cases):
+1. **Allow unlimited GPU memory** (when using `--gpu`):
 
    ```bash
    export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
+   arc index code ~/project --collection MyCode --gpu
+   ```
+
+2. **Use smaller GPU batch size:**
+
+   ```bash
+   arc index code ~/project --collection MyCode --gpu --embedding-batch-size 100
+   ```
+
+3. **Stay on CPU mode** (default, slower but reliable):
+
+   ```bash
    arc index code ~/project --collection MyCode
-   ```
-
-2. **Use smaller batch size:**
-
-   ```bash
-   arc index code ~/project --collection MyCode --embedding-batch-size 100
-   ```
-
-3. **Force CPU mode** (slower but reliable):
-
-   ```bash
-   arc index code ~/project --collection MyCode --no-gpu
    ```
 
 **Permanent fix:** Add to your `~/.zshrc` or `~/.bashrc`:

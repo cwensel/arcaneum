@@ -124,7 +124,7 @@ flag on `arc index pdf` is deprecated.
 
 **Performance Tuning:**
 
-- `--embedding-batch-size`: Batch size for embedding generation (default: auto from GPU memory)
+- `--embedding-batch-size`: Batch size for embedding generation (default: auto-tuned)
 - `--process-priority`: Process scheduling priority (low/normal/high) [default: normal]
 
 **OCR Options:**
@@ -163,10 +163,10 @@ arc index pdf ./pdfs --collection pdf-docs --force
 arc index pdf ./pdfs --collection pdf-docs --json > results.json
 ```
 
-**Disable GPU for CPU-only mode:**
+**Opt into accelerator embedding:**
 
 ```bash
-arc index pdf ./pdfs --collection pdf-docs --no-gpu
+arc index pdf ./pdfs --collection pdf-docs --gpu
 ```
 
 **Debug mode (show all warnings):**
@@ -238,7 +238,7 @@ available with `--gpu` for 1.5-3x faster embedding generation on supported model
 - **jina-code** - Full MPS support on Apple Silicon
 - **bge-small**, **bge-base** - experimental CoreML support
 
-**Performance**: 1.5-3x speedup with GPU compared to CPU-only mode.
+**Performance**: 1.5-3x speedup with GPU compared to CPU embedding.
 
 **When to enable GPU**:
 
@@ -258,12 +258,12 @@ arc index pdf ./pdfs --collection docs --gpu
 
 Choose the embedding model based on your use case:
 
-| Model          | Best For                        | Chunk Size  | Late Chunking | GPU Support |
-| -------------- | ------------------------------- | ----------- | ------------- | ----------- |
-| **arctic-m**   | Stable default for PDFs/docs    | 460 tokens  | No            | CPU/FastEmbed |
-| **stella**     | High-quality documents          | 768 tokens  | Yes           | MPS         |
-| **mxbai-large**| High-quality FastEmbed docs     | 460 tokens  | No            | CPU/FastEmbed |
-| **bge**        | Legacy BGE documents            | 460 tokens  | No            | Experimental CoreML |
+| Model           | Best For                     | Chunk Size | Late Chunking | GPU Support          |
+| --------------- | ---------------------------- | ---------- | ------------- | -------------------- |
+| **arctic-m**    | Stable default for PDFs/docs | 460 tokens | No            | CPU/FastEmbed        |
+| **stella**      | High-quality documents       | 768 tokens | Yes           | MPS                  |
+| **mxbai-large** | High-quality FastEmbed docs  | 460 tokens | No            | CPU/FastEmbed        |
+| **bge**         | Legacy BGE documents         | 460 tokens | No            | Experimental CoreML  |
 
 ## OCR Configuration
 
@@ -377,7 +377,7 @@ The system uses adaptive batch sizes based on model size, but if you still hit m
 1. **Use the stable default**: `arctic-m` is the default for document corpora
 2. **Stay on CPU**: CPU mode is the default; omit `--gpu`
 3. **Close other apps**: Free up GPU memory used by other applications
-4. **Reduce batch size**: `--embedding-batch-size 100` (lower = less memory)
+4. **Reduce GPU batch size**: add `--gpu --embedding-batch-size 100`
 
 **Model memory requirements (approximate on MPS):**
 

@@ -285,7 +285,7 @@ def index():
 @click.option('--from-file', help='Read file paths from list (one per line, or "-" for stdin)')
 @click.option('--collection', required=True, help='Target collection name')
 @click.option('--model', default=None, help='(Deprecated: model is now set at collection creation time) Embedding model to use')
-@click.option('--embedding-batch-size', type=int, default=None, help='Batch size for embedding generation. Auto-tuned for GPU memory if not specified. Larger batches (300-500) improve throughput 10-20%.')
+@click.option('--embedding-batch-size', type=int, default=None, help='Batch size for embedding generation. Auto-tuned if not specified. Larger batches (300-500) improve GPU throughput 10-20%.')
 @click.option('--no-ocr', is_flag=True, help='Disable OCR (enabled by default for scanned PDFs)')
 @click.option('--ocr-language', default='eng', help='OCR language code')
 @click.option('--ocr-workers', type=int, default=None, help='Parallel OCR workers for page processing (default: cpu_count, effective for scanned PDFs only)')
@@ -318,7 +318,7 @@ def index_pdf(path, from_file, collection, model, embedding_batch_size, no_ocr, 
 @click.option('--from-file', help='Read file paths from list (one per line, or "-" for stdin)')
 @click.option('--collection', required=True, help='Target collection name')
 @click.option('--model', default=None, help='(Deprecated: model is now set at collection creation time) Embedding model to use')
-@click.option('--embedding-batch-size', type=int, default=None, help='Batch size for embedding generation. Auto-tuned for GPU memory if not specified. Larger batches (300-500) improve throughput 10-20%.')
+@click.option('--embedding-batch-size', type=int, default=None, help='Batch size for embedding generation. Auto-tuned if not specified. Larger batches (300-500) improve GPU throughput 10-20%.')
 @click.option('--chunk-size', type=int, help='Target chunk size in tokens (default: 400)')
 @click.option('--chunk-overlap', type=int, help='Overlap between chunks in tokens (default: 20)')
 @click.option('--depth', type=int, help='Git discovery depth')
@@ -348,7 +348,7 @@ def index_code(path, from_file, collection, model, embedding_batch_size, chunk_s
 @click.option('--from-file', help='Read file paths from list (one per line, or "-" for stdin)')
 @click.option('--collection', required=True, help='Target collection name')
 @click.option('--model', default=None, help='(Deprecated: model is now set at collection creation time) Embedding model to use')
-@click.option('--embedding-batch-size', type=int, default=None, help='Batch size for embedding generation. Auto-tuned for GPU memory if not specified. Larger batches (300-500) improve throughput 10-20%.')
+@click.option('--embedding-batch-size', type=int, default=None, help='Batch size for embedding generation. Auto-tuned if not specified. Larger batches (300-500) improve GPU throughput 10-20%.')
 @click.option('--chunk-size', type=int, help='Target chunk size in tokens')
 @click.option('--chunk-overlap', type=int, help='Overlap between chunks in tokens')
 @click.option('--recursive/--no-recursive', default=True, help='Search subdirectories recursively')
@@ -637,10 +637,10 @@ def delete_corpus(name, confirm, output_json):
 @click.option('--text-workers', type=int, default=None,
               help='Parallel workers for code AST chunking (default: auto=cpu/2, 0=sequential)')
 @click.option('--max-embedding-batch', type=int, default=None,
-              help='Cap embedding batch size (default: auto from GPU memory, use 8-16 for OOM)')
+              help='Cap embedding batch size (default: auto-tuned; use 8-16 for OOM recovery)')
 @click.option('--no-gpu/--gpu', default=True, help='Use CPU by default; pass --gpu to opt into accelerator embedding')
 @click.option('--cpu-workers', type=int, default=None,
-              help='Batch parallelization workers for --no-gpu mode (default: 1, conservative to prevent system crashes)')
+              help='Batch parallelization workers for CPU embedding (default: 1, conservative to prevent system crashes)')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed progress (files, chunks, indexing)')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
 @click.option('--git-update', is_flag=True,
@@ -679,7 +679,7 @@ def sync_directory(corpus, paths, from_file, models, file_types, force, dry_run,
 
     Use --text-workers to parallelize AST chunking for code corpora.
 
-    Use --no-gpu for CPU-only mode (avoids MPS instability with large models).
+    CPU is the default for stable indexing; pass --gpu to opt into accelerator embedding.
 
     Use --parity to detect renames and remove files no longer on disk, and
     to check cross-system consistency (or use 'arc corpus parity' for a
@@ -716,7 +716,7 @@ def sync_directory(corpus, paths, from_file, models, file_types, force, dry_run,
 @click.option('--dry-run', is_flag=True, help='Show what would be repaired without making changes')
 @click.option('--no-gpu/--gpu', default=True, help='Use CPU by default; pass --gpu to opt into accelerator embedding')
 @click.option('--max-embedding-batch', type=int, default=None,
-              help='Cap embedding batch size (default: auto from GPU memory)')
+              help='Cap embedding batch size (default: auto-tuned)')
 @click.option('--verbose', '-v', is_flag=True, help='Show per-file quality scores and details')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
 def corpus_repair(corpus, quality_threshold, dry_run, no_gpu, max_embedding_batch, verbose, output_json):

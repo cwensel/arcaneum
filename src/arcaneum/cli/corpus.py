@@ -62,7 +62,7 @@ UNKNOWN_LEGACY = "unknown/legacy"
 def _item_unit_for_corpus_type(collection_type):
     """Return the user-facing unit for corpus list item counts."""
     if collection_type == "code":
-        return "source files"
+        return "repositories"
     if collection_type == "markdown":
         return "files"
     if collection_type == "pdf":
@@ -240,10 +240,21 @@ def _format_model_summary(models):
 def _get_qdrant_list_item_count(client, collection_name: str, collection_type: str):
     """Count corpus-list items using the natural unit for each corpus type."""
     if collection_type not in {"code", "markdown", "pdf"}:
-        return None, UNKNOWN_LEGACY
+        return {
+            "item_count": None,
+            "item_unit": UNKNOWN_LEGACY,
+            "file_count": None,
+            "file_unit": None,
+        }
 
     unique_items = set()
+    unique_files = set()
     offset = None
+    payload_fields = (
+        ["git_project_identifier", "file_path", "file_paths"]
+        if collection_type == "code"
+        else ["file_path", "file_paths"]
+    )
 
     while True:
         points, offset = client.scroll(
@@ -251,7 +262,7 @@ def _get_qdrant_list_item_count(client, collection_name: str, collection_type: s
             scroll_filter=metadata_exclusion_filter(),
             limit=1000,
             offset=offset,
-            with_payload=["file_path", "file_paths"],
+            with_payload=payload_fields,
             with_vectors=False,
         )
 
@@ -260,13 +271,35 @@ def _get_qdrant_list_item_count(client, collection_name: str, collection_type: s
 
         for point in points:
             if point.payload:
-                for item_id in _payload_file_paths(point.payload):
-                    unique_items.add(item_id)
+                if collection_type == "code":
+                    item_id = point.payload.get("git_project_identifier")
+                    if item_id:
+                        unique_items.add(item_id)
+                    for file_path in _payload_file_paths(point.payload):
+                        unique_files.add(file_path)
+                else:
+                    for item_id in _payload_file_paths(point.payload):
+                        unique_items.add(item_id)
 
         if offset is None:
             break
 
-    return len(unique_items), _item_unit_for_corpus_type(collection_type)
+    return {
+        "item_count": len(unique_items),
+        "item_unit": _item_unit_for_corpus_type(collection_type),
+        "file_count": len(unique_files) if collection_type == "code" else None,
+        "file_unit": "source files" if collection_type == "code" else None,
+    }
+
+
+def _format_list_item_count(corpus):
+    """Format detailed corpus-list item counts."""
+    if corpus["item_count"] is None:
+        return UNKNOWN_LEGACY
+    parts = [f"{corpus['item_count']} {corpus['item_unit']}"]
+    if corpus.get("file_count") is not None:
+        parts.append(f"{corpus['file_count']} {corpus['file_unit']}")
+    return ", ".join(parts)
 
 
 def _payload_file_paths(payload):
@@ -314,13 +347,17 @@ def list_corpora_command(details: bool, output_json: bool):
                 collection_type = metadata.get("collection_type")
                 last_sync, last_sync_status = _last_sync_state(metadata, chunk_count)
                 if details:
-                    item_count, item_unit = _get_qdrant_list_item_count(
+                    item_counts = _get_qdrant_list_item_count(
                         qdrant, col.name, collection_type
                     )
                     item_count_status = "exact"
                 else:
-                    item_count = None
-                    item_unit = _item_unit_for_corpus_type(collection_type)
+                    item_counts = {
+                        "item_count": None,
+                        "item_unit": _item_unit_for_corpus_type(collection_type),
+                        "file_count": None,
+                        "file_unit": None,
+                    }
                     item_count_status = "not_requested"
                 qdrant_collections[col.name] = {
                     "type": collection_type,
@@ -331,8 +368,7 @@ def list_corpora_command(details: bool, output_json: bool):
                     "chunks": chunk_count,
                     "last_sync": last_sync,
                     "last_sync_status": last_sync_status,
-                    "item_count": item_count,
-                    "item_unit": item_unit,
+                    **item_counts,
                     "item_count_status": item_count_status,
                 }
         except Exception as e:
@@ -396,6 +432,8 @@ def list_corpora_command(details: bool, output_json: bool):
             last_sync_status = q_info.get("last_sync_status") if q_info else "unknown"
             item_count = q_info.get("item_count") if q_info else None
             item_unit = q_info.get("item_unit") if q_info else UNKNOWN_LEGACY
+            file_count = q_info.get("file_count") if q_info else None
+            file_unit = q_info.get("file_unit") if q_info else None
             item_count_status = (
                 q_info.get("item_count_status") if q_info else "unavailable"
             )
@@ -414,6 +452,8 @@ def list_corpora_command(details: bool, output_json: bool):
                 "last_sync_status": last_sync_status,
                 "item_count": item_count,
                 "item_unit": item_unit,
+                "file_count": file_count,
+                "file_unit": file_unit,
                 "item_count_status": item_count_status,
             })
 
@@ -460,11 +500,7 @@ def list_corpora_command(details: bool, output_json: bool):
                         str(c["meili_chunks"]),
                     ]
                     if details:
-                        row.append(
-                            f"{c['item_count']} {c['item_unit']}"
-                            if c["item_count"] is not None
-                            else UNKNOWN_LEGACY
-                        )
+                        row.append(_format_list_item_count(c))
                     table.add_row(*row)
 
                 console.print(table)
@@ -805,7 +841,8 @@ def update_corpus_command(
 def _get_qdrant_item_count(client, collection_name: str, collection_type: str) -> int:
     """Get count of unique items in a Qdrant collection.
 
-    Scrolls through collection to count unique file_path values.
+    Scrolls through collection to count the natural item type:
+    repositories for code collections, files/documents otherwise.
 
     Args:
         client: Qdrant client
@@ -817,6 +854,11 @@ def _get_qdrant_item_count(client, collection_name: str, collection_type: str) -
     """
     unique_items = set()
     offset = None
+    payload_fields = (
+        ["git_project_identifier"]
+        if collection_type == "code"
+        else ["file_path", "file_paths"]
+    )
 
     while True:
         points, offset = client.scroll(
@@ -824,7 +866,7 @@ def _get_qdrant_item_count(client, collection_name: str, collection_type: str) -
             scroll_filter=metadata_exclusion_filter(),
             limit=1000,
             offset=offset,
-            with_payload=["file_path", "file_paths"],
+            with_payload=payload_fields,
             with_vectors=False
         )
 
@@ -833,8 +875,13 @@ def _get_qdrant_item_count(client, collection_name: str, collection_type: str) -
 
         for point in points:
             if point.payload:
-                for item_id in _payload_file_paths(point.payload):
-                    unique_items.add(item_id)
+                if collection_type == "code":
+                    item_id = point.payload.get("git_project_identifier")
+                    if item_id:
+                        unique_items.add(item_id)
+                else:
+                    for item_id in _payload_file_paths(point.payload):
+                        unique_items.add(item_id)
 
         if offset is None:
             break
@@ -842,18 +889,56 @@ def _get_qdrant_item_count(client, collection_name: str, collection_type: str) -
     return len(unique_items)
 
 
-def _get_meili_item_count(client, index_name: str) -> int:
-    """Get count of unique file_path values in a MeiliSearch index.
+def _get_meili_item_count(client, index_name: str, collection_type: str) -> int:
+    """Get count of unique items in a MeiliSearch index.
 
     Args:
         client: MeiliSearch FullTextClient
         index_name: Index name
+        collection_type: Type of corpus
 
     Returns:
-        Count of unique file paths
+        Count of unique repositories for code, unique file paths otherwise
     """
-    file_paths = client.get_all_file_paths(index_name)
-    return len(file_paths)
+    if collection_type != "code":
+        file_paths = client.get_all_file_paths(index_name)
+        return len(file_paths)
+
+    index = client.get_index(index_name)
+    projects = set()
+    offset = 0
+    limit = 1000
+
+    while True:
+        result = index.get_documents({
+            "offset": offset,
+            "limit": limit,
+            "fields": ["git_project_identifier"],
+        })
+
+        if hasattr(result, "results"):
+            docs = result.results
+        else:
+            docs = result.get("results", [])
+
+        if not docs:
+            break
+
+        for doc in docs:
+            if hasattr(doc, "git_project_identifier"):
+                identifier = doc.git_project_identifier
+            elif isinstance(doc, dict):
+                identifier = doc.get("git_project_identifier")
+            else:
+                identifier = None
+            if identifier:
+                projects.add(identifier)
+
+        offset += limit
+        if len(docs) < limit:
+            break
+
+    return len(projects)
 
 
 def corpus_info_command(name: str, output_json: bool):
@@ -927,7 +1012,7 @@ def corpus_info_command(name: str, output_json: bool):
                 stats = meili.get_index_stats(name)
 
                 # Get unique item count
-                item_count = _get_meili_item_count(meili, name)
+                item_count = _get_meili_item_count(meili, name, collection_type)
                 chunk_count = stats.get('numberOfDocuments', 0)
 
                 meili_info = {

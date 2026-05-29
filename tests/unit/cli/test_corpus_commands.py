@@ -349,7 +349,9 @@ class TestCorpusListModelInfo:
         }
         assert corpora["code"]["last_sync"] == "2026-05-28T22:01:02+00:00"
         assert corpora["code"]["item_count"] is None
-        assert corpora["code"]["item_unit"] == "source files"
+        assert corpora["code"]["item_unit"] == "repositories"
+        assert corpora["code"]["file_count"] is None
+        assert corpora["code"]["file_unit"] is None
         assert corpora["code"]["item_count_status"] == "not_requested"
         assert corpora["docs"]["item_count"] is None
         assert corpora["docs"]["item_unit"] == "documents"
@@ -394,9 +396,19 @@ class TestCorpusListModelInfo:
             },
             qdrant_payloads_by_name={
                 "code": [
-                    {"file_path": "/repo/a.py", "file_paths": ["/repo/a.py", "/repo/c.py"]},
-                    {"file_path": "/repo/a.py"},
-                    {"file_path": "/repo/b.py"},
+                    {
+                        "git_project_identifier": "repo-a#main",
+                        "file_path": "/repo-a/a.py",
+                        "file_paths": ["/repo-a/a.py", "/repo-a/c.py"],
+                    },
+                    {
+                        "git_project_identifier": "repo-a#main",
+                        "file_path": "/repo-a/a.py",
+                    },
+                    {
+                        "git_project_identifier": "repo-b#main",
+                        "file_path": "/repo-b/b.py",
+                    },
                 ],
                 "docs": [
                     {"file_path": "/docs/guide.pdf"},
@@ -417,8 +429,10 @@ class TestCorpusListModelInfo:
             for item in json.loads(capsys.readouterr().out)["data"]["corpora"]
         }
         assert corpora["code"]["last_sync"] == "2026-05-28T22:01:02+00:00"
-        assert corpora["code"]["item_count"] == 3
-        assert corpora["code"]["item_unit"] == "source files"
+        assert corpora["code"]["item_count"] == 2
+        assert corpora["code"]["item_unit"] == "repositories"
+        assert corpora["code"]["file_count"] == 3
+        assert corpora["code"]["file_unit"] == "source files"
         assert corpora["code"]["item_count_status"] == "exact"
         assert corpora["docs"]["item_count"] == 2
         assert corpora["docs"]["item_unit"] == "documents"
@@ -430,20 +444,67 @@ class TestCorpusListModelInfo:
         assert corpora["legacy"]["item_count"] is None
         assert corpora["legacy"]["item_unit"] == UNKNOWN_LEGACY
 
-    def test_qdrant_item_count_includes_deduplicated_file_paths(self):
+    def test_qdrant_item_count_uses_repositories_for_code(self):
         from arcaneum.cli.corpus import _get_qdrant_item_count
 
         class Qdrant:
             def scroll(self, **_kwargs):
                 return [
                     SimpleNamespace(payload={
-                        "file_path": "/repo/renamed-a.py",
-                        "file_paths": ["/repo/a.py", "/repo/b.py"],
+                        "git_project_identifier": "repo-a#main",
                     }),
-                    SimpleNamespace(payload={"file_path": "/repo/c.py"}),
+                    SimpleNamespace(payload={
+                        "git_project_identifier": "repo-a#main",
+                    }),
+                    SimpleNamespace(payload={
+                        "git_project_identifier": "repo-b#main",
+                    }),
                 ], None
 
-        assert _get_qdrant_item_count(Qdrant(), "code", "code") == 3
+        assert _get_qdrant_item_count(Qdrant(), "code", "code") == 2
+
+    def test_qdrant_item_count_includes_deduplicated_file_paths_for_docs(self):
+        from arcaneum.cli.corpus import _get_qdrant_item_count
+
+        class Qdrant:
+            def scroll(self, **_kwargs):
+                return [
+                    SimpleNamespace(payload={
+                        "file_path": "/docs/renamed-a.md",
+                        "file_paths": ["/docs/a.md", "/docs/b.md"],
+                    }),
+                    SimpleNamespace(payload={"file_path": "/docs/c.md"}),
+                ], None
+
+        assert _get_qdrant_item_count(Qdrant(), "docs", "markdown") == 3
+
+    def test_qdrant_list_item_count_uses_repositories_for_code(self):
+        from arcaneum.cli.corpus import _get_qdrant_list_item_count
+
+        class Qdrant:
+            def scroll(self, **_kwargs):
+                return [
+                    SimpleNamespace(payload={
+                        "git_project_identifier": "repo-a#main",
+                        "file_path": "/repo-a/renamed-a.py",
+                        "file_paths": ["/repo-a/a.py", "/repo-a/b.py"],
+                    }),
+                    SimpleNamespace(payload={
+                        "git_project_identifier": "repo-a#main",
+                        "file_path": "/repo-a/c.py",
+                    }),
+                    SimpleNamespace(payload={
+                        "git_project_identifier": "repo-b#main",
+                        "file_path": "/repo-b/d.py",
+                    }),
+                ], None
+
+        assert _get_qdrant_list_item_count(Qdrant(), "code", "code") == {
+            "item_count": 2,
+            "item_unit": "repositories",
+            "file_count": 4,
+            "file_unit": "source files",
+        }
 
 
 class TestCorpusDescriptions:

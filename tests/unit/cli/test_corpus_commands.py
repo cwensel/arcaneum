@@ -558,9 +558,7 @@ class TestCorpusListModelInfo:
         assert facet_calls == []
         assert metadata_updates == []
 
-    def test_json_details_uses_bounded_qdrant_facets_for_legacy_counts(
-        self, monkeypatch, capsys
-    ):
+    def test_json_details_uses_bounded_qdrant_facets_for_legacy_counts(self, monkeypatch, capsys):
         from arcaneum.cli.corpus import list_corpora_command
 
         scroll_calls = {}
@@ -615,9 +613,7 @@ class TestCorpusListModelInfo:
         assert metadata_updates[1][1]["file_count"] is None
         assert metadata_updates[1][1]["count_source"] == "facet"
 
-    def test_json_details_lazily_scrolls_and_persists_capped_facets(
-        self, monkeypatch, capsys
-    ):
+    def test_json_details_lazily_scrolls_and_persists_capped_facets(self, monkeypatch, capsys):
         from arcaneum.cli.corpus import list_corpora_command
 
         scroll_calls = {}
@@ -712,10 +708,7 @@ class TestCorpusListModelInfo:
                     ],
                 }
                 return SimpleNamespace(
-                    hits=[
-                        SimpleNamespace(value=value, count=count)
-                        for value, count in counts[key]
-                    ]
+                    hits=[SimpleNamespace(value=value, count=count) for value, count in counts[key]]
                 )
 
         assert _get_qdrant_list_item_count(Qdrant(), "code", "code") == {

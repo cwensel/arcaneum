@@ -81,8 +81,10 @@ from ..fulltext.client import FullTextClient
 from ..schema.document import DualIndexDocument, persisted_metadata_fields
 from ..indexing.dual_indexer import DualIndexer
 from ..indexing.collection_metadata import (
+    backfill_embedding_prompt_policy,
     get_collection_type,
     get_collection_metadata,
+    prompt_policy_can_be_backfilled,
     prompt_policy_issues,
     update_collection_metadata,
 )
@@ -91,6 +93,7 @@ from ..indexing.common.multiprocessing import create_process_pool
 from ..indexing.git_operations import GitProjectDiscovery, apply_git_metadata
 from ..indexing.git_metadata_sync import GitMetadataSync
 from ..config import DEFAULT_MODELS
+from .corpus_defaults import DEFAULT_MODELS_BY_CORPUS_TYPE
 from ..utils.formatting import format_size
 
 console = Console()
@@ -116,6 +119,39 @@ def _stale_policy_error(policy_issues: list[str], action: str) -> str:
         + ". Run a full directory sync with --force to reindex and recertify "
         "the corpus before incremental sync or backfill."
     )
+
+
+def _maybe_backfill_legacy_prompt_policy(
+    qdrant,
+    corpus: str,
+    corpus_type: str,
+    model_list: list[str],
+    metadata: dict,
+    output_json: bool,
+) -> tuple[dict, list[str]]:
+    """Stamp missing prompt-policy metadata for legacy valid corpora."""
+    policy_issues = [
+        issue
+        for model_name in model_list
+        for issue in prompt_policy_issues(metadata, model_name)
+    ]
+    if not policy_issues:
+        return metadata, []
+    if not prompt_policy_can_be_backfilled(metadata, model_list):
+        return metadata, policy_issues
+
+    metadata = backfill_embedding_prompt_policy(
+        qdrant,
+        corpus,
+        corpus_type,
+        ",".join(model_list),
+    )
+    if not output_json:
+        print_info(
+            "Backfilled legacy embedding prompt-policy metadata "
+            "(no documents reindexed)"
+        )
+    return metadata, []
 
 # Default patterns for files to exclude from indexing
 # These are typically generated, minified, or machine-readable files
@@ -1266,11 +1302,16 @@ def sync_directory_command(
         # Get corpus type and configured models from collection metadata
         corpus_type = get_collection_type(qdrant, corpus)
         metadata = get_collection_metadata(qdrant, corpus)
-        configured_models = metadata.get('model', models)
 
         if not corpus_type:
             corpus_type = 'pdf'  # Default
             logger.warning(f"Collection type not set, defaulting to {corpus_type}")
+
+        configured_models = (
+            metadata.get('model')
+            or models
+            or DEFAULT_MODELS_BY_CORPUS_TYPE.get(corpus_type)
+        )
 
         # Parse models before any repair/sync/backfill path can embed. If an
         # existing collection was indexed under an older prompt/backend policy
@@ -1281,11 +1322,14 @@ def sync_directory_command(
             for model_name in raw_model_list
         ]
         normalized_configured_models = ",".join(model_list)
-        policy_issues = [
-            issue
-            for model_name in model_list
-            for issue in prompt_policy_issues(metadata, model_name)
-        ]
+        metadata, policy_issues = _maybe_backfill_legacy_prompt_policy(
+            qdrant,
+            corpus,
+            corpus_type,
+            model_list,
+            metadata,
+            output_json,
+        )
         # Old quality scores map: populated during repair for garbled file comparison
         old_quality_scores = {}
 
@@ -4150,12 +4194,29 @@ def _parity_single_corpus(
         # Get corpus metadata
         corpus_type = get_collection_type(qdrant, corpus)
         metadata = get_collection_metadata(qdrant, corpus)
-        configured_models = metadata.get('model', 'stella')
-        model_list = [m.strip() for m in configured_models.split(',')]
 
         if not corpus_type:
             corpus_type = 'pdf'
             logger.warning(f"Collection type not set, defaulting to {corpus_type}")
+
+        configured_models = (
+            metadata.get('model')
+            or DEFAULT_MODELS_BY_CORPUS_TYPE.get(corpus_type)
+            or 'stella'
+        )
+        raw_model_list = [m.strip() for m in configured_models.split(',') if m.strip()]
+        model_list = [
+            prompt_policy_model_key_for_name(model_name) or model_name
+            for model_name in raw_model_list
+        ]
+        metadata, _ = _maybe_backfill_legacy_prompt_policy(
+            qdrant,
+            corpus,
+            corpus_type,
+            model_list,
+            metadata,
+            output_json,
+        )
 
         if not output_json:
             print_info(f"Corpus type: {corpus_type}, Models: {configured_models}")

@@ -14,11 +14,13 @@ from .utils import set_process_priority, create_qdrant_client
 from arcaneum.indexing.source_code_pipeline import SourceCodeIndexer
 from arcaneum.indexing.qdrant_indexer import QdrantIndexer
 from arcaneum.indexing.collection_metadata import (
+    backfill_embedding_prompt_policy,
     validate_collection_type,
     set_collection_metadata,
     get_collection_metadata,
     get_vector_names,
     CollectionType,
+    prompt_policy_can_be_backfilled,
     prompt_policy_issues,
     update_collection_metadata,
 )
@@ -327,6 +329,19 @@ def index_source_command(
 
         metadata = get_collection_metadata(qdrant_client, collection)
         issues = prompt_policy_issues(metadata, model)
+        if issues and prompt_policy_can_be_backfilled(metadata, [model]):
+            metadata = backfill_embedding_prompt_policy(
+                qdrant_client,
+                collection,
+                CollectionType.CODE,
+                model,
+            )
+            issues = []
+            if verbose:
+                console.print(
+                    "[cyan]Backfilled legacy embedding prompt-policy metadata "
+                    "(no documents reindexed)[/cyan]"
+                )
         full_force_candidate = force and file_list is None and depth is None
         if issues and not full_force_candidate:
             raise ValueError(

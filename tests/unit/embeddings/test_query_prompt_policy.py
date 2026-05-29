@@ -15,12 +15,21 @@ from arcaneum.search.embedder import SearchEmbedder
 
 def _client(metadata):
     client = MagicMock()
+    state = {"metadata": dict(metadata)}
     client.get_collection.return_value = SimpleNamespace(
         config=SimpleNamespace(
             params=SimpleNamespace(vectors={"e5-base": SimpleNamespace(size=768)})
         )
     )
-    client.retrieve.return_value = [SimpleNamespace(payload=metadata)]
+
+    def retrieve(collection_name, ids, with_payload, with_vectors):
+        return [SimpleNamespace(payload=state["metadata"])]
+
+    def upsert(collection_name, points):
+        state["metadata"] = points[0].payload
+
+    client.retrieve.side_effect = retrieve
+    client.upsert.side_effect = upsert
     return client
 
 
@@ -47,12 +56,36 @@ def test_sentence_transformer_query_embedding_uses_query_prompt_type():
     )
 
 
-def test_query_embedding_rejects_collections_without_prompt_policy():
+def test_query_embedding_backfills_collections_without_prompt_policy():
+    embedding_client = MagicMock()
+    embedding_client.get_model.return_value = object()
+    embedding_client.embed.return_value = [[0.1, 0.2]]
+
+    embedder = SearchEmbedder.__new__(SearchEmbedder)
+    embedder._embedding_client = embedding_client
+    client = _client({})
+
+    model_key, vector = embedder.generate_query_embedding("auth checks", "docs", client)
+
+    assert model_key == "e5-base"
+    assert vector == [0.1, 0.2]
+    client.upsert.assert_called_once()
+
+
+def test_query_embedding_rejects_changed_prompt_policy():
     embedder = SearchEmbedder.__new__(SearchEmbedder)
     embedder._embedding_client = MagicMock()
+    stale_policy = {
+        **get_embedding_prompt_policy("e5-base"),
+        "document": {"method": "encode"},
+    }
 
-    with pytest.raises(ValueError, match="missing embedding_prompt_policy"):
-        embedder.generate_query_embedding("auth checks", "docs", _client({}))
+    with pytest.raises(ValueError, match="differs"):
+        embedder.generate_query_embedding(
+            "auth checks",
+            "docs",
+            _client({"embedding_prompt_policy": {"e5-base": stale_policy}}),
+        )
 
 
 def test_prompt_prefix_length_is_reserved_when_clipping(monkeypatch):

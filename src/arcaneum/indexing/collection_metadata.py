@@ -8,7 +8,7 @@ ensuring PDFs, source code, and markdown are not mixed in the same collection.
 import logging
 import os
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import Condition, FieldCondition, Filter, MatchValue
@@ -103,6 +103,59 @@ def prompt_policy_issues(metadata: Dict[str, Any], model_name: str) -> list[str]
     return []
 
 
+def prompt_policy_can_be_backfilled(
+    metadata: Dict[str, Any],
+    model_names: str | Sequence[str],
+) -> bool:
+    """Return True when prompt-policy metadata can be stamped in place.
+
+    Older valid collections may predate ``embedding_prompt_policy``. Missing
+    policy metadata is a certification gap, not proof that vectors are invalid,
+    so it can be repaired by writing the current policy. A policy that exists
+    but differs from the current registry remains unsafe to backfill because it
+    explicitly records a different embedding contract.
+    """
+    if isinstance(model_names, str):
+        names = [m.strip() for m in model_names.split(",") if m.strip()]
+    else:
+        names = [str(m).strip() for m in model_names if str(m).strip()]
+    if not names:
+        return False
+
+    stored_policies = metadata.get("embedding_prompt_policy") or {}
+    if not isinstance(stored_policies, dict):
+        return False
+
+    needs_backfill = not stored_policies
+    for model_name in names:
+        model_key = prompt_policy_model_key_for_name(model_name)
+        if model_key is None:
+            return False
+        stored_policy = stored_policies.get(model_key)
+        if stored_policy is None:
+            needs_backfill = True
+            continue
+        if stored_policy != get_embedding_prompt_policy(model_key):
+            return False
+
+    return needs_backfill
+
+
+def backfill_embedding_prompt_policy(
+    qdrant: QdrantClient,
+    collection_name: str,
+    collection_type: str,
+    model: str | Sequence[str],
+) -> Dict[str, Any]:
+    """Certify a legacy collection by stamping current prompt-policy metadata.
+
+    This does not touch indexed documents or vectors. Callers must first verify
+    :func:`prompt_policy_can_be_backfilled` so an explicitly stale policy is not
+    overwritten.
+    """
+    return stamp_embedding_prompt_policy(qdrant, collection_name, collection_type, model)
+
+
 def should_stamp_prompt_policy(
     force: bool,
     file_list: Optional[list],
@@ -154,7 +207,7 @@ def stamp_embedding_prompt_policy(
     qdrant: QdrantClient,
     collection_name: str,
     collection_type: str,
-    model: str,
+    model: str | Sequence[str],
 ) -> Dict[str, Any]:
     """Write/refresh the collection's embedding_prompt_policy metadata.
 
@@ -177,7 +230,7 @@ def stamp_embedding_prompt_policy(
     policy = get_embedding_prompt_policies(model)
 
     metadata = _retrieve_collection_metadata(qdrant, collection_name)
-    if metadata is None:
+    if not metadata:
         set_collection_metadata(qdrant, collection_name, collection_type, model)
         logger.info(
             f"Initialized metadata point for legacy collection {collection_name} "

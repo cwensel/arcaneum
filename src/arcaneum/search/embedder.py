@@ -6,7 +6,13 @@ from typing import List, Tuple
 from qdrant_client import QdrantClient
 
 from ..embeddings.client import EMBEDDING_MODELS, EmbeddingClient
-from ..indexing.collection_metadata import get_collection_metadata, prompt_policy_issues
+from ..indexing.collection_metadata import (
+    backfill_embedding_prompt_policy,
+    get_collection_metadata,
+    get_collection_type,
+    prompt_policy_can_be_backfilled,
+    prompt_policy_issues,
+)
 
 
 class SearchEmbedder:
@@ -103,6 +109,15 @@ class SearchEmbedder:
 
         metadata = get_collection_metadata(client, collection_name)
         policy_issues = prompt_policy_issues(metadata, model_key)
+        if policy_issues and prompt_policy_can_be_backfilled(metadata, [model_key]):
+            collection_type = get_collection_type(client, collection_name) or "pdf"
+            metadata = backfill_embedding_prompt_policy(
+                client,
+                collection_name,
+                collection_type,
+                model_key,
+            )
+            policy_issues = prompt_policy_issues(metadata, model_key)
         if policy_issues:
             raise ValueError(policy_issues[0])
 

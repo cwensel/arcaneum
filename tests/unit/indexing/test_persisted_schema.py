@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from arcaneum.embeddings.client import get_embedding_prompt_policy
 from arcaneum.indexing.collection_metadata import (
     persisted_schema_issues,
+    prompt_policy_can_be_backfilled,
     prompt_policy_issues,
     set_collection_metadata,
 )
@@ -80,6 +81,37 @@ def test_prompt_policy_issues_flag_missing_and_changed_policy():
         {"embedding_prompt_policy": {"stella": get_embedding_prompt_policy("stella")}},
         "stella",
     ) == []
+
+
+def test_missing_prompt_policy_can_be_backfilled():
+    assert prompt_policy_can_be_backfilled({}, ["stella"]) is True
+    assert prompt_policy_can_be_backfilled(
+        {"embedding_prompt_policy": {"stella": get_embedding_prompt_policy("stella")}},
+        ["stella"],
+    ) is False
+
+
+def test_partially_missing_prompt_policy_can_be_backfilled():
+    metadata = {
+        "embedding_prompt_policy": {
+            "stella": get_embedding_prompt_policy("stella"),
+        }
+    }
+
+    assert prompt_policy_can_be_backfilled(metadata, ["stella", "arctic-m"]) is True
+
+
+def test_changed_prompt_policy_cannot_be_backfilled():
+    stale_metadata = {
+        "embedding_prompt_policy": {
+            "stella": {
+                **get_embedding_prompt_policy("stella"),
+                "query": {"method": "encode"},
+            }
+        }
+    }
+
+    assert prompt_policy_can_be_backfilled(stale_metadata, ["stella"]) is False
 
 
 def test_prompt_policy_issues_reject_legacy_jina_code_backend():

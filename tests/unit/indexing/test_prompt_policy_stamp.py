@@ -9,8 +9,11 @@ and left no orphan vectors (indexed files no longer on disk). Partial
 
 from types import SimpleNamespace
 
+import pytest
+
 from arcaneum.embeddings.client import get_embedding_prompt_policies
 from arcaneum.indexing.collection_metadata import (
+    backfill_embedding_prompt_policy,
     should_stamp_prompt_policy,
     stamp_embedding_prompt_policy,
 )
@@ -125,3 +128,22 @@ def test_stamp_does_not_initialize_when_metadata_retrieve_fails():
         raise AssertionError("expected metadata retrieve failure to propagate")
 
     assert qdrant.upserted is None
+
+
+@pytest.mark.parametrize("collection_type", ["pdf", "markdown", "code"])
+def test_backfill_prompt_policy_supports_all_corpus_types(collection_type):
+    qdrant = StampQdrant(metadata={
+        "collection_type": collection_type,
+        "model": "stella",
+        "created_by": "arcaneum",
+    })
+
+    metadata = backfill_embedding_prompt_policy(
+        qdrant,
+        "docs",
+        collection_type,
+        "stella",
+    )
+
+    assert metadata["collection_type"] == collection_type
+    assert metadata["embedding_prompt_policy"] == get_embedding_prompt_policies("stella")

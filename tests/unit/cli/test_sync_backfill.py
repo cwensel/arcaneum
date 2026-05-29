@@ -3,12 +3,79 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from arcaneum.cli import sync as sync_module
 from arcaneum.cli.sync import (
     _backfill_meili_to_qdrant,
     _fetch_chunks_for_files_bulk,
+    _maybe_backfill_legacy_prompt_policy,
     _repair_meili_metadata,
 )
+from arcaneum.embeddings.client import get_embedding_prompt_policy
+
+
+class MetadataQdrant:
+    def __init__(self, metadata):
+        self.metadata = dict(metadata)
+        self.upserted = None
+
+    def get_collection(self, _name):
+        return SimpleNamespace(
+            config=SimpleNamespace(
+                params=SimpleNamespace(vectors=SimpleNamespace(size=2))
+            )
+        )
+
+    def retrieve(self, collection_name, ids, with_payload, with_vectors):
+        return [SimpleNamespace(payload={**self.metadata, "is_metadata": True})]
+
+    def upsert(self, collection_name, points):
+        self.upserted = points[0].payload
+        self.metadata = dict(self.upserted)
+
+
+@pytest.mark.parametrize("corpus_type", ["pdf", "markdown", "code"])
+def test_corpus_sync_backfills_missing_prompt_policy_for_all_types(corpus_type):
+    qdrant = MetadataQdrant({"collection_type": corpus_type, "model": "stella"})
+
+    metadata, issues = _maybe_backfill_legacy_prompt_policy(
+        qdrant=qdrant,
+        corpus="Docs",
+        corpus_type=corpus_type,
+        model_list=["stella"],
+        metadata={"collection_type": corpus_type, "model": "stella"},
+        output_json=True,
+    )
+
+    assert issues == []
+    assert metadata["embedding_prompt_policy"]["stella"] == get_embedding_prompt_policy("stella")
+    assert qdrant.upserted["collection_type"] == corpus_type
+
+
+def test_corpus_sync_does_not_backfill_changed_prompt_policy():
+    stale_policy = {
+        **get_embedding_prompt_policy("stella"),
+        "query": {"method": "encode"},
+    }
+    metadata = {
+        "collection_type": "markdown",
+        "model": "stella",
+        "embedding_prompt_policy": {"stella": stale_policy},
+    }
+    qdrant = MetadataQdrant(metadata)
+
+    _, issues = _maybe_backfill_legacy_prompt_policy(
+        qdrant=qdrant,
+        corpus="Docs",
+        corpus_type="markdown",
+        model_list=["stella"],
+        metadata=metadata,
+        output_json=True,
+    )
+
+    assert "differs" in issues[0]
+    assert qdrant.upserted is None
 
 
 def test_fetch_chunks_for_files_bulk_preserves_pdf_ocr_metadata():

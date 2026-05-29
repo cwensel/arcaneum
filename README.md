@@ -38,7 +38,8 @@ The system supports PDF documents and source code with git-aware, AST-based chun
 - **Markdown Indexing**: YAML frontmatter extraction, semantic chunking, incremental sync
 - **Dual Indexing**: Single command to index to both search engines
 - **Performance Tuning**: Granular control over workers, batch sizes, and process priority via
-  `--embedding-batch-size` and `--process-priority` flags
+  `arc corpus sync --max-embedding-batch`, `--text-workers`, `--cpu-workers`, and
+  single-system indexing flags such as `--embedding-batch-size` and `--process-priority`
 
 ### Multiple Embedding Models
 
@@ -129,7 +130,10 @@ arc corpus list                                 # List all corpora
 arc corpus sync NAME PATH [PATH...]             # Sync one or more directories
 arc corpus sync NAME PATH --parity              # Also detect renames, remove files no longer on disk
 arc corpus items NAME                           # List items with parity status
+arc corpus verify NAME                          # Verify corpus health across both systems
 arc corpus parity NAME                          # Check/restore parity between systems
+arc corpus repair NAME                          # Re-index incomplete or garbled files
+arc corpus update NAME --description "..."      # Update corpus metadata
 arc corpus delete NAME                          # Delete both collection and index
 
 # Search (Works with corpus, collection, or index)
@@ -151,6 +155,7 @@ arc indexes create NAME --type TYPE      # When you only need full-text search
 arc indexes list
 arc index text pdf PATH --index NAME
 arc index text code PATH --index NAME
+arc index text markdown PATH --index NAME
 ```
 
 ## Common Workflows
@@ -238,19 +243,19 @@ arc search text "query" --corpus MyIndex
 arc corpus create Memory --type markdown
 
 # Store from file with metadata
-arc store analysis.md --corpus Memory \
+arc store analysis.md --collection Memory \
   --title "Security Analysis" \
   --category "security" \
   --tags "audit,findings"
 
 # Store from stdin (agent workflow)
-echo "# Research\n\nFindings..." | arc store - --corpus Memory
+echo "# Research\n\nFindings..." | arc store - --collection Memory
 
 # Search agent memory
 arc search semantic "security vulnerabilities" --corpus Memory
 arc search text "SQL injection" --corpus Memory
 
-# Content persisted to: ~/.local/share/arcaneum/agent-memory/{corpus}/
+# Content persisted to: ~/.local/share/arcaneum/agent-memory/{collection}/
 # Enables re-indexing and full-text retrieval
 ```
 

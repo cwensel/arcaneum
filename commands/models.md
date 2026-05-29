@@ -92,7 +92,7 @@ SentenceTransformers models require `arcaneum[sentence-transformers]`.
 **Pre-download for offline use:**
 
 ```bash
-# Download the recommended code model
+# Download an opt-in higher-quality code model
 python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('jinaai/jina-code-embeddings-0.5b')"
 
 # Or the legacy v2 SentenceTransformers model

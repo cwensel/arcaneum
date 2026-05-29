@@ -94,8 +94,8 @@ Example output:
 ```text
 Source Code Indexing Configuration
   Corpus: MyCode (type: code)
-  Embedding: jinaai/jina-code-embeddings-0.5b
-  Vector: jina-code-0.5b
+  Embedding: jinaai/jina-embeddings-v2-base-code
+  Vector: jina-code
 
 Git discovery completed: 1 repos, 3 branches
 Indexed 247 files → 1,532 chunks (Qdrant + MeiliSearch)
@@ -301,7 +301,7 @@ First-time indexing downloads embedding models (~1-2GB). This is normal and only
 # Check download progress
 arc config show-cache-dir
 
-# Models are cached in ~/.arcaneum/models/
+# Models are cached in ~/.cache/arcaneum/models/
 ```
 
 ### Collection Already Exists
@@ -375,11 +375,10 @@ After completing the installation above, you can use Arcaneum commands directly 
 
 ### Plugin Installation
 
-In Claude Code, add the local marketplace and install the plugin:
+In Claude Code, install the published plugin:
 
 ```text
-/plugin marketplace add /path/to/arcaneum
-/plugin install arc
+/plugin install cwensel/arcaneum
 ```
 
 Then restart Claude Code to activate the plugin.

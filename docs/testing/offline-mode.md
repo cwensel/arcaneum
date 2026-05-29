@@ -57,16 +57,16 @@ Don't use offline mode when:
 On a machine with working internet:
 
 ```bash
-# Models will be downloaded to ~/.arcaneum/models automatically
+# Models will be downloaded to ~/.cache/arcaneum/models automatically
 # Just run arc commands normally and models will be cached
 
 # Or download specific models manually
 python -c "
 from fastembed import TextEmbedding
 from sentence_transformers import SentenceTransformer
-from pathlib import Path
+from arcaneum.paths import get_models_dir
 
-cache_dir = str(Path.home() / '.arcaneum' / 'models')
+cache_dir = str(get_models_dir())
 
 # FastEmbed models
 TextEmbedding('BAAI/bge-large-en-v1.5', cache_dir=cache_dir)
@@ -91,8 +91,8 @@ SentenceTransformer(
 ### Step 2: Copy Models to Corporate Machine
 
 ```bash
-# Copy the ~/.arcaneum/models directory
-scp -r ~/.arcaneum/models/ corporate-machine:~/.arcaneum/
+# Copy the model cache directory
+scp -r ~/.cache/arcaneum/models/ corporate-machine:~/.cache/arcaneum/
 ```
 
 ### Step 3: Use arc Normally
@@ -113,7 +113,7 @@ export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 ```
 
-**Note:** Models are stored in `~/.arcaneum/models/` by default. Use `arc config show-cache-dir` to verify the location.
+**Note:** Models are stored in `~/.cache/arcaneum/models/` by default. Use `arc config show-cache-dir` to verify the location.
 
 ## Environment Variables
 

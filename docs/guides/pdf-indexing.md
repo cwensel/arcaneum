@@ -10,7 +10,7 @@ The PDF indexing pipeline supports:
 - **Image PDFs**: Scanned documents requiring OCR (Tesseract)
 - **Mixed PDFs**: Documents with both text and scanned images
 - **Incremental indexing**: Only new/modified files are processed
-- **Late chunking**: Improved retrieval quality for long documents
+- **PDF text normalization**: Markdown conversion, whitespace normalization, and OCR fallback for garbled text
 
 ## Prerequisites
 
@@ -36,10 +36,10 @@ Already included in `pyproject.toml`:
 pip install -e .
 ```
 
-### Start Qdrant Server
+### Start Search Services
 
 ```bash
-docker compose up -d
+arc container start
 ```
 
 ## Quick Start

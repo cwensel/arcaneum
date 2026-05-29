@@ -443,7 +443,7 @@ Claude Code can parse progress messages to track long-running operations.
 
 **Solutions:**
 1. Check if Qdrant Docker container is running: `docker ps | grep qdrant`
-2. Start Qdrant: `docker compose up -d`
+2. Start services: `arc container start`
 3. Verify port: `curl http://localhost:6333/healthz`
 
 #### Exit Code 2: Unknown Model
@@ -467,7 +467,7 @@ Claude Code can parse progress messages to track long-running operations.
 
 **Solutions:**
 1. List existing collections: `arc collection list`
-2. Create the collection first: `arc collection create Research --model stella`
+2. Create the collection first: `arc collection create Research --type pdf`
 3. Check for typos in collection name
 
 ### Verbose Mode

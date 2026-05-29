@@ -3,7 +3,7 @@ Markdown injection persistence module (RDR-014 / arcaneum-204).
 
 This module handles persisting directly injected markdown content to disk
 for agent memory and reference purposes. Content is stored in:
-  ~/.arcaneum/agent-memory/{collection}/{date}_{agent}_{slug}.md
+  ~/.local/share/arcaneum/agent-memory/{collection}/{date}_{agent}_{slug}.md
 
 Features:
 - Safe filename generation (slugify, collision handling)
@@ -67,9 +67,9 @@ def get_agent_memory_dir(collection: str) -> Path:
     Returns:
         Path to agent memory directory
     """
-    from arcaneum.paths import get_arcaneum_dir
+    from arcaneum.paths import get_data_dir
 
-    memory_dir = get_arcaneum_dir() / 'agent-memory' / collection
+    memory_dir = get_data_dir() / 'agent-memory' / collection
     memory_dir.mkdir(parents=True, exist_ok=True)
 
     return memory_dir

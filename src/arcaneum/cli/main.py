@@ -505,7 +505,7 @@ def store(file, collection, model, title, category, tags, metadata, chunk_size, 
     synthesized information. Content is persisted to disk for re-indexing
     and full-text retrieval, then indexed to Qdrant for semantic search.
 
-    Storage location: ~/.arcaneum/agent-memory/{collection}/
+    Storage location: ~/.local/share/arcaneum/agent-memory/{collection}/
 
     Examples:
 

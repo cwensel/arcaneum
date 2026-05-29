@@ -43,6 +43,7 @@ providing both semantic and full-text search capabilities.
 arc corpus create <name> --type <type>        # Create both collection and index
 arc corpus list                               # List all corpora
 arc corpus list --details                     # Include extended columns and exact item counts
+arc corpus update <name>                      # Update description metadata
 arc corpus sync <name> <path> [<path>...]     # Index to both systems
 arc corpus repair <name>                      # Re-index incomplete/garbled files
 arc corpus items <name>                       # List items with parity status
@@ -81,7 +82,13 @@ Use indexes when you only need full-text search:
 ```bash
 arc indexes create <name> --type <type>              # Create MeiliSearch index
 arc indexes list                                     # List all indexes
+arc indexes items <name>                             # List indexed documents
 arc indexes info <name>                              # Show index details
+arc indexes verify <name>                            # Verify index health
+arc indexes export <name> -o <file>                  # Export documents to JSONL
+arc indexes import <file> --into <name>              # Import documents from JSONL
+arc indexes list-projects <name>                     # List git projects in an index
+arc indexes delete-project <name> <project>          # Delete one git project/branch
 arc indexes delete <name>                            # Delete index
 arc indexes update-settings <name> --type <type>    # Update index settings
 ```
@@ -95,7 +102,10 @@ system.
 ```bash
 arc index pdf <path> --collection <name>      # Index PDFs to Qdrant (semantic)
 arc index code <path> --collection <name>     # Index source code to Qdrant
+arc index markdown <path> --collection <name> # Index Markdown to Qdrant
 arc index text pdf <path> --index <name>      # Index PDFs to MeiliSearch (full-text)
+arc index text code <path> --index <name>     # Index code to MeiliSearch
+arc index text markdown <path> --index <name> # Index Markdown to MeiliSearch
 ```
 
 ### Corpus Commands (Detailed)
@@ -104,6 +114,7 @@ A "corpus" is a paired Qdrant collection and MeiliSearch index with the same nam
 
 ```bash
 arc corpus create <name> --type <type> --models <model>  # Create both
+arc corpus update <name> --description <text>            # Update metadata
 arc corpus delete <name>                                 # Delete both
 arc corpus sync <name> <path> [<path>...]                # Index to both (multiple paths supported)
 arc corpus repair <name>                                 # Re-index incomplete/garbled files
@@ -514,9 +525,9 @@ arc collection create pdf-docs --type pdf --on-disk
 
 **Model Inference:** If `--model` is not specified, the model is automatically inferred from `--type`:
 
-- `--type pdf` → `stella` (optimized for documents)
-- `--type code` → `jina-code` (optimized for source code)
-- `--type markdown` → `stella` (optimized for documents)
+- `--type pdf` → `arctic-m` (stable FastEmbed document retrieval)
+- `--type code` → `jina-code` (stable FastEmbed code retrieval)
+- `--type markdown` → `arctic-m` (stable FastEmbed document retrieval)
 
 ### List Collections
 

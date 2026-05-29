@@ -2181,10 +2181,17 @@ def sync_directory_command(
                         chunk_sizes = [len(t) for t in chunk_texts]
                         max_chunk_size = max(chunk_sizes) if chunk_sizes else 0
                         if max_chunk_size > 10000 and verbose and not output_json:
-                            progress.console.print(
-                                f"[dim]  Large chunks: max={max_chunk_size} chars, "
-                                f"limit={hard_max_chars}[/dim]"
-                            )
+                            if hard_max_chars and max_chunk_size <= hard_max_chars:
+                                progress.console.print(
+                                    f"[dim]  Large chunks bounded: max={max_chunk_size} chars, "
+                                    f"limit={hard_max_chars}; windowing/hard-limit checks preserved full text[/dim]"
+                                )
+                            else:
+                                limit_text = str(hard_max_chars) if hard_max_chars else "unconfigured"
+                                progress.console.print(
+                                    f"[yellow]  Oversized chunks remain: max={max_chunk_size} chars, "
+                                    f"limit={limit_text}; embedding safety may clip text if upstream chunking did not split it[/yellow]"
+                                )
 
                         # Generate embeddings for all chunks at once, per model
                         model_embeddings = {}

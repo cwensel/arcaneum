@@ -1191,12 +1191,6 @@ class EmbeddingClient:
         # Log chunk sizes for debugging OOM issues
         max_text_len = max(len(t) for t in texts) if texts else 0
 
-        if max_text_len > max_chars * 0.8:
-            logger.warning(
-                f"Large chunks detected: max={max_text_len} chars, limit={max_chars} chars "
-                f"(model={model_name}, max_seq_length={max_seq_length})"
-            )
-
         truncated_count = 0
         safe_texts = []
         for text in texts:
@@ -1212,6 +1206,13 @@ class EmbeddingClient:
                 f"embedding; content beyond {max_source_chars} chars is not represented in vectors. "
                 f"This indicates upstream chunking should split smaller chunks "
                 f"(model={model_name}, max_seq_length={max_seq_length})."
+            )
+        elif max_text_len > max_chars * 0.8:
+            logger.info(
+                f"Large chunks are near the embedding safety bound but no clipping was needed: "
+                f"max={max_text_len} chars, limit={max_chars} chars "
+                f"(model={model_name}, max_seq_length={max_seq_length}). "
+                f"Upstream chunking/windowing preserved the full text for indexing."
             )
 
         texts = _prompted_texts(safe_texts, prompt_policy, prompt_type)

@@ -40,11 +40,15 @@ def _discover_meilisearch_api_key() -> str | None:
     try:
         result = subprocess.run(
             [
-                "docker", "inspect",
-                "--format", "{{range .Config.Env}}{{println .}}{{end}}",
+                "docker",
+                "inspect",
+                "--format",
+                "{{range .Config.Env}}{{println .}}{{end}}",
                 "meilisearch-arcaneum",
             ],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -83,8 +87,8 @@ def client():
     try:
         indexes = client.list_indexes()
         for idx in indexes:
-            if idx['uid'].startswith("test_"):
-                client.delete_index(idx['uid'])
+            if idx["uid"].startswith("test_"):
+                client.delete_index(idx["uid"])
     except Exception:
         pass
 
@@ -122,11 +126,7 @@ class TestIndexOperations:
     def test_create_index_with_settings(self, client):
         """Test creating an index with settings."""
         index_name = "test_create_with_settings"
-        client.create_index(
-            index_name,
-            primary_key="id",
-            settings=SOURCE_CODE_SETTINGS
-        )
+        client.create_index(index_name, primary_key="id", settings=SOURCE_CODE_SETTINGS)
 
         # Verify settings were applied
         settings = client.get_index_settings(index_name)
@@ -150,7 +150,7 @@ class TestIndexOperations:
         client.create_index("test_list_2")
 
         indexes = client.list_indexes()
-        index_names = [idx['uid'] for idx in indexes]
+        index_names = [idx["uid"] for idx in indexes]
 
         assert "test_list_1" in index_names
         assert "test_list_2" in index_names
@@ -174,7 +174,7 @@ class TestIndexOperations:
         # Update settings
         new_settings = {
             "filterableAttributes": ["language", "project"],
-            "searchableAttributes": ["content", "title"]
+            "searchableAttributes": ["content", "title"],
         }
         client.update_index_settings(index_name, new_settings)
 
@@ -203,9 +203,7 @@ class TestDocumentOperations:
     def test_add_documents_sync(self, client):
         """Test adding documents synchronously."""
         index_name = "test_add_docs_sync"
-        client.create_index(index_name, settings={
-            "filterableAttributes": ["language"]
-        })
+        client.create_index(index_name, settings={"filterableAttributes": ["language"]})
 
         documents = [
             {"id": 1, "content": "Python code example", "language": "python"},
@@ -234,17 +232,44 @@ class TestSearchOperations:
         index_name = "test_search_data"
 
         # Create index with settings
-        client.create_index(index_name, settings={
-            "searchableAttributes": ["content", "filename"],
-            "filterableAttributes": ["language", "project"]
-        })
+        client.create_index(
+            index_name,
+            settings={
+                "searchableAttributes": ["content", "filename"],
+                "filterableAttributes": ["language", "project"],
+            },
+        )
 
         # Add test documents
         documents = [
-            {"id": 1, "content": "def authenticate(user, password):", "filename": "auth.py", "language": "python", "project": "myapp"},
-            {"id": 2, "content": "function authenticate(user, pass) {", "filename": "auth.js", "language": "javascript", "project": "myapp"},
-            {"id": 3, "content": "class UserAuthentication:", "filename": "user.py", "language": "python", "project": "myapp"},
-            {"id": 4, "content": "def calculate_total(items):", "filename": "utils.py", "language": "python", "project": "utils"},
+            {
+                "id": 1,
+                "content": "def authenticate(user, password):",
+                "filename": "auth.py",
+                "language": "python",
+                "project": "myapp",
+            },
+            {
+                "id": 2,
+                "content": "function authenticate(user, pass) {",
+                "filename": "auth.js",
+                "language": "javascript",
+                "project": "myapp",
+            },
+            {
+                "id": 3,
+                "content": "class UserAuthentication:",
+                "filename": "user.py",
+                "language": "python",
+                "project": "myapp",
+            },
+            {
+                "id": 4,
+                "content": "def calculate_total(items):",
+                "filename": "utils.py",
+                "language": "python",
+                "project": "utils",
+            },
         ]
 
         client.add_documents_sync(index_name, documents)
@@ -261,11 +286,7 @@ class TestSearchOperations:
 
     def test_search_with_filter(self, client, indexed_data):
         """Test search with filter."""
-        results = client.search(
-            indexed_data,
-            "authenticate",
-            filter="language = python"
-        )
+        results = client.search(indexed_data, "authenticate", filter="language = python")
 
         assert len(results["hits"]) > 0
         # All results should be Python
@@ -291,11 +312,7 @@ class TestSearchOperations:
 
     def test_search_with_highlight(self, client, indexed_data):
         """Test search with highlighting."""
-        results = client.search(
-            indexed_data,
-            "authenticate",
-            attributes_to_highlight=["content"]
-        )
+        results = client.search(indexed_data, "authenticate", attributes_to_highlight=["content"])
 
         assert len(results["hits"]) > 0
         # Check that highlighted content is present

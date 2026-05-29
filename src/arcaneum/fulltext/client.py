@@ -19,10 +19,7 @@ class FullTextClient:
         self.client = meilisearch.Client(url, api_key)
 
     def create_index(
-        self,
-        name: str,
-        primary_key: str = "id",
-        settings: Optional[Dict[str, Any]] = None
+        self, name: str, primary_key: str = "id", settings: Optional[Dict[str, Any]] = None
     ) -> meilisearch.index.Index:
         """
         Create a new index with optional settings.
@@ -36,7 +33,7 @@ class FullTextClient:
             Created index object
         """
         # Create index - returns TaskInfo object (not dict)
-        task = self.client.create_index(name, {'primaryKey': primary_key})
+        task = self.client.create_index(name, {"primaryKey": primary_key})
         self.client.wait_for_task(task.task_uid)
 
         index = self.client.index(name)
@@ -68,21 +65,23 @@ class FullTextClient:
 
         # Extract the list of indexes from the response
         if isinstance(result, dict):
-            index_list = result.get('results', [])
+            index_list = result.get("results", [])
         else:
             index_list = result
 
         # Convert Index objects to dicts
         indexes = []
         for idx in index_list:
-            if hasattr(idx, 'uid'):
+            if hasattr(idx, "uid"):
                 # It's an Index object
-                indexes.append({
-                    'uid': idx.uid,
-                    'primaryKey': getattr(idx, 'primary_key', None),
-                    'createdAt': getattr(idx, 'created_at', None),
-                    'updatedAt': getattr(idx, 'updated_at', None),
-                })
+                indexes.append(
+                    {
+                        "uid": idx.uid,
+                        "primaryKey": getattr(idx, "primary_key", None),
+                        "createdAt": getattr(idx, "created_at", None),
+                        "updatedAt": getattr(idx, "updated_at", None),
+                    }
+                )
             elif isinstance(idx, dict):
                 indexes.append(idx)
         return indexes
@@ -93,10 +92,7 @@ class FullTextClient:
         self.client.wait_for_task(task.task_uid)
 
     def delete_documents_by_file_paths(
-        self,
-        index_name: str,
-        file_paths: List[str],
-        timeout_ms: int = 180000
+        self, index_name: str, file_paths: List[str], timeout_ms: int = 180000
     ) -> Dict[str, Any]:
         """
         Delete all documents with the given file_path values.
@@ -113,7 +109,7 @@ class FullTextClient:
             Dict with 'deleted_count' (number of file paths processed) and 'task_uids'
         """
         if not file_paths:
-            return {'deleted_count': 0, 'task_uids': []}
+            return {"deleted_count": 0, "task_uids": []}
 
         index = self.get_index(index_name)
         task_uids = []
@@ -121,13 +117,13 @@ class FullTextClient:
         # Delete in batches to avoid overly long filter expressions
         batch_size = 100
         for i in range(0, len(file_paths), batch_size):
-            batch = file_paths[i:i + batch_size]
+            batch = file_paths[i : i + batch_size]
 
             # Build filter: file_path IN ["path1", "path2", ...]
             # Escape quotes in file paths
             escaped_paths = [fp.replace('"', '\\"') for fp in batch]
             quoted_paths = [f'"{p}"' for p in escaped_paths]
-            filter_expr = f'file_path IN [{", ".join(quoted_paths)}]'
+            filter_expr = f"file_path IN [{', '.join(quoted_paths)}]"
 
             try:
                 task = index.delete_documents(filter=filter_expr)
@@ -135,6 +131,7 @@ class FullTextClient:
             except Exception as e:
                 # Log but continue - some batches may succeed
                 import logging
+
                 logging.getLogger(__name__).error(
                     f"Failed to queue deletion for batch starting at {i}: {e}"
                 )
@@ -147,13 +144,10 @@ class FullTextClient:
                 # Deletion failures are logged but not fatal
                 pass
 
-        return {'deleted_count': len(file_paths), 'task_uids': task_uids}
+        return {"deleted_count": len(file_paths), "task_uids": task_uids}
 
     def add_documents(
-        self,
-        index_name: str,
-        documents: List[Dict[str, Any]],
-        primary_key: Optional[str] = None
+        self, index_name: str, documents: List[Dict[str, Any]], primary_key: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Add documents to an index.
@@ -175,7 +169,7 @@ class FullTextClient:
         index_name: str,
         documents: List[Dict[str, Any]],
         primary_key: Optional[str] = None,
-        timeout_ms: int = 60000
+        timeout_ms: int = 60000,
     ) -> Dict[str, Any]:
         """
         Add documents to an index and wait for completion.
@@ -197,10 +191,14 @@ class FullTextClient:
         result = self.client.wait_for_task(task.task_uid, timeout_in_ms=timeout_ms)
 
         # Check if task failed
-        status = getattr(result, 'status', None) or (result.get('status') if isinstance(result, dict) else None)
-        if status == 'failed':
-            error = getattr(result, 'error', None) or (result.get('error') if isinstance(result, dict) else None)
-            error_msg = error.get('message', str(error)) if isinstance(error, dict) else str(error)
+        status = getattr(result, "status", None) or (
+            result.get("status") if isinstance(result, dict) else None
+        )
+        if status == "failed":
+            error = getattr(result, "error", None) or (
+                result.get("error") if isinstance(result, dict) else None
+            )
+            error_msg = error.get("message", str(error)) if isinstance(error, dict) else str(error)
             raise RuntimeError(f"Document addition failed: {error_msg}")
 
         return result
@@ -210,7 +208,7 @@ class FullTextClient:
         index_name: str,
         document_batches: List[List[Dict[str, Any]]],
         primary_key: Optional[str] = None,
-        timeout_ms: int = 120000
+        timeout_ms: int = 120000,
     ) -> Dict[str, Any]:
         """
         Add multiple document batches in parallel (enqueue all, then wait).
@@ -231,7 +229,7 @@ class FullTextClient:
             RuntimeError: If any task fails
         """
         if not document_batches:
-            return {'total_documents': 0, 'task_count': 0}
+            return {"total_documents": 0, "task_count": 0}
 
         index = self.get_index(index_name)
         task_uids = []
@@ -248,16 +246,22 @@ class FullTextClient:
         failed_tasks = []
         for task_uid in task_uids:
             result = self.client.wait_for_task(task_uid, timeout_in_ms=timeout_ms)
-            status = getattr(result, 'status', None) or (result.get('status') if isinstance(result, dict) else None)
-            if status == 'failed':
-                error = getattr(result, 'error', None) or (result.get('error') if isinstance(result, dict) else None)
-                error_msg = error.get('message', str(error)) if isinstance(error, dict) else str(error)
+            status = getattr(result, "status", None) or (
+                result.get("status") if isinstance(result, dict) else None
+            )
+            if status == "failed":
+                error = getattr(result, "error", None) or (
+                    result.get("error") if isinstance(result, dict) else None
+                )
+                error_msg = (
+                    error.get("message", str(error)) if isinstance(error, dict) else str(error)
+                )
                 failed_tasks.append(f"Task {task_uid}: {error_msg}")
 
         if failed_tasks:
             raise RuntimeError(f"Document addition failed: {'; '.join(failed_tasks)}")
 
-        return {'total_documents': total_docs, 'task_count': len(task_uids)}
+        return {"total_documents": total_docs, "task_count": len(task_uids)}
 
     def search(
         self,
@@ -266,7 +270,7 @@ class FullTextClient:
         filter: Optional[str] = None,
         limit: int = 20,
         offset: int = 0,
-        attributes_to_highlight: Optional[List[str]] = None
+        attributes_to_highlight: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Search an index.
@@ -285,13 +289,13 @@ class FullTextClient:
         index = self.get_index(index_name)
 
         search_params: Dict[str, Any] = {
-            'limit': limit,
-            'offset': offset,
+            "limit": limit,
+            "offset": offset,
         }
         if filter:
-            search_params['filter'] = filter
+            search_params["filter"] = filter
         if attributes_to_highlight:
-            search_params['attributesToHighlight'] = attributes_to_highlight
+            search_params["attributesToHighlight"] = attributes_to_highlight
 
         return index.search(query, search_params)
 
@@ -300,9 +304,9 @@ class FullTextClient:
         index = self.get_index(index_name)
         stats = index.get_stats()
         # Convert Pydantic model to dict if needed
-        if hasattr(stats, 'model_dump'):
+        if hasattr(stats, "model_dump"):
             return stats.model_dump(by_alias=True)
-        elif hasattr(stats, 'dict'):
+        elif hasattr(stats, "dict"):
             return stats.dict(by_alias=True)
         return stats
 
@@ -311,17 +315,13 @@ class FullTextClient:
         index = self.get_index(index_name)
         settings = index.get_settings()
         # Convert Pydantic model to dict if needed
-        if hasattr(settings, 'model_dump'):
+        if hasattr(settings, "model_dump"):
             return settings.model_dump(by_alias=True)
-        elif hasattr(settings, 'dict'):
+        elif hasattr(settings, "dict"):
             return settings.dict(by_alias=True)
         return settings
 
-    def update_index_settings(
-        self,
-        index_name: str,
-        settings: Dict[str, Any]
-    ) -> None:
+    def update_index_settings(self, index_name: str, settings: Dict[str, Any]) -> None:
         """Update settings for an index."""
         index = self.get_index(index_name)
         task = index.update_settings(settings)
@@ -331,7 +331,7 @@ class FullTextClient:
         """Check if MeiliSearch server is healthy."""
         try:
             health = self.client.health()
-            return health.get('status') == 'available'
+            return health.get("status") == "available"
         except Exception:
             return False
 
@@ -363,26 +363,24 @@ class FullTextClient:
         limit = 1000
 
         while True:
-            result = index.get_documents({
-                'offset': offset,
-                'limit': limit,
-                'fields': ['file_path']
-            })
+            result = index.get_documents(
+                {"offset": offset, "limit": limit, "fields": ["file_path"]}
+            )
 
             # Handle both dict and object results
-            if hasattr(result, 'results'):
+            if hasattr(result, "results"):
                 docs = result.results
             else:
-                docs = result.get('results', [])
+                docs = result.get("results", [])
 
             if not docs:
                 break
 
             for doc in docs:
-                if hasattr(doc, 'file_path'):
+                if hasattr(doc, "file_path"):
                     file_paths.add(doc.file_path)
-                elif isinstance(doc, dict) and 'file_path' in doc:
-                    file_paths.add(doc['file_path'])
+                elif isinstance(doc, dict) and "file_path" in doc:
+                    file_paths.add(doc["file_path"])
 
             offset += limit
 
@@ -409,26 +407,24 @@ class FullTextClient:
         limit = 1000
 
         while True:
-            result = index.get_documents({
-                'offset': offset,
-                'limit': limit,
-                'fields': ['file_path']
-            })
+            result = index.get_documents(
+                {"offset": offset, "limit": limit, "fields": ["file_path"]}
+            )
 
             # Handle both dict and object results
-            if hasattr(result, 'results'):
+            if hasattr(result, "results"):
                 docs = result.results
             else:
-                docs = result.get('results', [])
+                docs = result.get("results", [])
 
             if not docs:
                 break
 
             for doc in docs:
-                if hasattr(doc, 'file_path'):
+                if hasattr(doc, "file_path"):
                     fp = doc.file_path
-                elif isinstance(doc, dict) and 'file_path' in doc:
-                    fp = doc['file_path']
+                elif isinstance(doc, dict) and "file_path" in doc:
+                    fp = doc["file_path"]
                 else:
                     continue
 

@@ -155,7 +155,9 @@ class TestASTCodeChunker:
 
         for filepath, expected_lang in test_cases.items():
             detected = chunker.detect_language(filepath)
-            assert detected == expected_lang, f"Failed for {filepath}: got {detected}, expected {expected_lang}"
+            assert detected == expected_lang, (
+                f"Failed for {filepath}: got {detected}, expected {expected_lang}"
+            )
 
     def test_language_detection_unknown(self):
         """Test language detection for unknown file types."""
@@ -265,10 +267,7 @@ class TestASTCodeChunker:
         chunker = ASTCodeChunker(chunk_size=100)  # Small chunks
 
         # Create a large Python file
-        large_code = "\n".join([
-            f"def function_{i}():\n    return {i}"
-            for i in range(100)
-        ])
+        large_code = "\n".join([f"def function_{i}():\n    return {i}" for i in range(100)])
 
         chunks = chunker.chunk_code("large.py", large_code)
 
@@ -355,7 +354,7 @@ class TestChunkCodeFile:
     def test_chunk_existing_file(self):
         """Test chunking an existing file."""
         # Create temporary file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(PYTHON_CODE)
             temp_path = f.name
 
@@ -375,7 +374,7 @@ class TestChunkCodeFile:
     def test_chunk_file_with_custom_params(self):
         """Test chunking file with custom parameters."""
         # Create temporary file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.java', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".java", delete=False) as f:
             f.write(JAVA_CODE)
             temp_path = f.name
 
@@ -389,10 +388,10 @@ class TestChunkCodeFile:
     def test_chunk_file_encoding_fallback(self):
         """Test that encoding fallback works."""
         # Create file with latin-1 encoding
-        with tempfile.NamedTemporaryFile(mode='wb', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="wb", suffix=".py", delete=False) as f:
             # Write some latin-1 encoded text
-            f.write("# Comment with special char: \xe9\n".encode('latin-1'))
-            f.write("def test():\n    pass\n".encode('latin-1'))
+            f.write("# Comment with special char: \xe9\n".encode("latin-1"))
+            f.write("def test():\n    pass\n".encode("latin-1"))
             temp_path = f.name
 
         try:
@@ -441,7 +440,7 @@ class TestChunkingAccuracy:
 
             # Chunks should end with complete lines (not mid-line)
             # This is important for code readability
-            assert chunk.content[-1] in ['\n', ' ', '}', ')', ';', ':']
+            assert chunk.content[-1] in ["\n", " ", "}", ")", ";", ":"]
 
 
 class TestMinifiedCodeHandling:
@@ -475,7 +474,7 @@ class TestMinifiedCodeHandling:
         segments = chunker._split_long_line(long_line, 300)
 
         # Most segments should end with semicolon (except possibly the last)
-        semicolon_endings = sum(1 for seg in segments[:-1] if seg.endswith(';'))
+        semicolon_endings = sum(1 for seg in segments[:-1] if seg.endswith(";"))
         assert semicolon_endings >= len(segments) - 2
 
     def test_split_long_line_short_line_unchanged(self):
@@ -493,7 +492,7 @@ class TestMinifiedCodeHandling:
         chunker = ASTCodeChunker(chunk_size=100)  # Small for testing
 
         # Simulate minified JS: entire file on one line
-        minified_js = 'var a=1,b=2;function add(x,y){return x+y;}' * 50
+        minified_js = "var a=1,b=2;function add(x,y){return x+y;}" * 50
 
         # Should not raise memory error
         chunks = chunker.chunk_code("jquery.min.js", minified_js)
@@ -516,5 +515,5 @@ class TestMinifiedCodeHandling:
         # Combined chunks should contain all original content
         combined = "".join(c.content for c in chunks)
         # Account for potential newlines added between segments
-        combined_cleaned = combined.replace('\n', '')
+        combined_cleaned = combined.replace("\n", "")
         assert minified in combined_cleaned or combined_cleaned == minified

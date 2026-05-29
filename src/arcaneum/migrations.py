@@ -140,4 +140,6 @@ def run_migration_if_needed(verbose: bool = False) -> None:
                 logger.info("Migration complete! Using new directory structure.")
         else:
             logger.error(f"Migration failed: {message}")
-            logger.error("Continuing with new directory structure, but some data may not be available.")
+            logger.error(
+                "Continuing with new directory structure, but some data may not be available."
+            )

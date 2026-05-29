@@ -70,7 +70,8 @@ def gpu_client():
 
     client._try_deferred_gpu_cleanup()
     live_cleanup = [
-        name for name, (thread, _model_ref) in client._pending_gpu_cleanup.items()
+        name
+        for name, (thread, _model_ref) in client._pending_gpu_cleanup.items()
         if thread.is_alive()
     ]
     if live_cleanup:
@@ -140,9 +141,7 @@ def test_fastembed_provider_selection_and_encode_smoke(gpu_client, monkeypatch):
     _assert_embeddings(embeddings, rows=1, dims=config["dimensions"])
 
 
-def test_timeout_poison_path_falls_back_after_real_accelerator_thread(
-    gpu_client, monkeypatch
-):
+def test_timeout_poison_path_falls_back_after_real_accelerator_thread(gpu_client, monkeypatch):
     from arcaneum.embeddings.client import EMBEDDING_MODELS
 
     model_name = _sentence_transformer_model()
@@ -179,8 +178,7 @@ def test_timeout_poison_path_falls_back_after_real_accelerator_thread(
 
         assert encode_completed.wait(timeout=30)
         assert any(
-            thread.is_alive()
-            for thread, _model_ref in gpu_client._pending_gpu_cleanup.values()
+            thread.is_alive() for thread, _model_ref in gpu_client._pending_gpu_cleanup.values()
         )
     finally:
         release_encode.set()

@@ -26,16 +26,14 @@ def compute_file_hash(file_path: Path) -> str:
         SHA-256 hex digest
     """
     sha256 = hashlib.sha256()
-    with open(file_path, 'rb') as f:
-        for chunk in iter(lambda: f.read(8192), b''):
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
             sha256.update(chunk)
     return sha256.hexdigest()
 
 
 def find_files_to_index(
-    pdf_files: list[Path],
-    indexed_files: Dict[str, str],
-    force_reindex: bool = False
+    pdf_files: list[Path], indexed_files: Dict[str, str], force_reindex: bool = False
 ) -> tuple[list[Path], list[Path], list[Path]]:
     """Determine which files need indexing based on change detection.
 
@@ -79,10 +77,7 @@ def find_files_to_index(
     return new_files, modified_files, unchanged_files
 
 
-def get_orphaned_files(
-    indexed_files: Dict[str, str],
-    pdf_files: list[Path]
-) -> Set[str]:
+def get_orphaned_files(indexed_files: Dict[str, str], pdf_files: list[Path]) -> Set[str]:
     """Find indexed files that no longer exist on disk.
 
     Args:
@@ -101,6 +96,7 @@ def get_orphaned_files(
 # =============================================================================
 # Git-Aware Sync for Source Code (RDR-011)
 # =============================================================================
+
 
 class GitCodeMetadataSync:
     """Query MeiliSearch for indexed git projects (source of truth).
@@ -149,19 +145,16 @@ class GitCodeMetadataSync:
 
             while True:
                 results = self.meili_client.search(
-                    index_name=index_name,
-                    query='',
-                    limit=limit,
-                    offset=offset
+                    index_name=index_name, query="", limit=limit, offset=offset
                 )
 
-                hits = results.get('hits', [])
+                hits = results.get("hits", [])
                 if not hits:
                     break
 
                 for hit in hits:
-                    identifier = hit.get('git_project_identifier')
-                    commit = hit.get('git_commit_hash')
+                    identifier = hit.get("git_project_identifier")
+                    commit = hit.get("git_commit_hash")
                     if identifier and commit and identifier not in indexed:
                         indexed[identifier] = commit
 
@@ -179,10 +172,7 @@ class GitCodeMetadataSync:
         return indexed
 
     def should_reindex_project(
-        self,
-        index_name: str,
-        project_identifier: str,
-        current_commit: str
+        self, index_name: str, project_identifier: str, current_commit: str
     ) -> bool:
         """Check if (project, branch) needs re-indexing.
 
@@ -209,11 +199,7 @@ class GitCodeMetadataSync:
         # Unchanged
         return False
 
-    def delete_project_documents(
-        self,
-        index_name: str,
-        project_identifier: str
-    ) -> int:
+    def delete_project_documents(self, index_name: str, project_identifier: str) -> int:
         """Delete all documents for specific (project, branch).
 
         Uses MeiliSearch filter-based deletion to remove all documents
@@ -237,18 +223,18 @@ class GitCodeMetadataSync:
             while True:
                 results = self.meili_client.search(
                     index_name=index_name,
-                    query='',
+                    query="",
                     filter=f'git_project_identifier = "{project_identifier}"',
                     limit=limit,
-                    offset=offset
+                    offset=offset,
                 )
 
-                hits = results.get('hits', [])
+                hits = results.get("hits", [])
                 if not hits:
                     break
 
                 # Delete documents by ID
-                doc_ids = [hit['id'] for hit in hits if 'id' in hit]
+                doc_ids = [hit["id"] for hit in hits if "id" in hit]
                 if doc_ids:
                     task = index.delete_documents(doc_ids)
                     self.meili_client.client.wait_for_task(task.task_uid)
@@ -281,11 +267,7 @@ class GitCodeMetadataSync:
         """
         self._cache.clear()
 
-    def get_project_document_count(
-        self,
-        index_name: str,
-        project_identifier: str
-    ) -> int:
+    def get_project_document_count(self, index_name: str, project_identifier: str) -> int:
         """Get the number of documents for a specific project.
 
         Args:
@@ -298,11 +280,11 @@ class GitCodeMetadataSync:
         try:
             results = self.meili_client.search(
                 index_name=index_name,
-                query='',
+                query="",
                 filter=f'git_project_identifier = "{project_identifier}"',
-                limit=0  # We only need the count
+                limit=0,  # We only need the count
             )
-            return results.get('estimatedTotalHits', 0)
+            return results.get("estimatedTotalHits", 0)
 
         except Exception as e:
             logger.warning(f"Failed to get document count for {project_identifier}: {e}")

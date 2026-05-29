@@ -63,7 +63,7 @@ class CPUMonitor:
             "cpu_percent_per_core": cpu_percent_per_core,
             "num_threads": num_threads,
             "num_cores": num_cores,
-            "elapsed_time": elapsed
+            "elapsed_time": elapsed,
         }
 
     def get_summary(self) -> str:

@@ -34,9 +34,7 @@ class SearchEmbedder:
 
     @staticmethod
     def detect_collection_model(
-        client: QdrantClient,
-        collection_name: str,
-        vector_name: str = None
+        client: QdrantClient, collection_name: str, vector_name: str = None
     ) -> str:
         """Detect which embedding model a collection uses.
 
@@ -74,11 +72,7 @@ class SearchEmbedder:
         return sorted(available_vectors)[0]
 
     def generate_query_embedding(
-        self,
-        query: str,
-        collection_name: str,
-        client: QdrantClient,
-        vector_name: str = None
+        self, query: str, collection_name: str, client: QdrantClient, vector_name: str = None
     ) -> Tuple[str, List[float]]:
         """Generate query embedding with auto-detected or specified model.
 
@@ -102,10 +96,7 @@ class SearchEmbedder:
         # Validate model is configured
         if model_key not in EMBEDDING_MODELS:
             available = ", ".join(EMBEDDING_MODELS.keys())
-            raise ValueError(
-                f"Model '{model_key}' not configured.\n"
-                f"Available models: {available}"
-            )
+            raise ValueError(f"Model '{model_key}' not configured.\nAvailable models: {available}")
 
         metadata = get_collection_metadata(client, collection_name)
         policy_issues = prompt_policy_issues(metadata, model_key)

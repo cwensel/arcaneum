@@ -37,7 +37,7 @@ jobs:
         run: |
           python scripts/ci_quality_ratchet.py \
             --lint-baseline=1074 \
-            --format-baseline=123
+            --format-baseline=0
 
       - name: Validate package metadata
         run: |

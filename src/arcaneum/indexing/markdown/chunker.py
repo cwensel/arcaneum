@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 try:
     from markdown_it import MarkdownIt
     from markdown_it.token import Token
+
     MARKDOWN_IT_AVAILABLE = True
 except ImportError:
     MARKDOWN_IT_AVAILABLE = False
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class MarkdownChunk:
     """Represents a semantic markdown chunk with metadata."""
+
     text: str
     chunk_index: int
     token_count: int
@@ -52,7 +54,7 @@ class SemanticMarkdownChunker:
         chunk_overlap: int = 50,
         max_chars: Optional[int] = None,
         hard_max_chars: Optional[int] = None,
-        preserve_code_blocks: bool = True
+        preserve_code_blocks: bool = True,
     ):
         """Initialize semantic markdown chunker.
 
@@ -76,8 +78,7 @@ class SemanticMarkdownChunker:
 
         if not MARKDOWN_IT_AVAILABLE:
             logger.warning(
-                "markdown-it-py not available. "
-                "Semantic chunking will fall back to naive splitting."
+                "markdown-it-py not available. Semantic chunking will fall back to naive splitting."
             )
 
         # Initialize markdown-it parser
@@ -139,8 +140,8 @@ class SemanticMarkdownChunker:
 
             if hard_end < len(text):
                 search_start = start + int(self.hard_max_chars * 0.75)
-                para_end = text.rfind('\n\n', search_start, hard_end)
-                line_end = text.rfind('\n', search_start, hard_end)
+                para_end = text.rfind("\n\n", search_start, hard_end)
+                line_end = text.rfind("\n", search_start, hard_end)
                 boundary = para_end if para_end != -1 else line_end
                 if boundary > start:
                     end = boundary + (2 if boundary == para_end else 1)
@@ -180,27 +181,28 @@ class SemanticMarkdownChunker:
             for window_index, (window_text, start_char, end_char) in enumerate(windows):
                 metadata = {
                     **chunk.metadata,
-                    'chunk_index': next_index,
-                    'hard_split': True,
-                    'hard_split_source_chunk': chunk.chunk_index,
-                    'hard_split_index': window_index,
-                    'hard_split_count': total_windows,
-                    'chunk_start_char': start_char,
-                    'chunk_end_char': end_char,
+                    "chunk_index": next_index,
+                    "hard_split": True,
+                    "hard_split_source_chunk": chunk.chunk_index,
+                    "hard_split_index": window_index,
+                    "hard_split_count": total_windows,
+                    "chunk_start_char": start_char,
+                    "chunk_end_char": end_char,
                 }
-                bounded.append(MarkdownChunk(
-                    text=window_text,
-                    chunk_index=next_index,
-                    token_count=int(len(window_text) / self.CHARS_PER_TOKEN),
-                    metadata=metadata,
-                    header_path=chunk.header_path,
-                ))
+                bounded.append(
+                    MarkdownChunk(
+                        text=window_text,
+                        chunk_index=next_index,
+                        token_count=int(len(window_text) / self.CHARS_PER_TOKEN),
+                        metadata=metadata,
+                        header_path=chunk.header_path,
+                    )
+                )
                 next_index += 1
 
         if split_count:
             logger.info(
-                "Split %d oversized markdown chunks into %d bounded chunks "
-                "(hard_max_chars=%d)",
+                "Split %d oversized markdown chunks into %d bounded chunks (hard_max_chars=%d)",
                 split_count,
                 len(bounded),
                 self.hard_max_chars,
@@ -210,7 +212,7 @@ class SemanticMarkdownChunker:
 
     def _copy_chunk_with_index(self, chunk: MarkdownChunk, chunk_index: int) -> MarkdownChunk:
         """Copy a chunk while normalizing sequential chunk_index metadata."""
-        metadata = {**chunk.metadata, 'chunk_index': chunk_index}
+        metadata = {**chunk.metadata, "chunk_index": chunk_index}
         return MarkdownChunk(
             text=chunk.text,
             chunk_index=chunk_index,
@@ -251,33 +253,31 @@ class SemanticMarkdownChunker:
         """
         sections = []
         header_stack = []  # Track parent headers for context
-        source_lines = source_text.split('\n')
+        source_lines = source_text.split("\n")
         content_start_line = self._content_start_line(source_lines)
         heading_tokens = [
             (index, token)
             for index, token in enumerate(tokens)
-            if (
-                token.type == "heading_open"
-                and token.map
-                and token.map[0] >= content_start_line
-            )
+            if (token.type == "heading_open" and token.map and token.map[0] >= content_start_line)
         ]
 
         def add_preamble(end_line: int) -> None:
             raw_text = self._source_lines(source_lines, content_start_line, end_line)
             if not raw_text.strip():
                 return
-            sections.append({
-                'level': 0,
-                'header': '',
-                'header_path': [],
-                'header_raw': '',
-                'raw_text': raw_text,
-                'content_parts': self._build_content_parts(
-                    tokens, source_lines, content_start_line, end_line
-                ),
-                'start_line': content_start_line,
-            })
+            sections.append(
+                {
+                    "level": 0,
+                    "header": "",
+                    "header_path": [],
+                    "header_raw": "",
+                    "raw_text": raw_text,
+                    "content_parts": self._build_content_parts(
+                        tokens, source_lines, content_start_line, end_line
+                    ),
+                    "start_line": content_start_line,
+                }
+            )
 
         if heading_tokens:
             first_heading_line = heading_tokens[0][1].map[0]
@@ -300,40 +300,44 @@ class SemanticMarkdownChunker:
                 heading_text = tokens[token_index + 1].content
 
             # Update header stack (remove deeper levels)
-            header_stack = [h for h in header_stack if h['level'] < level]
-            header_stack.append({'level': level, 'text': heading_text})
+            header_stack = [h for h in header_stack if h["level"] < level]
+            header_stack.append({"level": level, "text": heading_text})
 
             raw_text = self._source_lines(source_lines, start_line, end_line)
             if not raw_text.strip():
                 continue
 
-            sections.append({
-                'level': level,
-                'header': heading_text,
-                'header_path': [h['text'] for h in header_stack],
-                'header_raw': self._source_lines(source_lines, start_line, heading_end_line),
-                'raw_text': raw_text,
-                'content_parts': self._build_content_parts(
-                    tokens, source_lines, heading_end_line, end_line
-                ),
-                'start_line': start_line,
-            })
+            sections.append(
+                {
+                    "level": level,
+                    "header": heading_text,
+                    "header_path": [h["text"] for h in header_stack],
+                    "header_raw": self._source_lines(source_lines, start_line, heading_end_line),
+                    "raw_text": raw_text,
+                    "content_parts": self._build_content_parts(
+                        tokens, source_lines, heading_end_line, end_line
+                    ),
+                    "start_line": start_line,
+                }
+            )
 
         # If no headers found, create a single section with all non-frontmatter content
         if not sections and not heading_tokens:
             raw_text = self._source_lines(source_lines, content_start_line, len(source_lines))
             if raw_text.strip():
-                sections = [{
-                    'level': 0,
-                    'header': '',
-                    'header_path': [],
-                    'header_raw': '',
-                    'raw_text': raw_text,
-                    'content_parts': self._build_content_parts(
-                        tokens, source_lines, content_start_line, len(source_lines)
-                    ),
-                    'start_line': content_start_line,
-                }]
+                sections = [
+                    {
+                        "level": 0,
+                        "header": "",
+                        "header_path": [],
+                        "header_raw": "",
+                        "raw_text": raw_text,
+                        "content_parts": self._build_content_parts(
+                            tokens, source_lines, content_start_line, len(source_lines)
+                        ),
+                        "start_line": content_start_line,
+                    }
+                ]
 
         return sections
 
@@ -350,14 +354,10 @@ class SemanticMarkdownChunker:
 
     def _source_lines(self, source_lines: List[str], start_line: int, end_line: int) -> str:
         """Extract a raw source line span without surrounding blank lines."""
-        return '\n'.join(source_lines[start_line:end_line]).strip('\n')
+        return "\n".join(source_lines[start_line:end_line]).strip("\n")
 
     def _build_content_parts(
-        self,
-        tokens: List[Token],
-        source_lines: List[str],
-        start_line: int,
-        end_line: int
+        self, tokens: List[Token], source_lines: List[str], start_line: int, end_line: int
     ) -> List[Dict]:
         """Build non-overlapping raw block spans for section splitting."""
         content_parts = []
@@ -379,29 +379,27 @@ class SemanticMarkdownChunker:
             if token_start > cursor:
                 gap_content = self._source_lines(source_lines, cursor, token_start)
                 if gap_content.strip():
-                    content_parts.append({
-                        'type': 'text',
-                        'content': gap_content,
-                        'is_code_block': False
-                    })
+                    content_parts.append(
+                        {"type": "text", "content": gap_content, "is_code_block": False}
+                    )
 
             content = self._source_lines(source_lines, token_start, token_end)
             if content.strip():
-                content_parts.append({
-                    'type': token.type,
-                    'content': content,
-                    'is_code_block': token.type in ['code_block', 'fence']
-                })
+                content_parts.append(
+                    {
+                        "type": token.type,
+                        "content": content,
+                        "is_code_block": token.type in ["code_block", "fence"],
+                    }
+                )
             cursor = token_end
 
         if cursor < end_line:
             tail_content = self._source_lines(source_lines, cursor, end_line)
             if tail_content.strip():
-                content_parts.append({
-                    'type': 'text',
-                    'content': tail_content,
-                    'is_code_block': False
-                })
+                content_parts.append(
+                    {"type": "text", "content": tail_content, "is_code_block": False}
+                )
 
         return content_parts
 
@@ -409,10 +407,10 @@ class SemanticMarkdownChunker:
         """Extract raw source content from a markdown token."""
         # Prefer source line spans so inline markdown structure is not stripped.
         if token.map:
-            lines = source_text.split('\n')
+            lines = source_text.split("\n")
             start_line, end_line = token.map
             content_lines = lines[start_line:end_line]
-            return '\n'.join(content_lines)
+            return "\n".join(content_lines)
 
         # Fall back to token content only when no source span exists.
         if token.content:
@@ -438,7 +436,7 @@ class SemanticMarkdownChunker:
             section_tokens = len(section_text) / self.CHARS_PER_TOKEN
 
             # Check if section has code blocks
-            has_code = any(part.get('is_code_block', False) for part in section['content_parts'])
+            has_code = any(part.get("is_code_block", False) for part in section["content_parts"])
 
             # Section fits in one chunk
             if section_tokens <= self.chunk_size:
@@ -446,17 +444,15 @@ class SemanticMarkdownChunker:
                     text=section_text,
                     chunk_index=chunk_index,
                     metadata=base_metadata,
-                    header_path=section['header_path'],
-                    has_code_blocks=has_code
+                    header_path=section["header_path"],
+                    has_code_blocks=has_code,
                 )
                 chunks.append(chunk)
                 chunk_index += 1
 
             else:
                 # Section too large, need to split
-                sub_chunks = self._split_large_section(
-                    section, base_metadata, chunk_index
-                )
+                sub_chunks = self._split_large_section(section, base_metadata, chunk_index)
                 chunks.extend(sub_chunks)
                 chunk_index += len(sub_chunks)
 
@@ -464,21 +460,21 @@ class SemanticMarkdownChunker:
 
     def _build_section_text(self, section: Dict) -> str:
         """Build text for a section including header and content."""
-        if section.get('raw_text') is not None:
-            return section['raw_text']
+        if section.get("raw_text") is not None:
+            return section["raw_text"]
 
         parts = []
 
         # Add header if present
-        if section['header']:
-            header_prefix = '#' * section['level']
+        if section["header"]:
+            header_prefix = "#" * section["level"]
             parts.append(f"{header_prefix} {section['header']}")
 
         # Add content parts
-        for part in section['content_parts']:
-            parts.append(part['content'])
+        for part in section["content_parts"]:
+            parts.append(part["content"])
 
-        return '\n\n'.join(parts)
+        return "\n\n".join(parts)
 
     def _split_large_section(
         self, section: Dict, base_metadata: Dict, start_chunk_index: int
@@ -492,20 +488,19 @@ class SemanticMarkdownChunker:
 
         # Add header to first chunk
         header_text = ""
-        if section['header']:
+        if section["header"]:
             header_text = (
-                section.get('header_raw')
-                or f"{'#' * section['level']} {section['header']}"
+                section.get("header_raw") or f"{'#' * section['level']} {section['header']}"
             )
             header_tokens = len(header_text) / self.CHARS_PER_TOKEN
             current_parts.append(header_text)
             current_tokens += header_tokens
 
         # Process content parts
-        for part in section['content_parts']:
-            part_text = part['content']
+        for part in section["content_parts"]:
+            part_text = part["content"]
             part_tokens = len(part_text) / self.CHARS_PER_TOKEN
-            is_code = part.get('is_code_block', False)
+            is_code = part.get("is_code_block", False)
 
             # Code blocks: keep intact if possible
             if is_code and self.preserve_code_blocks:
@@ -517,22 +512,20 @@ class SemanticMarkdownChunker:
                 else:
                     # Save current chunk if has content
                     if len(current_parts) > (1 if header_text else 0):
-                        chunk_text = '\n\n'.join(current_parts)
+                        chunk_text = "\n\n".join(current_parts)
                         chunk = self._create_chunk(
                             text=chunk_text,
                             chunk_index=chunk_index,
                             metadata=base_metadata,
-                            header_path=section['header_path'],
-                            has_code_blocks=current_has_code
+                            header_path=section["header_path"],
+                            has_code_blocks=current_has_code,
                         )
                         chunks.append(chunk)
                         chunk_index += 1
 
                     # Start new chunk with header context + code block
                     current_parts = [header_text, part_text] if header_text else [part_text]
-                    header_tokens = (
-                        len(header_text) / self.CHARS_PER_TOKEN if header_text else 0
-                    )
+                    header_tokens = len(header_text) / self.CHARS_PER_TOKEN if header_text else 0
                     current_tokens = header_tokens + part_tokens
                     current_has_code = True
 
@@ -544,55 +537,57 @@ class SemanticMarkdownChunker:
                 else:
                     # Save current chunk
                     if current_parts:
-                        chunk_text = '\n\n'.join(current_parts)
+                        chunk_text = "\n\n".join(current_parts)
                         chunk = self._create_chunk(
                             text=chunk_text,
                             chunk_index=chunk_index,
                             metadata=base_metadata,
-                            header_path=section['header_path'],
-                            has_code_blocks=current_has_code
+                            header_path=section["header_path"],
+                            has_code_blocks=current_has_code,
                         )
                         chunks.append(chunk)
                         chunk_index += 1
 
                     # Start new chunk with header context
                     current_parts = [header_text, part_text] if header_text else [part_text]
-                    header_tokens = (
-                        len(header_text) / self.CHARS_PER_TOKEN if header_text else 0
-                    )
+                    header_tokens = len(header_text) / self.CHARS_PER_TOKEN if header_text else 0
                     current_tokens = header_tokens + part_tokens
                     current_has_code = False
 
         # Save final chunk
         if current_parts:
-            chunk_text = '\n\n'.join(current_parts)
+            chunk_text = "\n\n".join(current_parts)
             chunk = self._create_chunk(
                 text=chunk_text,
                 chunk_index=chunk_index,
                 metadata=base_metadata,
-                header_path=section['header_path'],
-                has_code_blocks=current_has_code
+                header_path=section["header_path"],
+                has_code_blocks=current_has_code,
             )
             chunks.append(chunk)
 
         return chunks
 
     def _create_chunk(
-        self, text: str, chunk_index: int, metadata: Dict, header_path: List[str],
-        has_code_blocks: bool = False
+        self,
+        text: str,
+        chunk_index: int,
+        metadata: Dict,
+        header_path: List[str],
+        has_code_blocks: bool = False,
     ) -> MarkdownChunk:
         """Create a MarkdownChunk with metadata."""
         token_count = int(len(text) / self.CHARS_PER_TOKEN)
 
         # Detect code blocks from fence markers or indented code
         if not has_code_blocks:
-            has_code_blocks = '```' in text or '~~~' in text or '\n    ' in text
+            has_code_blocks = "```" in text or "~~~" in text or "\n    " in text
 
         chunk_metadata = {
             **metadata,
-            'chunk_index': chunk_index,
-            'header_path': ' > '.join(header_path) if header_path else None,
-            'has_code_blocks': has_code_blocks,
+            "chunk_index": chunk_index,
+            "header_path": " > ".join(header_path) if header_path else None,
+            "has_code_blocks": has_code_blocks,
         }
 
         return MarkdownChunk(
@@ -600,7 +595,7 @@ class SemanticMarkdownChunker:
             chunk_index=chunk_index,
             token_count=token_count,
             metadata=chunk_metadata,
-            header_path=header_path
+            header_path=header_path,
         )
 
     def _naive_chunking(self, text: str, metadata: Dict) -> List[MarkdownChunk]:
@@ -620,7 +615,7 @@ class SemanticMarkdownChunker:
             if end < len(text):
                 # Look for double newline in last 20% of chunk
                 search_start = end - int(chunk_chars * 0.2)
-                para_end = text.rfind('\n\n', search_start, end)
+                para_end = text.rfind("\n\n", search_start, end)
 
                 if para_end != -1:
                     end = para_end + 2
@@ -632,10 +627,10 @@ class SemanticMarkdownChunker:
 
                 chunk_metadata = {
                     **metadata,
-                    'chunk_index': chunk_index,
-                    'chunk_start_char': start,
-                    'chunk_end_char': end,
-                    'semantic_chunking': False,
+                    "chunk_index": chunk_index,
+                    "chunk_start_char": start,
+                    "chunk_end_char": end,
+                    "semantic_chunking": False,
                 }
 
                 chunk = MarkdownChunk(
@@ -643,7 +638,7 @@ class SemanticMarkdownChunker:
                     chunk_index=chunk_index,
                     token_count=token_count,
                     metadata=chunk_metadata,
-                    header_path=[]
+                    header_path=[],
                 )
 
                 chunks.append(chunk)

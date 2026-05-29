@@ -32,10 +32,7 @@ class TestClaudeEnvironmentDetection:
     def test_detects_terminal_without_claude_env(self):
         """Test terminal detection when Claude env variables are absent."""
         # Clear Claude-related env vars
-        env_without_claude = {
-            k: v for k, v in os.environ.items()
-            if not k.startswith("CLAUDE")
-        }
+        env_without_claude = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
         with patch.dict(os.environ, env_without_claude, clear=True):
             logger = InteractionLogger()
             assert logger._is_claude is False

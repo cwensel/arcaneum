@@ -7,10 +7,7 @@ from .searcher import SearchResult
 
 
 def format_text_results(
-    query: str,
-    results: List[SearchResult],
-    offset: int = 0,
-    verbose: bool = False
+    query: str, results: List[SearchResult], offset: int = 0, verbose: bool = False
 ) -> str:
     """Format search results for human-readable terminal display.
 
@@ -40,7 +37,9 @@ def format_text_results(
     if offset > 0:
         start = offset + 1
         end = offset + len(results)
-        lines.append(f"Found {len(results)} result{'s' if len(results) != 1 else ''} (showing results {start}-{end})")
+        lines.append(
+            f"Found {len(results)} result{'s' if len(results) != 1 else ''} (showing results {start}-{end})"
+        )
     else:
         lines.append(f"Found {len(results)} result{'s' if len(results) != 1 else ''}")
     lines.append("")  # Blank line
@@ -66,7 +65,7 @@ def format_text_results(
 
         # Show first few lines of snippet (max 5 lines in normal mode, 10 in verbose)
         max_lines = 10 if verbose else 5
-        snippet_lines = snippet.split('\n')[:max_lines]
+        snippet_lines = snippet.split("\n")[:max_lines]
 
         for line in snippet_lines:
             lines.append(f"    {line}")
@@ -82,7 +81,7 @@ def format_json_results(
     results: List[SearchResult],
     limit: int = 10,
     offset: int = 0,
-    verbose: bool = False
+    verbose: bool = False,
 ) -> str:
     """Format search results as JSON.
 
@@ -127,12 +126,14 @@ def format_json_results(
             {
                 "score": r.score,
                 "location": _sanitize_for_json(r.location),  # Sanitize location too
-                "content": _sanitize_for_json(r.content[:content_length] if content_length else r.content),
+                "content": _sanitize_for_json(
+                    r.content[:content_length] if content_length else r.content
+                ),
                 "metadata": r.metadata if verbose else _filter_metadata(r.metadata),
-                "point_id": r.point_id
+                "point_id": r.point_id,
             }
             for r in results
-        ]
+        ],
     }
 
     # ensure_ascii=True escapes ALL non-ASCII and control characters
@@ -199,7 +200,7 @@ def extract_snippet(content: str, max_length: int = 200) -> str:
 
     # Find word boundary near max_length
     snippet = content[:max_length]
-    last_space = snippet.rfind(' ')
+    last_space = snippet.rfind(" ")
 
     # Only truncate at word boundary if we're at least 80% of max_length
     if last_space > max_length * 0.8:
@@ -229,13 +230,13 @@ def _sanitize_for_json(text: str) -> str:
     def replace_control_char(match):
         char = match.group(0)
         # Keep newline, carriage return, tab
-        if char in ('\n', '\r', '\t'):
+        if char in ("\n", "\r", "\t"):
             return char
         # Replace other control chars with space
-        return ' '
+        return " "
 
     # Pattern matches all control characters (0x00-0x1F)
-    sanitized = re.sub(r'[\x00-\x1f]', replace_control_char, text)
+    sanitized = re.sub(r"[\x00-\x1f]", replace_control_char, text)
 
     return sanitized
 
@@ -256,14 +257,11 @@ def _filter_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
         "git_project_name",
         "git_branch",
         "page_number",
-        "chunk_index"
+        "chunk_index",
     }
 
     # Return only essential fields that exist
-    return {
-        k: v for k, v in metadata.items()
-        if k in essential_fields
-    }
+    return {k: v for k, v in metadata.items() if k in essential_fields}
 
 
 def format_summary(
@@ -271,7 +269,7 @@ def format_summary(
     collection: str,
     results: List[SearchResult],
     filter_description: str = None,
-    execution_time_ms: float = None
+    execution_time_ms: float = None,
 ) -> str:
     """Format a summary of search results.
 
@@ -303,11 +301,13 @@ def format_summary(
         max_score = max(r.score for r in results)
         min_score = min(r.score for r in results)
 
-        lines.extend([
-            f"Avg Score:    {avg_score:.2%}",
-            f"Max Score:    {max_score:.2%}",
-            f"Min Score:    {min_score:.2%}",
-        ])
+        lines.extend(
+            [
+                f"Avg Score:    {avg_score:.2%}",
+                f"Max Score:    {max_score:.2%}",
+                f"Min Score:    {min_score:.2%}",
+            ]
+        )
 
     if execution_time_ms is not None:
         lines.append(f"Time:         {execution_time_ms:.1f}ms")

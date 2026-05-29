@@ -116,7 +116,7 @@ def estimate_safe_batch_size_v2(
     available_gpu_bytes: int,
     pipeline_overhead_gb: float = 0.3,
     safety_factor: float = 0.6,
-    device_type: str = "cuda"
+    device_type: str = "cuda",
 ) -> int:
     """Estimate safe batch size with model-aware memory calculations.
 
@@ -149,7 +149,7 @@ def estimate_safe_batch_size_v2(
     # MPS (Apple Silicon): Use simplified heuristic
     # Precise calculation is unreliable due to unified memory architecture
     if device_type == "mps":
-        available_gb = available_gpu_bytes / (1024 ** 3)
+        available_gb = available_gpu_bytes / (1024**3)
 
         # Get model config to derive batch size from params_billions
         # Import here to avoid circular dependency
@@ -161,7 +161,9 @@ def estimate_safe_batch_size_v2(
         # Check for MPS-specific batch size cap (some models need tiny batches on MPS)
         mps_max_batch = model_config.get("mps_max_batch")
         if mps_max_batch is not None:
-            logger.debug(f"MPS: Using model-specific mps_max_batch={mps_max_batch} for {model_name}")
+            logger.debug(
+                f"MPS: Using model-specific mps_max_batch={mps_max_batch} for {model_name}"
+            )
             return mps_max_batch
 
         # Derive optimal batch size from model parameter count
@@ -184,42 +186,46 @@ def estimate_safe_batch_size_v2(
 
         if available_gb >= min_required:
             # Have enough memory, use optimal batch size
-            logger.debug(f"MPS: {available_gb:.1f}GB available, using optimal batch_size={optimal} (params={params_billions}B)")
+            logger.debug(
+                f"MPS: {available_gb:.1f}GB available, using optimal batch_size={optimal} (params={params_billions}B)"
+            )
             return optimal
         else:
             # Not enough for optimal batching, scale down proportionally
             scale_factor = available_gb / min_required
             scaled_batch = max(8, int(optimal * scale_factor))
-            logger.debug(f"MPS: {available_gb:.1f}GB available (need {min_required:.1f}GB), using batch_size={scaled_batch}")
+            logger.debug(
+                f"MPS: {available_gb:.1f}GB available (need {min_required:.1f}GB), using batch_size={scaled_batch}"
+            )
             return min(scaled_batch, 1024)
 
     # CUDA: Use detailed memory model
     # Model weights (one-time GPU memory allocation)
     MODEL_WEIGHTS_GB = {
-        'stella': 2.5,            # 1.5B parameters
-        'jina': 0.5,              # ~110M parameters
-        'jina-code': 0.5,
-        'jina-code-0.5b': 1.5,    # 500M parameters
-        'jina-code-1.5b': 4.0,    # 1.5B parameters
-        'codesage-large': 1.5,    # ~400M parameters
-        'nomic-code': 14.0,       # 7B parameters
-        'bge-large': 0.8,
-        'bge-base': 0.5,
-        'bge-small': 0.3,
+        "stella": 2.5,  # 1.5B parameters
+        "jina": 0.5,  # ~110M parameters
+        "jina-code": 0.5,
+        "jina-code-0.5b": 1.5,  # 500M parameters
+        "jina-code-1.5b": 4.0,  # 1.5B parameters
+        "codesage-large": 1.5,  # ~400M parameters
+        "nomic-code": 14.0,  # 7B parameters
+        "bge-large": 0.8,
+        "bge-base": 0.5,
+        "bge-small": 0.3,
     }
 
     # Activation memory per batch item (empirical measurements)
     ACTIVATION_MB_PER_ITEM = {
-        'stella': 8.0,            # 1024D output, large model
-        'jina': 5.0,              # 768D output
-        'jina-code': 5.0,
-        'jina-code-0.5b': 6.0,    # 896D output
-        'jina-code-1.5b': 10.0,   # 1536D output, large model
-        'codesage-large': 8.0,    # 1024D output
-        'nomic-code': 20.0,       # 3584D output, very large
-        'bge-large': 8.0,         # 1024D output
-        'bge-base': 5.0,          # 768D output
-        'bge-small': 3.0,         # 384D output
+        "stella": 8.0,  # 1024D output, large model
+        "jina": 5.0,  # 768D output
+        "jina-code": 5.0,
+        "jina-code-0.5b": 6.0,  # 896D output
+        "jina-code-1.5b": 10.0,  # 1536D output, large model
+        "codesage-large": 8.0,  # 1024D output
+        "nomic-code": 20.0,  # 3584D output, very large
+        "bge-large": 8.0,  # 1024D output
+        "bge-base": 5.0,  # 768D output
+        "bge-small": 3.0,  # 384D output
     }
 
     # Get model-specific parameters, default to conservative values
@@ -227,7 +233,7 @@ def estimate_safe_batch_size_v2(
     activation_mb_per_item = ACTIVATION_MB_PER_ITEM.get(model_name, 8.0)
 
     # Calculate usable memory after accounting for fixed costs
-    available_gb = available_gpu_bytes / (1024 ** 3)
+    available_gb = available_gpu_bytes / (1024**3)
     memory_after_fixed = available_gb - model_weights_gb - pipeline_overhead_gb
 
     if memory_after_fixed <= 0:
@@ -268,14 +274,14 @@ def get_available_memory_gb() -> float:
         Available memory in gigabytes
     """
     mem = psutil.virtual_memory()
-    return mem.available / (1024 ** 3)
+    return mem.available / (1024**3)
 
 
 def calculate_safe_workers(
     requested_workers: int,
     estimated_memory_per_worker_mb: int,
     max_memory_gb: Optional[float] = None,
-    min_workers: int = 1
+    min_workers: int = 1,
 ) -> tuple[int, str]:
     """Calculate safe number of workers based on available memory.
 
@@ -290,8 +296,8 @@ def calculate_safe_workers(
         warning_message is empty string if no warning needed
     """
     mem = psutil.virtual_memory()
-    available_gb = mem.available / (1024 ** 3)
-    total_gb = mem.total / (1024 ** 3)
+    available_gb = mem.available / (1024**3)
+    total_gb = mem.total / (1024**3)
 
     # Determine memory limit
     if max_memory_gb is not None:
@@ -330,9 +336,9 @@ def log_memory_stats(prefix: str = ""):
         prefix: Optional prefix for log message
     """
     mem = psutil.virtual_memory()
-    available_gb = mem.available / (1024 ** 3)
-    total_gb = mem.total / (1024 ** 3)
-    used_gb = mem.used / (1024 ** 3)
+    available_gb = mem.available / (1024**3)
+    total_gb = mem.total / (1024**3)
+    used_gb = mem.used / (1024**3)
 
     log_msg = f"{prefix}Memory: {used_gb:.1f}GB used / {total_gb:.1f}GB total ({mem.percent:.1f}%), {available_gb:.1f}GB available"
 

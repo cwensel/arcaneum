@@ -13,7 +13,7 @@ class TestGitMetadata:
             project_root="/path/to/repo",
             commit_hash="a" * 40,
             branch="feature-x",
-            project_name="my-project"
+            project_name="my-project",
         )
 
         assert metadata.identifier == "my-project#feature-x"
@@ -24,10 +24,11 @@ class TestGitMetadata:
             project_root="/path/to/repo",
             commit_hash="abc123def456abc123def456abc123def456abc1",
             branch="feature-x",
-            project_name="my-project"
+            project_name="my-project",
         )
 
         assert metadata.version_identifier == "my-project#feature-x@abc123d"
+
 
 class TestCodeChunkMetadata:
     """Tests for CodeChunkMetadata dataclass."""
@@ -48,7 +49,7 @@ class TestCodeChunkMetadata:
             git_project_root="/repo",
             git_project_name="project",
             git_branch="main",
-            git_commit_hash="a" * 40
+            git_commit_hash="a" * 40,
         )
 
         assert metadata.ast_chunked is False
@@ -80,7 +81,7 @@ class TestCodeChunkMetadata:
             source_hash="source123",
             chunking_version="code-ast:v1:400:20",
             ast_chunked=True,
-            has_functions=True
+            has_functions=True,
         )
 
         payload = metadata.to_payload()
@@ -114,7 +115,7 @@ class TestCodeChunkMetadata:
             git_remote_url="https://github.com/user/repo.git",
             source_hash="source456",
             chunking_version="code-ast:v1:400:20",
-            has_classes=True
+            has_classes=True,
         )
 
         payload = original.to_payload()
@@ -147,7 +148,7 @@ class TestCodeChunk:
             git_project_root="/repo",
             git_project_name="myproject",
             git_branch="develop",
-            git_commit_hash="c" * 40
+            git_commit_hash="c" * 40,
         )
 
         chunk = CodeChunk(content="function test() {}", metadata=metadata)
@@ -171,7 +172,7 @@ class TestCodeChunk:
             git_project_root="/repo",
             git_project_name="project",
             git_branch="main",
-            git_commit_hash="a" * 40
+            git_commit_hash="a" * 40,
         )
 
         chunk = CodeChunk(content="code", metadata=metadata)
@@ -195,13 +196,13 @@ class TestCodeChunk:
             git_project_root="/repo",
             git_project_name="project",
             git_branch="main",
-            git_commit_hash="a" * 40
+            git_commit_hash="a" * 40,
         )
 
         chunk = CodeChunk(
             content="code",
             metadata=metadata,
-            embedding=[0.1] * 768  # Mock 768D embedding
+            embedding=[0.1] * 768,  # Mock 768D embedding
         )
 
         point = chunk.to_point()

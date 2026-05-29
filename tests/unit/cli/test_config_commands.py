@@ -22,16 +22,18 @@ class TestShowCacheDir:
         models_dir.mkdir(parents=True)
         data_dir.mkdir(parents=True)
 
-        with patch('arcaneum.cli.config.get_models_dir', return_value=models_dir):
-            with patch('arcaneum.cli.config.get_data_dir', return_value=data_dir):
-                with patch('arcaneum.cli.config.get_legacy_arcaneum_dir', return_value=temp_dir / "legacy"):
+        with patch("arcaneum.cli.config.get_models_dir", return_value=models_dir):
+            with patch("arcaneum.cli.config.get_data_dir", return_value=data_dir):
+                with patch(
+                    "arcaneum.cli.config.get_legacy_arcaneum_dir", return_value=temp_dir / "legacy"
+                ):
                     show_cache_dir()
 
         captured = capsys.readouterr()
 
         # Should show both directories
-        assert 'Cache' in captured.out or 'models' in captured.out
-        assert 'Data' in captured.out or 'data' in captured.out
+        assert "Cache" in captured.out or "models" in captured.out
+        assert "Data" in captured.out or "data" in captured.out
 
     def test_shows_sizes(self, temp_dir, capsys):
         """Test that sizes are shown for existing directories."""
@@ -45,15 +47,17 @@ class TestShowCacheDir:
         # Create some test files
         (models_dir / "model.bin").write_bytes(b"x" * 1024)
 
-        with patch('arcaneum.cli.config.get_models_dir', return_value=models_dir):
-            with patch('arcaneum.cli.config.get_data_dir', return_value=data_dir):
-                with patch('arcaneum.cli.config.get_legacy_arcaneum_dir', return_value=temp_dir / "legacy"):
+        with patch("arcaneum.cli.config.get_models_dir", return_value=models_dir):
+            with patch("arcaneum.cli.config.get_data_dir", return_value=data_dir):
+                with patch(
+                    "arcaneum.cli.config.get_legacy_arcaneum_dir", return_value=temp_dir / "legacy"
+                ):
                     show_cache_dir()
 
         captured = capsys.readouterr()
 
         # Should show cache size
-        assert 'size' in captured.out.lower() or 'KB' in captured.out or 'MB' in captured.out
+        assert "size" in captured.out.lower() or "KB" in captured.out or "MB" in captured.out
 
     def test_shows_legacy_directory_if_exists(self, temp_dir, capsys):
         """Test that legacy directory is shown if it exists."""
@@ -67,15 +71,15 @@ class TestShowCacheDir:
         data_dir.mkdir(parents=True)
         legacy_dir.mkdir(parents=True)
 
-        with patch('arcaneum.cli.config.get_models_dir', return_value=models_dir):
-            with patch('arcaneum.cli.config.get_data_dir', return_value=data_dir):
-                with patch('arcaneum.cli.config.get_legacy_arcaneum_dir', return_value=legacy_dir):
+        with patch("arcaneum.cli.config.get_models_dir", return_value=models_dir):
+            with patch("arcaneum.cli.config.get_data_dir", return_value=data_dir):
+                with patch("arcaneum.cli.config.get_legacy_arcaneum_dir", return_value=legacy_dir):
                     show_cache_dir()
 
         captured = capsys.readouterr()
 
         # Should mention legacy directory
-        assert 'Legacy' in captured.out or 'legacy' in captured.out.lower()
+        assert "Legacy" in captured.out or "legacy" in captured.out.lower()
 
     def test_json_output(self, temp_dir, capsys):
         """Test that show-cache-dir emits a parseable JSON envelope."""
@@ -87,9 +91,9 @@ class TestShowCacheDir:
         models_dir.mkdir(parents=True)
         data_dir.mkdir(parents=True)
 
-        with patch('arcaneum.cli.config.get_models_dir', return_value=models_dir):
-            with patch('arcaneum.cli.config.get_data_dir', return_value=data_dir):
-                with patch('arcaneum.cli.config.get_legacy_arcaneum_dir', return_value=legacy_dir):
+        with patch("arcaneum.cli.config.get_models_dir", return_value=models_dir):
+            with patch("arcaneum.cli.config.get_data_dir", return_value=data_dir):
+                with patch("arcaneum.cli.config.get_legacy_arcaneum_dir", return_value=legacy_dir):
                     show_cache_dir(output_json=True)
 
         captured = capsys.readouterr()
@@ -110,7 +114,7 @@ class TestClearCache:
         models_dir.mkdir(parents=True)
         (models_dir / "model.bin").write_bytes(b"x" * 1024)
 
-        with patch('arcaneum.cli.config.get_models_dir', return_value=models_dir):
+        with patch("arcaneum.cli.config.get_models_dir", return_value=models_dir):
             clear_cache(confirm=False)
 
         captured = capsys.readouterr()
@@ -118,7 +122,7 @@ class TestClearCache:
         output = captured.out + captured.err
 
         # Should prompt for confirmation
-        assert '--confirm' in output or 'confirm' in output.lower()
+        assert "--confirm" in output or "confirm" in output.lower()
 
         # File should still exist
         assert (models_dir / "model.bin").exists()
@@ -133,13 +137,13 @@ class TestClearCache:
         (models_dir / "subdir").mkdir()
         (models_dir / "subdir" / "another.bin").write_bytes(b"y" * 512)
 
-        with patch('arcaneum.cli.config.get_models_dir', return_value=models_dir):
+        with patch("arcaneum.cli.config.get_models_dir", return_value=models_dir):
             clear_cache(confirm=True)
 
         captured = capsys.readouterr()
 
         # Should show success message
-        assert 'Cleared' in captured.out or 'cleared' in captured.out.lower()
+        assert "Cleared" in captured.out or "cleared" in captured.out.lower()
 
         # Directory should be empty (but still exist)
         assert models_dir.exists()
@@ -152,13 +156,13 @@ class TestClearCache:
         models_dir = temp_dir / "cache" / "models"
         # Don't create the directory
 
-        with patch('arcaneum.cli.config.get_models_dir', return_value=models_dir):
+        with patch("arcaneum.cli.config.get_models_dir", return_value=models_dir):
             clear_cache(confirm=True)
 
         captured = capsys.readouterr()
 
         # Should indicate cache is already empty
-        assert 'empty' in captured.out.lower() or 'already' in captured.out.lower()
+        assert "empty" in captured.out.lower() or "already" in captured.out.lower()
 
     def test_clear_cache_json_confirm_required(self, temp_dir, capsys):
         """Test that JSON mode reports confirmation errors as JSON."""
@@ -168,7 +172,7 @@ class TestClearCache:
         models_dir.mkdir(parents=True)
         (models_dir / "model.bin").write_bytes(b"x" * 1024)
 
-        with patch('arcaneum.cli.config.get_models_dir', return_value=models_dir):
+        with patch("arcaneum.cli.config.get_models_dir", return_value=models_dir):
             with pytest.raises(SystemExit) as exc_info:
                 clear_cache(confirm=False, output_json=True)
 

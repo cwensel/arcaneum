@@ -48,7 +48,7 @@ def index_markdown_command(
     streaming: bool,
     verbose: bool,
     debug: bool,
-    output_json: bool
+    output_json: bool,
 ):
     """Index markdown files to Qdrant collection.
 
@@ -82,9 +82,9 @@ def index_markdown_command(
 
     # Enable offline mode if requested
     if offline:
-        os.environ['HF_HUB_OFFLINE'] = '1'
-        os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
-        os.environ['TRANSFORMERS_OFFLINE'] = '1'
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
     # Setup logging (centralized configuration)
     if debug:
@@ -103,7 +103,8 @@ def index_markdown_command(
 
     # Start interaction logging (RDR-018)
     interaction_logger.start(
-        "index", "markdown",
+        "index",
+        "markdown",
         collection=collection,
         path=path,
         from_file=from_file,
@@ -118,8 +119,11 @@ def index_markdown_command(
 
         if from_file:
             from .utils import read_file_list
+
             # Markdown supports multiple extensions
-            file_list = read_file_list(from_file, allowed_extensions={'.md', '.markdown', '.mdown', '.mkd', '.mkdn'})
+            file_list = read_file_list(
+                from_file, allowed_extensions={".md", ".markdown", ".mdown", ".mkd", ".mkdn"}
+            )
             if not file_list:
                 raise ValueError("No valid markdown files found in the provided list")
             # Use parent directory of first file as base directory for reporting
@@ -131,18 +135,20 @@ def index_markdown_command(
 
         # Initialize Qdrant client early to retrieve model from collection metadata
         from arcaneum.paths import get_models_dir
+
         qdrant = create_qdrant_client(url=qdrant_url)
 
         # Retrieve model from collection metadata if not provided
         if model is None:
             from arcaneum.indexing.collection_metadata import get_collection_metadata
+
             metadata = get_collection_metadata(qdrant, collection)
-            if not metadata or 'model' not in metadata:
+            if not metadata or "model" not in metadata:
                 raise ValueError(
                     f"Collection '{collection}' has no model metadata. "
                     "Please create the collection with 'arc collection create --type markdown' first."
                 )
-            model = metadata['model']
+            model = metadata["model"]
         else:
             # Warn about deprecated --model flag
             console.print(
@@ -157,18 +163,16 @@ def index_markdown_command(
 
         model_config = DEFAULT_MODELS[model]
         model_dict = {
-            'chunk_size': chunk_size or model_config.chunk_size,
-            'chunk_overlap': chunk_overlap or model_config.chunk_overlap,
-            'vector_name': getattr(model_config, 'vector_name', None),
+            "chunk_size": chunk_size or model_config.chunk_size,
+            "chunk_overlap": chunk_overlap or model_config.chunk_overlap,
+            "vector_name": getattr(model_config, "vector_name", None),
         }
 
         # Initialize embedding client with persistent model caching (arcaneum-pwd5)
         # get_cached_model ensures models are cached for the process lifetime,
         # saving 7-8 seconds on subsequent CLI invocations within the same session
         embeddings = get_cached_model(
-            model_name=model,
-            cache_dir=str(get_models_dir()),
-            use_gpu=not no_gpu
+            model_name=model, cache_dir=str(get_models_dir()), use_gpu=not no_gpu
         )
 
         # Validate collection type (must be 'markdown' or untyped)
@@ -186,7 +190,7 @@ def index_markdown_command(
             vector_names = get_vector_names(qdrant, collection)
             if vector_names:
                 # Collection exists with named vectors - use first one
-                model_dict['vector_name'] = vector_names[0]
+                model_dict["vector_name"] = vector_names[0]
         except Exception:
             # Collection doesn't exist yet, use default vector_name from model_config
             pass
@@ -194,7 +198,7 @@ def index_markdown_command(
         # Build exclude patterns from CLI args
         exclude_patterns = list(exclude) if exclude else []
         # Add default excludes
-        default_excludes = ['**/node_modules/**', '**/.git/**', '**/venv/**']
+        default_excludes = ["**/node_modules/**", "**/.git/**", "**/venv/**"]
         for pattern in default_excludes:
             if pattern not in exclude_patterns:
                 exclude_patterns.append(pattern)
@@ -214,8 +218,9 @@ def index_markdown_command(
         # Show configuration
         if not output_json:
             from arcaneum.embeddings.client import EMBEDDING_MODELS
-            actual_model = EMBEDDING_MODELS.get(model, {}).get('name', model)
-            model_desc = EMBEDDING_MODELS.get(model, {}).get('description', '')
+
+            actual_model = EMBEDDING_MODELS.get(model, {}).get("name", model)
+            model_desc = EMBEDDING_MODELS.get(model, {}).get("description", "")
 
             console.print(f"\n[bold blue]Markdown Indexing Configuration[/bold blue]")
             console.print(f"  Collection: {collection} (type: markdown)")
@@ -229,14 +234,20 @@ def index_markdown_command(
             device_info = embeddings.get_device_info()
             if no_gpu:
                 console.print(f"  Device: CPU (GPU acceleration disabled)")
-            elif device_info['gpu_available']:
-                console.print(f"  [green]Device: {device_info['device'].upper()} (GPU acceleration enabled)[/green]")
+            elif device_info["gpu_available"]:
+                console.print(
+                    f"  [green]Device: {device_info['device'].upper()} (GPU acceleration enabled)[/green]"
+                )
             else:
                 console.print(f"  Device: CPU (GPU not available)")
 
             # Show parallelism configuration
-            console.print(f"  File processing: {actual_file_workers} workers (sequential, parallelism planned)")
-            console.print(f"  Embedding: {actual_embedding_workers} workers, batch size {embedding_batch_size}")
+            console.print(
+                f"  File processing: {actual_file_workers} workers (sequential, parallelism planned)"
+            )
+            console.print(
+                f"  Embedding: {actual_embedding_workers} workers, batch size {embedding_batch_size}"
+            )
 
             console.print(f"  Chunk size: {model_dict['chunk_size']} tokens")
             console.print(f"  Chunk overlap: {model_dict['chunk_overlap']} tokens")
@@ -246,7 +257,7 @@ def index_markdown_command(
             if process_priority != "normal":
                 console.print(f"  Process Priority: {process_priority}")
 
-            if offline or os.environ.get('HF_HUB_OFFLINE') == '1':
+            if offline or os.environ.get("HF_HUB_OFFLINE") == "1":
                 console.print(f"  [yellow]Mode: Offline (cached models only)[/yellow]")
 
             console.print()
@@ -266,10 +277,10 @@ def index_markdown_command(
             force_reindex=force,
             randomize=randomize,
             verbose=verbose,
-            chunk_size=model_dict['chunk_size'],
-            chunk_overlap=model_dict['chunk_overlap'],
+            chunk_size=model_dict["chunk_size"],
+            chunk_overlap=model_dict["chunk_overlap"],
             recursive=recursive,
-            file_list=file_list
+            file_list=file_list,
         )
 
         # Orphan-aware prompt-policy stamp gate (C3/C4)
@@ -288,9 +299,7 @@ def index_markdown_command(
             covered = pipeline.discovery.discover_files(markdown_dir, recursive=recursive)
             covered_paths = {str(Path(p).absolute()) for p in covered}
             prune_warn = (
-                None
-                if output_json
-                else (lambda m: console.print(f"[yellow]⚠ {m}[/yellow]"))
+                None if output_json else (lambda m: console.print(f"[yellow]⚠ {m}[/yellow]"))
             )
             prune_orphans_and_stamp(
                 qdrant=qdrant,
@@ -321,7 +330,9 @@ def index_markdown_command(
 
             if verification_result.is_healthy:
                 if not output_json:
-                    console.print(f"[green]✓ Collection verified - all {verification_result.complete_items} files complete[/green]")
+                    console.print(
+                        f"[green]✓ Collection verified - all {verification_result.complete_items} files complete[/green]"
+                    )
             else:
                 incomplete = verification_result.get_items_needing_repair()
                 if not output_json:
@@ -348,9 +359,9 @@ def index_markdown_command(
 
         # Log successful operation (RDR-018)
         interaction_logger.finish(
-            result_count=stats.get('files', 0),
-            chunks=stats.get('chunks', 0),
-            errors=stats.get('errors', 0),
+            result_count=stats.get("files", 0),
+            chunks=stats.get("chunks", 0),
+            errors=stats.get("errors", 0),
         )
 
         sys.exit(0)
@@ -390,7 +401,7 @@ def store_command(
     chunk_size: int,
     chunk_overlap: int,
     verbose: bool,
-    output_json: bool
+    output_json: bool,
 ):
     """Store agent-generated content for long-term memory.
 
@@ -409,13 +420,14 @@ def store_command(
     """
     # Setup logging
     if verbose:
-        logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+        logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     else:
-        logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
+        logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 
     # Start interaction logging (RDR-018)
     interaction_logger.start(
-        "store", None,
+        "store",
+        None,
         collection=collection,
         title=title,
         category=category,
@@ -423,7 +435,7 @@ def store_command(
 
     try:
         # Read content
-        if file == '-':
+        if file == "-":
             content = sys.stdin.read()
             filename = "stdin"
         else:
@@ -436,11 +448,11 @@ def store_command(
         # Parse metadata
         meta = {}
         if title:
-            meta['title'] = title
+            meta["title"] = title
         if category:
-            meta['category'] = category
+            meta["category"] = category
         if tags:
-            meta['tags'] = [t.strip() for t in tags.split(',')]
+            meta["tags"] = [t.strip() for t in tags.split(",")]
         if metadata:
             try:
                 custom_meta = json.loads(metadata)
@@ -454,19 +466,18 @@ def store_command(
 
         model_config = DEFAULT_MODELS[model]
         model_dict = {
-            'chunk_size': chunk_size or model_config.chunk_size,
-            'chunk_overlap': chunk_overlap or model_config.chunk_overlap,
-            'vector_name': getattr(model_config, 'vector_name', None),
+            "chunk_size": chunk_size or model_config.chunk_size,
+            "chunk_overlap": chunk_overlap or model_config.chunk_overlap,
+            "vector_name": getattr(model_config, "vector_name", None),
         }
 
         # Initialize clients
         from arcaneum.paths import get_models_dir
+
         qdrant = create_qdrant_client()
         # Use cached model for persistent model loading (arcaneum-pwd5)
         embeddings = get_cached_model(
-            model_name=model,
-            cache_dir=str(get_models_dir()),
-            use_gpu=False
+            model_name=model, cache_dir=str(get_models_dir()), use_gpu=False
         )
 
         # Validate collection type
@@ -484,7 +495,7 @@ def store_command(
             vector_names = get_vector_names(qdrant, collection)
             if vector_names:
                 # Collection exists with named vectors - use first one
-                model_dict['vector_name'] = vector_names[0]
+                model_dict["vector_name"] = vector_names[0]
         except Exception:
             # Collection doesn't exist yet, use default vector_name from model_config
             pass
@@ -511,9 +522,9 @@ def store_command(
             model_name=model,
             model_config=model_dict,
             metadata=meta,
-            chunk_size=model_dict['chunk_size'],
-            chunk_overlap=model_dict['chunk_overlap'],
-            persist=True  # Always persist for agent memory
+            chunk_size=model_dict["chunk_size"],
+            chunk_overlap=model_dict["chunk_overlap"],
+            persist=True,  # Always persist for agent memory
         )
 
         # Output results
@@ -521,13 +532,13 @@ def store_command(
             print(json.dumps(stats))
         else:
             console.print(f"✅ Stored {stats['chunks']} chunks")
-            if stats.get('persisted') and not verbose:
+            if stats.get("persisted") and not verbose:
                 console.print(f"📁 {stats['path']}")
 
         # Log successful operation (RDR-018)
         interaction_logger.finish(
             result_count=1,
-            chunks=stats.get('chunks', 0),
+            chunks=stats.get("chunks", 0),
         )
 
         sys.exit(0)

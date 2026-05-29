@@ -9,6 +9,7 @@ from arcaneum.embeddings.client import EMBEDDING_MODELS
 
 class ModelConfig(BaseModel):
     """Configuration for a single embedding model."""
+
     name: str
     dimensions: int
     chunk_size: int
@@ -20,6 +21,7 @@ class ModelConfig(BaseModel):
 
 class QdrantConfig(BaseModel):
     """Qdrant server configuration."""
+
     url: str = "http://localhost:6333"
     api_key: Optional[str] = None
     timeout: int = 120  # General timeout for indexing operations
@@ -28,12 +30,14 @@ class QdrantConfig(BaseModel):
 
 class CacheConfig(BaseModel):
     """Model cache configuration."""
+
     models_dir: Path = Path("./models_cache")
     max_size_gb: int = 10
 
 
 class CollectionTemplate(BaseModel):
     """Template for collection creation."""
+
     models: List[str]
     hnsw_m: int = 16
     hnsw_ef_construct: int = 100
@@ -43,6 +47,7 @@ class CollectionTemplate(BaseModel):
 
 class ArcaneumConfig(BaseModel):
     """Root configuration."""
+
     qdrant: QdrantConfig = Field(default_factory=QdrantConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
     models: Dict[str, ModelConfig]
@@ -79,8 +84,8 @@ def save_config(config: ArcaneumConfig, config_path: Path):
         config_path: Path to save YAML file
     """
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(config_path, 'w') as f:
-        yaml.dump(config.model_dump(mode='json'), f, default_flow_style=False)
+    with open(config_path, "w") as f:
+        yaml.dump(config.model_dump(mode="json"), f, default_flow_style=False)
 
 
 def _build_default_models() -> Dict[str, ModelConfig]:
@@ -123,7 +128,9 @@ def _build_default_models() -> Dict[str, ModelConfig]:
             if dimensions >= 1024:
                 chunk_size = 768  # stella, codesage-large
             else:
-                chunk_size = 512  # jina-code: AST-clean, no resplits, ~half attention memory vs 1024
+                chunk_size = (
+                    512  # jina-code: AST-clean, no resplits, ~half attention memory vs 1024
+                )
         else:
             # FastEmbed models: limited by token budget, use conservative sizing
             chunk_size = 460  # Safe margin from 512 token limit

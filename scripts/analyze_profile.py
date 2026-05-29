@@ -5,6 +5,7 @@ Extracts top bottlenecks and generates a summary report.
 
 Usage: python analyze_profile.py PROFILE_FILE [--detailed]
 """
+
 import argparse
 import pstats
 import sys
@@ -35,7 +36,7 @@ def analyze_profile(prof_file: str, detailed: bool = False):
     print("TOP 20 FUNCTIONS BY CUMULATIVE TIME (exclude stdlib)")
     print("-" * 80)
 
-    ps.sort_stats('cumulative')
+    ps.sort_stats("cumulative")
     ps.print_stats(20)
 
     # Top functions by total time
@@ -43,7 +44,7 @@ def analyze_profile(prof_file: str, detailed: bool = False):
     print("TOP 20 FUNCTIONS BY TOTAL TIME (exclude stdlib)")
     print("-" * 80)
 
-    ps.sort_stats('time')
+    ps.sort_stats("time")
     ps.print_stats(20)
 
     # Callers of top functions
@@ -53,12 +54,14 @@ def analyze_profile(prof_file: str, detailed: bool = False):
 
     # Find top 5 by time
     top_funcs = []
-    ps.sort_stats('time')
+    ps.sort_stats("time")
     for func, (cc, nc, tt, ct, callers) in list(ps.stats.items())[:5]:
         top_funcs.append((func, tt))
         print(f"\n{func[2]}: {tt:.3f}s ({nc} calls)")
         print(f"  Callers:")
-        for caller, (c_cc, c_nc, c_tt, c_ct) in sorted(callers.items(), key=lambda x: x[1][3], reverse=True)[:5]:
+        for caller, (c_cc, c_nc, c_tt, c_ct) in sorted(
+            callers.items(), key=lambda x: x[1][3], reverse=True
+        )[:5]:
             caller_name = caller[2] if len(caller) > 2 else str(caller)
             print(f"    {caller_name}: {c_ct:.3f}s")
 
@@ -68,7 +71,7 @@ def analyze_profile(prof_file: str, detailed: bool = False):
     print("=" * 80)
 
     for func in ps.stats.keys():
-        if 'embed' in func[2].lower() or 'stella' in func[2].lower():
+        if "embed" in func[2].lower() or "stella" in func[2].lower():
             func_data = ps.stats[func]
             cc, nc, tt, ct = func_data[:4]
             print(f"{func[2]}: {ct:.3f}s cum, {tt:.3f}s total ({nc} calls)")
@@ -78,7 +81,7 @@ def analyze_profile(prof_file: str, detailed: bool = False):
         print("DETAILED ANALYSIS")
         print("=" * 80)
         print("\nPrint Stats (first 50):")
-        ps.sort_stats('cumulative')
+        ps.sort_stats("cumulative")
         ps.print_stats(50)
 
 
@@ -98,6 +101,7 @@ def main():
     except Exception as e:
         print(f"ERROR: Failed to analyze profile: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 

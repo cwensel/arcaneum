@@ -52,7 +52,7 @@ class TestSemanticMarkdownChunker:
             chunk_overlap=100,
             max_chars=5000,
             hard_max_chars=8000,
-            preserve_code_blocks=False
+            preserve_code_blocks=False,
         )
         assert chunker.chunk_size == 1024
         assert chunker.chunk_overlap == 100
@@ -73,12 +73,12 @@ class TestSemanticMarkdownChunker:
         """Test chunker handles simple paragraph without headers."""
         text = "This is a simple paragraph with some text content."
         chunker = SemanticMarkdownChunker(chunk_size=100)
-        chunks = chunker.chunk(text, {'source': 'test'})
+        chunks = chunker.chunk(text, {"source": "test"})
 
         assert len(chunks) == 1
         assert chunks[0].text == text
         assert chunks[0].chunk_index == 0
-        assert chunks[0].metadata['source'] == 'test'
+        assert chunks[0].metadata["source"] == "test"
 
     def test_single_header_section(self):
         """Test chunker preserves single header with content."""
@@ -91,9 +91,9 @@ It has multiple lines of text."""
         chunks = chunker.chunk(text, {})
 
         assert len(chunks) == 1
-        assert '# Introduction' in chunks[0].text
-        assert 'introduction section' in chunks[0].text
-        assert chunks[0].header_path == ['Introduction']
+        assert "# Introduction" in chunks[0].text
+        assert "introduction section" in chunks[0].text
+        assert chunks[0].header_path == ["Introduction"]
 
     @pytest.mark.skipif(not MARKDOWN_IT_AVAILABLE, reason="markdown-it-py not available")
     def test_intro_before_first_heading_is_preserved(self):
@@ -166,10 +166,10 @@ Deep content here."""
         header_paths = [c.header_path for c in chunks]
 
         # Check that nested structure is captured
-        assert any('Main Title' in path for path in header_paths)
-        assert any('Subsection 1' in path for path in header_paths)
-        assert any('Subsection 2' in path for path in header_paths)
-        assert any('Deep section' in path for path in header_paths)
+        assert any("Main Title" in path for path in header_paths)
+        assert any("Subsection 1" in path for path in header_paths)
+        assert any("Subsection 2" in path for path in header_paths)
+        assert any("Deep section" in path for path in header_paths)
 
     def test_parent_header_context_preservation(self):
         """Test that parent headers are included in sub-section chunks."""
@@ -187,14 +187,14 @@ Detailed content here."""
         chunks = chunker.chunk(text, {})
 
         # Find chunk with deepest nesting
-        deep_chunks = [c for c in chunks if 'Subsection 1.1.1' in c.header_path]
+        deep_chunks = [c for c in chunks if "Subsection 1.1.1" in c.header_path]
         assert len(deep_chunks) > 0
 
         # Verify full path is preserved
         deep_chunk = deep_chunks[0]
-        assert 'Chapter 1' in deep_chunk.header_path
-        assert 'Section 1.1' in deep_chunk.header_path
-        assert 'Subsection 1.1.1' in deep_chunk.header_path
+        assert "Chapter 1" in deep_chunk.header_path
+        assert "Section 1.1" in deep_chunk.header_path
+        assert "Subsection 1.1.1" in deep_chunk.header_path
 
     def test_code_block_preservation(self):
         """Test that code blocks remain intact and aren't split."""
@@ -214,13 +214,12 @@ More text after code."""
         chunks = chunker.chunk(text, {})
 
         # Find chunk with code block
-        code_chunks = [c for c in chunks if '```python' in c.text or 'def hello_world' in c.text]
+        code_chunks = [c for c in chunks if "```python" in c.text or "def hello_world" in c.text]
         assert len(code_chunks) > 0
 
         # Verify code block is complete in at least one chunk
         has_complete_code = any(
-            'def hello_world():' in c.text and 'return 42' in c.text
-            for c in code_chunks
+            "def hello_world():" in c.text and "return 42" in c.text for c in code_chunks
         )
         assert has_complete_code
 
@@ -240,9 +239,9 @@ More text."""
         chunks = chunker.chunk(text, {})
 
         # Find chunk with code
-        code_chunks = [c for c in chunks if 'const x = 42' in c.text]
+        code_chunks = [c for c in chunks if "const x = 42" in c.text]
         assert len(code_chunks) > 0
-        assert code_chunks[0].metadata.get('has_code_blocks') is True
+        assert code_chunks[0].metadata.get("has_code_blocks") is True
 
     def test_large_section_splitting(self):
         """Test that large sections are split at semantic boundaries."""
@@ -260,7 +259,7 @@ More text."""
 
         # All chunks should have the header in their path
         for chunk in chunks:
-            assert 'Large Section' in chunk.header_path
+            assert "Large Section" in chunk.header_path
 
     def test_hard_max_splits_oversized_semantic_chunk(self):
         """Oversized markdown chunks are windowed instead of truncated."""
@@ -279,7 +278,7 @@ More text."""
         assert len(chunks) > 1
         assert all(len(chunk.text) <= 300 for chunk in chunks)
         assert any(tail in chunk.text for chunk in chunks)
-        assert any(chunk.metadata.get('hard_split') is True for chunk in chunks)
+        assert any(chunk.metadata.get("hard_split") is True for chunk in chunks)
 
     def test_hard_max_windowing_uses_overlap(self):
         """Hard-max windows preserve overlap so boundary context is retained."""
@@ -292,12 +291,12 @@ More text."""
         )
         chunks = chunker.chunk(text, {})
 
-        split_chunks = [chunk for chunk in chunks if chunk.metadata.get('hard_split')]
+        split_chunks = [chunk for chunk in chunks if chunk.metadata.get("hard_split")]
         assert len(split_chunks) > 1
 
         first = split_chunks[0]
         second = split_chunks[1]
-        assert second.metadata['chunk_start_char'] < first.metadata['chunk_end_char']
+        assert second.metadata["chunk_start_char"] < first.metadata["chunk_end_char"]
 
     def test_chunk_indices(self):
         """Test that chunk indices are sequential."""
@@ -341,19 +340,15 @@ Content 1.
 
 Content 2."""
 
-        base_metadata = {
-            'file_path': '/test/doc.md',
-            'source': 'test',
-            'priority': 'high'
-        }
+        base_metadata = {"file_path": "/test/doc.md", "source": "test", "priority": "high"}
 
         chunker = SemanticMarkdownChunker(chunk_size=50)
         chunks = chunker.chunk(text, base_metadata)
 
         for chunk in chunks:
-            assert chunk.metadata['file_path'] == '/test/doc.md'
-            assert chunk.metadata['source'] == 'test'
-            assert chunk.metadata['priority'] == 'high'
+            assert chunk.metadata["file_path"] == "/test/doc.md"
+            assert chunk.metadata["source"] == "test"
+            assert chunk.metadata["priority"] == "high"
 
     def test_list_handling(self):
         """Test that markdown lists are handled properly."""
@@ -371,10 +366,10 @@ Done."""
         chunks = chunker.chunk(text, {})
 
         # Should keep list together if possible
-        list_chunks = [c for c in chunks if '- First task' in c.text]
+        list_chunks = [c for c in chunks if "- First task" in c.text]
         if list_chunks:
             # Ideally all list items in same chunk
-            assert '- Second task' in list_chunks[0].text or len(chunks) > 1
+            assert "- Second task" in list_chunks[0].text or len(chunks) > 1
 
     def test_table_handling(self):
         """Test that markdown tables are preserved."""
@@ -391,7 +386,7 @@ End."""
         chunks = chunker.chunk(text, {})
 
         # Find chunk with table
-        table_chunks = [c for c in chunks if '| Column 1 |' in c.text]
+        table_chunks = [c for c in chunks if "| Column 1 |" in c.text]
         assert len(table_chunks) > 0
 
     @pytest.mark.skipif(not MARKDOWN_IT_AVAILABLE, reason="markdown-it-py not available")
@@ -407,7 +402,7 @@ Content here."""
         # The naive fallback path tags chunks with semantic_chunking=False; the
         # semantic path does not set the key at all. Verifying "not False"
         # distinguishes the two paths correctly.
-        assert chunks[0].metadata.get('semantic_chunking', True) is not False
+        assert chunks[0].metadata.get("semantic_chunking", True) is not False
 
     def test_naive_chunking_fallback(self):
         """Test that naive chunking works when markdown-it-py unavailable."""
@@ -444,7 +439,7 @@ Content."""
         deep_chunks = [c for c in chunks if len(c.header_path) == 3]
         if deep_chunks:
             # Check metadata has formatted path
-            assert 'Level 1 > Level 2 > Level 3' in deep_chunks[0].metadata.get('header_path', '')
+            assert "Level 1 > Level 2 > Level 3" in deep_chunks[0].metadata.get("header_path", "")
 
 
 class TestChunkMarkdownFunction:
@@ -460,10 +455,10 @@ class TestChunkMarkdownFunction:
     def test_chunk_markdown_with_metadata(self):
         """Test chunk_markdown with metadata."""
         text = "# Test\n\nContent."
-        metadata = {'file': 'test.md'}
+        metadata = {"file": "test.md"}
         chunks = chunk_markdown(text, metadata=metadata)
 
-        assert chunks[0].metadata['file'] == 'test.md'
+        assert chunks[0].metadata["file"] == "test.md"
 
     def test_chunk_markdown_accepts_hard_max_chars(self):
         """Convenience wrapper forwards hard_max_chars."""
@@ -500,8 +495,8 @@ Content at each level."""
         for c in chunks:
             all_headers.extend(c.header_path)
 
-        assert 'H1' in all_headers
-        assert 'H6' in all_headers
+        assert "H1" in all_headers
+        assert "H6" in all_headers
 
     def test_configurable_chunk_size(self):
         """Acceptance: Configurable chunk size.

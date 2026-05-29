@@ -16,11 +16,13 @@ class TestDualIndexer:
         client = Mock()
         client.upsert = Mock()
         client.delete = Mock()
-        client.get_collection = Mock(return_value=Mock(
-            points_count=100,
-            indexed_vectors_count=100,
-            status="green",
-        ))
+        client.get_collection = Mock(
+            return_value=Mock(
+                points_count=100,
+                indexed_vectors_count=100,
+                status="green",
+            )
+        )
         return client
 
     @pytest.fixture
@@ -29,7 +31,9 @@ class TestDualIndexer:
         client = Mock()
         client.add_documents = Mock()
         client.add_documents_sync = Mock()
-        client.add_documents_batch_parallel = Mock(return_value={"total_documents": 0, "task_count": 0})
+        client.add_documents_batch_parallel = Mock(
+            return_value={"total_documents": 0, "task_count": 0}
+        )
         client.get_index_stats = Mock(return_value={"numberOfDocuments": 100})
         return client
 
@@ -139,7 +143,8 @@ class TestDualIndexer:
         dual_indexer.batch_size = 2  # Small batch for testing
         # 5 docs / batch_size 2 = 3 batches → uses add_documents_batch_parallel
         dual_indexer.meili.add_documents_batch_parallel.return_value = {
-            "total_documents": 5, "task_count": 3
+            "total_documents": 5,
+            "task_count": 3,
         }
 
         docs = [
@@ -221,11 +226,13 @@ class TestDualIndexer:
     def test_get_stats(self, dual_indexer):
         """Test getting stats from both systems."""
         # Use different values per source so we catch a swapped-key bug.
-        dual_indexer.qdrant.get_collection = Mock(return_value=Mock(
-            points_count=42,
-            indexed_vectors_count=42,
-            status="green",
-        ))
+        dual_indexer.qdrant.get_collection = Mock(
+            return_value=Mock(
+                points_count=42,
+                indexed_vectors_count=42,
+                status="green",
+            )
+        )
         dual_indexer.meili.get_index_stats = Mock(return_value={"numberOfDocuments": 7})
 
         stats = dual_indexer.get_stats()
@@ -302,7 +309,7 @@ class TestDualIndexerWithMultipleModels:
 
         # Verify Qdrant was called with all vectors
         upsert_call = qdrant.upsert.call_args
-        points = upsert_call.kwargs.get('points') or upsert_call[1].get('points')
+        points = upsert_call.kwargs.get("points") or upsert_call[1].get("points")
         assert len(points) == 1
         assert "stella" in points[0].vector
         assert "jina" in points[0].vector

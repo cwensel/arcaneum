@@ -20,33 +20,19 @@ from qdrant_client.models import OptimizersConfigDiff
 
 def main():
     parser = argparse.ArgumentParser(description="Optimize Qdrant collection segments")
+    parser.add_argument("--host", default="localhost", help="Qdrant host (default: localhost)")
+    parser.add_argument("--port", type=int, default=6333, help="Qdrant port (default: 6333)")
     parser.add_argument(
-        "--host",
-        default="localhost",
-        help="Qdrant host (default: localhost)"
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=6333,
-        help="Qdrant port (default: 6333)"
-    )
-    parser.add_argument(
-        "--target-segments",
-        type=int,
-        default=2,
-        help="Target number of segments (default: 2)"
+        "--target-segments", type=int, default=2, help="Target number of segments (default: 2)"
     )
     parser.add_argument(
         "--max-segment-size-kb",
         type=int,
         default=100000,
-        help="Max segment size in KB (default: 100000)"
+        help="Max segment size in KB (default: 100000)",
     )
     parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be done without making changes"
+        "--dry-run", action="store_true", help="Show what would be done without making changes"
     )
     args = parser.parse_args()
 
@@ -96,7 +82,9 @@ def main():
                 continue
 
             reduction = current_segments - args.target_segments
-            print(f"  → Will consolidate {reduction} segments ({current_segments}→{args.target_segments})")
+            print(
+                f"  → Will consolidate {reduction} segments ({current_segments}→{args.target_segments})"
+            )
 
             if args.dry_run:
                 print(f"  → [DRY RUN] Would update optimizer config")
@@ -108,8 +96,8 @@ def main():
                 collection_name=collection_name,
                 optimizer_config=OptimizersConfigDiff(
                     default_segment_number=args.target_segments,
-                    max_segment_size=args.max_segment_size_kb
-                )
+                    max_segment_size=args.max_segment_size_kb,
+                ),
             )
 
             print(f"  ✓ Optimizer config updated")

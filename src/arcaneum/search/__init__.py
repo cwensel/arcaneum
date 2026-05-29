@@ -8,7 +8,7 @@ from .formatter import (
     format_json_results,
     format_metadata,
     extract_snippet,
-    format_summary
+    format_summary,
 )
 
 __all__ = [

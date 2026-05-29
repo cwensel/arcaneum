@@ -39,6 +39,7 @@ QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 # Fixtures
 # -----------------------------------------------------------------------------
 
+
 @pytest.fixture
 def meili_client():
     """Provide MeiliSearch client connected to test server."""
@@ -61,8 +62,8 @@ def meili_client():
     try:
         indexes = client.list_indexes()
         for idx in indexes:
-            if idx['uid'].startswith("test_workflow_"):
-                client.delete_index(idx['uid'])
+            if idx["uid"].startswith("test_workflow_"):
+                client.delete_index(idx["uid"])
     except Exception:
         pass
 
@@ -72,6 +73,7 @@ def qdrant_client():
     """Provide Qdrant client connected to test server."""
     try:
         from qdrant_client import QdrantClient
+
         client = QdrantClient(url=QDRANT_URL)
 
         # Test connection
@@ -103,9 +105,7 @@ def test_index(meili_client):
 
     # Create with source code fulltext settings
     meili_client.create_index(
-        name=index_name,
-        primary_key='id',
-        settings=SOURCE_CODE_FULLTEXT_SETTINGS
+        name=index_name, primary_key="id", settings=SOURCE_CODE_FULLTEXT_SETTINGS
     )
 
     yield index_name
@@ -133,11 +133,15 @@ def git_project_with_auth():
         subprocess.run(["git", "init"], cwd=project_path, check=True, capture_output=True)
         subprocess.run(
             ["git", "config", "user.email", "test@example.com"],
-            cwd=project_path, check=True, capture_output=True
+            cwd=project_path,
+            check=True,
+            capture_output=True,
         )
         subprocess.run(
             ["git", "config", "user.name", "Test User"],
-            cwd=project_path, check=True, capture_output=True
+            cwd=project_path,
+            check=True,
+            capture_output=True,
         )
 
         # Create auth directory with authentication code
@@ -280,7 +284,9 @@ def format_currency(amount: float) -> str:
         subprocess.run(["git", "add", "."], cwd=project_path, check=True, capture_output=True)
         subprocess.run(
             ["git", "commit", "-m", "Initial commit with auth module"],
-            cwd=project_path, check=True, capture_output=True
+            cwd=project_path,
+            check=True,
+            capture_output=True,
         )
 
         yield str(project_path)
@@ -290,25 +296,23 @@ def format_currency(amount: float) -> str:
 def indexed_auth_project(meili_client, test_index, git_project_with_auth):
     """Index the authentication project into MeiliSearch."""
     indexer = SourceCodeFullTextIndexer(
-        meili_client=meili_client,
-        index_name=test_index,
-        batch_size=100
+        meili_client=meili_client, index_name=test_index, batch_size=100
     )
 
     stats = indexer.index_single_project(
-        project_root=git_project_with_auth,
-        force=True,
-        verbose=False
+        project_root=git_project_with_auth, force=True, verbose=False
     )
 
     # Verify indexing succeeded
-    assert stats['indexed_projects'] == 1
-    assert stats['indexed_files'] >= 4  # verify.py, models.py, exceptions.py, __init__.py, helpers.py
+    assert stats["indexed_projects"] == 1
+    assert (
+        stats["indexed_files"] >= 4
+    )  # verify.py, models.py, exceptions.py, __init__.py, helpers.py
 
     yield {
-        'index_name': test_index,
-        'project_path': git_project_with_auth,
-        'stats': stats,
+        "index_name": test_index,
+        "project_path": git_project_with_auth,
+        "stats": stats,
     }
 
 
@@ -316,42 +320,35 @@ def indexed_auth_project(meili_client, test_index, git_project_with_auth):
 # Complete Search Workflow Tests
 # -----------------------------------------------------------------------------
 
+
 class TestFullTextSearchWorkflow:
     """Tests for the complete full-text search workflow."""
 
     def test_basic_text_search(self, meili_client, indexed_auth_project):
         """Test basic full-text search returns results."""
-        index_name = indexed_auth_project['index_name']
+        index_name = indexed_auth_project["index_name"]
 
-        results = meili_client.search(
-            index_name,
-            "authenticate",
-            limit=10
-        )
+        results = meili_client.search(index_name, "authenticate", limit=10)
 
-        assert 'hits' in results
-        assert 'processingTimeMs' in results
-        assert 'estimatedTotalHits' in results
-        assert results['estimatedTotalHits'] >= 1
+        assert "hits" in results
+        assert "processingTimeMs" in results
+        assert "estimatedTotalHits" in results
+        assert results["estimatedTotalHits"] >= 1
 
     def test_exact_phrase_search(self, meili_client, indexed_auth_project):
         """Test exact phrase search with quotes."""
-        index_name = indexed_auth_project['index_name']
+        index_name = indexed_auth_project["index_name"]
 
         # Search for exact phrase "def authenticate"
-        results = meili_client.search(
-            index_name,
-            '"def authenticate"',
-            limit=10
-        )
+        results = meili_client.search(index_name, '"def authenticate"', limit=10)
 
-        assert results['estimatedTotalHits'] >= 1
+        assert results["estimatedTotalHits"] >= 1
 
         # The result should contain the exact phrase
         found_exact = False
-        for hit in results['hits']:
-            content = hit.get('content', '')
-            if 'def authenticate' in content:
+        for hit in results["hits"]:
+            content = hit.get("content", "")
+            if "def authenticate" in content:
                 found_exact = True
                 break
 
@@ -359,24 +356,21 @@ class TestFullTextSearchWorkflow:
 
     def test_search_with_highlighting(self, meili_client, indexed_auth_project):
         """Test search returns highlighted content."""
-        index_name = indexed_auth_project['index_name']
+        index_name = indexed_auth_project["index_name"]
 
         results = meili_client.search(
-            index_name,
-            "password",
-            limit=10,
-            attributes_to_highlight=['content']
+            index_name, "password", limit=10, attributes_to_highlight=["content"]
         )
 
-        assert results['estimatedTotalHits'] >= 1
+        assert results["estimatedTotalHits"] >= 1
 
         # Check that at least one result has highlighting
         has_highlighting = False
-        for hit in results['hits']:
-            if '_formatted' in hit and 'content' in hit['_formatted']:
-                formatted_content = hit['_formatted']['content']
+        for hit in results["hits"]:
+            if "_formatted" in hit and "content" in hit["_formatted"]:
+                formatted_content = hit["_formatted"]["content"]
                 # MeiliSearch wraps matches in <em> tags
-                if '<em>' in formatted_content and '</em>' in formatted_content:
+                if "<em>" in formatted_content and "</em>" in formatted_content:
                     has_highlighting = True
                     break
 
@@ -384,38 +378,28 @@ class TestFullTextSearchWorkflow:
 
     def test_search_with_pagination(self, meili_client, indexed_auth_project):
         """Test search pagination with limit and offset."""
-        index_name = indexed_auth_project['index_name']
+        index_name = indexed_auth_project["index_name"]
 
         # Get all results
         all_results = meili_client.search(
             index_name,
             "",  # Empty query returns all
-            limit=100
+            limit=100,
         )
 
-        total = all_results['estimatedTotalHits']
+        total = all_results["estimatedTotalHits"]
 
         if total >= 2:
             # Get first result
-            first_results = meili_client.search(
-                index_name,
-                "",
-                limit=1,
-                offset=0
-            )
+            first_results = meili_client.search(index_name, "", limit=1, offset=0)
 
             # Get second result using offset
-            second_results = meili_client.search(
-                index_name,
-                "",
-                limit=1,
-                offset=1
-            )
+            second_results = meili_client.search(index_name, "", limit=1, offset=1)
 
             # Results should be different
-            if first_results['hits'] and second_results['hits']:
-                first_id = first_results['hits'][0].get('id')
-                second_id = second_results['hits'][0].get('id')
+            if first_results["hits"] and second_results["hits"]:
+                first_id = first_results["hits"][0].get("id")
+                second_id = second_results["hits"][0].get("id")
                 assert first_id != second_id, "Pagination should return different results"
 
 
@@ -423,59 +407,50 @@ class TestFullTextSearchWorkflow:
 # Filter Validation Tests (RDR-012)
 # -----------------------------------------------------------------------------
 
+
 class TestFilterValidation:
     """Tests for MeiliSearch filter expressions."""
 
     def test_filter_by_language(self, meili_client, indexed_auth_project):
         """Test filtering by programming language."""
-        index_name = indexed_auth_project['index_name']
+        index_name = indexed_auth_project["index_name"]
 
         results = meili_client.search(
             index_name,
             "",  # All documents
             filter='programming_language = "python"',
-            limit=100
+            limit=100,
         )
 
-        assert results['estimatedTotalHits'] >= 1
+        assert results["estimatedTotalHits"] >= 1
 
         # All results should be Python
-        for hit in results['hits']:
-            assert hit.get('programming_language') == 'python'
+        for hit in results["hits"]:
+            assert hit.get("programming_language") == "python"
 
     def test_filter_by_code_type_function(self, meili_client, indexed_auth_project):
         """Test filtering for function definitions."""
-        index_name = indexed_auth_project['index_name']
+        index_name = indexed_auth_project["index_name"]
 
-        results = meili_client.search(
-            index_name,
-            "",
-            filter='code_type = "function"',
-            limit=100
-        )
+        results = meili_client.search(index_name, "", filter='code_type = "function"', limit=100)
 
-        assert results['estimatedTotalHits'] >= 1
+        assert results["estimatedTotalHits"] >= 1
 
         # All results should be functions
-        for hit in results['hits']:
-            assert hit.get('code_type') == 'function'
+        for hit in results["hits"]:
+            assert hit.get("code_type") == "function"
 
     def test_filter_by_code_type_class(self, meili_client, indexed_auth_project):
         """Test filtering for class definitions."""
-        index_name = indexed_auth_project['index_name']
+        index_name = indexed_auth_project["index_name"]
 
-        results = meili_client.search(
-            index_name,
-            "",
-            filter='code_type = "class"',
-            limit=100
-        )
+        results = meili_client.search(index_name, "", filter='code_type = "class"', limit=100)
 
         # Should find Authenticator, User, AuthenticationError, AuthorizationError
-        assert results['estimatedTotalHits'] >= 1
+        assert results["estimatedTotalHits"] >= 1
 
-        for hit in results['hits']:
-            assert hit.get('code_type') == 'class'
+        for hit in results["hits"]:
+            assert hit.get("code_type") == "class"
 
     def test_filter_file_path_contains(self, meili_client, indexed_auth_project):
         """Test filtering by file path using CONTAINS operator.
@@ -484,165 +459,153 @@ class TestFilterValidation:
         be enabled on all servers. This test will be skipped if the feature
         is not available.
         """
-        index_name = indexed_auth_project['index_name']
+        index_name = indexed_auth_project["index_name"]
 
         try:
             results = meili_client.search(
-                index_name,
-                "",
-                filter='file_path CONTAINS "/auth/"',
-                limit=100
+                index_name, "", filter='file_path CONTAINS "/auth/"', limit=100
             )
         except Exception as e:
-            if 'feature_not_enabled' in str(e) or 'CONTAINS' in str(e):
+            if "feature_not_enabled" in str(e) or "CONTAINS" in str(e):
                 pytest.skip("CONTAINS filter requires experimental feature to be enabled")
             raise
 
-        assert results['estimatedTotalHits'] >= 1
+        assert results["estimatedTotalHits"] >= 1
 
         # All results should have /auth/ in their path
-        for hit in results['hits']:
-            file_path = hit.get('file_path', '')
-            assert '/auth/' in file_path, f"Expected '/auth/' in path: {file_path}"
+        for hit in results["hits"]:
+            file_path = hit.get("file_path", "")
+            assert "/auth/" in file_path, f"Expected '/auth/' in path: {file_path}"
 
     def test_filter_combined_conditions(self, meili_client, indexed_auth_project):
         """Test filtering with multiple conditions using AND."""
-        index_name = indexed_auth_project['index_name']
+        index_name = indexed_auth_project["index_name"]
 
         results = meili_client.search(
             index_name,
             "authenticate",
             filter='programming_language = "python" AND code_type = "function"',
-            limit=100
+            limit=100,
         )
 
         # Should find the authenticate function
-        assert results['estimatedTotalHits'] >= 1
+        assert results["estimatedTotalHits"] >= 1
 
-        for hit in results['hits']:
-            assert hit.get('programming_language') == 'python'
-            assert hit.get('code_type') == 'function'
+        for hit in results["hits"]:
+            assert hit.get("programming_language") == "python"
+            assert hit.get("code_type") == "function"
 
     def test_filter_or_conditions(self, meili_client, indexed_auth_project):
         """Test filtering with OR conditions."""
-        index_name = indexed_auth_project['index_name']
+        index_name = indexed_auth_project["index_name"]
 
         results = meili_client.search(
-            index_name,
-            "",
-            filter='code_type = "function" OR code_type = "class"',
-            limit=100
+            index_name, "", filter='code_type = "function" OR code_type = "class"', limit=100
         )
 
-        assert results['estimatedTotalHits'] >= 1
+        assert results["estimatedTotalHits"] >= 1
 
         # All results should be either function or class
-        for hit in results['hits']:
-            code_type = hit.get('code_type')
-            assert code_type in ('function', 'class'), f"Unexpected code_type: {code_type}"
+        for hit in results["hits"]:
+            code_type = hit.get("code_type")
+            assert code_type in ("function", "class"), f"Unexpected code_type: {code_type}"
 
 
 # -----------------------------------------------------------------------------
 # Result Format Validation Tests (RDR-012)
 # -----------------------------------------------------------------------------
 
+
 class TestResultFormatValidation:
     """Tests for validating search result format."""
 
     def test_result_contains_file_path(self, meili_client, indexed_auth_project):
         """Test that results contain file_path."""
-        index_name = indexed_auth_project['index_name']
+        index_name = indexed_auth_project["index_name"]
 
         results = meili_client.search(index_name, "authenticate", limit=10)
 
-        assert results['hits'], "Expected at least one result"
+        assert results["hits"], "Expected at least one result"
 
-        for hit in results['hits']:
-            assert 'file_path' in hit, "Result should contain file_path"
-            assert hit['file_path'], "file_path should not be empty"
+        for hit in results["hits"]:
+            assert "file_path" in hit, "Result should contain file_path"
+            assert hit["file_path"], "file_path should not be empty"
 
     def test_result_contains_line_numbers(self, meili_client, indexed_auth_project):
         """Test that results contain line number information."""
-        index_name = indexed_auth_project['index_name']
+        index_name = indexed_auth_project["index_name"]
 
         results = meili_client.search(index_name, "authenticate", limit=10)
 
-        assert results['hits'], "Expected at least one result"
+        assert results["hits"], "Expected at least one result"
 
-        for hit in results['hits']:
+        for hit in results["hits"]:
             # Should have start_line and end_line per RDR-011
-            assert 'start_line' in hit, "Result should contain start_line"
-            assert 'end_line' in hit, "Result should contain end_line"
-            assert 'line_count' in hit, "Result should contain line_count"
+            assert "start_line" in hit, "Result should contain start_line"
+            assert "end_line" in hit, "Result should contain end_line"
+            assert "line_count" in hit, "Result should contain line_count"
 
             # Validate line number consistency
-            assert hit['start_line'] >= 1, "start_line should be >= 1"
-            assert hit['end_line'] >= hit['start_line'], "end_line should be >= start_line"
-            assert hit['line_count'] == hit['end_line'] - hit['start_line'] + 1
+            assert hit["start_line"] >= 1, "start_line should be >= 1"
+            assert hit["end_line"] >= hit["start_line"], "end_line should be >= start_line"
+            assert hit["line_count"] == hit["end_line"] - hit["start_line"] + 1
 
     def test_result_contains_function_name(self, meili_client, indexed_auth_project):
         """Test that function results contain function_name."""
-        index_name = indexed_auth_project['index_name']
+        index_name = indexed_auth_project["index_name"]
 
         results = meili_client.search(
-            index_name,
-            "authenticate",
-            filter='code_type = "function"',
-            limit=10
+            index_name, "authenticate", filter='code_type = "function"', limit=10
         )
 
-        assert results['hits'], "Expected at least one function result"
+        assert results["hits"], "Expected at least one function result"
 
-        for hit in results['hits']:
-            assert 'function_name' in hit, "Function result should contain function_name"
+        for hit in results["hits"]:
+            assert "function_name" in hit, "Function result should contain function_name"
 
     def test_result_contains_class_name(self, meili_client, indexed_auth_project):
         """Test that class results contain class_name."""
-        index_name = indexed_auth_project['index_name']
+        index_name = indexed_auth_project["index_name"]
 
-        results = meili_client.search(
-            index_name,
-            "",
-            filter='code_type = "class"',
-            limit=10
-        )
+        results = meili_client.search(index_name, "", filter='code_type = "class"', limit=10)
 
-        assert results['hits'], "Expected at least one class result"
+        assert results["hits"], "Expected at least one class result"
 
-        for hit in results['hits']:
-            assert 'class_name' in hit, "Class result should contain class_name"
+        for hit in results["hits"]:
+            assert "class_name" in hit, "Class result should contain class_name"
 
     def test_result_contains_content(self, meili_client, indexed_auth_project):
         """Test that results contain code content."""
-        index_name = indexed_auth_project['index_name']
+        index_name = indexed_auth_project["index_name"]
 
         results = meili_client.search(index_name, "authenticate", limit=10)
 
-        assert results['hits'], "Expected at least one result"
+        assert results["hits"], "Expected at least one result"
 
-        for hit in results['hits']:
-            assert 'content' in hit, "Result should contain content"
-            assert hit['content'], "content should not be empty"
+        for hit in results["hits"]:
+            assert "content" in hit, "Result should contain content"
+            assert hit["content"], "content should not be empty"
 
     def test_result_contains_git_metadata(self, meili_client, indexed_auth_project):
         """Test that results contain git metadata."""
-        index_name = indexed_auth_project['index_name']
+        index_name = indexed_auth_project["index_name"]
 
         results = meili_client.search(index_name, "authenticate", limit=10)
 
-        assert results['hits'], "Expected at least one result"
+        assert results["hits"], "Expected at least one result"
 
-        for hit in results['hits']:
+        for hit in results["hits"]:
             # Git metadata from RDR-011
-            assert 'git_project_name' in hit, "Result should contain git_project_name"
-            assert 'git_branch' in hit, "Result should contain git_branch"
-            assert 'git_project_identifier' in hit, "Result should contain git_project_identifier"
-            assert 'git_commit_hash' in hit, "Result should contain git_commit_hash"
+            assert "git_project_name" in hit, "Result should contain git_project_name"
+            assert "git_branch" in hit, "Result should contain git_branch"
+            assert "git_project_identifier" in hit, "Result should contain git_project_identifier"
+            assert "git_commit_hash" in hit, "Result should contain git_commit_hash"
 
 
 # -----------------------------------------------------------------------------
 # Cooperative Workflow Tests (RDR-012: Semantic -> Exact)
 # -----------------------------------------------------------------------------
+
 
 class TestCooperativeWorkflow:
     """Tests for cooperative workflow: semantic search followed by exact search.
@@ -663,23 +626,19 @@ class TestCooperativeWorkflow:
         """Index project in both MeiliSearch (full-text) and Qdrant (semantic)."""
         # Index in MeiliSearch for full-text search
         ft_indexer = SourceCodeFullTextIndexer(
-            meili_client=meili_client,
-            index_name=test_index,
-            batch_size=100
+            meili_client=meili_client, index_name=test_index, batch_size=100
         )
 
         ft_stats = ft_indexer.index_single_project(
-            project_root=git_project_with_auth,
-            force=True,
-            verbose=False
+            project_root=git_project_with_auth, force=True, verbose=False
         )
 
         # For Qdrant semantic indexing, we'll use mocked results
         # since setting up embedding models in tests is complex
         yield {
-            'fulltext_index': test_index,
-            'project_path': git_project_with_auth,
-            'ft_stats': ft_stats,
+            "fulltext_index": test_index,
+            "project_path": git_project_with_auth,
+            "ft_stats": ft_stats,
         }
 
     def test_step1_semantic_finds_auth_files(self, meili_client, dual_indexed_project):
@@ -688,23 +647,23 @@ class TestCooperativeWorkflow:
         Note: This uses full-text search to simulate semantic search behavior
         since embedding models aren't available in tests.
         """
-        index_name = dual_indexed_project['fulltext_index']
+        index_name = dual_indexed_project["fulltext_index"]
 
         # Simulate semantic search for "authentication patterns"
         # In real workflow, this would be: arc search semantic "authentication" --collection MyCode
         results = meili_client.search(
             index_name,
             "authentication user verify",  # Conceptual query
-            limit=10
+            limit=10,
         )
 
-        assert results['estimatedTotalHits'] >= 1, "Should find authentication-related results"
+        assert results["estimatedTotalHits"] >= 1, "Should find authentication-related results"
 
         # Collect file paths from results
         auth_file_paths = []
-        for hit in results['hits']:
-            file_path = hit.get('file_path', '')
-            if '/auth/' in file_path:
+        for hit in results["hits"]:
+            file_path = hit.get("file_path", "")
+            if "/auth/" in file_path:
                 auth_file_paths.append(file_path)
 
         assert len(auth_file_paths) >= 1, "Should find files in /auth/ directory"
@@ -717,46 +676,41 @@ class TestCooperativeWorkflow:
 
         Note: Uses code_type filter as fallback if CONTAINS is not available.
         """
-        index_name = dual_indexed_project['fulltext_index']
+        index_name = dual_indexed_project["fulltext_index"]
 
         # Try with CONTAINS first, fall back to code_type filter
         try:
             results = meili_client.search(
-                index_name,
-                '"def authenticate"',
-                filter='file_path CONTAINS "/auth/"',
-                limit=10
+                index_name, '"def authenticate"', filter='file_path CONTAINS "/auth/"', limit=10
             )
         except Exception as e:
-            if 'feature_not_enabled' in str(e) or 'CONTAINS' in str(e):
+            if "feature_not_enabled" in str(e) or "CONTAINS" in str(e):
                 # Fall back to code_type filter (which is filterable)
                 results = meili_client.search(
-                    index_name,
-                    '"def authenticate"',
-                    filter='code_type = "function"',
-                    limit=10
+                    index_name, '"def authenticate"', filter='code_type = "function"', limit=10
                 )
             else:
                 raise
 
-        assert results['estimatedTotalHits'] >= 1, \
+        assert results["estimatedTotalHits"] >= 1, (
             "Should find 'def authenticate' in /auth/ directory"
+        )
 
         # Verify we found the actual function definition
         found_authenticate = False
-        for hit in results['hits']:
-            function_name = hit.get('function_name', '')
-            if function_name == 'authenticate':
+        for hit in results["hits"]:
+            function_name = hit.get("function_name", "")
+            if function_name == "authenticate":
                 found_authenticate = True
 
                 # Verify it's in the auth directory
-                file_path = hit.get('file_path', '')
-                assert '/auth/' in file_path
-                assert file_path.endswith('verify.py')
+                file_path = hit.get("file_path", "")
+                assert "/auth/" in file_path
+                assert file_path.endswith("verify.py")
 
                 # Verify line numbers exist
-                assert 'start_line' in hit
-                assert 'end_line' in hit
+                assert "start_line" in hit
+                assert "end_line" in hit
                 break
 
         assert found_authenticate, "Should find authenticate function"
@@ -771,25 +725,23 @@ class TestCooperativeWorkflow:
 
         Note: Uses code_type filter as fallback if CONTAINS is not available.
         """
-        index_name = dual_indexed_project['fulltext_index']
+        index_name = dual_indexed_project["fulltext_index"]
 
         # Step 1: Conceptual search (simulating semantic)
         conceptual_results = meili_client.search(
-            index_name,
-            "authentication user credentials",
-            limit=20
+            index_name, "authentication user credentials", limit=20
         )
 
-        assert conceptual_results['estimatedTotalHits'] >= 1
+        assert conceptual_results["estimatedTotalHits"] >= 1
 
         # Step 2: Extract relevant file paths
         relevant_paths = set()
-        for hit in conceptual_results['hits']:
-            file_path = hit.get('file_path', '')
+        for hit in conceptual_results["hits"]:
+            file_path = hit.get("file_path", "")
             if file_path:
                 # Extract directory path pattern for filter
-                if '/auth/' in file_path:
-                    relevant_paths.add('/auth/')
+                if "/auth/" in file_path:
+                    relevant_paths.add("/auth/")
 
         assert relevant_paths, "Should discover /auth/ directory"
 
@@ -804,107 +756,99 @@ class TestCooperativeWorkflow:
                     index_name,
                     '"def authenticate"',
                     filter=f'file_path CONTAINS "{path_pattern}"',
-                    limit=10
+                    limit=10,
                 )
                 exact_search_succeeded = True
             except Exception as e:
-                if 'feature_not_enabled' not in str(e) and 'CONTAINS' not in str(e):
+                if "feature_not_enabled" not in str(e) and "CONTAINS" not in str(e):
                     raise
                 # CONTAINS not available, try fallback
                 break
 
             # Verify exact match found
-            if exact_results and exact_results['estimatedTotalHits'] >= 1:
-                hit = exact_results['hits'][0]
-                assert 'file_path' in hit
-                assert 'start_line' in hit
-                assert 'end_line' in hit
-                assert 'content' in hit
-                assert 'git_project_name' in hit
+            if exact_results and exact_results["estimatedTotalHits"] >= 1:
+                hit = exact_results["hits"][0]
+                assert "file_path" in hit
+                assert "start_line" in hit
+                assert "end_line" in hit
+                assert "content" in hit
+                assert "git_project_name" in hit
                 return  # Test passed
 
         # Fallback: Use code_type filter (which is filterable)
         if not exact_search_succeeded:
             exact_results = meili_client.search(
-                index_name,
-                '"def authenticate"',
-                filter='code_type = "function"',
-                limit=10
+                index_name, '"def authenticate"', filter='code_type = "function"', limit=10
             )
 
-            assert exact_results['estimatedTotalHits'] >= 1, \
+            assert exact_results["estimatedTotalHits"] >= 1, (
                 "Should find authenticate function with code_type filter"
+            )
 
             # Verify we found the function in /auth/ directory
             found_in_auth = False
-            for hit in exact_results['hits']:
-                if hit.get('function_name') == 'authenticate':
-                    file_path = hit.get('file_path', '')
-                    if '/auth/' in file_path:
+            for hit in exact_results["hits"]:
+                if hit.get("function_name") == "authenticate":
+                    file_path = hit.get("file_path", "")
+                    if "/auth/" in file_path:
                         found_in_auth = True
                         # Both searches use same metadata structure
-                        assert 'file_path' in hit
-                        assert 'start_line' in hit
-                        assert 'end_line' in hit
-                        assert 'content' in hit
-                        assert 'git_project_name' in hit
+                        assert "file_path" in hit
+                        assert "start_line" in hit
+                        assert "end_line" in hit
+                        assert "content" in hit
+                        assert "git_project_name" in hit
                         break
 
             assert found_in_auth, "Should find authenticate function in /auth/ directory"
 
     def test_metadata_consistency_between_searches(self, meili_client, dual_indexed_project):
         """Verify both search types use same file metadata."""
-        index_name = dual_indexed_project['fulltext_index']
+        index_name = dual_indexed_project["fulltext_index"]
 
         # Search for same function with different queries
-        conceptual_results = meili_client.search(
-            index_name,
-            "authenticate user password",
-            limit=10
-        )
+        conceptual_results = meili_client.search(index_name, "authenticate user password", limit=10)
 
         exact_results = meili_client.search(
-            index_name,
-            '"def authenticate"',
-            filter='code_type = "function"',
-            limit=10
+            index_name, '"def authenticate"', filter='code_type = "function"', limit=10
         )
 
         # Both should find the authenticate function
-        assert conceptual_results['hits'], "Conceptual search should return results"
-        assert exact_results['hits'], "Exact search should return results"
+        assert conceptual_results["hits"], "Conceptual search should return results"
+        assert exact_results["hits"], "Exact search should return results"
 
         # Find the authenticate function in both results
         conceptual_auth = None
         exact_auth = None
 
-        for hit in conceptual_results['hits']:
-            if hit.get('function_name') == 'authenticate':
+        for hit in conceptual_results["hits"]:
+            if hit.get("function_name") == "authenticate":
                 conceptual_auth = hit
                 break
 
-        for hit in exact_results['hits']:
-            if hit.get('function_name') == 'authenticate':
+        for hit in exact_results["hits"]:
+            if hit.get("function_name") == "authenticate":
                 exact_auth = hit
                 break
 
         # If both found, verify metadata matches
         if conceptual_auth and exact_auth:
             # Same file path
-            assert conceptual_auth['file_path'] == exact_auth['file_path']
+            assert conceptual_auth["file_path"] == exact_auth["file_path"]
 
             # Same line numbers
-            assert conceptual_auth['start_line'] == exact_auth['start_line']
-            assert conceptual_auth['end_line'] == exact_auth['end_line']
+            assert conceptual_auth["start_line"] == exact_auth["start_line"]
+            assert conceptual_auth["end_line"] == exact_auth["end_line"]
 
             # Same git metadata
-            assert conceptual_auth['git_project_name'] == exact_auth['git_project_name']
-            assert conceptual_auth['git_branch'] == exact_auth['git_branch']
+            assert conceptual_auth["git_project_name"] == exact_auth["git_project_name"]
+            assert conceptual_auth["git_branch"] == exact_auth["git_branch"]
 
 
 # -----------------------------------------------------------------------------
 # Error Handling Tests (RDR-012)
 # -----------------------------------------------------------------------------
+
 
 class TestErrorHandling:
     """Tests for error handling in search workflow."""
@@ -914,25 +858,16 @@ class TestErrorHandling:
         import meilisearch.errors
 
         with pytest.raises(meilisearch.errors.MeilisearchApiError):
-            meili_client.search(
-                "nonexistent_index_xyz123",
-                "test query",
-                limit=10
-            )
+            meili_client.search("nonexistent_index_xyz123", "test query", limit=10)
 
     def test_invalid_filter_syntax(self, meili_client, indexed_auth_project):
         """Invalid filter syntax must raise a MeilisearchApiError."""
         import meilisearch.errors
 
-        index_name = indexed_auth_project['index_name']
+        index_name = indexed_auth_project["index_name"]
 
         with pytest.raises(meilisearch.errors.MeilisearchApiError):
-            meili_client.search(
-                index_name,
-                "test",
-                filter='invalid syntax !!!',
-                limit=10
-            )
+            meili_client.search(index_name, "test", filter="invalid syntax !!!", limit=10)
 
     def test_search_empty_index(self, meili_client):
         """Test searching an empty index returns no results."""
@@ -942,17 +877,13 @@ class TestErrorHandling:
         if meili_client.index_exists(index_name):
             meili_client.delete_index(index_name)
 
-        meili_client.create_index(name=index_name, primary_key='id')
+        meili_client.create_index(name=index_name, primary_key="id")
 
         try:
-            results = meili_client.search(
-                index_name,
-                "test query",
-                limit=10
-            )
+            results = meili_client.search(index_name, "test query", limit=10)
 
-            assert results['hits'] == []
-            assert results['estimatedTotalHits'] == 0
+            assert results["hits"] == []
+            assert results["estimatedTotalHits"] == 0
         finally:
             meili_client.delete_index(index_name)
 
@@ -961,63 +892,57 @@ class TestErrorHandling:
 # JSON Output Format Tests (RDR-012)
 # -----------------------------------------------------------------------------
 
+
 class TestJsonOutputFormat:
     """Tests for JSON output format validation."""
 
     def test_search_result_structure(self, meili_client, indexed_auth_project):
         """Test that search results have expected JSON structure."""
-        index_name = indexed_auth_project['index_name']
+        index_name = indexed_auth_project["index_name"]
 
-        results = meili_client.search(
-            index_name,
-            "authenticate",
-            limit=10
-        )
+        results = meili_client.search(index_name, "authenticate", limit=10)
 
         # Verify top-level structure
-        assert 'hits' in results
-        assert 'processingTimeMs' in results
-        assert 'estimatedTotalHits' in results
-        assert 'query' in results
+        assert "hits" in results
+        assert "processingTimeMs" in results
+        assert "estimatedTotalHits" in results
+        assert "query" in results
 
         # Verify hits is a list
-        assert isinstance(results['hits'], list)
+        assert isinstance(results["hits"], list)
 
         # Verify processing time is numeric
-        assert isinstance(results['processingTimeMs'], (int, float))
+        assert isinstance(results["processingTimeMs"], (int, float))
 
         # Verify estimated total is numeric
-        assert isinstance(results['estimatedTotalHits'], int)
+        assert isinstance(results["estimatedTotalHits"], int)
 
     def test_hit_structure(self, meili_client, indexed_auth_project):
         """Test that individual hits have expected structure."""
-        index_name = indexed_auth_project['index_name']
+        index_name = indexed_auth_project["index_name"]
 
         results = meili_client.search(
-            index_name,
-            "authenticate",
-            attributes_to_highlight=['content'],
-            limit=10
+            index_name, "authenticate", attributes_to_highlight=["content"], limit=10
         )
 
-        assert results['hits'], "Expected at least one hit"
+        assert results["hits"], "Expected at least one hit"
 
-        hit = results['hits'][0]
+        hit = results["hits"][0]
 
         # Required fields per RDR-011/012
         required_fields = [
-            'id',
-            'file_path',
-            'content',
-            'start_line',
-            'end_line',
-            'programming_language',
-            'code_type',
+            "id",
+            "file_path",
+            "content",
+            "start_line",
+            "end_line",
+            "programming_language",
+            "code_type",
         ]
 
         for field in required_fields:
             assert field in hit, f"Hit should contain '{field}'"
 
         # Verify _formatted when highlighting is requested
-        assert '_formatted' in hit, "Hit should contain '_formatted' when highlighting"
-        assert 'content' in hit['_formatted'], "_formatted should contain 'content'"
+        assert "_formatted" in hit, "Hit should contain '_formatted' when highlighting"
+        assert "content" in hit["_formatted"], "_formatted should contain 'content'"

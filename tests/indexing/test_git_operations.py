@@ -36,7 +36,7 @@ def simple_repo(temp_dir):
 
     # Create a file and commit
     test_file = os.path.join(repo_path, "test.py")
-    with open(test_file, 'w') as f:
+    with open(test_file, "w") as f:
         f.write("print('hello')\n")
 
     repo.index.add(["test.py"])
@@ -60,7 +60,7 @@ def detached_head_repo(temp_dir):
 
     # Create commits
     test_file = os.path.join(repo_path, "test.txt")
-    with open(test_file, 'w') as f:
+    with open(test_file, "w") as f:
         f.write("content\n")
 
     repo.index.add(["test.txt"])
@@ -197,7 +197,7 @@ class TestGitProjectDiscovery:
 
         # Create commit without remote
         test_file = os.path.join(repo_path, "file.txt")
-        with open(test_file, 'w') as f:
+        with open(test_file, "w") as f:
             f.write("content")
         repo.index.add(["file.txt"])
         repo.index.commit("Commit")
@@ -244,15 +244,13 @@ class TestGitProjectDiscovery:
 
         # HTTPS GitHub
         name1 = discovery._derive_project_name(
-            "https://github.com/user/my-project.git",
-            "/tmp/repo"
+            "https://github.com/user/my-project.git", "/tmp/repo"
         )
         assert name1 == "my-project"
 
         # SSH GitHub
         name2 = discovery._derive_project_name(
-            "git@github.com:user/another-project.git",
-            "/tmp/repo"
+            "git@github.com:user/another-project.git", "/tmp/repo"
         )
         assert name2 == "another-project"
 
@@ -278,7 +276,7 @@ class TestGitProjectDiscovery:
         repo = git.Repo(simple_repo)
         for filename in ["file1.py", "file2.java", "README.md"]:
             filepath = os.path.join(simple_repo, filename)
-            with open(filepath, 'w') as f:
+            with open(filepath, "w") as f:
                 f.write("content")
             repo.index.add([filename])
         repo.index.commit("Add files")
@@ -298,11 +296,11 @@ class TestGitProjectDiscovery:
             "script.py": "python",
             "app.java": "java",
             "main.js": "javascript",
-            "README.md": "markdown"
+            "README.md": "markdown",
         }
         for filename, content in files.items():
             filepath = os.path.join(simple_repo, filename)
-            with open(filepath, 'w') as f:
+            with open(filepath, "w") as f:
                 f.write(content)
             repo.index.add([filename])
         repo.index.commit("Add multiple files")
@@ -310,14 +308,14 @@ class TestGitProjectDiscovery:
         discovery = GitProjectDiscovery()
 
         # Filter for Python only
-        py_files = discovery.get_tracked_files(simple_repo, extensions=['.py'])
+        py_files = discovery.get_tracked_files(simple_repo, extensions=[".py"])
         assert len(py_files) >= 2  # test.py + script.py
-        assert all(f.endswith('.py') for f in py_files)
+        assert all(f.endswith(".py") for f in py_files)
 
         # Filter for Java only
-        java_files = discovery.get_tracked_files(simple_repo, extensions=['.java'])
+        java_files = discovery.get_tracked_files(simple_repo, extensions=[".java"])
         assert len(java_files) >= 1
-        assert all(f.endswith('.java') for f in java_files)
+        assert all(f.endswith(".java") for f in java_files)
 
     def test_get_tracked_files_respects_gitignore(self, simple_repo):
         """Test that get_tracked_files respects .gitignore."""
@@ -325,19 +323,19 @@ class TestGitProjectDiscovery:
 
         # Create .gitignore
         gitignore_path = os.path.join(simple_repo, ".gitignore")
-        with open(gitignore_path, 'w') as f:
+        with open(gitignore_path, "w") as f:
             f.write("*.ignored\n")
         repo.index.add([".gitignore"])
         repo.index.commit("Add gitignore")
 
         # Create ignored file (not added to git)
         ignored_file = os.path.join(simple_repo, "secret.ignored")
-        with open(ignored_file, 'w') as f:
+        with open(ignored_file, "w") as f:
             f.write("secret content")
 
         # Create tracked file
         tracked_file = os.path.join(simple_repo, "tracked.txt")
-        with open(tracked_file, 'w') as f:
+        with open(tracked_file, "w") as f:
             f.write("tracked content")
         repo.index.add(["tracked.txt"])
         repo.index.commit("Add tracked file")
@@ -362,7 +360,7 @@ class TestApplyGitMetadata:
             commit_hash="abc123def456789012345678901234567890abcd",
             branch="main",
             project_name="test-project",
-            remote_url="https://github.com/user/test-project.git"
+            remote_url="https://github.com/user/test-project.git",
         )
 
         apply_git_metadata(doc, git_meta)
@@ -381,7 +379,7 @@ class TestApplyGitMetadata:
             commit_hash="abc123def456789012345678901234567890abcd",
             branch="feature-branch",
             project_name="local-project",
-            remote_url=None
+            remote_url=None,
         )
 
         apply_git_metadata(doc, git_meta)
@@ -414,7 +412,7 @@ class TestApplyGitMetadata:
             commit_hash="abc123def456abc123def456abc123def456abc1",
             branch="main",
             project_name="myproject",
-            remote_url="https://github.com/org/myproject.git"
+            remote_url="https://github.com/org/myproject.git",
         )
 
         doc = DualIndexDocument(content="test content")
@@ -434,7 +432,7 @@ class TestApplyGitMetadata:
             commit_hash="abc123def456abc123def456abc123def456abc1",
             branch="main",
             project_name="myproject",
-            remote_url=None
+            remote_url=None,
         )
 
         doc = DualIndexDocument(content="test content")

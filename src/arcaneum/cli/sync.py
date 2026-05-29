@@ -16,7 +16,7 @@ import logging
 import os
 
 # Suppress tokenizers fork warning - must be set before any tokenizers import
-os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 # Cap MPS allocator to a fraction of recommended_max_memory(). Without this
 # torch.mps grows the Metal driver allocation without bound until macOS
@@ -30,8 +30,8 @@ os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
 # LOW=1.4 / HIGH=1.7 relative to recommended_max_memory(); we scale both
 # down to leave headroom for the rest of the system (window server, IDE,
 # browsers) while preserving LOW < HIGH so the allocator can still cache.
-os.environ.setdefault('PYTORCH_MPS_LOW_WATERMARK_RATIO', '0.6')
-os.environ.setdefault('PYTORCH_MPS_HIGH_WATERMARK_RATIO', '0.8')
+os.environ.setdefault("PYTORCH_MPS_LOW_WATERMARK_RATIO", "0.6")
+os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.8")
 
 import hashlib
 import sys
@@ -61,8 +61,10 @@ class AdaptiveProgress(Progress):
     This gives more stable and accurate ETAs for long-running processes.
     """
 
-    def __init__(self, *args, min_estimate_period: float = 120, max_estimate_period: float = 300, **kwargs):
-        kwargs.setdefault('speed_estimate_period', min_estimate_period)
+    def __init__(
+        self, *args, min_estimate_period: float = 120, max_estimate_period: float = 300, **kwargs
+    ):
+        kwargs.setdefault("speed_estimate_period", min_estimate_period)
         super().__init__(*args, **kwargs)
         self._min_estimate_period = min_estimate_period
         self._max_estimate_period = max_estimate_period
@@ -80,6 +82,7 @@ class AdaptiveProgress(Progress):
                 max(self._min_estimate_period, elapsed),
             )
         super().update(*args, **kwargs)
+
 
 from ..cli.errors import InvalidArgumentError, ResourceNotFoundError
 from ..cli.interaction_logger import interaction_logger
@@ -144,9 +147,7 @@ def _maybe_backfill_legacy_prompt_policy(
 ) -> tuple[dict, list[str]]:
     """Stamp missing prompt-policy metadata for legacy valid corpora."""
     policy_issues = [
-        issue
-        for model_name in model_list
-        for issue in prompt_policy_issues(metadata, model_name)
+        issue for model_name in model_list for issue in prompt_policy_issues(metadata, model_name)
     ]
     if not policy_issues:
         return metadata, []
@@ -160,11 +161,9 @@ def _maybe_backfill_legacy_prompt_policy(
         ",".join(model_list),
     )
     if not output_json:
-        print_info(
-            "Backfilled legacy embedding prompt-policy metadata "
-            "(no documents reindexed)"
-        )
+        print_info("Backfilled legacy embedding prompt-policy metadata (no documents reindexed)")
     return metadata, []
+
 
 # Default patterns for files to exclude from indexing
 # These are typically generated, minified, or machine-readable files
@@ -173,37 +172,37 @@ def _maybe_backfill_legacy_prompt_policy(
 # Filename patterns (matched against file name only)
 DEFAULT_EXCLUDE_FILE_PATTERNS = {
     # Minified JavaScript (poor search quality, can cause memory issues)
-    '*.min.js',
-    '*.min.css',
-    '*-min.js',
-    '*-min.css',
+    "*.min.js",
+    "*.min.css",
+    "*-min.js",
+    "*-min.css",
     # Search index files (machine-generated JSON)
-    '*-search-index.js',
-    '*-search-index.json',
-    'search-index.js',
-    'search-index.json',
+    "*-search-index.js",
+    "*-search-index.json",
+    "search-index.js",
+    "search-index.json",
     # Bundle outputs
-    '*.bundle.js',
-    '*.bundle.css',
-    '*-bundle.js',
-    '*-bundle.css',
+    "*.bundle.js",
+    "*.bundle.css",
+    "*-bundle.js",
+    "*-bundle.css",
     # Source maps
-    '*.map',
-    '*.js.map',
-    '*.css.map',
+    "*.map",
+    "*.js.map",
+    "*.css.map",
     # Generated code files (poor search quality, can cause memory issues)
-    '*_generated.go',      # Kubernetes/OpenAPI generated Go
-    '*.generated.go',      # Alternative Go generated pattern
-    'zz_generated_*.go',   # Kubernetes controller-gen output (underscore)
-    'zz_generated.*.go',   # Kubernetes controller-gen output (dot, e.g., zz_generated.deepcopy.go)
-    '*_generated.py',      # Generated Python
-    '*.pb.go',             # Protocol buffer generated Go
-    '*_pb2.py',            # Protocol buffer generated Python
-    '*_pb2_grpc.py',       # gRPC generated Python
-    '*.gen.go',            # Code generators
-    '*.gen.ts',            # TypeScript generated
-    'generated.ts',        # Common generated filename
-    'generated.js',        # Common generated filename
+    "*_generated.go",  # Kubernetes/OpenAPI generated Go
+    "*.generated.go",  # Alternative Go generated pattern
+    "zz_generated_*.go",  # Kubernetes controller-gen output (underscore)
+    "zz_generated.*.go",  # Kubernetes controller-gen output (dot, e.g., zz_generated.deepcopy.go)
+    "*_generated.py",  # Generated Python
+    "*.pb.go",  # Protocol buffer generated Go
+    "*_pb2.py",  # Protocol buffer generated Python
+    "*_pb2_grpc.py",  # gRPC generated Python
+    "*.gen.go",  # Code generators
+    "*.gen.ts",  # TypeScript generated
+    "generated.ts",  # Common generated filename
+    "generated.js",  # Common generated filename
 }
 
 # Supported file extensions per corpus type.  Used both for discovery defaults
@@ -212,13 +211,49 @@ DEFAULT_EXCLUDE_FILE_PATTERNS = {
 # previously the discovery default was a narrower subset, which silently
 # dropped tracked YAML/MD/shell files (e.g., .github/workflows/*.yml).
 SUPPORTED_EXTENSIONS_BY_TYPE: Dict[str, Set[str]] = {
-    'pdf': {'.pdf'},
-    'markdown': {'.md', '.markdown'},
-    'code': {'.py', '.js', '.ts', '.tsx', '.jsx', '.java', '.go', '.rs', '.rb',
-             '.cpp', '.c', '.h', '.hpp', '.cs', '.swift', '.kt', '.scala',
-             '.php', '.pl', '.sh', '.bash', '.zsh', '.ps1', '.lua', '.r',
-             '.sql', '.graphql', '.proto', '.thrift', '.yaml', '.yml', '.json',
-             '.xml', '.html', '.css', '.scss', '.less', '.vue', '.svelte'},
+    "pdf": {".pdf"},
+    "markdown": {".md", ".markdown"},
+    "code": {
+        ".py",
+        ".js",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".java",
+        ".go",
+        ".rs",
+        ".rb",
+        ".cpp",
+        ".c",
+        ".h",
+        ".hpp",
+        ".cs",
+        ".swift",
+        ".kt",
+        ".scala",
+        ".php",
+        ".pl",
+        ".sh",
+        ".bash",
+        ".zsh",
+        ".ps1",
+        ".lua",
+        ".r",
+        ".sql",
+        ".graphql",
+        ".proto",
+        ".thrift",
+        ".yaml",
+        ".yml",
+        ".json",
+        ".xml",
+        ".html",
+        ".css",
+        ".scss",
+        ".less",
+        ".vue",
+        ".svelte",
+    },
 }
 
 
@@ -226,16 +261,16 @@ SUPPORTED_EXTENSIONS_BY_TYPE: Dict[str, Set[str]] = {
 # Any file under these directories will be skipped
 DEFAULT_EXCLUDE_DIRECTORIES = {
     # JavaDoc/JSDoc generated files
-    'javadoc',
-    'jsdoc',
-    'apidocs',
+    "javadoc",
+    "jsdoc",
+    "apidocs",
     # Node modules (if not already gitignored)
-    'node_modules',
+    "node_modules",
     # Vendor directories
-    'vendor',
+    "vendor",
     # Build outputs
-    'dist',
-    'build',
+    "dist",
+    "build",
 }
 
 
@@ -298,9 +333,9 @@ def _chunk_code_file_worker(
         Tuple of (file_path, list of chunk dicts, error or None)
     """
     # Lower process priority to avoid starving main process
-    if os.environ.get('ARCANEUM_DISABLE_WORKER_NICE') != '1':
+    if os.environ.get("ARCANEUM_DISABLE_WORKER_NICE") != "1":
         try:
-            if hasattr(os, 'nice'):
+            if hasattr(os, "nice"):
                 os.nice(10)
         except Exception:
             pass
@@ -316,7 +351,7 @@ def _chunk_code_file_worker(
         if file_size > _MAX_CODE_FILE_SIZE:
             return (file_path, [], f"File too large ({file_size} bytes > {_MAX_CODE_FILE_SIZE})")
         try:
-            code = file_p.read_text(encoding='utf-8', errors='replace')
+            code = file_p.read_text(encoding="utf-8", errors="replace")
         except Exception as e:
             return (file_path, [], f"Read error: {e}")
 
@@ -325,11 +360,19 @@ def _chunk_code_file_worker(
 
         # Determine language from extension
         ext_to_lang = {
-            '.py': 'python', '.js': 'javascript', '.ts': 'typescript',
-            '.java': 'java', '.go': 'go', '.rs': 'rust', '.rb': 'ruby',
-            '.cpp': 'cpp', '.c': 'c', '.h': 'c', '.hpp': 'cpp',
+            ".py": "python",
+            ".js": "javascript",
+            ".ts": "typescript",
+            ".java": "java",
+            ".go": "go",
+            ".rs": "rust",
+            ".rb": "ruby",
+            ".cpp": "cpp",
+            ".c": "c",
+            ".h": "c",
+            ".hpp": "cpp",
         }
-        language = ext_to_lang.get(file_p.suffix.lower(), 'unknown')
+        language = ext_to_lang.get(file_p.suffix.lower(), "unknown")
 
         # Large files skip tree-sitter to avoid OOM-killing the worker process;
         # generated/vendored headers routinely exceed 256 KB.
@@ -338,25 +381,25 @@ def _chunk_code_file_worker(
 
         # Chunk using AST with hard limit to prevent embedding OOM
         chunker = ASTCodeChunker(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            hard_max_chars=hard_max_chars
+            chunk_size=chunk_size, chunk_overlap=chunk_overlap, hard_max_chars=hard_max_chars
         )
         chunks = chunker.chunk_code(file_path, code, force_line_based=force_line_based)
 
         # Convert to serializable dicts
         chunk_dicts = []
         for i, chunk in enumerate(chunks):
-            chunk_dicts.append({
-                'text': chunk.content,
-                'metadata': {
-                    'file_path': file_path,
-                    'filename': file_p.name,
-                    'language': language,
-                    'chunk_index': i,
-                    'method': chunk.method,
+            chunk_dicts.append(
+                {
+                    "text": chunk.content,
+                    "metadata": {
+                        "file_path": file_path,
+                        "filename": file_p.name,
+                        "language": language,
+                        "chunk_index": i,
+                        "method": chunk.method,
+                    },
                 }
-            })
+            )
 
         return (file_path, chunk_dicts, None)
 
@@ -451,7 +494,7 @@ def get_meili_client() -> FullTextClient:
     """Get MeiliSearch client from environment or auto-generated key."""
     from ..paths import get_meilisearch_api_key
 
-    url = os.environ.get('MEILISEARCH_URL', 'http://localhost:7700')
+    url = os.environ.get("MEILISEARCH_URL", "http://localhost:7700")
     api_key = get_meilisearch_api_key()
     return FullTextClient(url, api_key)
 
@@ -476,7 +519,7 @@ def read_path_list(from_file: str) -> List[Path]:
     paths = []
 
     # Read lines from stdin or file
-    if from_file == '-':
+    if from_file == "-":
         logger.debug("Reading path list from stdin")
         lines = sys.stdin.readlines()
     else:
@@ -485,7 +528,7 @@ def read_path_list(from_file: str) -> List[Path]:
             logger.error(f"Path list file not found: {from_file}")
             return []
         logger.debug(f"Reading path list from {from_file}")
-        with open(from_file_path, 'r') as f:
+        with open(from_file_path, "r") as f:
             lines = f.readlines()
 
     # Process each line
@@ -493,7 +536,7 @@ def read_path_list(from_file: str) -> List[Path]:
         line = line.strip()
 
         # Skip empty lines and comments
-        if not line or line.startswith('#'):
+        if not line or line.startswith("#"):
             continue
 
         # Convert to Path and make absolute
@@ -516,6 +559,7 @@ def _is_git_repo(directory: Path) -> bool:
     """Check if directory is inside a git repository."""
     try:
         import git
+
         git.Repo(directory, search_parent_directories=True)
         return True
     except Exception:
@@ -523,7 +567,7 @@ def _is_git_repo(directory: Path) -> bool:
 
 
 # Extensions that may contain minified content
-_MINIFIED_CHECK_EXTENSIONS = {'.js', '.css'}
+_MINIFIED_CHECK_EXTENSIONS = {".js", ".css"}
 
 # Maximum line length before a file is considered minified
 _MINIFIED_LINE_LENGTH_THRESHOLD = 5000
@@ -544,8 +588,11 @@ _MAX_CODE_FILE_SIZE = 1_000_000  # 1 MB
 _MAX_AST_FILE_SIZE = 256_000  # 256 KB
 
 
-def _filter_excluded_files(files: List[Path], skip_dir_prefixes: Tuple[str, ...] = ('_',),
-                           base_directory: Optional[Path] = None) -> List[Path]:
+def _filter_excluded_files(
+    files: List[Path],
+    skip_dir_prefixes: Tuple[str, ...] = ("_",),
+    base_directory: Optional[Path] = None,
+) -> List[Path]:
     """Filter out excluded files by name patterns, directory, and content-based minification.
 
     Args:
@@ -610,12 +657,14 @@ def _filter_excluded_files(files: List[Path], skip_dir_prefixes: Tuple[str, ...]
         # behind an opt-in flag rather than removing it.
         if f.suffix.lower() in _MINIFIED_CHECK_EXTENSIONS:
             try:
-                with open(f, 'r', encoding='utf-8', errors='replace') as fh:
+                with open(f, "r", encoding="utf-8", errors="replace") as fh:
                     head = fh.read(_MINIFIED_CHECK_BYTES)
                 if head:
-                    longest_line = max(len(line) for line in head.split('\n'))
+                    longest_line = max(len(line) for line in head.split("\n"))
                     if longest_line > _MINIFIED_LINE_LENGTH_THRESHOLD:
-                        logger.info(f"Skipping likely minified file {f.name} (longest line: {longest_line} chars)")
+                        logger.info(
+                            f"Skipping likely minified file {f.name} (longest line: {longest_line} chars)"
+                        )
                         minified_count += 1
                         continue
             except OSError:
@@ -626,9 +675,13 @@ def _filter_excluded_files(files: List[Path], skip_dir_prefixes: Tuple[str, ...]
     if excluded_count > 0:
         logger.info(f"Excluded {excluded_count} files matching exclusion patterns")
     if prefix_skip_count > 0:
-        logger.info(f"Excluded {prefix_skip_count} files in {len(prefix_dirs_seen)} prefix-matched director{'y' if len(prefix_dirs_seen) == 1 else 'ies'}: {', '.join(sorted(prefix_dirs_seen))}")
+        logger.info(
+            f"Excluded {prefix_skip_count} files in {len(prefix_dirs_seen)} prefix-matched director{'y' if len(prefix_dirs_seen) == 1 else 'ies'}: {', '.join(sorted(prefix_dirs_seen))}"
+        )
     if minified_count > 0:
-        logger.info(f"Excluded {minified_count} files detected as minified (line > {_MINIFIED_LINE_LENGTH_THRESHOLD} chars)")
+        logger.info(
+            f"Excluded {minified_count} files detected as minified (line > {_MINIFIED_LINE_LENGTH_THRESHOLD} chars)"
+        )
 
     return filtered_files
 
@@ -637,7 +690,7 @@ def discover_files(
     directory: Path,
     file_types: Optional[str],
     corpus_type: str,
-    skip_dir_prefixes: Tuple[str, ...] = ('_',),
+    skip_dir_prefixes: Tuple[str, ...] = ("_",),
     skip_git_roots: Optional[Set[str]] = None,
 ) -> Tuple[List[Path], List[str]]:
     """Discover files to index based on corpus type and file filters.
@@ -676,9 +729,9 @@ def discover_files(
     """
     # Determine extensions to look for
     if file_types:
-        extensions = set(ext.strip().lower() for ext in file_types.split(','))
+        extensions = set(ext.strip().lower() for ext in file_types.split(","))
         # Ensure extensions start with '.'
-        extensions = set(e if e.startswith('.') else f'.{e}' for e in extensions)
+        extensions = set(e if e.startswith(".") else f".{e}" for e in extensions)
     else:
         extensions = set(SUPPORTED_EXTENSIONS_BY_TYPE.get(corpus_type, set()))
 
@@ -691,12 +744,13 @@ def discover_files(
     git_tracked_files: List[Path] = []
     git_roots: List[str] = []
 
-    if corpus_type == 'code':
+    if corpus_type == "code":
         git_discovery = GitProjectDiscovery()
 
         if _is_git_repo(directory):
             # The directory itself is a git repo — treat it as a single unit.
             import git as gitlib
+
             try:
                 repo = gitlib.Repo(str(directory), search_parent_directories=True)
                 root = repo.working_tree_dir
@@ -744,8 +798,9 @@ def discover_files(
     # Filter out excluded files (minified, generated, etc.)
     # Pass the base directory so prefix filtering only applies to nested dirs,
     # not the directory the user explicitly provided on the command line.
-    files = _filter_excluded_files(files, skip_dir_prefixes=skip_dir_prefixes,
-                                   base_directory=directory.absolute())
+    files = _filter_excluded_files(
+        files, skip_dir_prefixes=skip_dir_prefixes, base_directory=directory.absolute()
+    )
 
     # Git-tracked code files bypass the dot/underscore prefix filter:
     # `git ls-files` is the source of truth for what belongs to the repo, so
@@ -754,7 +809,8 @@ def discover_files(
     # patterns) still apply because git happily tracks generated artifacts too.
     if git_tracked_files:
         git_tracked_files = _filter_excluded_files(
-            git_tracked_files, skip_dir_prefixes=(),
+            git_tracked_files,
+            skip_dir_prefixes=(),
             base_directory=directory.absolute(),
         )
         files.extend(git_tracked_files)
@@ -766,8 +822,8 @@ def discover_files(
 def compute_file_hash(file_path: Path) -> str:
     """Compute SHA256 hash of file for change detection."""
     hasher = hashlib.sha256()
-    with open(file_path, 'rb') as f:
-        for chunk in iter(lambda: f.read(8192), b''):
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
             hasher.update(chunk)
     return hasher.hexdigest()[:16]  # First 16 chars is enough
 
@@ -854,28 +910,25 @@ def _handle_renames_meili(
             points, offset = qdrant.scroll(
                 collection_name=corpus,
                 scroll_filter=Filter(
-                    must=[
-                        FieldCondition(
-                            key="file_path",
-                            match=MatchValue(value=old_path)
-                        )
-                    ]
+                    must=[FieldCondition(key="file_path", match=MatchValue(value=old_path))]
                 ),
                 limit=100,
                 offset=offset,
                 with_payload=False,
-                with_vectors=False
+                with_vectors=False,
             )
 
             if not points:
                 break
 
             for point in points:
-                update_docs.append({
-                    "id": str(point.id),
-                    "file_path": new_path,
-                    "filename": Path(new_path).name,
-                })
+                update_docs.append(
+                    {
+                        "id": str(point.id),
+                        "file_path": new_path,
+                        "filename": Path(new_path).name,
+                    }
+                )
 
             if offset is None:
                 break
@@ -887,7 +940,9 @@ def _handle_renames_meili(
                 meili.client.wait_for_task(task.task_uid)
                 total_updated += len(update_docs)
             except Exception as e:
-                logger.error(f"Failed to update MeiliSearch for rename {old_path} -> {new_path}: {e}")
+                logger.error(
+                    f"Failed to update MeiliSearch for rename {old_path} -> {new_path}: {e}"
+                )
 
     return total_updated
 
@@ -927,7 +982,9 @@ def _detect_stale_paths(
     return stale_paths
 
 
-def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool = False) -> List[Dict[str, Any]]:
+def chunk_pdf_file(
+    file_path: Path, model_config: Dict[str, Any], use_ocr: bool = False
+) -> List[Dict[str, Any]]:
     """Chunk a PDF file using existing PDF chunking logic.
 
     Args:
@@ -950,14 +1007,15 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool 
     # OCR fallback: triggered for near-empty extractions (scanned/image PDFs)
     # or garbled text (corrupt font mappings, encoding failures)
     run_ocr = not text or len(text.strip()) < 100
-    ocr_triggered_by = 'empty' if run_ocr else None
+    ocr_triggered_by = "empty" if run_ocr else None
     if not run_ocr and not use_ocr:
         from ..indexing.pdf.quality import needs_ocr as check_needs_ocr
         from ..indexing.pdf.quality import score_text
+
         if check_needs_ocr(text):
             logger.info(f"Garbled text detected in {file_path.name}, re-extracting with OCR")
             run_ocr = True
-            ocr_triggered_by = 'garbled'
+            ocr_triggered_by = "garbled"
         else:
             # Conservative soft-quality gate: needs_ocr() only catches hard
             # garbage (U+FFFD, no stop words). Files scoring 0.5-0.9 on
@@ -971,7 +1029,7 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool 
                     f"(score {score:.2f}), re-extracting with OCR"
                 )
                 run_ocr = True
-                ocr_triggered_by = 'quality'
+                ocr_triggered_by = "quality"
 
     if run_ocr and not use_ocr:
         # Re-extract with pymupdf4llm auto-OCR (handles garbled spans)
@@ -984,7 +1042,7 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool 
                 ocr_text,
                 ocr_metadata,
             )
-            metadata['ocr_triggered_by'] = ocr_triggered_by or 'quality'
+            metadata["ocr_triggered_by"] = ocr_triggered_by or "quality"
         except Exception as e:
             logger.warning(f"OCR re-extraction failed for {file_path}: {e}")
 
@@ -992,7 +1050,7 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool 
     # can silently OCR scanned PDFs and return only the page watermark
     # (clean text, so needs_ocr() passes). Compare against plain page.get_text()
     # when the output is implausibly small for the page count.
-    page_count = metadata.get('page_count', 0) or 0
+    page_count = metadata.get("page_count", 0) or 0
     extraction_floor = False
     if text and looks_like_dropout(text, page_count):
         try:
@@ -1006,7 +1064,7 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool 
                 )
                 text = alt_text
                 metadata.update(alt_metadata)
-                metadata['dropout_recovered'] = True
+                metadata["dropout_recovered"] = True
             else:
                 # Bypass didn't help — mark chunks so repair doesn't loop on this file
                 extraction_floor = True
@@ -1021,7 +1079,7 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool 
     # Final fallback: Tesseract OCR for completely empty extractions
     if not text or len(text.strip()) < 100:
         try:
-            ocr_engine = OCREngine(language='eng')
+            ocr_engine = OCREngine(language="eng")
             ocr_text, ocr_metadata = ocr_engine.process_pdf(file_path)
             text, metadata = merge_extracted_text_with_ocr(
                 text,
@@ -1029,7 +1087,7 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool 
                 ocr_text,
                 ocr_metadata,
             )
-            metadata['ocr_triggered_by'] = 'empty'
+            metadata["ocr_triggered_by"] = "empty"
         except Exception as e:
             logger.warning(f"OCR failed for {file_path}: {e}")
 
@@ -1037,43 +1095,43 @@ def chunk_pdf_file(file_path: Path, model_config: Dict[str, Any], use_ocr: bool 
         logger.warning(f"No text extracted from {file_path}")
         return []
 
-    page_count = metadata.get('page_count', page_count)
+    page_count = metadata.get("page_count", page_count)
 
     # Create chunker and chunk the text
     chunker = PDFChunker(model_config)
     base_metadata = {
-        'file_path': str(file_path),
-        'filename': file_path.name,
-        'page_count': page_count,
-        'page_boundaries': metadata.get('page_boundaries', []),
-        'extraction_method': metadata.get('extraction_method'),
-        'ocr_confidence': metadata.get('ocr_confidence'),
-        'ocr_language': metadata.get('ocr_language'),
-        'ocr_pages_processed': metadata.get('ocr_pages_processed', 0),
-        'ocr_pages_failed': metadata.get('ocr_pages_failed', 0),
-        'ocr_low_confidence_word_count': metadata.get('ocr_low_confidence_word_count', 0),
-        'ocr_merge_strategy': metadata.get('ocr_merge_strategy'),
-        'ocr_triggered_by': metadata.get('ocr_triggered_by'),
+        "file_path": str(file_path),
+        "filename": file_path.name,
+        "page_count": page_count,
+        "page_boundaries": metadata.get("page_boundaries", []),
+        "extraction_method": metadata.get("extraction_method"),
+        "ocr_confidence": metadata.get("ocr_confidence"),
+        "ocr_language": metadata.get("ocr_language"),
+        "ocr_pages_processed": metadata.get("ocr_pages_processed", 0),
+        "ocr_pages_failed": metadata.get("ocr_pages_failed", 0),
+        "ocr_low_confidence_word_count": metadata.get("ocr_low_confidence_word_count", 0),
+        "ocr_merge_strategy": metadata.get("ocr_merge_strategy"),
+        "ocr_triggered_by": metadata.get("ocr_triggered_by"),
     }
     if extraction_floor:
-        base_metadata['extraction_floor'] = True
-        metadata['extraction_floor'] = True
+        base_metadata["extraction_floor"] = True
+        metadata["extraction_floor"] = True
 
-    base_metadata['quality_manifest'] = _build_quality_manifest(
+    base_metadata["quality_manifest"] = _build_quality_manifest(
         file_path=file_path,
-        corpus_type='pdf',
+        corpus_type="pdf",
         source_hash=compute_file_hash(file_path),
         chunk_count=0,
         metadata={**metadata, **base_metadata},
     )
 
     chunks = chunker.chunk(text, base_metadata)
-    quality_manifest = dict(base_metadata['quality_manifest'])
-    quality_manifest['chunk_count'] = len(chunks)
+    quality_manifest = dict(base_metadata["quality_manifest"])
+    quality_manifest["chunk_count"] = len(chunks)
     for chunk in chunks:
-        chunk.metadata['quality_manifest'] = quality_manifest
+        chunk.metadata["quality_manifest"] = quality_manifest
 
-    return [{'text': c.text, 'metadata': c.metadata} for c in chunks]
+    return [{"text": c.text, "metadata": c.metadata} for c in chunks]
 
 
 def chunk_markdown_file(
@@ -1096,7 +1154,7 @@ def chunk_markdown_file(
     """
     from ..indexing.markdown.chunker import SemanticMarkdownChunker
 
-    text = file_path.read_text(encoding='utf-8', errors='replace')
+    text = file_path.read_text(encoding="utf-8", errors="replace")
     if not text.strip():
         return []
 
@@ -1107,19 +1165,16 @@ def chunk_markdown_file(
     )
 
     base_metadata = {
-        'file_path': str(file_path),
-        'filename': file_path.name,
+        "file_path": str(file_path),
+        "filename": file_path.name,
     }
 
     chunks = chunker.chunk(text, base_metadata)
-    return [{'text': c.text, 'metadata': c.metadata} for c in chunks]
+    return [{"text": c.text, "metadata": c.metadata} for c in chunks]
 
 
 def chunk_code_file(
-    file_path: Path,
-    chunk_size: int,
-    chunk_overlap: int,
-    hard_max_chars: Optional[int] = None
+    file_path: Path, chunk_size: int, chunk_overlap: int, hard_max_chars: Optional[int] = None
 ) -> List[Dict[str, Any]]:
     """Chunk a source code file using AST-aware chunking.
 
@@ -1134,46 +1189,46 @@ def chunk_code_file(
     """
     from ..indexing.ast_chunker import ASTCodeChunker
 
-    text = file_path.read_text(encoding='utf-8', errors='replace')
+    text = file_path.read_text(encoding="utf-8", errors="replace")
     if not text.strip():
         return []
 
     # Determine language from extension
     ext_to_lang = {
-        '.py': 'python',
-        '.js': 'javascript',
-        '.ts': 'typescript',
-        '.java': 'java',
-        '.go': 'go',
-        '.rs': 'rust',
-        '.rb': 'ruby',
-        '.cpp': 'cpp',
-        '.c': 'c',
-        '.h': 'c',
-        '.hpp': 'cpp',
+        ".py": "python",
+        ".js": "javascript",
+        ".ts": "typescript",
+        ".java": "java",
+        ".go": "go",
+        ".rs": "rust",
+        ".rb": "ruby",
+        ".cpp": "cpp",
+        ".c": "c",
+        ".h": "c",
+        ".hpp": "cpp",
     }
-    language = ext_to_lang.get(file_path.suffix.lower(), 'unknown')
+    language = ext_to_lang.get(file_path.suffix.lower(), "unknown")
 
     chunker = ASTCodeChunker(
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-        hard_max_chars=hard_max_chars
+        chunk_size=chunk_size, chunk_overlap=chunk_overlap, hard_max_chars=hard_max_chars
     )
 
     chunks = chunker.chunk_code(str(file_path), text)
 
     result = []
     for i, chunk in enumerate(chunks):
-        result.append({
-            'text': chunk.content,
-            'metadata': {
-                'file_path': str(file_path),
-                'filename': file_path.name,
-                'language': language,
-                'chunk_index': i,
-                'method': chunk.method,
+        result.append(
+            {
+                "text": chunk.content,
+                "metadata": {
+                    "file_path": str(file_path),
+                    "filename": file_path.name,
+                    "language": language,
+                    "chunk_index": i,
+                    "method": chunk.method,
+                },
             }
-        })
+        )
 
     return result
 
@@ -1194,7 +1249,7 @@ def sync_directory_command(
     output_json: bool,
     git_update: bool = False,
     git_version: bool = False,
-    skip_dir_prefixes: Tuple[str, ...] = ('_',),
+    skip_dir_prefixes: Tuple[str, ...] = ("_",),
     dry_run: bool = False,
     parity: bool = False,
     repair: bool = False,
@@ -1245,7 +1300,8 @@ def sync_directory_command(
 
     # Start interaction logging (RDR-018)
     interaction_logger.start(
-        "corpus", "sync",
+        "corpus",
+        "sync",
         corpus=corpus,
         paths=all_input_paths,
         models=models,
@@ -1275,17 +1331,27 @@ def sync_directory_command(
             elif all_input_paths:
                 source_info = " (from file)" if from_file else ""
                 if len(single_files) == 1 and not dir_paths:
-                    print_info(f"Syncing file '{all_input_paths[0]}' to corpus '{corpus}'{source_info}")
+                    print_info(
+                        f"Syncing file '{all_input_paths[0]}' to corpus '{corpus}'{source_info}"
+                    )
                 elif len(dir_paths) == 1 and not single_files:
-                    print_info(f"Syncing directory '{all_input_paths[0]}' to corpus '{corpus}'{source_info}")
+                    print_info(
+                        f"Syncing directory '{all_input_paths[0]}' to corpus '{corpus}'{source_info}"
+                    )
                 else:
                     parts = []
                     if dir_paths:
-                        parts.append(f"{len(dir_paths)} director{'y' if len(dir_paths) == 1 else 'ies'}")
+                        parts.append(
+                            f"{len(dir_paths)} director{'y' if len(dir_paths) == 1 else 'ies'}"
+                        )
                     if single_files:
-                        parts.append(f"{len(single_files)} file{'s' if len(single_files) > 1 else ''}")
+                        parts.append(
+                            f"{len(single_files)} file{'s' if len(single_files) > 1 else ''}"
+                        )
                     if parts:
-                        print_info(f"Syncing {' and '.join(parts)} to corpus '{corpus}'{source_info}")
+                        print_info(
+                            f"Syncing {' and '.join(parts)} to corpus '{corpus}'{source_info}"
+                        )
 
         # Initialize clients
         qdrant = create_qdrant_client(timeout=qdrant_timeout)
@@ -1317,19 +1383,17 @@ def sync_directory_command(
         metadata = get_collection_metadata(qdrant, corpus)
 
         if not corpus_type:
-            corpus_type = 'pdf'  # Default
+            corpus_type = "pdf"  # Default
             logger.warning(f"Collection type not set, defaulting to {corpus_type}")
 
         configured_models = (
-            metadata.get('model')
-            or models
-            or DEFAULT_MODELS_BY_CORPUS_TYPE.get(corpus_type)
+            metadata.get("model") or models or DEFAULT_MODELS_BY_CORPUS_TYPE.get(corpus_type)
         )
 
         # Parse models before any repair/sync/backfill path can embed. If an
         # existing collection was indexed under an older prompt/backend policy
         # for the same alias, incremental sync would silently mix vector spaces.
-        raw_model_list = [m.strip() for m in configured_models.split(',') if m.strip()]
+        raw_model_list = [m.strip() for m in configured_models.split(",") if m.strip()]
         model_list = [
             prompt_policy_model_key_for_name(model_name) or model_name
             for model_name in raw_model_list
@@ -1351,7 +1415,7 @@ def sync_directory_command(
             from ..indexing.verify import CollectionVerifier
 
             # Check text quality for PDF corpora to detect garbled extractions
-            is_pdf_corpus = corpus_type == 'pdf'
+            is_pdf_corpus = corpus_type == "pdf"
 
             if not output_json:
                 if is_pdf_corpus:
@@ -1361,30 +1425,41 @@ def sync_directory_command(
 
             verifier = CollectionVerifier(qdrant)
             verification_result = verifier.verify_collection(
-                corpus, verbose=verbose,
+                corpus,
+                verbose=verbose,
                 check_quality=is_pdf_corpus,
                 quality_threshold=quality_threshold,
             )
 
             if verification_result.is_healthy:
                 if not output_json:
-                    console.print(f"[green]✓ Collection is healthy - all {verification_result.complete_items} files complete, nothing to repair[/green]")
+                    console.print(
+                        f"[green]✓ Collection is healthy - all {verification_result.complete_items} files complete, nothing to repair[/green]"
+                    )
                 else:
-                    print_json("success", "Collection is healthy, nothing to repair", data={
-                        "total_files": verification_result.total_items,
-                        "complete_files": verification_result.complete_items,
-                        "repaired": 0,
-                    })
+                    print_json(
+                        "success",
+                        "Collection is healthy, nothing to repair",
+                        data={
+                            "total_files": verification_result.total_items,
+                            "complete_files": verification_result.complete_items,
+                            "repaired": 0,
+                        },
+                    )
                 interaction_logger.finish(result_count=0)
                 return
 
             # Report garbled files separately from incomplete files
             garbled_count = verification_result.garbled_items
             if garbled_count > 0 and not output_json:
-                console.print(f"[yellow]⚠ Found {garbled_count} files with garbled/unreadable text[/yellow]")
+                console.print(
+                    f"[yellow]⚠ Found {garbled_count} files with garbled/unreadable text[/yellow]"
+                )
                 garbled_files = [f for f in verification_result.files if f.has_garbled_text]
                 for f in garbled_files[:5]:
-                    console.print(f"  [dim]{f.file_path} (quality: {f.avg_quality_score:.2f})[/dim]")
+                    console.print(
+                        f"  [dim]{f.file_path} (quality: {f.avg_quality_score:.2f})[/dim]"
+                    )
                 if len(garbled_files) > 5:
                     console.print(f"  [dim]... and {len(garbled_files) - 5} more[/dim]")
 
@@ -1400,8 +1475,7 @@ def sync_directory_command(
                 dropout_files = [f for f in verification_result.files if f.suspected_dropout]
                 for f in dropout_files[:5]:
                     console.print(
-                        f"  [dim]{f.file_path} "
-                        f"({f.total_text_chars} chars / {f.page_count}p)[/dim]"
+                        f"  [dim]{f.file_path} ({f.total_text_chars} chars / {f.page_count}p)[/dim]"
                     )
                 if len(dropout_files) > 5:
                     console.print(f"  [dim]... and {len(dropout_files) - 5} more[/dim]")
@@ -1418,7 +1492,9 @@ def sync_directory_command(
             missing_from_disk = [p for p in incomplete_paths if not Path(p).exists()]
 
             if missing_from_disk and not output_json:
-                console.print(f"[yellow]⚠ {len(missing_from_disk)} files no longer exist on disk (skipped)[/yellow]")
+                console.print(
+                    f"[yellow]⚠ {len(missing_from_disk)} files no longer exist on disk (skipped)[/yellow]"
+                )
                 for p in missing_from_disk[:5]:
                     console.print(f"  [dim]{p}[/dim]")
                 if len(missing_from_disk) > 5:
@@ -1426,14 +1502,20 @@ def sync_directory_command(
 
             if not existing_incomplete:
                 if not output_json:
-                    console.print("[yellow]No repairable files found (files no longer exist on disk)[/yellow]")
+                    console.print(
+                        "[yellow]No repairable files found (files no longer exist on disk)[/yellow]"
+                    )
                 else:
-                    print_json("warning", "No repairable files found", data={
-                        "incomplete_files": len(incomplete_paths),
-                        "garbled_files": garbled_count,
-                        "missing_from_disk": len(missing_from_disk),
-                        "repaired": 0,
-                    })
+                    print_json(
+                        "warning",
+                        "No repairable files found",
+                        data={
+                            "incomplete_files": len(incomplete_paths),
+                            "garbled_files": garbled_count,
+                            "missing_from_disk": len(missing_from_disk),
+                            "repaired": 0,
+                        },
+                    )
                 interaction_logger.finish(result_count=0)
                 return
 
@@ -1446,11 +1528,15 @@ def sync_directory_command(
                 if not output_json:
                     console.print("[dim]Dry run: would re-index the above files[/dim]")
                 else:
-                    print_json("success", "Dry run complete", data={
-                        "would_repair": len(existing_incomplete),
-                        "garbled_files": garbled_count,
-                        "files": existing_incomplete,
-                    })
+                    print_json(
+                        "success",
+                        "Dry run complete",
+                        data={
+                            "would_repair": len(existing_incomplete),
+                            "garbled_files": garbled_count,
+                            "files": existing_incomplete,
+                        },
+                    )
                 interaction_logger.finish(result_count=0)
                 return
 
@@ -1481,7 +1567,7 @@ def sync_directory_command(
             print_info(f"Corpus type: {corpus_type}")
             print_info(f"Models: {configured_models}")
             # Show sync mode for code corpora
-            if corpus_type == 'code':
+            if corpus_type == "code":
                 if repair:
                     print_info("Sync mode: repair (re-index incomplete files)")
                 elif force:
@@ -1507,11 +1593,12 @@ def sync_directory_command(
         # ensuring every repo is treated atomically regardless of whether the user
         # pointed at a single repo or a folder-of-repos.
         all_dir_git_roots: List[str] = []  # flattened, in dir_paths order
-        if corpus_type == 'code' and dir_paths:
+        if corpus_type == "code" and dir_paths:
             _git_disc = GitProjectDiscovery()
             for dp in dir_paths:
                 if _is_git_repo(dp):
                     import git as _gitlib
+
                     try:
                         _r = _gitlib.Repo(str(dp), search_parent_directories=True)
                         all_dir_git_roots.append(_r.working_tree_dir)
@@ -1528,7 +1615,7 @@ def sync_directory_command(
             git_discovery = GitProjectDiscovery()
 
             non_code_path_groups: Optional[Dict[Optional[str], List[Path]]] = None
-            if corpus_type == 'code':
+            if corpus_type == "code":
                 repo_roots_to_check = all_dir_git_roots
                 # Also include git roots of any explicit single files
                 for sf in single_files:
@@ -1545,7 +1632,9 @@ def sync_directory_command(
 
                 if non_code_path_groups is not None and None in non_code_path_groups:
                     if not output_json:
-                        print_info("Warning: --git-update specified but some paths are not in git repos")
+                        print_info(
+                            "Warning: --git-update specified but some paths are not in git repos"
+                        )
 
                 for git_root in repo_roots_to_check:
                     meta = git_discovery.extract_metadata(git_root)
@@ -1553,10 +1642,14 @@ def sync_directory_command(
                         if indexed_projects[meta.identifier].commit_hash == meta.commit_hash:
                             skip_git_roots.add(git_root)
                             if not output_json:
-                                print_info(f"Skipping {meta.identifier}: commit unchanged ({meta.commit_hash[:7]})")
+                                print_info(
+                                    f"Skipping {meta.identifier}: commit unchanged ({meta.commit_hash[:7]})"
+                                )
                         else:
                             if not output_json:
-                                print_info(f"Commit changed for {meta.identifier}: {indexed_projects[meta.identifier].commit_hash[:7]} -> {meta.commit_hash[:7]}")
+                                print_info(
+                                    f"Commit changed for {meta.identifier}: {indexed_projects[meta.identifier].commit_hash[:7]} -> {meta.commit_hash[:7]}"
+                                )
                     elif meta:
                         if not output_json:
                             print_info(f"New project detected: {meta.identifier}")
@@ -1588,12 +1681,14 @@ def sync_directory_command(
         files = []
         discovered_git_roots: List[str] = []
         for dir_path in dir_paths:
-            if corpus_type != 'code' and skip_git_roots:
+            if corpus_type != "code" and skip_git_roots:
                 dir_git_root = _find_git_root(dir_path)
                 if dir_git_root in skip_git_roots:
                     continue
             dir_files, dir_roots = discover_files(
-                dir_path, file_types, corpus_type,
+                dir_path,
+                file_types,
+                corpus_type,
                 skip_dir_prefixes=skip_dir_prefixes,
                 skip_git_roots=skip_git_roots,
             )
@@ -1625,9 +1720,13 @@ def sync_directory_command(
                 if repo_count > 0:
                     loc_word = f"{repo_count} repo{'s' if repo_count != 1 else ''}"
                 else:
-                    loc_word = f"{len(dir_paths)} {'directory' if len(dir_paths) == 1 else 'directories'}"
+                    loc_word = (
+                        f"{len(dir_paths)} {'directory' if len(dir_paths) == 1 else 'directories'}"
+                    )
                 if single_files:
-                    print_info(f"Found {total_from_dirs} files across {loc_word}, plus {len(single_files)} individual file{'s' if len(single_files) > 1 else ''}")
+                    print_info(
+                        f"Found {total_from_dirs} files across {loc_word}, plus {len(single_files)} individual file{'s' if len(single_files) > 1 else ''}"
+                    )
                 else:
                     print_info(f"Found {len(files)} files across {loc_word}")
 
@@ -1668,13 +1767,17 @@ def sync_directory_command(
             if missing_from_meili:
                 meili_backfill_paths = [p for p in missing_from_meili if Path(p).exists()]
                 if not output_json and meili_backfill_paths:
-                    print_info(f"Found {len(meili_backfill_paths)} files in Qdrant missing from MeiliSearch")
+                    print_info(
+                        f"Found {len(meili_backfill_paths)} files in Qdrant missing from MeiliSearch"
+                    )
 
             # Files in MeiliSearch but not in Qdrant need backfill
             if missing_from_qdrant:
                 qdrant_backfill_paths = [p for p in missing_from_qdrant if Path(p).exists()]
                 if not output_json and qdrant_backfill_paths:
-                    print_info(f"Found {len(qdrant_backfill_paths)} files in MeiliSearch missing from Qdrant")
+                    print_info(
+                        f"Found {len(qdrant_backfill_paths)} files in MeiliSearch missing from Qdrant"
+                    )
 
             # Check for new/modified files not in either system
             # Convert discovered files to absolute path strings for comparison
@@ -1687,7 +1790,9 @@ def sync_directory_command(
 
             # Detect renames: files that appear "new" but match existing content
             detected_renames = _detect_renames(
-                new_file_paths, sync_manager, corpus,
+                new_file_paths,
+                sync_manager,
+                corpus,
             )
 
             renamed_old_paths = set()
@@ -1714,7 +1819,9 @@ def sync_directory_command(
                         common = os.path.commonpath([old_dir, new_dir])
                         old_rel = os.path.relpath(old_dir, common) + "/"
                         new_rel = os.path.relpath(new_dir, common) + "/"
-                        print_info(f"Detected {len(detected_renames)} renames: {old_rel} -> {new_rel}")
+                        print_info(
+                            f"Detected {len(detected_renames)} renames: {old_rel} -> {new_rel}"
+                        )
                     else:
                         print_info(f"Detected {len(detected_renames)} renamed/moved files")
 
@@ -1725,26 +1832,32 @@ def sync_directory_command(
                 if not dry_run:
                     # Update MeiliSearch FIRST (needs old file_path to find docs via Qdrant)
                     meili_updated = _handle_renames_meili(
-                        detected_renames, qdrant, meili, corpus,
+                        detected_renames,
+                        qdrant,
+                        meili,
+                        corpus,
                     )
 
                     # Update Qdrant metadata
                     rename_tuples = [
-                        (old, new, {'filename': Path(new).name})
-                        for old, new in detected_renames
+                        (old, new, {"filename": Path(new).name}) for old, new in detected_renames
                     ]
                     sync_manager.handle_renames(corpus, rename_tuples)
                     files_renamed = len(detected_renames)
 
                     if not output_json:
-                        print_info(f"Renamed {files_renamed} files ({meili_updated} chunks updated in both indexes)")
+                        print_info(
+                            f"Renamed {files_renamed} files ({meili_updated} chunks updated in both indexes)"
+                        )
 
                 # Remove renamed files from new_file_paths so they aren't re-indexed
                 new_file_paths -= renamed_new_paths
 
             # Detect stale paths: indexed files that no longer exist on disk
             stale_paths = _detect_stale_paths(
-                all_indexed_paths, dir_paths, renamed_old_paths,
+                all_indexed_paths,
+                dir_paths,
+                renamed_old_paths,
             )
 
             if stale_paths:
@@ -1762,6 +1875,7 @@ def sync_directory_command(
                         FilterSelector,
                         MatchValue,
                     )
+
                     meili.delete_documents_by_file_paths(corpus, stale_paths)
                     for stale_path in stale_paths:
                         qdrant.delete(
@@ -1770,12 +1884,11 @@ def sync_directory_command(
                                 filter=Filter(
                                     must=[
                                         FieldCondition(
-                                            key="file_path",
-                                            match=MatchValue(value=stale_path)
+                                            key="file_path", match=MatchValue(value=stale_path)
                                         )
                                     ]
                                 )
-                            )
+                            ),
                         )
                     stale_cleaned = len(stale_paths)
 
@@ -1785,13 +1898,10 @@ def sync_directory_command(
             # Files in both systems that survived rename/stale handling still need a
             # mtime+size check so edited-but-not-renamed files don't silently get skipped.
             unchanged_candidate_paths = (
-                (in_both_systems & discovered_file_paths)
-                - renamed_new_paths
-                - set(stale_paths)
+                (in_both_systems & discovered_file_paths) - renamed_new_paths - set(stale_paths)
             )
             unchanged_candidates = [
-                f for f in files
-                if str(f.absolute()) in unchanged_candidate_paths
+                f for f in files if str(f.absolute()) in unchanged_candidate_paths
             ]
 
             modified_files: List[Path] = []
@@ -1805,9 +1915,9 @@ def sync_directory_command(
 
             # New files (not in either system) + modified files (mtime+size changed)
             files_to_process = [
-                f for f in files
-                if str(f.absolute()) in new_file_paths
-                or str(f.absolute()) in modified_file_set
+                f
+                for f in files
+                if str(f.absolute()) in new_file_paths or str(f.absolute()) in modified_file_set
             ]
 
             already_indexed_count = len(truly_unchanged)
@@ -1817,7 +1927,9 @@ def sync_directory_command(
 
             if not output_json:
                 if already_indexed_count > 0:
-                    print_info(f"Corpus: {already_indexed_count}/{total_corpus_files} files indexed, processing {len(files_to_process)} new/modified files")
+                    print_info(
+                        f"Corpus: {already_indexed_count}/{total_corpus_files} files indexed, processing {len(files_to_process)} new/modified files"
+                    )
                 elif len(files_to_process) > 0:
                     print_info(f"Processing {len(files_to_process)} new/modified files")
 
@@ -1835,7 +1947,9 @@ def sync_directory_command(
 
             if not output_json:
                 if already_indexed_count > 0:
-                    print_info(f"Corpus: {already_indexed_count}/{total_corpus_files} files indexed, processing {len(files_to_process)} new/modified files")
+                    print_info(
+                        f"Corpus: {already_indexed_count}/{total_corpus_files} files indexed, processing {len(files_to_process)} new/modified files"
+                    )
                 elif len(files_to_process) > 0:
                     print_info(f"Processing {len(files_to_process)} new/modified files")
 
@@ -1872,12 +1986,15 @@ def sync_directory_command(
             if not dry_run:
                 _stamp_last_sync_metadata(qdrant, corpus)
             if output_json:
-                print_json("success", "All files already indexed", data={
-                    "indexed": 0,
-                    "skipped": already_indexed_count
-                })
+                print_json(
+                    "success",
+                    "All files already indexed",
+                    data={"indexed": 0, "skipped": already_indexed_count},
+                )
             else:
-                print_info("All files are already indexed (use --force to reindex, or --parity for cross-system checks)")
+                print_info(
+                    "All files are already indexed (use --force to reindex, or --parity for cross-system checks)"
+                )
             interaction_logger.finish(result_count=0)
             return
 
@@ -1890,9 +2007,7 @@ def sync_directory_command(
 
         # Capture indexed paths BEFORE indexing so we can detect orphans
         # (indexed files no longer on disk) on a force, full-directory sync.
-        full_directory_force = (
-            force and not from_file and not single_files and bool(dir_paths)
-        )
+        full_directory_force = force and not from_file and not single_files and bool(dir_paths)
         sync_pre_run_paths = set()
         if full_directory_force:
             sync_pre_run_paths = MetadataBasedSync(qdrant)._get_indexed_file_paths_set(corpus)
@@ -1912,7 +2027,9 @@ def sync_directory_command(
                 if verbose:
                     data["files"] = [str(f) for f in files]
                     if detected_renames:
-                        data["renames"] = [{"old": old, "new": new} for old, new in detected_renames]
+                        data["renames"] = [
+                            {"old": old, "new": new} for old, new in detected_renames
+                        ]
                     if stale_paths:
                         data["stale_paths"] = stale_paths
                     if meili_backfill_paths:
@@ -1930,7 +2047,9 @@ def sync_directory_command(
                 if stale_paths:
                     console.print(f"Would clean up: {len(stale_paths)} stale paths")
                 if meili_backfill_paths:
-                    console.print(f"Would backfill to MeiliSearch: {len(meili_backfill_paths)} files")
+                    console.print(
+                        f"Would backfill to MeiliSearch: {len(meili_backfill_paths)} files"
+                    )
                 if qdrant_backfill_paths:
                     console.print(f"Would backfill to Qdrant: {len(qdrant_backfill_paths)} files")
                 if verbose:
@@ -1975,15 +2094,15 @@ def sync_directory_command(
             else:
                 # Fallback config
                 model_config = {
-                    'chunk_size': 512,
-                    'chunk_overlap': 50,
-                    'char_to_token_ratio': 3.3,
+                    "chunk_size": 512,
+                    "chunk_overlap": 50,
+                    "char_to_token_ratio": 3.3,
                 }
 
             # Calculate hard_max_chars from embedding model's max_seq_length
             # This prevents OOM during embedding for dense generated code (OpenAPI, protobuf)
             embedding_model_config = EMBEDDING_MODELS.get(first_model, {})
-            max_seq_length = embedding_model_config.get('max_seq_length', 8192)
+            max_seq_length = embedding_model_config.get("max_seq_length", 8192)
             hard_max_chars = max_seq_length * 2  # Conservative: assume 0.5 tokens/char worst case
 
             # Pre-chunk code files in parallel BEFORE initializing EmbeddingClient.
@@ -1994,13 +2113,15 @@ def sync_directory_command(
             # the fork pool here — before any GPU/ONNX state exists — the children
             # inherit a clean address space and tree-sitter runs safely.
             pre_chunked_code_files: Dict[str, List[Dict[str, Any]]] = {}
-            if corpus_type == 'code' and effective_text_workers > 1:
+            if corpus_type == "code" and effective_text_workers > 1:
                 if not output_json:
-                    print_info(f"Parallel chunking {len(files)} code files with {effective_text_workers} workers...")
+                    print_info(
+                        f"Parallel chunking {len(files)} code files with {effective_text_workers} workers..."
+                    )
                 pre_chunked_code_files = _parallel_chunk_code_files(
                     [str(f) for f in files],
-                    model_config.get('chunk_size', 400),
-                    model_config.get('chunk_overlap', 20),
+                    model_config.get("chunk_size", 400),
+                    model_config.get("chunk_overlap", 20),
                     effective_text_workers,
                     verbose,
                     output_json,
@@ -2012,19 +2133,16 @@ def sync_directory_command(
 
             # Initialize embedding client after chunking so the fork pool above
             # never inherits PyTorch/ONNX allocator state.
-            use_gpu = not no_gpu and os.environ.get('ARC_NO_GPU', '').lower() not in ('1', 'true')
+            use_gpu = not no_gpu and os.environ.get("ARC_NO_GPU", "").lower() not in ("1", "true")
             embedding_client = EmbeddingClient(use_gpu=use_gpu, cpu_workers=cpu_workers)
 
             # Initialize git discovery for code corpora
-            git_discovery = GitProjectDiscovery() if corpus_type == 'code' else None
+            git_discovery = GitProjectDiscovery() if corpus_type == "code" else None
             git_metadata_cache: Dict[str, Any] = {}  # Cache by git root path
 
             # Create dual indexer
             dual_indexer = DualIndexer(
-                qdrant_client=qdrant,
-                meili_client=meili,
-                collection_name=corpus,
-                index_name=corpus
+                qdrant_client=qdrant, meili_client=meili, collection_name=corpus, index_name=corpus
             )
 
             # Install memory-diagnostic SIGUSR1 handler and take baseline snapshot.
@@ -2047,6 +2165,7 @@ def sync_directory_command(
             from arcaneum.embeddings.memory_probe import (
                 start_probe_thread as _start_probe_thread,
             )
+
             _install_mem_dump(embedding_client)
             _set_phase("startup")
             _stop_mem_probe = _start_probe_thread(
@@ -2067,7 +2186,9 @@ def sync_directory_command(
                 console=console,
                 disable=output_json,
             ) as progress:
-                task = progress.add_task("Indexing...", total=total_corpus_files, completed=already_indexed_count)
+                task = progress.add_task(
+                    "Indexing...", total=total_corpus_files, completed=already_indexed_count
+                )
 
                 # Track repair results for quality comparison reporting
                 repair_results = []  # (filename, old_score, new_score, action)
@@ -2082,7 +2203,9 @@ def sync_directory_command(
                         if force and not repair:
                             file_path_str = str(file_path.absolute())
                             if verbose and not output_json:
-                                progress.console.print(f"[dim]Deleting existing chunks for {file_path.name}...[/dim]")
+                                progress.console.print(
+                                    f"[dim]Deleting existing chunks for {file_path.name}...[/dim]"
+                                )
                             # Delete from Qdrant
                             dual_indexer.delete_by_file_path(file_path_str)
                             # Delete from MeiliSearch
@@ -2090,11 +2213,13 @@ def sync_directory_command(
 
                         # Chunk file based on corpus type
                         if verbose and not output_json:
-                            progress.console.print(f"[dim]Extracting text from {file_path.name}...[/dim]")
+                            progress.console.print(
+                                f"[dim]Extracting text from {file_path.name}...[/dim]"
+                            )
 
                         # Skip oversized code files before chunking — they are almost
                         # certainly generated/vendored and waste GPU time or cause OOM.
-                        if corpus_type == 'code':
+                        if corpus_type == "code":
                             file_size = file_path.stat().st_size
                             if file_size > _MAX_CODE_FILE_SIZE:
                                 logger.warning(
@@ -2110,7 +2235,7 @@ def sync_directory_command(
                                 progress.advance(task)
                                 continue
 
-                        if corpus_type == 'pdf':
+                        if corpus_type == "pdf":
                             # chunk_pdf_file handles OCR internally via needs_ocr() check:
                             # extracts without OCR first, then re-extracts with OCR only
                             # if garbled text (U+FFFD, encoding garbage) is detected.
@@ -2124,14 +2249,14 @@ def sync_directory_command(
                                 and prior_score < quality_threshold
                             )
                             chunks = chunk_pdf_file(file_path, model_config, use_ocr=force_ocr)
-                        elif corpus_type == 'markdown':
+                        elif corpus_type == "markdown":
                             chunks = chunk_markdown_file(
                                 file_path,
-                                model_config.get('chunk_size', 512),
-                                model_config.get('chunk_overlap', 50),
+                                model_config.get("chunk_size", 512),
+                                model_config.get("chunk_overlap", 50),
                                 hard_max_chars=hard_max_chars,
                             )
-                        elif corpus_type == 'code':
+                        elif corpus_type == "code":
                             # Use pre-chunked data if available. Pop (not get)
                             # so the dict shrinks as the run progresses — on
                             # large corpora this dict can hold GBs of chunk
@@ -2141,17 +2266,21 @@ def sync_directory_command(
                             if chunks is None:
                                 chunks = chunk_code_file(
                                     file_path,
-                                    model_config.get('chunk_size', 400),
-                                    model_config.get('chunk_overlap', 20),
-                                    hard_max_chars=hard_max_chars
+                                    model_config.get("chunk_size", 400),
+                                    model_config.get("chunk_overlap", 20),
+                                    hard_max_chars=hard_max_chars,
                                 )
                         else:
-                            logger.warning(f"Unknown corpus type: {corpus_type}, skipping {file_path}")
+                            logger.warning(
+                                f"Unknown corpus type: {corpus_type}, skipping {file_path}"
+                            )
                             continue
 
                         if not chunks:
                             if verbose and not output_json:
-                                progress.console.print(f"[yellow]  No text extracted from {file_path.name}[/yellow]")
+                                progress.console.print(
+                                    f"[yellow]  No text extracted from {file_path.name}[/yellow]"
+                                )
                             if repair:
                                 repair_results.append((file_path.name, None, None, "no_text"))
                             progress.advance(task)
@@ -2164,46 +2293,59 @@ def sync_directory_command(
 
                             if old_score is not None:
                                 from ..indexing.pdf.quality import score_chunks
+
                                 new_score = score_chunks(chunks)
 
                                 if new_score > old_score:
                                     action = "improved"
                                     if not output_json:
                                         progress.console.print(
-                                            f"[green]  {file_path.name}: {old_score:.2f} → {new_score:.2f} (improved)[/green]")
+                                            f"[green]  {file_path.name}: {old_score:.2f} → {new_score:.2f} (improved)[/green]"
+                                        )
                                 else:
                                     action = "skipped"
                                     if verbose and not output_json:
                                         progress.console.print(
-                                            f"[yellow]  {file_path.name}: {old_score:.2f} → {new_score:.2f} (skipped, no improvement)[/yellow]")
-                                    repair_results.append((file_path.name, old_score, new_score, action))
+                                            f"[yellow]  {file_path.name}: {old_score:.2f} → {new_score:.2f} (skipped, no improvement)[/yellow]"
+                                        )
+                                    repair_results.append(
+                                        (file_path.name, old_score, new_score, action)
+                                    )
                                     progress.advance(task)
                                     continue
 
-                                repair_results.append((file_path.name, old_score, new_score, action))
+                                repair_results.append(
+                                    (file_path.name, old_score, new_score, action)
+                                )
                             else:
                                 # Incomplete file (not garbled) — always re-index
                                 repair_results.append((file_path.name, None, None, "incomplete"))
 
                             # Now safe to delete old chunks before indexing
                             if verbose and not output_json:
-                                progress.console.print(f"[dim]  Deleting old chunks for {file_path.name}...[/dim]")
+                                progress.console.print(
+                                    f"[dim]  Deleting old chunks for {file_path.name}...[/dim]"
+                                )
                             dual_indexer.delete_by_file_path(file_path_str)
                             meili.delete_documents_by_file_paths(corpus, [file_path_str])
 
                         if verbose and not output_json:
-                            progress.console.print(f"[dim]  Created {len(chunks)} chunks, generating embeddings...[/dim]")
+                            progress.console.print(
+                                f"[dim]  Created {len(chunks)} chunks, generating embeddings...[/dim]"
+                            )
 
                         # Build dual index documents
                         documents = []
                         file_hash = compute_file_hash(file_path)
                         quick_hash = compute_quick_hash(file_path)
-                        chunking_version = "code-ast:v1" if corpus_type == "code" else f"{corpus_type}:v1"
+                        chunking_version = (
+                            "code-ast:v1" if corpus_type == "code" else f"{corpus_type}:v1"
+                        )
 
                         # Batch embedding: collect all chunk texts and embed together
                         # This is much more efficient than embedding one chunk at a time,
                         # especially for CPU mode where batching reduces Python overhead
-                        chunk_texts = [chunk['text'] for chunk in chunks]
+                        chunk_texts = [chunk["text"] for chunk in chunks]
 
                         # Log large chunks for OOM debugging (only in verbose mode)
                         chunk_sizes = [len(t) for t in chunk_texts]
@@ -2215,7 +2357,9 @@ def sync_directory_command(
                                     f"limit={hard_max_chars}; windowing/hard-limit checks preserved full text[/dim]"
                                 )
                             else:
-                                limit_text = str(hard_max_chars) if hard_max_chars else "unconfigured"
+                                limit_text = (
+                                    str(hard_max_chars) if hard_max_chars else "unconfigured"
+                                )
                                 progress.console.print(
                                     f"[yellow]  Oversized chunks remain: max={max_chunk_size} chars, "
                                     f"limit={limit_text}; embedding safety may clip text if upstream chunking did not split it[/yellow]"
@@ -2237,7 +2381,7 @@ def sync_directory_command(
                             for model in model_list:
                                 embedding = model_embeddings[model][i]
                                 # Handle both list and numpy array returns
-                                if hasattr(embedding, 'tolist'):
+                                if hasattr(embedding, "tolist"):
                                     vectors[model] = embedding.tolist()
                                 else:
                                     vectors[model] = list(embedding)
@@ -2245,8 +2389,10 @@ def sync_directory_command(
                             # Create document with shared metadata
                             doc = DualIndexDocument(
                                 id=str(uuid4()),
-                                content=chunk['text'],
-                                file_path=str(file_path.absolute()),  # Use absolute path for change detection
+                                content=chunk["text"],
+                                file_path=str(
+                                    file_path.absolute()
+                                ),  # Use absolute path for change detection
                                 filename=file_path.name,
                                 file_extension=file_path.suffix,
                                 chunk_index=i,
@@ -2260,49 +2406,51 @@ def sync_directory_command(
                             )
 
                             # Add type-specific metadata
-                            chunk_meta = chunk.get('metadata', {})
-                            quality_manifest = chunk_meta.get('quality_manifest')
+                            chunk_meta = chunk.get("metadata", {})
+                            quality_manifest = chunk_meta.get("quality_manifest")
 
-                            if corpus_type == 'pdf':
-                                doc.page_number = chunk_meta.get('page_number')
-                                doc.page_count = chunk_meta.get('page_count')
-                                if chunk_meta.get('extraction_floor'):
+                            if corpus_type == "pdf":
+                                doc.page_number = chunk_meta.get("page_number")
+                                doc.page_count = chunk_meta.get("page_count")
+                                if chunk_meta.get("extraction_floor"):
                                     doc.extraction_floor = True
-                                doc.ocr_confidence = chunk_meta.get('ocr_confidence')
-                                doc.ocr_language = chunk_meta.get('ocr_language')
-                                doc.ocr_pages_processed = chunk_meta.get('ocr_pages_processed')
-                                doc.ocr_pages_failed = chunk_meta.get('ocr_pages_failed')
+                                doc.ocr_confidence = chunk_meta.get("ocr_confidence")
+                                doc.ocr_language = chunk_meta.get("ocr_language")
+                                doc.ocr_pages_processed = chunk_meta.get("ocr_pages_processed")
+                                doc.ocr_pages_failed = chunk_meta.get("ocr_pages_failed")
                                 doc.ocr_low_confidence_word_count = chunk_meta.get(
-                                    'ocr_low_confidence_word_count'
+                                    "ocr_low_confidence_word_count"
                                 )
-                                doc.ocr_merge_strategy = chunk_meta.get('ocr_merge_strategy')
-                                doc.ocr_triggered_by = chunk_meta.get('ocr_triggered_by')
-                                doc.document_type = 'pdf'
+                                doc.ocr_merge_strategy = chunk_meta.get("ocr_merge_strategy")
+                                doc.ocr_triggered_by = chunk_meta.get("ocr_triggered_by")
+                                doc.document_type = "pdf"
 
-                            elif corpus_type == 'markdown':
-                                doc.language = 'markdown'
-                                doc.section = chunk_meta.get('header_path')
-                                if chunk_meta.get('has_code_blocks'):
-                                    doc.tags = ['has-code']
+                            elif corpus_type == "markdown":
+                                doc.language = "markdown"
+                                doc.section = chunk_meta.get("header_path")
+                                if chunk_meta.get("has_code_blocks"):
+                                    doc.tags = ["has-code"]
 
-                            elif corpus_type == 'code':
-                                doc.language = chunk_meta.get('language', 'unknown')
-                                doc.line_number = chunk_meta.get('line_number')
+                            elif corpus_type == "code":
+                                doc.language = chunk_meta.get("language", "unknown")
+                                doc.line_number = chunk_meta.get("line_number")
                                 quality_manifest = _build_quality_manifest(
                                     file_path=file_path,
-                                    corpus_type='code',
+                                    corpus_type="code",
                                     source_hash=file_hash,
                                     chunk_count=len(chunks),
                                     metadata=chunk_meta,
-                                    extraction_method=chunk_meta.get('method'),
+                                    extraction_method=chunk_meta.get("method"),
                                 )
 
                                 # Extract git metadata for code files
                                 if git_discovery:
                                     # Find git root for this file
                                     git_root = None
-                                    for parent in [file_path.absolute()] + list(file_path.absolute().parents):
-                                        if (parent / '.git').exists():
+                                    for parent in [file_path.absolute()] + list(
+                                        file_path.absolute().parents
+                                    ):
+                                        if (parent / ".git").exists():
                                             git_root = str(parent)
                                             break
 
@@ -2312,14 +2460,20 @@ def sync_directory_command(
                                             git_meta = git_discovery.extract_metadata(git_root)
                                             git_metadata_cache[git_root] = git_meta
                                             if verbose and not output_json and git_meta:
-                                                progress.console.print(f"[blue]Indexing repo: {git_meta.identifier} ({git_root})[/blue]")
+                                                progress.console.print(
+                                                    f"[blue]Indexing repo: {git_meta.identifier} ({git_root})[/blue]"
+                                                )
                                         else:
                                             git_meta = git_metadata_cache[git_root]
 
                                         if git_meta:
                                             # Include version_identifier for --git-version mode
-                                            include_version = git_version and git_root in version_identifiers
-                                            apply_git_metadata(doc, git_meta, include_version_id=include_version)
+                                            include_version = (
+                                                git_version and git_root in version_identifiers
+                                            )
+                                            apply_git_metadata(
+                                                doc, git_meta, include_version_id=include_version
+                                            )
 
                             doc.quality_manifest = quality_manifest
                             documents.append(doc)
@@ -2327,7 +2481,9 @@ def sync_directory_command(
                         # Index to both systems
                         if documents:
                             if verbose and not output_json:
-                                progress.console.print(f"[dim]  Indexing {len(documents)} chunks to Qdrant + MeiliSearch...[/dim]")
+                                progress.console.print(
+                                    f"[dim]  Indexing {len(documents)} chunks to Qdrant + MeiliSearch...[/dim]"
+                                )
 
                             _set_phase(f"indexing:{file_path.name}")
                             qdrant_count, meili_count = dual_indexer.index_batch(documents)
@@ -2336,8 +2492,10 @@ def sync_directory_command(
                             total_meili += meili_count
 
                             if verbose and not output_json:
-                                embedded_size = sum(len(c['text'].encode('utf-8')) for c in chunks)
-                                progress.console.print(f"[green]  ✓ {file_path.name} — {len(chunks)} chunks, {format_size(embedded_size)} embedded[/green]")
+                                embedded_size = sum(len(c["text"].encode("utf-8")) for c in chunks)
+                                progress.console.print(
+                                    f"[green]  ✓ {file_path.name} — {len(chunks)} chunks, {format_size(embedded_size)} embedded[/green]"
+                                )
 
                         total_indexed += 1
 
@@ -2351,6 +2509,7 @@ def sync_directory_command(
                         if total_indexed % 50 == 0:
                             try:
                                 import gc as _gc
+
                                 _gc.collect()
                                 embedding_client._clear_gpu_cache()
                             except Exception:
@@ -2411,6 +2570,7 @@ def sync_directory_command(
                             if _drv_delta > 500 * 1024 * 1024:
                                 try:
                                     import gc as _gc
+
                                     _gc.collect()
                                     embedding_client._clear_gpu_cache()
                                 except Exception:
@@ -2423,7 +2583,9 @@ def sync_directory_command(
                         files_failed += 1
                         logger.error(f"Failed to process {file_path}: {e}")
                         if not output_json:
-                            progress.console.print(f"[yellow]Warning: Failed to process {file_path.name}: {e}[/yellow]")
+                            progress.console.print(
+                                f"[yellow]Warning: Failed to process {file_path.name}: {e}[/yellow]"
+                            )
 
                             # Check if this is a GPU OOM error and provide helpful re-index command
                             error_str = str(e).lower()
@@ -2436,8 +2598,12 @@ def sync_directory_command(
                             ]
                             if any(pattern in error_str for pattern in gpu_oom_patterns):
                                 abs_path = file_path.absolute()
-                                reindex_cmd = f"arc corpus sync {corpus} \"{abs_path}\" --force --no-gpu"
-                                progress.console.print(f"[dim]  To re-index with CPU: {reindex_cmd}[/dim]")
+                                reindex_cmd = (
+                                    f'arc corpus sync {corpus} "{abs_path}" --force --no-gpu'
+                                )
+                                progress.console.print(
+                                    f"[dim]  To re-index with CPU: {reindex_cmd}[/dim]"
+                                )
 
                     progress.advance(task)
                     _set_phase("idle")
@@ -2468,7 +2634,9 @@ def sync_directory_command(
 
         if meili_backfill_paths and not force:
             if not output_json:
-                console.print(f"\n[blue]Backfilling {len(meili_backfill_paths)} files to MeiliSearch...[/blue]")
+                console.print(
+                    f"\n[blue]Backfilling {len(meili_backfill_paths)} files to MeiliSearch...[/blue]"
+                )
 
             with AdaptiveProgress(
                 SpinnerColumn(),
@@ -2480,9 +2648,17 @@ def sync_directory_command(
                 disable=output_json,
             ) as progress:
                 backfill_task = progress.add_task("Backfilling...", total=len(meili_backfill_paths))
-                meili_backfilled, meili_backfill_chunks, meili_backfill_failed = _backfill_qdrant_to_meili(
-                    qdrant, meili, corpus, meili_backfill_paths,
-                    verbose, output_json, progress, backfill_task,
+                meili_backfilled, meili_backfill_chunks, meili_backfill_failed = (
+                    _backfill_qdrant_to_meili(
+                        qdrant,
+                        meili,
+                        corpus,
+                        meili_backfill_paths,
+                        verbose,
+                        output_json,
+                        progress,
+                        backfill_task,
+                    )
                 )
 
             total_meili += meili_backfill_chunks
@@ -2495,10 +2671,12 @@ def sync_directory_command(
 
         if qdrant_backfill_paths and not force:
             if not output_json:
-                console.print(f"\n[blue]Backfilling {len(qdrant_backfill_paths)} files to Qdrant (requires embedding)...[/blue]")
+                console.print(
+                    f"\n[blue]Backfilling {len(qdrant_backfill_paths)} files to Qdrant (requires embedding)...[/blue]"
+                )
 
             # Need embedding client for Qdrant backfill
-            use_gpu = not no_gpu and os.environ.get('ARC_NO_GPU', '').lower() not in ('1', 'true')
+            use_gpu = not no_gpu and os.environ.get("ARC_NO_GPU", "").lower() not in ("1", "true")
             embedding_client = EmbeddingClient(use_gpu=use_gpu)
 
             # Get model config for chunking
@@ -2507,25 +2685,27 @@ def sync_directory_command(
                 model_config = DEFAULT_MODELS[first_model].__dict__
             else:
                 model_config = {
-                    'chunk_size': 512,
-                    'chunk_overlap': 50,
-                    'char_to_token_ratio': 3.3,
+                    "chunk_size": 512,
+                    "chunk_overlap": 50,
+                    "char_to_token_ratio": 3.3,
                 }
 
             # Calculate hard_max_chars from embedding model's max_seq_length
             embedding_model_config = EMBEDDING_MODELS.get(first_model, {})
-            max_seq_length = embedding_model_config.get('max_seq_length', 8192)
+            max_seq_length = embedding_model_config.get("max_seq_length", 8192)
             hard_max_chars = max_seq_length * 2
 
             # Pre-chunk code files for backfill in parallel if workers > 1
             backfill_pre_chunked: Dict[str, List[Dict[str, Any]]] = {}
-            if corpus_type == 'code' and effective_text_workers > 1:
+            if corpus_type == "code" and effective_text_workers > 1:
                 if not output_json:
-                    print_info(f"Parallel chunking {len(qdrant_backfill_paths)} code files for backfill...")
+                    print_info(
+                        f"Parallel chunking {len(qdrant_backfill_paths)} code files for backfill..."
+                    )
                 backfill_pre_chunked = _parallel_chunk_code_files(
                     qdrant_backfill_paths,
-                    model_config.get('chunk_size', 400),
-                    model_config.get('chunk_overlap', 20),
+                    model_config.get("chunk_size", 400),
+                    model_config.get("chunk_overlap", 20),
                     effective_text_workers,
                     verbose,
                     output_json,
@@ -2542,7 +2722,9 @@ def sync_directory_command(
                 console=console,
                 disable=output_json,
             ) as progress:
-                backfill_task = progress.add_task("Backfilling Qdrant...", total=len(qdrant_backfill_paths))
+                backfill_task = progress.add_task(
+                    "Backfilling Qdrant...", total=len(qdrant_backfill_paths)
+                )
 
                 for file_path_str in qdrant_backfill_paths:
                     file_path = Path(file_path_str)
@@ -2550,25 +2732,25 @@ def sync_directory_command(
 
                     try:
                         # Chunk file based on corpus type
-                        if corpus_type == 'pdf':
+                        if corpus_type == "pdf":
                             chunks = chunk_pdf_file(file_path, model_config)
-                        elif corpus_type == 'markdown':
+                        elif corpus_type == "markdown":
                             chunks = chunk_markdown_file(
                                 file_path,
-                                model_config.get('chunk_size', 512),
-                                model_config.get('chunk_overlap', 50),
+                                model_config.get("chunk_size", 512),
+                                model_config.get("chunk_overlap", 50),
                                 hard_max_chars=hard_max_chars,
                             )
-                        elif corpus_type == 'code':
+                        elif corpus_type == "code":
                             # Use pre-chunked data if available
                             if file_path_str in backfill_pre_chunked:
                                 chunks = backfill_pre_chunked[file_path_str]
                             else:
                                 chunks = chunk_code_file(
                                     file_path,
-                                    model_config.get('chunk_size', 400),
-                                    model_config.get('chunk_overlap', 20),
-                                    hard_max_chars=hard_max_chars
+                                    model_config.get("chunk_size", 400),
+                                    model_config.get("chunk_overlap", 20),
+                                    hard_max_chars=hard_max_chars,
                                 )
                         else:
                             progress.advance(backfill_task)
@@ -2580,12 +2762,15 @@ def sync_directory_command(
 
                         # Build Qdrant documents with embeddings
                         from qdrant_client.models import PointStruct
+
                         points = []
                         file_hash = compute_file_hash(file_path)
                         quick_hash = compute_quick_hash(file_path)
-                        chunking_version = "code-ast:v1" if corpus_type == "code" else f"{corpus_type}:v1"
+                        chunking_version = (
+                            "code-ast:v1" if corpus_type == "code" else f"{corpus_type}:v1"
+                        )
 
-                        chunk_texts = [chunk['text'] for chunk in chunks]
+                        chunk_texts = [chunk["text"] for chunk in chunks]
                         model_embeddings = {}
                         for model in model_list:
                             model_embeddings[model] = embedding_client.embed(
@@ -2596,7 +2781,7 @@ def sync_directory_command(
                             vectors = {}
                             for model in model_list:
                                 embedding = model_embeddings[model][i]
-                                if hasattr(embedding, 'tolist'):
+                                if hasattr(embedding, "tolist"):
                                     vectors[model] = embedding.tolist()
                                 else:
                                     vectors[model] = list(embedding)
@@ -2604,7 +2789,7 @@ def sync_directory_command(
                             # Build payload
                             payload = {
                                 **persisted_metadata_fields(),
-                                "text": chunk['text'],
+                                "text": chunk["text"],
                                 "file_path": str(file_path.absolute()),
                                 "filename": file_path.name,
                                 "file_extension": file_path.suffix,
@@ -2618,15 +2803,15 @@ def sync_directory_command(
                             }
 
                             # Add type-specific metadata
-                            chunk_meta = chunk.get('metadata', {})
+                            chunk_meta = chunk.get("metadata", {})
                             if chunk_meta.get("quality_manifest"):
                                 payload["quality_manifest"] = chunk_meta["quality_manifest"]
-                            if corpus_type == 'pdf':
-                                if chunk_meta.get('page_number'):
+                            if corpus_type == "pdf":
+                                if chunk_meta.get("page_number"):
                                     payload["page_number"] = chunk_meta["page_number"]
-                                if chunk_meta.get('page_count'):
+                                if chunk_meta.get("page_count"):
                                     payload["page_count"] = chunk_meta["page_count"]
-                                if chunk_meta.get('extraction_floor'):
+                                if chunk_meta.get("extraction_floor"):
                                     payload["extraction_floor"] = True
                                 for key in (
                                     "ocr_confidence",
@@ -2640,21 +2825,19 @@ def sync_directory_command(
                                     if chunk_meta.get(key) is not None:
                                         payload[key] = chunk_meta[key]
                                 payload["document_type"] = "pdf"
-                            elif corpus_type == 'code' and "quality_manifest" not in payload:
+                            elif corpus_type == "code" and "quality_manifest" not in payload:
                                 payload["quality_manifest"] = _build_quality_manifest(
                                     file_path=file_path,
-                                    corpus_type='code',
+                                    corpus_type="code",
                                     source_hash=file_hash,
                                     chunk_count=len(chunks),
                                     metadata=chunk_meta,
-                                    extraction_method=chunk_meta.get('method'),
+                                    extraction_method=chunk_meta.get("method"),
                                 )
 
-                            points.append(PointStruct(
-                                id=str(uuid4()),
-                                vector=vectors,
-                                payload=payload
-                            ))
+                            points.append(
+                                PointStruct(id=str(uuid4()), vector=vectors, payload=payload)
+                            )
 
                         # Upload to Qdrant
                         if points:
@@ -2662,8 +2845,12 @@ def sync_directory_command(
                             qdrant_backfill_chunks += len(points)
 
                             if verbose and not output_json:
-                                embedded_size = sum(len(p.payload['text'].encode('utf-8')) for p in points)
-                                progress.console.print(f"[green]  ✓ {file_path.name} — {len(points)} chunks, {format_size(embedded_size)} embedded (Qdrant backfill)[/green]")
+                                embedded_size = sum(
+                                    len(p.payload["text"].encode("utf-8")) for p in points
+                                )
+                                progress.console.print(
+                                    f"[green]  ✓ {file_path.name} — {len(points)} chunks, {format_size(embedded_size)} embedded (Qdrant backfill)[/green]"
+                                )
 
                         qdrant_backfilled += 1
 
@@ -2671,7 +2858,9 @@ def sync_directory_command(
                         qdrant_backfill_failed += 1
                         logger.error(f"Failed to backfill {file_path_str} to Qdrant: {e}")
                         if not output_json:
-                            progress.console.print(f"[yellow]Warning: Failed to backfill {file_path.name}: {e}[/yellow]")
+                            progress.console.print(
+                                f"[yellow]Warning: Failed to backfill {file_path.name}: {e}[/yellow]"
+                            )
 
                     progress.advance(backfill_task)
 
@@ -2684,9 +2873,7 @@ def sync_directory_command(
             stamp_sync = MetadataBasedSync(qdrant)
             gate_stats = {"files": total_indexed, "errors": files_failed}
             prune_warn = (
-                None
-                if output_json
-                else (lambda m: console.print(f"[yellow]⚠ {m}[/yellow]"))
+                None if output_json else (lambda m: console.print(f"[yellow]⚠ {m}[/yellow]"))
             )
             certification = prune_orphans_and_stamp(
                 qdrant=qdrant,
@@ -2749,7 +2936,9 @@ def sync_directory_command(
             }
 
         if output_json:
-            print_json("success", f"Indexed {total_indexed} files ({total_chunks} chunks)", data=data)
+            print_json(
+                "success", f"Indexed {total_indexed} files ({total_chunks} chunks)", data=data
+            )
         else:
             console.print(f"\n[green]✅ Sync complete for corpus '{corpus}'[/green]")
 
@@ -2763,7 +2952,9 @@ def sync_directory_command(
 
             # New files (indexed to both systems)
             if total_indexed > 0:
-                console.print(f"   New files (both systems): {total_indexed} files ({total_chunks} chunks)")
+                console.print(
+                    f"   New files (both systems): {total_indexed} files ({total_chunks} chunks)"
+                )
 
             # Already in both systems
             if already_indexed_count > 0:
@@ -2788,8 +2979,8 @@ def sync_directory_command(
             console.print(f"   Total in MeiliSearch: {total_meili} documents")
 
             console.print("\n[dim]Search with:[/dim]")
-            console.print(f"  arc search semantic \"your query\" --corpus {corpus}")
-            console.print(f"  arc search text \"your query\" --corpus {corpus}")
+            console.print(f'  arc search semantic "your query" --corpus {corpus}')
+            console.print(f'  arc search text "your query" --corpus {corpus}')
 
         # Post-verify if requested (uses same verifier as index commands)
         verification_result = None
@@ -2804,7 +2995,9 @@ def sync_directory_command(
 
             if verification_result.is_healthy:
                 if not output_json:
-                    console.print(f"[green]✓ Collection verified - all {verification_result.complete_items} files complete[/green]")
+                    console.print(
+                        f"[green]✓ Collection verified - all {verification_result.complete_items} files complete[/green]"
+                    )
             else:
                 incomplete = verification_result.get_items_needing_repair()
                 if not output_json:
@@ -2813,7 +3006,9 @@ def sync_directory_command(
                         console.print(f"  [yellow]{item}[/yellow]")
                     if len(incomplete) > 5:
                         console.print(f"  [dim]... and {len(incomplete) - 5} more[/dim]")
-                    console.print("[dim]Re-run with --repair to re-index only incomplete files[/dim]")
+                    console.print(
+                        "[dim]Re-run with --repair to re-index only incomplete files[/dim]"
+                    )
 
             data["verification"] = {
                 "is_healthy": verification_result.is_healthy,
@@ -2887,7 +3082,7 @@ def _fetch_chunks_for_files_bulk(
                 limit=1000,  # Large batches for efficiency
                 offset=offset,
                 with_payload=True,
-                with_vectors=False
+                with_vectors=False,
             )
 
             if not points:
@@ -3001,10 +3196,15 @@ def _fetch_git_metadata_for_files(
             collection_name=corpus,
             limit=1000,
             offset=offset,
-            with_payload=["file_path", "git_project_identifier",
-                         "git_project_name", "git_branch", "git_commit_hash",
-                         "git_version_identifier"],
-            with_vectors=False
+            with_payload=[
+                "file_path",
+                "git_project_identifier",
+                "git_project_name",
+                "git_branch",
+                "git_commit_hash",
+                "git_version_identifier",
+            ],
+            with_vectors=False,
         )
         if not points:
             break
@@ -3075,18 +3275,28 @@ def _repair_meili_metadata(
 
     index = meili.get_index(corpus)
     while True:
-        result = index.get_documents({
-            'offset': batch_offset,
-            'limit': batch_size,
-            'fields': ['id', 'file_path', 'chunk_index', 'git_project_identifier',
-                      'git_project_name', 'git_branch', 'git_commit_hash', 'git_version_identifier']
-        })
+        result = index.get_documents(
+            {
+                "offset": batch_offset,
+                "limit": batch_size,
+                "fields": [
+                    "id",
+                    "file_path",
+                    "chunk_index",
+                    "git_project_identifier",
+                    "git_project_name",
+                    "git_branch",
+                    "git_commit_hash",
+                    "git_version_identifier",
+                ],
+            }
+        )
 
         # Handle both dict and object results
-        if hasattr(result, 'results'):
+        if hasattr(result, "results"):
             docs = result.results
         else:
-            docs = result.get('results', [])
+            docs = result.get("results", [])
 
         if not docs:
             break
@@ -3094,45 +3304,49 @@ def _repair_meili_metadata(
         for doc in docs:
             # Get field values handling both dict and object
             if isinstance(doc, dict):
-                has_git_id = bool(doc.get('git_project_identifier'))
-                doc_id = doc.get('id')
-                file_path = doc.get('file_path')
-                chunk_index = doc.get('chunk_index', 0)
-                project_name = doc.get('git_project_name')
-                branch = doc.get('git_branch')
-                commit_hash = doc.get('git_commit_hash')
+                has_git_id = bool(doc.get("git_project_identifier"))
+                doc_id = doc.get("id")
+                file_path = doc.get("file_path")
+                chunk_index = doc.get("chunk_index", 0)
+                project_name = doc.get("git_project_name")
+                branch = doc.get("git_branch")
+                commit_hash = doc.get("git_commit_hash")
             else:
-                has_git_id = bool(getattr(doc, 'git_project_identifier', None))
-                doc_id = getattr(doc, 'id', None)
-                file_path = getattr(doc, 'file_path', None)
-                chunk_index = getattr(doc, 'chunk_index', 0)
-                project_name = getattr(doc, 'git_project_name', None)
-                branch = getattr(doc, 'git_branch', None)
-                commit_hash = getattr(doc, 'git_commit_hash', None)
+                has_git_id = bool(getattr(doc, "git_project_identifier", None))
+                doc_id = getattr(doc, "id", None)
+                file_path = getattr(doc, "file_path", None)
+                chunk_index = getattr(doc, "chunk_index", 0)
+                project_name = getattr(doc, "git_project_name", None)
+                branch = getattr(doc, "git_branch", None)
+                commit_hash = getattr(doc, "git_commit_hash", None)
 
             # Check if git_project_identifier is missing - needs full repair from Qdrant
             if not has_git_id:
-                docs_to_repair.append({
-                    'id': doc_id,
-                    'file_path': file_path,
-                    'chunk_index': chunk_index,
-                })
+                docs_to_repair.append(
+                    {
+                        "id": doc_id,
+                        "file_path": file_path,
+                        "chunk_index": chunk_index,
+                    }
+                )
             # Check if doc has git metadata but version_identifier is missing or incorrect
             elif project_name and branch and commit_hash:
                 expected_version_id = f"{project_name}#{branch}@{commit_hash[:7]}"
                 # Get current value for comparison
                 if isinstance(doc, dict):
-                    current_version_id = doc.get('git_version_identifier')
+                    current_version_id = doc.get("git_version_identifier")
                 else:
-                    current_version_id = getattr(doc, 'git_version_identifier', None)
+                    current_version_id = getattr(doc, "git_version_identifier", None)
 
                 # Repair if missing OR if format doesn't match expected
                 if current_version_id != expected_version_id:
-                    docs_needing_version_id.append({
-                        'id': doc_id,
-                        **persisted_metadata_fields(),
-                        'git_version_identifier': expected_version_id,
-                    })
+                    docs_needing_version_id.append(
+                        {
+                            "id": doc_id,
+                            **persisted_metadata_fields(),
+                            "git_version_identifier": expected_version_id,
+                        }
+                    )
 
         batch_offset += len(docs)
         if len(docs) < batch_size:
@@ -3145,18 +3359,24 @@ def _repair_meili_metadata(
 
     if not output_json:
         if docs_to_repair:
-            console.print(f"[blue]Found {len(docs_to_repair)} documents missing git metadata[/blue]")
+            console.print(
+                f"[blue]Found {len(docs_to_repair)} documents missing git metadata[/blue]"
+            )
         if docs_needing_version_id:
-            console.print(f"[blue]Found {len(docs_needing_version_id)} documents needing git_version_identifier repair[/blue]")
+            console.print(
+                f"[blue]Found {len(docs_needing_version_id)} documents needing git_version_identifier repair[/blue]"
+            )
 
     # Step 2: Build a map of file_path -> git metadata from Qdrant (only if needed)
     updates = []
     if docs_to_repair:
         # Get unique file paths that need repair
-        file_paths_needed = set(d['file_path'] for d in docs_to_repair if d['file_path'])
+        file_paths_needed = set(d["file_path"] for d in docs_to_repair if d["file_path"])
 
         if not output_json:
-            console.print(f"[dim]Scanning Qdrant for git metadata ({len(file_paths_needed)} files needed)...[/dim]")
+            console.print(
+                f"[dim]Scanning Qdrant for git metadata ({len(file_paths_needed)} files needed)...[/dim]"
+            )
 
         # Single scroll through Qdrant, bounded to needed files
         git_metadata_by_file = _fetch_git_metadata_for_files(
@@ -3165,18 +3385,16 @@ def _repair_meili_metadata(
 
         if git_metadata_by_file:
             if not output_json:
-                console.print(f"[dim]Found git metadata for {len(git_metadata_by_file)} files[/dim]")
+                console.print(
+                    f"[dim]Found git metadata for {len(git_metadata_by_file)} files[/dim]"
+                )
 
             # Step 3: Build update documents from Qdrant metadata
             for doc in docs_to_repair:
-                file_path = doc.get('file_path')
+                file_path = doc.get("file_path")
                 if file_path and file_path in git_metadata_by_file:
                     git_meta = git_metadata_by_file[file_path]
-                    update_doc = {
-                        'id': doc['id'],
-                        **persisted_metadata_fields(),
-                        **git_meta
-                    }
+                    update_doc = {"id": doc["id"], **persisted_metadata_fields(), **git_meta}
                     updates.append(update_doc)
         elif not output_json:
             console.print("[yellow]No git metadata found in Qdrant to use for repair[/yellow]")
@@ -3201,7 +3419,7 @@ def _repair_meili_metadata(
         index = meili.get_index(corpus)
 
         for i in range(0, len(updates), update_batch_size):
-            batch = updates[i:i + update_batch_size]
+            batch = updates[i : i + update_batch_size]
             try:
                 # Use update_documents which will update existing docs by id
                 task = index.update_documents(batch)
@@ -3283,7 +3501,7 @@ def _backfill_qdrant_to_meili(
 
             # Upload in batches, but track all tasks for this file
             for i in range(0, len(docs), batch_size):
-                batch = docs[i:i + batch_size]
+                batch = docs[i : i + batch_size]
                 task = index.add_documents(batch)
                 task_uids.append(task.task_uid)
 
@@ -3313,7 +3531,9 @@ def _backfill_qdrant_to_meili(
     if fetch_error:
         logger.error(f"Bulk fetch from Qdrant failed: {fetch_error}")
         if not output_json:
-            progress.console.print(f"[red]Error: Failed to fetch chunks from Qdrant: {fetch_error}[/red]")
+            progress.console.print(
+                f"[red]Error: Failed to fetch chunks from Qdrant: {fetch_error}[/red]"
+            )
         return 0, 0, len(file_paths)
 
     # Phase 2: Upload chunks to MeiliSearch
@@ -3346,20 +3566,21 @@ def _backfill_qdrant_to_meili(
 
     if all_task_uids:
         # Create a new progress task for waiting on uploads
-        wait_task = progress.add_task(
-            "Waiting for uploads...",
-            total=len(all_task_uids)
-        )
+        wait_task = progress.add_task("Waiting for uploads...", total=len(all_task_uids))
 
         # Wait for all tasks
         task_results: Dict[int, bool] = {}  # task_uid -> success
         for task_uid in all_task_uids:
             try:
                 result = meili.client.wait_for_task(task_uid, timeout_in_ms=180000)
-                status = getattr(result, 'status', None) or (result.get('status') if isinstance(result, dict) else None)
-                task_results[task_uid] = (status == 'succeeded')
-                if status == 'failed':
-                    error = getattr(result, 'error', None) or (result.get('error') if isinstance(result, dict) else None)
+                status = getattr(result, "status", None) or (
+                    result.get("status") if isinstance(result, dict) else None
+                )
+                task_results[task_uid] = status == "succeeded"
+                if status == "failed":
+                    error = getattr(result, "error", None) or (
+                        result.get("error") if isinstance(result, dict) else None
+                    )
                     logger.error(f"Upload task {task_uid} failed: {error}")
             except Exception as e:
                 task_results[task_uid] = False
@@ -3381,12 +3602,16 @@ def _backfill_qdrant_to_meili(
 
         if files_with_failed_uploads:
             if not output_json:
-                progress.console.print(f"[yellow]Warning: {len(files_with_failed_uploads)} files had upload failures[/yellow]")
+                progress.console.print(
+                    f"[yellow]Warning: {len(files_with_failed_uploads)} files had upload failures[/yellow]"
+                )
                 if verbose:
                     for fp in files_with_failed_uploads[:5]:
                         progress.console.print(f"[yellow]  - {Path(fp).name}[/yellow]")
                     if len(files_with_failed_uploads) > 5:
-                        progress.console.print(f"[yellow]  ... and {len(files_with_failed_uploads) - 5} more[/yellow]")
+                        progress.console.print(
+                            f"[yellow]  ... and {len(files_with_failed_uploads) - 5} more[/yellow]"
+                        )
 
             # Clean up partial uploads from MeiliSearch so they can be retried
             # This ensures failed files aren't seen as "synced" on the next parity run
@@ -3395,7 +3620,9 @@ def _backfill_qdrant_to_meili(
             try:
                 meili.delete_documents_by_file_paths(corpus, files_with_failed_uploads)
                 if not output_json:
-                    progress.console.print(f"[dim]  Cleaned up {len(files_with_failed_uploads)} partial file uploads[/dim]")
+                    progress.console.print(
+                        f"[dim]  Cleaned up {len(files_with_failed_uploads)} partial file uploads[/dim]"
+                    )
             except Exception as cleanup_error:
                 logger.warning(f"Failed to clean up partial uploads: {cleanup_error}")
                 if not output_json:
@@ -3408,7 +3635,9 @@ def _backfill_qdrant_to_meili(
                     )
 
     if verbose and not output_json:
-        progress.console.print(f"[green]  ✓ {len(completed_files)} files, {chunks_success} chunks uploaded to MeiliSearch[/green]")
+        progress.console.print(
+            f"[green]  ✓ {len(completed_files)} files, {chunks_success} chunks uploaded to MeiliSearch[/green]"
+        )
 
     return files_success, chunks_success, files_failed
 
@@ -3460,8 +3689,7 @@ def _parallel_chunk_code_files(
         executor = create_process_pool(max_workers=workers)
         futures = {
             executor.submit(
-                _chunk_code_file_worker,
-                fp, chunk_size, chunk_overlap, hard_max_chars
+                _chunk_code_file_worker, fp, chunk_size, chunk_overlap, hard_max_chars
             ): fp
             for fp in file_paths
         }
@@ -3473,7 +3701,9 @@ def _parallel_chunk_code_files(
                 if error:
                     errors.append((file_path_str, error))
                     if verbose and not output_json:
-                        console.print(f"[yellow]  Chunking error for {Path(file_path_str).name}: {error}[/yellow]")
+                        console.print(
+                            f"[yellow]  Chunking error for {Path(file_path_str).name}: {error}[/yellow]"
+                        )
                 elif chunks:
                     chunked_files[file_path_str] = chunks
             except Exception as e:
@@ -3483,7 +3713,10 @@ def _parallel_chunk_code_files(
                 logger.warning(f"Worker crash for {fp}: {e} — retrying with line-based chunking")
                 try:
                     file_path_str, chunks, error = _chunk_code_file_worker(
-                        fp, chunk_size, chunk_overlap, hard_max_chars,
+                        fp,
+                        chunk_size,
+                        chunk_overlap,
+                        hard_max_chars,
                         max_ast_size=0,  # force line-based for all files
                     )
                     if error:
@@ -3559,14 +3792,14 @@ def _backfill_meili_to_qdrant(
     skipped_paths = []
 
     # Calculate hard_max_chars from embedding model's max_seq_length
-    first_model = model_list[0] if model_list else 'jina-code'
+    first_model = model_list[0] if model_list else "jina-code"
     embedding_model_config = EMBEDDING_MODELS.get(first_model, {})
-    max_seq_length = embedding_model_config.get('max_seq_length', 8192)
+    max_seq_length = embedding_model_config.get("max_seq_length", 8192)
     hard_max_chars = max_seq_length * 2
 
     # For code corpora with parallel workers, pre-chunk all files in parallel
     pre_chunked_files: Dict[str, List[Dict[str, Any]]] = {}
-    if corpus_type == 'code' and text_workers > 1:
+    if corpus_type == "code" and text_workers > 1:
         # Filter to existing files first
         existing_files = []
         for fp in file_paths:
@@ -3576,11 +3809,13 @@ def _backfill_meili_to_qdrant(
                 skipped_paths.append(fp)
 
         if existing_files:
-            progress.update(backfill_task, description=f"Parallel chunking {len(existing_files)} code files...")
+            progress.update(
+                backfill_task, description=f"Parallel chunking {len(existing_files)} code files..."
+            )
             pre_chunked_files = _parallel_chunk_code_files(
                 existing_files,
-                model_config.get('chunk_size', 400),
-                model_config.get('chunk_overlap', 20),
+                model_config.get("chunk_size", 400),
+                model_config.get("chunk_overlap", 20),
                 text_workers,
                 verbose,
                 output_json,
@@ -3588,7 +3823,9 @@ def _backfill_meili_to_qdrant(
                 hard_max_chars=hard_max_chars,
             )
             if verbose and not output_json:
-                progress.console.print(f"[dim]  Pre-chunked {len(pre_chunked_files)} files in parallel[/dim]")
+                progress.console.print(
+                    f"[dim]  Pre-chunked {len(pre_chunked_files)} files in parallel[/dim]"
+                )
 
     for file_path_str in file_paths:
         file_path = Path(file_path_str)
@@ -3597,20 +3834,24 @@ def _backfill_meili_to_qdrant(
         # Check if file exists on disk (already checked for pre-chunked code)
         if file_path_str in skipped_paths:
             if not output_json:
-                progress.console.print(f"[yellow]  ⚠ {file_path.name}: File not found, skipping[/yellow]")
+                progress.console.print(
+                    f"[yellow]  ⚠ {file_path.name}: File not found, skipping[/yellow]"
+                )
             progress.advance(backfill_task)
             continue
 
         if not file_path.exists():
             skipped_paths.append(file_path_str)
             if not output_json:
-                progress.console.print(f"[yellow]  ⚠ {file_path.name}: File not found, skipping[/yellow]")
+                progress.console.print(
+                    f"[yellow]  ⚠ {file_path.name}: File not found, skipping[/yellow]"
+                )
             progress.advance(backfill_task)
             continue
 
         try:
             # Skip oversized code files before chunking
-            if corpus_type == 'code':
+            if corpus_type == "code":
                 file_size = file_path.stat().st_size
                 if file_size > _MAX_CODE_FILE_SIZE:
                     logger.warning(
@@ -3629,25 +3870,25 @@ def _backfill_meili_to_qdrant(
             # Chunk file based on corpus type
             chunks = None
 
-            if corpus_type == 'code' and file_path_str in pre_chunked_files:
+            if corpus_type == "code" and file_path_str in pre_chunked_files:
                 # Use pre-chunked results
                 chunks = pre_chunked_files[file_path_str]
-            elif corpus_type == 'pdf':
+            elif corpus_type == "pdf":
                 chunks = chunk_pdf_file(file_path, model_config)
-            elif corpus_type == 'markdown':
+            elif corpus_type == "markdown":
                 chunks = chunk_markdown_file(
                     file_path,
-                    model_config.get('chunk_size', 512),
-                    model_config.get('chunk_overlap', 50),
+                    model_config.get("chunk_size", 512),
+                    model_config.get("chunk_overlap", 50),
                     hard_max_chars=hard_max_chars,
                 )
-            elif corpus_type == 'code':
+            elif corpus_type == "code":
                 # Sequential chunking for code (workers=1 or file not in pre-chunked)
                 chunks = chunk_code_file(
                     file_path,
-                    model_config.get('chunk_size', 400),
-                    model_config.get('chunk_overlap', 20),
-                    hard_max_chars=hard_max_chars
+                    model_config.get("chunk_size", 400),
+                    model_config.get("chunk_overlap", 20),
+                    hard_max_chars=hard_max_chars,
                 )
             else:
                 progress.advance(backfill_task)
@@ -3664,8 +3905,7 @@ def _backfill_meili_to_qdrant(
             chunking_version = "code-ast:v1" if corpus_type == "code" else f"{corpus_type}:v1"
 
             chunk_texts = [
-                chunk.get('text') if isinstance(chunk, dict) else chunk.content
-                for chunk in chunks
+                chunk.get("text") if isinstance(chunk, dict) else chunk.content for chunk in chunks
             ]
             model_embeddings = {}
             for model in model_list:
@@ -3678,7 +3918,7 @@ def _backfill_meili_to_qdrant(
                 chunk_text = chunk_texts[i]
                 for model in model_list:
                     embedding = model_embeddings[model][i]
-                    if hasattr(embedding, 'tolist'):
+                    if hasattr(embedding, "tolist"):
                         vectors[model] = embedding.tolist()
                     else:
                         vectors[model] = list(embedding)
@@ -3700,15 +3940,15 @@ def _backfill_meili_to_qdrant(
                 }
 
                 # Add type-specific metadata
-                chunk_meta = chunk.get('metadata', {}) if isinstance(chunk, dict) else {}
+                chunk_meta = chunk.get("metadata", {}) if isinstance(chunk, dict) else {}
                 if chunk_meta.get("quality_manifest"):
                     payload["quality_manifest"] = chunk_meta["quality_manifest"]
-                if corpus_type == 'pdf':
-                    if chunk_meta.get('page_number'):
+                if corpus_type == "pdf":
+                    if chunk_meta.get("page_number"):
                         payload["page_number"] = chunk_meta["page_number"]
-                    if chunk_meta.get('page_count'):
+                    if chunk_meta.get("page_count"):
                         payload["page_count"] = chunk_meta["page_count"]
-                    if chunk_meta.get('extraction_floor'):
+                    if chunk_meta.get("extraction_floor"):
                         payload["extraction_floor"] = True
                     for key in (
                         "ocr_confidence",
@@ -3722,21 +3962,17 @@ def _backfill_meili_to_qdrant(
                         if chunk_meta.get(key) is not None:
                             payload[key] = chunk_meta[key]
                     payload["document_type"] = "pdf"
-                elif corpus_type == 'code' and "quality_manifest" not in payload:
+                elif corpus_type == "code" and "quality_manifest" not in payload:
                     payload["quality_manifest"] = _build_quality_manifest(
                         file_path=file_path,
-                        corpus_type='code',
+                        corpus_type="code",
                         source_hash=file_hash,
                         chunk_count=len(chunks),
                         metadata=chunk_meta,
-                        extraction_method=chunk_meta.get('method'),
+                        extraction_method=chunk_meta.get("method"),
                     )
 
-                points.append(PointStruct(
-                    id=str(uuid4()),
-                    vector=vectors,
-                    payload=payload
-                ))
+                points.append(PointStruct(id=str(uuid4()), vector=vectors, payload=payload))
 
             # Upload to Qdrant
             if points:
@@ -3744,8 +3980,10 @@ def _backfill_meili_to_qdrant(
                 chunks_success += len(points)
 
                 if verbose and not output_json:
-                    embedded_size = sum(len(p.payload['text'].encode('utf-8')) for p in points)
-                    progress.console.print(f"[green]  ✓ {file_path.name} — {len(points)} chunks, {format_size(embedded_size)} embedded (Qdrant backfill)[/green]")
+                    embedded_size = sum(len(p.payload["text"].encode("utf-8")) for p in points)
+                    progress.console.print(
+                        f"[green]  ✓ {file_path.name} — {len(points)} chunks, {format_size(embedded_size)} embedded (Qdrant backfill)[/green]"
+                    )
 
             files_success += 1
 
@@ -3753,17 +3991,16 @@ def _backfill_meili_to_qdrant(
             files_failed += 1
             logger.error(f"Failed to backfill {file_path_str} to Qdrant: {e}")
             if not output_json:
-                progress.console.print(f"[yellow]Warning: Failed to backfill {file_path.name}: {e}[/yellow]")
+                progress.console.print(
+                    f"[yellow]Warning: Failed to backfill {file_path.name}: {e}[/yellow]"
+                )
 
         progress.advance(backfill_task)
 
     return files_success, chunks_success, files_failed, skipped_paths
 
 
-def _create_missing_meili_index(
-    corpus_name: str,
-    output_json: bool = False
-) -> bool:
+def _create_missing_meili_index(corpus_name: str, output_json: bool = False) -> bool:
     """Create MeiliSearch index for a qdrant_only corpus.
 
     Reads corpus type from Qdrant metadata and creates index with appropriate settings.
@@ -3785,7 +4022,9 @@ def _create_missing_meili_index(
         if not corpus_type:
             logger.warning(f"Cannot determine corpus type for '{corpus_name}'")
             if not output_json:
-                console.print(f"[yellow]Warning: Cannot determine corpus type for '{corpus_name}'[/yellow]")
+                console.print(
+                    f"[yellow]Warning: Cannot determine corpus type for '{corpus_name}'[/yellow]"
+                )
             return False
 
         # Map corpus type to index settings
@@ -3802,10 +4041,12 @@ def _create_missing_meili_index(
                 console.print("[red]Error: MeiliSearch server not available[/red]")
             return False
 
-        meili.create_index(corpus_name, primary_key='id', settings=settings)
+        meili.create_index(corpus_name, primary_key="id", settings=settings)
 
         if not output_json:
-            console.print(f"[green]Created MeiliSearch index '{corpus_name}' (type: {corpus_type})[/green]")
+            console.print(
+                f"[green]Created MeiliSearch index '{corpus_name}' (type: {corpus_type})[/green]"
+            )
 
         logger.info(f"Created MeiliSearch index '{corpus_name}' with type '{corpus_type}'")
         return True
@@ -3854,11 +4095,11 @@ def _discover_corpora_for_parity() -> List[Dict[str, Any]]:
         if meili.health_check():
             indexes = meili.list_indexes()
             for idx in indexes:
-                name = idx['uid']
+                name = idx["uid"]
                 try:
                     stats = meili.get_index_stats(name)
                     meili_indexes[name] = {
-                        "chunks": stats.get('numberOfDocuments', 0),
+                        "chunks": stats.get("numberOfDocuments", 0),
                     }
                 except Exception:
                     meili_indexes[name] = {"chunks": 0}
@@ -3891,17 +4132,27 @@ def _discover_corpora_for_parity() -> List[Dict[str, Any]]:
         m_chunks = m_info.get("chunks", 0) if m_info else 0
 
         # Calculate files to backfill
-        to_meili = max(0, q_chunks - m_chunks) if status == "chunk_mismatch" else (q_chunks if status == "qdrant_only" else 0)
-        to_qdrant = max(0, m_chunks - q_chunks) if status == "chunk_mismatch" else (m_chunks if status == "meili_only" else 0)
+        to_meili = (
+            max(0, q_chunks - m_chunks)
+            if status == "chunk_mismatch"
+            else (q_chunks if status == "qdrant_only" else 0)
+        )
+        to_qdrant = (
+            max(0, m_chunks - q_chunks)
+            if status == "chunk_mismatch"
+            else (m_chunks if status == "meili_only" else 0)
+        )
 
-        corpora.append({
-            "name": name,
-            "status": status,
-            "qdrant_chunks": q_chunks,
-            "meili_chunks": m_chunks,
-            "to_meili": to_meili,
-            "to_qdrant": to_qdrant,
-        })
+        corpora.append(
+            {
+                "name": name,
+                "status": status,
+                "qdrant_chunks": q_chunks,
+                "meili_chunks": m_chunks,
+                "to_meili": to_meili,
+                "to_qdrant": to_qdrant,
+            }
+        )
 
     return corpora
 
@@ -3957,27 +4208,35 @@ def _parity_all_corpora(
 
             if qdrant_only:
                 if not output_json:
-                    console.print(f"\n[blue]Creating missing MeiliSearch indexes for {len(qdrant_only)} qdrant_only corpora...[/blue]")
+                    console.print(
+                        f"\n[blue]Creating missing MeiliSearch indexes for {len(qdrant_only)} qdrant_only corpora...[/blue]"
+                    )
 
                 for c in qdrant_only:
                     if dry_run:
                         if not output_json:
-                            console.print(f"  [dim]Would create MeiliSearch index for '{c['name']}'[/dim]")
-                        indexes_created.append(c['name'])
+                            console.print(
+                                f"  [dim]Would create MeiliSearch index for '{c['name']}'[/dim]"
+                            )
+                        indexes_created.append(c["name"])
                     else:
-                        if _create_missing_meili_index(c['name'], output_json):
-                            indexes_created.append(c['name'])
+                        if _create_missing_meili_index(c["name"], output_json):
+                            indexes_created.append(c["name"])
                             # Update corpus status and move to can_process
-                            c['status'] = 'chunk_mismatch'
+                            c["status"] = "chunk_mismatch"
                             can_process.append(c)
 
                 # Remove successfully created from incomplete
-                incomplete = [c for c in incomplete if c['name'] not in indexes_created]
+                incomplete = [c for c in incomplete if c["name"] not in indexes_created]
 
             if meili_only and not output_json:
-                console.print(f"\n[yellow]Warning: {len(meili_only)} meili_only corpora cannot be auto-created (require --type and --model)[/yellow]")
+                console.print(
+                    f"\n[yellow]Warning: {len(meili_only)} meili_only corpora cannot be auto-created (require --type and --model)[/yellow]"
+                )
                 for c in meili_only:
-                    console.print(f"  [yellow]Skipping '{c['name']}' - create Qdrant collection first with: arc corpus create {c['name']} --type <type>[/yellow]")
+                    console.print(
+                        f"  [yellow]Skipping '{c['name']}' - create Qdrant collection first with: arc corpus create {c['name']} --type <type>[/yellow]"
+                    )
 
         # Build summary table
         if not output_json:
@@ -4005,8 +4264,8 @@ def _parity_all_corpora(
                 else:
                     status_str = "[yellow]chunk_mismatch[/yellow]"
 
-                to_meili = f"{c['to_meili']} chunks" if c['to_meili'] > 0 else "0"
-                to_qdrant = f"{c['to_qdrant']} chunks" if c['to_qdrant'] > 0 else "0"
+                to_meili = f"{c['to_meili']} chunks" if c["to_meili"] > 0 else "0"
+                to_qdrant = f"{c['to_qdrant']} chunks" if c["to_qdrant"] > 0 else "0"
 
                 table.add_row(name, status_str, to_meili, to_qdrant)
 
@@ -4015,8 +4274,12 @@ def _parity_all_corpora(
 
             # Note about incomplete corpora
             if incomplete:
-                console.print(f"\n[dim]Note: {len(incomplete)} corpora exist only on one side and will be skipped.[/dim]")
-                console.print("[dim]Create the missing index/collection first with: arc corpus create <name> --type <type>[/dim]")
+                console.print(
+                    f"\n[dim]Note: {len(incomplete)} corpora exist only on one side and will be skipped.[/dim]"
+                )
+                console.print(
+                    "[dim]Create the missing index/collection first with: arc corpus create <name> --type <type>[/dim]"
+                )
 
         # Dry-run mode: show summary and exit
         if dry_run:
@@ -4099,16 +4362,22 @@ def _parity_all_corpora(
         failures = sum(1 for r in results if r["status"] == "failed")
 
         if output_json:
-            print_json("success", f"Parity completed for {successes} corpora", data={
-                "processed": len(can_process),
-                "successes": successes,
-                "failures": failures,
-                "incomplete_skipped": len(incomplete),
-                "indexes_created": indexes_created,
-                "results": results,
-            })
+            print_json(
+                "success",
+                f"Parity completed for {successes} corpora",
+                data={
+                    "processed": len(can_process),
+                    "successes": successes,
+                    "failures": failures,
+                    "incomplete_skipped": len(incomplete),
+                    "indexes_created": indexes_created,
+                    "results": results,
+                },
+            )
         else:
-            summary = f"\n[green]✅ Parity completed: {successes} successful, {failures} failed[/green]"
+            summary = (
+                f"\n[green]✅ Parity completed: {successes} successful, {failures} failed[/green]"
+            )
             if indexes_created:
                 summary += f"\n[blue]   ({len(indexes_created)} MeiliSearch indexes created)[/blue]"
             if incomplete:
@@ -4156,7 +4425,8 @@ def _parity_single_corpus(
     """
     if not all_corpora_mode:
         interaction_logger.start(
-            "corpus", "parity",
+            "corpus",
+            "parity",
             corpus=corpus,
             dry_run=dry_run,
         )
@@ -4198,16 +4468,24 @@ def _parity_single_corpus(
                     sync_manager = MetadataBasedSync(qdrant)
                     qdrant_file_paths = sync_manager._get_indexed_file_paths_set(corpus)
                     if output_json:
-                        print_json("success", "Dry run complete", data={
-                            "corpus": corpus,
-                            "dry_run": True,
-                            "would_create_index": True,
-                            "corpus_type": corpus_type,
-                            "would_backfill_to_meili": len(qdrant_file_paths),
-                        })
+                        print_json(
+                            "success",
+                            "Dry run complete",
+                            data={
+                                "corpus": corpus,
+                                "dry_run": True,
+                                "would_create_index": True,
+                                "corpus_type": corpus_type,
+                                "would_backfill_to_meili": len(qdrant_file_paths),
+                            },
+                        )
                     else:
-                        console.print("\n[bold yellow]DRY RUN - No changes will be made[/bold yellow]")
-                        console.print(f"\nWould create MeiliSearch index and backfill {len(qdrant_file_paths)} files")
+                        console.print(
+                            "\n[bold yellow]DRY RUN - No changes will be made[/bold yellow]"
+                        )
+                        console.print(
+                            f"\nWould create MeiliSearch index and backfill {len(qdrant_file_paths)} files"
+                        )
                     if not all_corpora_mode:
                         interaction_logger.finish(result_count=0)
                     return
@@ -4231,15 +4509,13 @@ def _parity_single_corpus(
         metadata = get_collection_metadata(qdrant, corpus)
 
         if not corpus_type:
-            corpus_type = 'pdf'
+            corpus_type = "pdf"
             logger.warning(f"Collection type not set, defaulting to {corpus_type}")
 
         configured_models = (
-            metadata.get('model')
-            or DEFAULT_MODELS_BY_CORPUS_TYPE.get(corpus_type)
-            or 'stella'
+            metadata.get("model") or DEFAULT_MODELS_BY_CORPUS_TYPE.get(corpus_type) or "stella"
         )
-        raw_model_list = [m.strip() for m in configured_models.split(',') if m.strip()]
+        raw_model_list = [m.strip() for m in configured_models.split(",") if m.strip()]
         model_list = [
             prompt_policy_model_key_for_name(model_name) or model_name
             for model_name in raw_model_list
@@ -4280,35 +4556,45 @@ def _parity_single_corpus(
             total_qdrant_chunks = sum(qdrant_chunk_counts.values())
             total_meili_chunks = sum(meili_chunk_counts.values())
             if not output_json:
-                console.print(f"[dim]  Qdrant total chunks: {total_qdrant_chunks} across {len(qdrant_chunk_counts)} files[/dim]")
-                console.print(f"[dim]  MeiliSearch total chunks: {total_meili_chunks} across {len(meili_chunk_counts)} files[/dim]")
+                console.print(
+                    f"[dim]  Qdrant total chunks: {total_qdrant_chunks} across {len(qdrant_chunk_counts)} files[/dim]"
+                )
+                console.print(
+                    f"[dim]  MeiliSearch total chunks: {total_meili_chunks} across {len(meili_chunk_counts)} files[/dim]"
+                )
 
             # Compare counts for files in both systems
             for file_path in in_both:
                 qdrant_count = qdrant_chunk_counts.get(file_path, 0)
                 meili_count = meili_chunk_counts.get(file_path, 0)
                 if qdrant_count != meili_count:
-                    chunk_mismatches.append({
-                        'file_path': file_path,
-                        'qdrant_chunks': qdrant_count,
-                        'meili_chunks': meili_count,
-                    })
+                    chunk_mismatches.append(
+                        {
+                            "file_path": file_path,
+                            "qdrant_chunks": qdrant_count,
+                            "meili_chunks": meili_count,
+                        }
+                    )
 
             # Also check for files in the counts but not in file_paths (edge case)
             qdrant_only_in_counts = set(qdrant_chunk_counts.keys()) - meili_file_paths
             meili_only_in_counts = set(meili_chunk_counts.keys()) - qdrant_file_paths
             if verbose and not output_json:
                 if qdrant_only_in_counts:
-                    console.print(f"[dim]  Files in Qdrant counts but not MeiliSearch file_paths: {len(qdrant_only_in_counts)}[/dim]")
+                    console.print(
+                        f"[dim]  Files in Qdrant counts but not MeiliSearch file_paths: {len(qdrant_only_in_counts)}[/dim]"
+                    )
                 if meili_only_in_counts:
-                    console.print(f"[dim]  Files in MeiliSearch counts but not Qdrant file_paths: {len(meili_only_in_counts)}[/dim]")
+                    console.print(
+                        f"[dim]  Files in MeiliSearch counts but not Qdrant file_paths: {len(meili_only_in_counts)}[/dim]"
+                    )
 
             if chunk_mismatches:
                 # Move mismatched files from "in_both" to the appropriate backfill list
                 # Files with more chunks in Qdrant need MeiliSearch backfill
                 # Files with more chunks in MeiliSearch need Qdrant backfill (re-index)
                 for mismatch in chunk_mismatches:
-                    fp = mismatch['file_path']
+                    fp = mismatch["file_path"]
                     in_both.discard(fp)
                     # Qdrant is source of truth - backfill to MeiliSearch
                     missing_from_meili.add(fp)
@@ -4321,7 +4607,9 @@ def _parity_single_corpus(
             console.print(f"  Files in MeiliSearch only: {len(missing_from_qdrant)}")
 
             if chunk_mismatches:
-                console.print(f"\n[yellow]Chunk count mismatches:      {len(chunk_mismatches)} files[/yellow]")
+                console.print(
+                    f"\n[yellow]Chunk count mismatches:      {len(chunk_mismatches)} files[/yellow]"
+                )
                 if verbose:
                     for m in chunk_mismatches[:10]:
                         console.print(
@@ -4329,7 +4617,9 @@ def _parity_single_corpus(
                             f"Qdrant={m['qdrant_chunks']}, MeiliSearch={m['meili_chunks']}[/yellow]"
                         )
                     if len(chunk_mismatches) > 10:
-                        console.print(f"  [yellow]... and {len(chunk_mismatches) - 10} more[/yellow]")
+                        console.print(
+                            f"  [yellow]... and {len(chunk_mismatches) - 10} more[/yellow]"
+                        )
 
         # Check which files missing from Qdrant exist on disk
         qdrant_backfill_paths = []
@@ -4348,7 +4638,9 @@ def _parity_single_corpus(
                 console.print("\n[bold yellow]DRY RUN - No changes will be made[/bold yellow]")
 
                 if meili_backfill_paths:
-                    console.print(f"\nWould backfill to MeiliSearch: {len(meili_backfill_paths)} files")
+                    console.print(
+                        f"\nWould backfill to MeiliSearch: {len(meili_backfill_paths)} files"
+                    )
                     if verbose:
                         for p in meili_backfill_paths[:10]:
                             console.print(f"  {Path(p).name}")
@@ -4364,7 +4656,9 @@ def _parity_single_corpus(
                             console.print(f"  ... and {len(qdrant_backfill_paths) - 10} more")
 
                 if qdrant_skip_paths:
-                    console.print(f"\n[yellow]Would skip (file not found): {len(qdrant_skip_paths)} files[/yellow]")
+                    console.print(
+                        f"\n[yellow]Would skip (file not found): {len(qdrant_skip_paths)} files[/yellow]"
+                    )
                     if verbose:
                         for p in qdrant_skip_paths[:10]:
                             console.print(f"  [yellow]{Path(p).name}[/yellow]")
@@ -4418,15 +4712,19 @@ def _parity_single_corpus(
 
         # Delete mismatched files from MeiliSearch before re-syncing
         if chunk_mismatches:
-            mismatched_paths = [m['file_path'] for m in chunk_mismatches]
+            mismatched_paths = [m["file_path"] for m in chunk_mismatches]
             if not output_json:
-                console.print(f"\n[dim]Deleting {len(mismatched_paths)} mismatched files from MeiliSearch...[/dim]")
+                console.print(
+                    f"\n[dim]Deleting {len(mismatched_paths)} mismatched files from MeiliSearch...[/dim]"
+                )
             try:
                 meili.delete_documents_by_file_paths(corpus, mismatched_paths)
             except Exception as e:
                 logger.warning(f"Failed to delete mismatched files: {e}")
                 if not output_json:
-                    console.print(f"[yellow]Warning: Could not delete mismatched files: {e}[/yellow]")
+                    console.print(
+                        f"[yellow]Warning: Could not delete mismatched files: {e}[/yellow]"
+                    )
 
         # Backfill MeiliSearch from Qdrant
         meili_backfilled = 0
@@ -4435,7 +4733,9 @@ def _parity_single_corpus(
 
         if meili_backfill_paths:
             if not output_json:
-                console.print(f"\n[blue]Backfilling {len(meili_backfill_paths)} files to MeiliSearch...[/blue]")
+                console.print(
+                    f"\n[blue]Backfilling {len(meili_backfill_paths)} files to MeiliSearch...[/blue]"
+                )
 
             with AdaptiveProgress(
                 SpinnerColumn(),
@@ -4447,9 +4747,17 @@ def _parity_single_corpus(
                 disable=output_json,
             ) as progress:
                 backfill_task = progress.add_task("Backfilling...", total=len(meili_backfill_paths))
-                meili_backfilled, meili_backfill_chunks, meili_backfill_failed = _backfill_qdrant_to_meili(
-                    qdrant, meili, corpus, meili_backfill_paths,
-                    verbose, output_json, progress, backfill_task,
+                meili_backfilled, meili_backfill_chunks, meili_backfill_failed = (
+                    _backfill_qdrant_to_meili(
+                        qdrant,
+                        meili,
+                        corpus,
+                        meili_backfill_paths,
+                        verbose,
+                        output_json,
+                        progress,
+                        backfill_task,
+                    )
                 )
 
         # Backfill Qdrant from MeiliSearch
@@ -4459,10 +4767,12 @@ def _parity_single_corpus(
 
         if qdrant_backfill_paths:
             if not output_json:
-                console.print(f"\n[blue]Backfilling {len(qdrant_backfill_paths)} files to Qdrant (requires embedding)...[/blue]")
+                console.print(
+                    f"\n[blue]Backfilling {len(qdrant_backfill_paths)} files to Qdrant (requires embedding)...[/blue]"
+                )
 
             # Initialize embedding client (parity uses env var only, not CLI flag)
-            use_gpu = os.environ.get('ARC_NO_GPU', '').lower() not in ('1', 'true')
+            use_gpu = os.environ.get("ARC_NO_GPU", "").lower() not in ("1", "true")
             embedding_client = EmbeddingClient(use_gpu=use_gpu)
 
             # Get model config for chunking
@@ -4471,9 +4781,9 @@ def _parity_single_corpus(
                 model_config = DEFAULT_MODELS[first_model].__dict__
             else:
                 model_config = {
-                    'chunk_size': 512,
-                    'chunk_overlap': 50,
-                    'char_to_token_ratio': 3.3,
+                    "chunk_size": 512,
+                    "chunk_overlap": 50,
+                    "char_to_token_ratio": 3.3,
                 }
 
             with AdaptiveProgress(
@@ -4485,18 +4795,31 @@ def _parity_single_corpus(
                 console=console,
                 disable=output_json,
             ) as progress:
-                backfill_task = progress.add_task("Backfilling Qdrant...", total=len(qdrant_backfill_paths))
-                qdrant_backfilled, qdrant_backfill_chunks, qdrant_backfill_failed, _ = _backfill_meili_to_qdrant(
-                    qdrant, embedding_client, corpus, corpus_type, model_list, model_config,
-                    qdrant_backfill_paths, verbose, output_json, progress, backfill_task,
-                    text_workers=effective_text_workers,
-                    max_embedding_batch=max_embedding_batch,
+                backfill_task = progress.add_task(
+                    "Backfilling Qdrant...", total=len(qdrant_backfill_paths)
+                )
+                qdrant_backfilled, qdrant_backfill_chunks, qdrant_backfill_failed, _ = (
+                    _backfill_meili_to_qdrant(
+                        qdrant,
+                        embedding_client,
+                        corpus,
+                        corpus_type,
+                        model_list,
+                        model_config,
+                        qdrant_backfill_paths,
+                        verbose,
+                        output_json,
+                        progress,
+                        backfill_task,
+                        text_workers=effective_text_workers,
+                        max_embedding_batch=max_embedding_batch,
+                    )
                 )
 
         # Repair metadata if requested (for code corpora)
         metadata_repaired = 0
         metadata_repair_failed = 0
-        if repair_metadata and corpus_type == 'code':
+        if repair_metadata and corpus_type == "code":
             if not output_json:
                 console.print("\n[blue]Repairing git metadata in MeiliSearch...[/blue]")
             metadata_repaired, metadata_repair_failed = _repair_meili_metadata(
@@ -4540,7 +4863,9 @@ def _parity_single_corpus(
                 console.print(f"   Backfilled to Qdrant:      {status}")
 
             if qdrant_skip_paths:
-                console.print(f"   [yellow]Skipped (not found):      {len(qdrant_skip_paths)} files[/yellow]")
+                console.print(
+                    f"   [yellow]Skipped (not found):      {len(qdrant_skip_paths)} files[/yellow]"
+                )
 
             if metadata_repaired > 0 or metadata_repair_failed > 0:
                 status = f"{metadata_repaired} documents"
@@ -4581,7 +4906,7 @@ def parity_command(
     create_missing: bool,
     confirm: bool,
     verbose: bool,
-    output_json: bool
+    output_json: bool,
 ):
     """Check and restore parity between Qdrant and MeiliSearch.
 

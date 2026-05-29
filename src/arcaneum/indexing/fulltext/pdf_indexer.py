@@ -43,7 +43,7 @@ class PDFFullTextIndexer:
         meili_client: FullTextClient,
         index_name: str,
         ocr_enabled: bool = True,
-        ocr_language: str = 'eng',
+        ocr_language: str = "eng",
         ocr_workers: Optional[int] = None,
         batch_size: int = 1000,
         markdown_conversion: bool = True,
@@ -69,17 +69,17 @@ class PDFFullTextIndexer:
             markdown_conversion=markdown_conversion,
         )
 
-        self.ocr_engine = OCREngine(
-            language=ocr_language,
-            confidence_threshold=60.0,
-            ocr_workers=ocr_workers,
-        ) if ocr_enabled else None
+        self.ocr_engine = (
+            OCREngine(
+                language=ocr_language,
+                confidence_threshold=60.0,
+                ocr_workers=ocr_workers,
+            )
+            if ocr_enabled
+            else None
+        )
 
-    def index_pdf(
-        self,
-        pdf_path: Path,
-        verbose: bool = False
-    ) -> Dict[str, Any]:
+    def index_pdf(self, pdf_path: Path, verbose: bool = False) -> Dict[str, Any]:
         """Index a single PDF to MeiliSearch.
 
         Extracts text using RDR-004 pipeline, builds page-level documents,
@@ -107,41 +107,35 @@ class PDFFullTextIndexer:
             text, metadata = merge_extracted_text_with_ocr(text, metadata, ocr_text, ocr_metadata)
 
         # Phase 2: Prepare MeiliSearch documents (page-level)
-        documents = self._build_meilisearch_documents(
-            pdf_path, text, metadata
-        )
+        documents = self._build_meilisearch_documents(pdf_path, text, metadata)
 
         # Phase 3: Upload to MeiliSearch
         if documents:
             result = self.meili_client.add_documents_sync(
-                index_name=self.index_name,
-                documents=documents
+                index_name=self.index_name, documents=documents
             )
             # Result can be a Task object (Pydantic) or dict
-            if hasattr(result, 'uid'):
+            if hasattr(result, "uid"):
                 task_uid = result.uid
             elif isinstance(result, dict):
-                task_uid = result.get('taskUid', result.get('uid', 'unknown'))
+                task_uid = result.get("taskUid", result.get("uid", "unknown"))
             else:
-                task_uid = 'unknown'
+                task_uid = "unknown"
         else:
             task_uid = None
 
         return {
-            'pdf_path': str(pdf_path),
-            'page_count': len(documents),
-            'task_uid': task_uid,
-            'extraction_method': metadata.get('extraction_method', 'unknown'),
-            'ocr_pages_processed': metadata.get('ocr_pages_processed', 0),
-            'ocr_pages_failed': metadata.get('ocr_pages_failed', 0),
-            'ocr_confidence': metadata.get('ocr_confidence'),
+            "pdf_path": str(pdf_path),
+            "page_count": len(documents),
+            "task_uid": task_uid,
+            "extraction_method": metadata.get("extraction_method", "unknown"),
+            "ocr_pages_processed": metadata.get("ocr_pages_processed", 0),
+            "ocr_pages_failed": metadata.get("ocr_pages_failed", 0),
+            "ocr_confidence": metadata.get("ocr_confidence"),
         }
 
     def _build_meilisearch_documents(
-        self,
-        pdf_path: Path,
-        full_text: str,
-        metadata: Dict[str, Any]
+        self, pdf_path: Path, full_text: str, metadata: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
         """Build MeiliSearch documents (one per page).
 
@@ -159,7 +153,7 @@ class PDFFullTextIndexer:
         file_hash = self._compute_file_hash(pdf_path)
 
         # Get page count
-        page_count = metadata.get('page_count', 1)
+        page_count = metadata.get("page_count", 1)
 
         # Split text into pages
         pages = self._split_into_pages(full_text, page_count, metadata)
@@ -175,42 +169,39 @@ class PDFFullTextIndexer:
             path_hash = hashlib.md5(str(pdf_path.absolute()).encode()).hexdigest()[:8]
             # Sanitize stem: MeiliSearch IDs only allow alphanumeric, hyphen, underscore
             # Replace invalid characters and truncate to avoid 511 byte limit
-            sanitized_stem = re.sub(r'[^a-zA-Z0-9_-]', '_', pdf_path.stem)[:200]
+            sanitized_stem = re.sub(r"[^a-zA-Z0-9_-]", "_", pdf_path.stem)[:200]
             doc_id = f"{sanitized_stem}_{path_hash}_p{page_num}"
 
             doc = {
                 # Primary key
-                'id': doc_id,
+                "id": doc_id,
                 **persisted_metadata_fields(),
-
                 # Searchable content
-                'content': page_text,
-                'filename': pdf_path.name,
-
+                "content": page_text,
+                "filename": pdf_path.name,
                 # Filterable metadata (shared with Qdrant, RDR-009)
-                'file_path': str(pdf_path.absolute()),
-                'page_number': page_num,
-                'file_hash': file_hash,
-                'extraction_method': metadata.get('extraction_method', 'unknown'),
-                'is_image_pdf': metadata.get('is_image_pdf', False),
-
+                "file_path": str(pdf_path.absolute()),
+                "page_number": page_num,
+                "file_hash": file_hash,
+                "extraction_method": metadata.get("extraction_method", "unknown"),
+                "is_image_pdf": metadata.get("is_image_pdf", False),
                 # Additional metadata
-                'file_size': metadata.get('file_size'),
-                'page_count': page_count,
-                'document_type': 'pdf',
+                "file_size": metadata.get("file_size"),
+                "page_count": page_count,
+                "document_type": "pdf",
             }
 
             # Add OCR-specific metadata if present
-            if 'ocr_confidence' in metadata:
-                doc['ocr_confidence'] = metadata['ocr_confidence']
-                doc['ocr_language'] = metadata.get('ocr_language', 'eng')
-                doc['ocr_pages_processed'] = metadata.get('ocr_pages_processed', 0)
-                doc['ocr_pages_failed'] = metadata.get('ocr_pages_failed', 0)
-                doc['ocr_low_confidence_word_count'] = metadata.get(
-                    'ocr_low_confidence_word_count',
+            if "ocr_confidence" in metadata:
+                doc["ocr_confidence"] = metadata["ocr_confidence"]
+                doc["ocr_language"] = metadata.get("ocr_language", "eng")
+                doc["ocr_pages_processed"] = metadata.get("ocr_pages_processed", 0)
+                doc["ocr_pages_failed"] = metadata.get("ocr_pages_failed", 0)
+                doc["ocr_low_confidence_word_count"] = metadata.get(
+                    "ocr_low_confidence_word_count",
                     0,
                 )
-                doc['ocr_merge_strategy'] = metadata.get('ocr_merge_strategy')
+                doc["ocr_merge_strategy"] = metadata.get("ocr_merge_strategy")
 
             documents.append(doc)
 
@@ -228,16 +219,13 @@ class PDFFullTextIndexer:
             SHA-256 hex digest
         """
         sha256 = hashlib.sha256()
-        with open(pdf_path, 'rb') as f:
-            for chunk in iter(lambda: f.read(8192), b''):
+        with open(pdf_path, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
                 sha256.update(chunk)
         return sha256.hexdigest()
 
     def _split_into_pages(
-        self,
-        full_text: str,
-        page_count: int,
-        metadata: Dict[str, Any]
+        self, full_text: str, page_count: int, metadata: Dict[str, Any]
     ) -> List[str]:
         """Split full text into pages.
 
@@ -253,22 +241,22 @@ class PDFFullTextIndexer:
             List of text strings, one per page
         """
         # Check for page boundaries from extractor
-        page_boundaries = metadata.get('page_boundaries', [])
+        page_boundaries = metadata.get("page_boundaries", [])
 
         if page_boundaries:
             # Use precise page boundaries from extraction
-            pages = [''] * page_count
+            pages = [""] * page_count
             for i, boundary in enumerate(page_boundaries):
-                page_number = boundary.get('page_number', i + 1)
+                page_number = boundary.get("page_number", i + 1)
                 if page_number < 1 or page_number > page_count:
                     continue
-                start_char = boundary.get('start_char', 0)
-                length = boundary.get('page_text_length', 0)
+                start_char = boundary.get("start_char", 0)
+                length = boundary.get("page_text_length", 0)
                 end_char = start_char + length
 
                 # Get next boundary start or end of text
                 if i + 1 < len(page_boundaries):
-                    next_start = page_boundaries[i + 1].get('start_char', len(full_text))
+                    next_start = page_boundaries[i + 1].get("start_char", len(full_text))
                     end_char = min(end_char, next_start)
 
                 page_text = full_text[start_char:end_char]
@@ -281,12 +269,12 @@ class PDFFullTextIndexer:
             return pages
 
         # Fallback: split by form feed character (used by some extractors)
-        if '\f' in full_text:
-            pages = full_text.split('\f')
+        if "\f" in full_text:
+            pages = full_text.split("\f")
         else:
             # Try splitting by page markers in markdown output
             # PyMuPDF4LLM adds "-----" between pages
-            page_marker_pattern = r'\n-{5,}\n'
+            page_marker_pattern = r"\n-{5,}\n"
             if re.search(page_marker_pattern, full_text):
                 pages = re.split(page_marker_pattern, full_text)
             else:
@@ -296,7 +284,7 @@ class PDFFullTextIndexer:
         # Adjust to expected page count
         if len(pages) < page_count:
             # Pad with empty pages
-            pages.extend([''] * (page_count - len(pages)))
+            pages.extend([""] * (page_count - len(pages)))
         elif len(pages) > page_count:
             # Truncate excess (shouldn't happen normally)
             pages = pages[:page_count]
@@ -325,29 +313,29 @@ class PDFFullTextIndexer:
         """
         # Discover PDFs
         if file_list:
-            pdf_files = [f for f in file_list if f.suffix.lower() == '.pdf']
+            pdf_files = [f for f in file_list if f.suffix.lower() == ".pdf"]
         else:
-            pattern = '**/*.pdf' if recursive else '*.pdf'
+            pattern = "**/*.pdf" if recursive else "*.pdf"
             pdf_files = list(directory.glob(pattern))
 
         stats = {
-            'total_pdfs': len(pdf_files),
-            'indexed_pdfs': 0,
-            'skipped_pdfs': 0,
-            'failed_pdfs': 0,
-            'total_pages': 0,
-            'ocr_pages_processed': 0,
-            'ocr_pages_failed': 0,
-            'ocr_confidence_sum': 0.0,
-            'ocr_pdf_count': 0,
-            'errors': [],
+            "total_pdfs": len(pdf_files),
+            "indexed_pdfs": 0,
+            "skipped_pdfs": 0,
+            "failed_pdfs": 0,
+            "total_pages": 0,
+            "ocr_pages_processed": 0,
+            "ocr_pages_failed": 0,
+            "ocr_confidence_sum": 0.0,
+            "ocr_pdf_count": 0,
+            "errors": [],
         }
 
         if not pdf_files:
             logger.info("No PDF files found to index")
-            stats['ocr_confidence'] = 0.0
-            del stats['ocr_confidence_sum']
-            del stats['ocr_pdf_count']
+            stats["ocr_confidence"] = 0.0
+            del stats["ocr_confidence_sum"]
+            del stats["ocr_pdf_count"]
             return stats
 
         # Index PDFs with progress tracking
@@ -362,16 +350,13 @@ class PDFFullTextIndexer:
             TimeElapsedColumn(),
             transient=False,
         ) as progress:
-            task = progress.add_task(
-                "[cyan]Indexing PDFs to MeiliSearch",
-                total=len(pdf_files)
-            )
+            task = progress.add_task("[cyan]Indexing PDFs to MeiliSearch", total=len(pdf_files))
 
             for pdf_path in pdf_files:
                 try:
                     # Check if already indexed (change detection)
                     if not force_reindex and self._is_already_indexed(pdf_path):
-                        stats['skipped_pdfs'] += 1
+                        stats["skipped_pdfs"] += 1
                         if verbose:
                             progress.console.print(
                                 f"  [dim]Skipped:[/dim] {pdf_path.name} [dim](already indexed)[/dim]"
@@ -381,13 +366,13 @@ class PDFFullTextIndexer:
 
                     # Index PDF
                     result = self.index_pdf(pdf_path, verbose=verbose)
-                    stats['indexed_pdfs'] += 1
-                    stats['total_pages'] += result['page_count']
-                    stats['ocr_pages_processed'] += result.get('ocr_pages_processed', 0)
-                    stats['ocr_pages_failed'] += result.get('ocr_pages_failed', 0)
-                    if result.get('ocr_confidence') is not None:
-                        stats['ocr_confidence_sum'] += result['ocr_confidence']
-                        stats['ocr_pdf_count'] += 1
+                    stats["indexed_pdfs"] += 1
+                    stats["total_pages"] += result["page_count"]
+                    stats["ocr_pages_processed"] += result.get("ocr_pages_processed", 0)
+                    stats["ocr_pages_failed"] += result.get("ocr_pages_failed", 0)
+                    if result.get("ocr_confidence") is not None:
+                        stats["ocr_confidence_sum"] += result["ocr_confidence"]
+                        stats["ocr_pdf_count"] += 1
 
                     if verbose:
                         progress.console.print(
@@ -396,23 +381,18 @@ class PDFFullTextIndexer:
                         )
 
                 except Exception as e:
-                    progress.console.print(
-                        f"  [red]Failed:[/red] {pdf_path.name}: {e}"
-                    )
-                    stats['failed_pdfs'] += 1
-                    stats['errors'].append({
-                        'file': str(pdf_path),
-                        'error': str(e)
-                    })
+                    progress.console.print(f"  [red]Failed:[/red] {pdf_path.name}: {e}")
+                    stats["failed_pdfs"] += 1
+                    stats["errors"].append({"file": str(pdf_path), "error": str(e)})
 
                 progress.update(task, advance=1)
 
-        if stats['ocr_pdf_count']:
-            stats['ocr_confidence'] = stats['ocr_confidence_sum'] / stats['ocr_pdf_count']
+        if stats["ocr_pdf_count"]:
+            stats["ocr_confidence"] = stats["ocr_confidence_sum"] / stats["ocr_pdf_count"]
         else:
-            stats['ocr_confidence'] = 0.0
-        del stats['ocr_confidence_sum']
-        del stats['ocr_pdf_count']
+            stats["ocr_confidence"] = 0.0
+        del stats["ocr_confidence_sum"]
+        del stats["ocr_pdf_count"]
 
         return stats
 
@@ -437,14 +417,14 @@ class PDFFullTextIndexer:
 
             results = self.meili_client.search(
                 index_name=self.index_name,
-                query='',  # Empty query to just filter
+                query="",  # Empty query to just filter
                 filter=filter_expr,
-                limit=1
+                limit=1,
             )
 
             # Check actual hits returned, not estimatedTotalHits
             # estimatedTotalHits can be unreliable for filtered queries
-            hits = results.get('hits', [])
+            hits = results.get("hits", [])
             logger.debug(
                 f"Change detection for {pdf_path.name}: "
                 f"hits={len(hits)}, filter={filter_expr[:100]}..."
@@ -477,17 +457,17 @@ class PDFFullTextIndexer:
 
             results = self.meili_client.search(
                 index_name=self.index_name,
-                query='',
+                query="",
                 filter=filter_expr,
-                limit=1000  # Get all pages
+                limit=1000,  # Get all pages
             )
 
-            hits = results.get('hits', [])
+            hits = results.get("hits", [])
             if not hits:
                 return True
 
             # Delete documents by ID
-            doc_ids = [hit['id'] for hit in hits]
+            doc_ids = [hit["id"] for hit in hits]
             index = self.meili_client.get_index(self.index_name)
             task = index.delete_documents(doc_ids)
             self.meili_client.client.wait_for_task(task.task_uid)

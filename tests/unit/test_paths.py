@@ -22,9 +22,11 @@ def isolate_env(monkeypatch, tmp_path):
 
 # --- get_models_dir ---
 
+
 def test_get_models_dir_default(isolate_env):
     from arcaneum import paths as p
     import importlib
+
     importlib.reload(p)
     models_dir = p.get_models_dir()
     assert models_dir == isolate_env / ".cache" / "arcaneum" / "models"
@@ -36,6 +38,7 @@ def test_get_models_dir_custom_xdg(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CACHE_HOME", str(custom_cache))
     from arcaneum import paths as p
     import importlib
+
     importlib.reload(p)
     models_dir = p.get_models_dir()
     assert models_dir == custom_cache / "arcaneum" / "models"
@@ -44,9 +47,11 @@ def test_get_models_dir_custom_xdg(monkeypatch, tmp_path):
 
 # --- get_data_dir ---
 
+
 def test_get_data_dir_default(isolate_env):
     from arcaneum import paths as p
     import importlib
+
     importlib.reload(p)
     data_dir = p.get_data_dir()
     assert data_dir == isolate_env / ".local" / "share" / "arcaneum"
@@ -58,6 +63,7 @@ def test_get_data_dir_custom_xdg(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_DATA_HOME", str(custom_data))
     from arcaneum import paths as p
     import importlib
+
     importlib.reload(p)
     data_dir = p.get_data_dir()
     assert data_dir == custom_data / "arcaneum"
@@ -66,9 +72,11 @@ def test_get_data_dir_custom_xdg(monkeypatch, tmp_path):
 
 # --- get_config_dir ---
 
+
 def test_get_config_dir_default(isolate_env):
     from arcaneum import paths as p
     import importlib
+
     importlib.reload(p)
     config_dir = p.get_config_dir()
     assert config_dir == isolate_env / ".config" / "arcaneum"
@@ -80,6 +88,7 @@ def test_get_config_dir_custom_xdg(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(custom_config))
     from arcaneum import paths as p
     import importlib
+
     importlib.reload(p)
     config_dir = p.get_config_dir()
     assert config_dir == custom_config / "arcaneum"
@@ -88,9 +97,11 @@ def test_get_config_dir_custom_xdg(monkeypatch, tmp_path):
 
 # --- get_meilisearch_api_key ---
 
+
 def test_get_meilisearch_api_key_generates_and_caches(isolate_env):
     from arcaneum import paths as p
     import importlib
+
     importlib.reload(p)
     key1 = p.get_meilisearch_api_key()
     key2 = p.get_meilisearch_api_key()
@@ -107,6 +118,7 @@ def test_get_meilisearch_api_key_env_override(monkeypatch, isolate_env):
     monkeypatch.setenv("MEILISEARCH_API_KEY", "my-secret-key-1234567890")
     from arcaneum import paths as p
     import importlib
+
     importlib.reload(p)
     key = p.get_meilisearch_api_key()
     assert key == "my-secret-key-1234567890"
@@ -116,6 +128,7 @@ def test_get_meilisearch_api_key_short_env_ignored(monkeypatch, isolate_env):
     monkeypatch.setenv("MEILISEARCH_API_KEY", "short")
     from arcaneum import paths as p
     import importlib
+
     importlib.reload(p)
     key = p.get_meilisearch_api_key()
     # Short env key is ignored; a real key is generated
@@ -125,9 +138,11 @@ def test_get_meilisearch_api_key_short_env_ignored(monkeypatch, isolate_env):
 
 # --- configure_model_cache_env ---
 
+
 def test_configure_model_cache_env_sets_defaults(monkeypatch, isolate_env):
     from arcaneum import paths as p
     import importlib
+
     importlib.reload(p)
     p.configure_model_cache_env()
     assert "HF_HOME" in os.environ
@@ -142,6 +157,7 @@ def test_configure_model_cache_env_respects_existing(monkeypatch, isolate_env):
     monkeypatch.setenv("SENTENCE_TRANSFORMERS_HOME", "/custom/st")
     from arcaneum import paths as p
     import importlib
+
     importlib.reload(p)
     p.configure_model_cache_env()
     assert os.environ["HF_HOME"] == "/custom/hf"

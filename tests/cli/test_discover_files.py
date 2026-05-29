@@ -174,7 +174,9 @@ class TestDiscoverFilesCode:
         """Repos in skip_git_roots are excluded entirely."""
         repo_a_root = str(folder_of_repos / "repo-a")
         files, roots = discover_files(
-            folder_of_repos, None, "code",
+            folder_of_repos,
+            None,
+            "code",
             skip_git_roots={repo_a_root},
         )
         names = {f.name for f in files}

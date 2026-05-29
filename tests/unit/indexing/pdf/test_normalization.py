@@ -22,12 +22,12 @@ class TestWhitespaceNormalization:
     def test_unicode_whitespace_normalization(self):
         """Test Unicode whitespace characters are normalized."""
         # Non-breaking space (U+00A0)
-        input_text = "Hello\u00A0world"
+        input_text = "Hello\u00a0world"
         result = self.extractor._normalize_whitespace_edge_cases(input_text)
         assert result == "Hello world"
 
         # Multiple Unicode whitespace types
-        input_text = "Test\u00A0\u2000\u2001word"
+        input_text = "Test\u00a0\u2000\u2001word"
         result = self.extractor._normalize_whitespace_edge_cases(input_text)
         assert result == "Test word"
 

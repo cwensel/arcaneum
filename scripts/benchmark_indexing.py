@@ -33,10 +33,7 @@ from arcaneum.embeddings.client import EmbeddingClient
 from arcaneum.paths import get_models_dir
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
 class BenchmarkResults:
@@ -53,31 +50,28 @@ class BenchmarkResults:
 
     def start_timer(self, label: str):
         """Start timing a section."""
-        self.timings[label] = {'start': time.time()}
+        self.timings[label] = {"start": time.time()}
 
     def end_timer(self, label: str):
         """End timing and calculate elapsed."""
         if label not in self.timings:
             return 0
-        elapsed = time.time() - self.timings[label]['start']
-        self.timings[label]['elapsed'] = elapsed
+        elapsed = time.time() - self.timings[label]["start"]
+        self.timings[label]["elapsed"] = elapsed
         return elapsed
 
     def get_timing(self, label: str) -> float:
         """Get elapsed time for a label."""
-        return self.timings.get(label, {}).get('elapsed', 0)
+        return self.timings.get(label, {}).get("elapsed", 0)
 
     def report(self) -> Dict:
         """Generate report dictionary."""
-        timing_summary = {
-            label: data.get('elapsed', 0)
-            for label, data in self.timings.items()
-        }
+        timing_summary = {label: data.get("elapsed", 0) for label, data in self.timings.items()}
         return {
-            'benchmark': self.name,
-            'results': self.results,
-            'timings': timing_summary,
-            'total_time': sum(timing_summary.values())
+            "benchmark": self.name,
+            "results": self.results,
+            "timings": timing_summary,
+            "total_time": sum(timing_summary.values()),
         }
 
 
@@ -86,7 +80,7 @@ def benchmark_embedding_batches(
     batch_sizes: List[int] = None,
     gpu: bool = True,
     num_texts: int = 10000,
-    samples_per_batch: int = 3
+    samples_per_batch: int = 3,
 ) -> Dict:
     """Benchmark embedding generation with different batch sizes.
 
@@ -102,7 +96,10 @@ def benchmark_embedding_batches(
     logger.info(f"Batch sizes: {batch_sizes}, total texts: {num_texts}")
 
     # Create test data
-    test_texts = [f"Sample text {i}: This is a test document for benchmarking. " * 10 for i in range(num_texts)]
+    test_texts = [
+        f"Sample text {i}: This is a test document for benchmarking. " * 10
+        for i in range(num_texts)
+    ]
 
     results = {}
 
@@ -110,10 +107,7 @@ def benchmark_embedding_batches(
         logger.info(f"\nBenchmarking batch_size={batch_size}")
 
         # Create embedding client
-        client = EmbeddingClient(
-            cache_dir=str(get_models_dir()),
-            use_gpu=gpu
-        )
+        client = EmbeddingClient(cache_dir=str(get_models_dir()), use_gpu=gpu)
 
         # Load model
         client.get_model(model_name)
@@ -123,41 +117,40 @@ def benchmark_embedding_batches(
         for sample in range(samples_per_batch):
             start = time.time()
             embeddings = client.embed_parallel(
-                test_texts,
-                model_name,
-                batch_size=batch_size,
-                max_workers=4
+                test_texts, model_name, batch_size=batch_size, max_workers=4
             )
             elapsed = time.time() - start
             timings.append(elapsed)
 
-            logger.info(f"  Sample {sample + 1}: {elapsed:.2f}s ({num_texts / elapsed:.0f} embeddings/sec)")
+            logger.info(
+                f"  Sample {sample + 1}: {elapsed:.2f}s ({num_texts / elapsed:.0f} embeddings/sec)"
+            )
 
         avg_time = statistics.mean(timings)
         std_dev = statistics.stdev(timings) if len(timings) > 1 else 0
         throughput = num_texts / avg_time
 
         results[batch_size] = {
-            'avg_time': avg_time,
-            'std_dev': std_dev,
-            'throughput_per_sec': throughput,
-            'total_embeddings': num_texts,
-            'samples': len(timings),
-            'timings': timings
+            "avg_time": avg_time,
+            "std_dev": std_dev,
+            "throughput_per_sec": throughput,
+            "total_embeddings": num_texts,
+            "samples": len(timings),
+            "timings": timings,
         }
 
         # Release model
         client.release_model(model_name)
 
-        logger.info(f"  Average: {avg_time:.2f}s ± {std_dev:.2f}s ({throughput:.0f} embeddings/sec)")
+        logger.info(
+            f"  Average: {avg_time:.2f}s ± {std_dev:.2f}s ({throughput:.0f} embeddings/sec)"
+        )
 
     return results
 
 
 def benchmark_embedding_comparison(
-    model_name: str = "stella",
-    batch_size: int = 256,
-    num_texts: int = 5000
+    model_name: str = "stella", batch_size: int = 256, num_texts: int = 5000
 ) -> Dict:
     """Compare GPU vs CPU embedding performance."""
 
@@ -171,27 +164,21 @@ def benchmark_embedding_comparison(
         logger.info(f"\nTesting {device}...")
 
         try:
-            client = EmbeddingClient(
-                cache_dir=str(get_models_dir()),
-                use_gpu=use_gpu
-            )
+            client = EmbeddingClient(cache_dir=str(get_models_dir()), use_gpu=use_gpu)
 
             client.get_model(model_name)
 
             start = time.time()
             embeddings = client.embed_parallel(
-                test_texts,
-                model_name,
-                batch_size=batch_size,
-                max_workers=4
+                test_texts, model_name, batch_size=batch_size, max_workers=4
             )
             elapsed = time.time() - start
 
             throughput = num_texts / elapsed
             results[device] = {
-                'time': elapsed,
-                'throughput': throughput,
-                'device_info': client.get_device_info()
+                "time": elapsed,
+                "throughput": throughput,
+                "device_info": client.get_device_info(),
             }
 
             logger.info(f"{device}: {elapsed:.2f}s ({throughput:.0f} embeddings/sec)")
@@ -204,16 +191,13 @@ def benchmark_embedding_comparison(
     # Calculate speedup
     if "GPU" in results and "CPU" in results:
         speedup = results["CPU"]["time"] / results["GPU"]["time"]
-        results['speedup'] = speedup
+        results["speedup"] = speedup
         logger.info(f"GPU speedup: {speedup:.2f}x")
 
     return results
 
 
-def generate_benchmark_report(
-    benchmark_results: Dict,
-    output_file: str = None
-) -> str:
+def generate_benchmark_report(benchmark_results: Dict, output_file: str = None) -> str:
     """Generate human-readable benchmark report."""
 
     report = []
@@ -228,14 +212,14 @@ def generate_benchmark_report(
         report.append("-" * 80)
         results = benchmark_results["embedding_batches"]
 
-        best_batch = max(results.keys(), key=lambda k: results[k]['throughput_per_sec'])
-        baseline = results.get(256, {}).get('throughput_per_sec', 0)
+        best_batch = max(results.keys(), key=lambda k: results[k]["throughput_per_sec"])
+        baseline = results.get(256, {}).get("throughput_per_sec", 0)
 
         for batch_size in sorted(results.keys()):
             data = results[batch_size]
-            throughput = data['throughput_per_sec']
-            avg_time = data['avg_time']
-            std_dev = data['std_dev']
+            throughput = data["throughput_per_sec"]
+            avg_time = data["avg_time"]
+            std_dev = data["std_dev"]
 
             # Calculate improvement vs batch_size 256 baseline
             if baseline > 0:
@@ -245,12 +229,18 @@ def generate_benchmark_report(
 
             marker = " ⭐ BEST" if batch_size == best_batch else ""
 
-            report.append(f"  Batch {batch_size:4d}: {throughput:7.0f} emb/sec ({avg_time:6.2f}s ± {std_dev:5.2f}s) {improvement:+6.1f}%{marker}")
+            report.append(
+                f"  Batch {batch_size:4d}: {throughput:7.0f} emb/sec ({avg_time:6.2f}s ± {std_dev:5.2f}s) {improvement:+6.1f}%{marker}"
+            )
 
         report.append("")
         if best_batch != 256:
-            improvement_pct = ((results[best_batch]['throughput_per_sec'] - baseline) / baseline) * 100
-            report.append(f"  → Recommendation: Use batch_size={best_batch} for {improvement_pct:.1f}% speedup")
+            improvement_pct = (
+                (results[best_batch]["throughput_per_sec"] - baseline) / baseline
+            ) * 100
+            report.append(
+                f"  → Recommendation: Use batch_size={best_batch} for {improvement_pct:.1f}% speedup"
+            )
         report.append("")
 
     # GPU vs CPU comparison
@@ -260,13 +250,15 @@ def generate_benchmark_report(
         results = benchmark_results["gpu_vs_cpu"]
 
         for device, data in results.items():
-            if device == 'speedup':
+            if device == "speedup":
                 report.append(f"  GPU Speedup: {data:.2f}x faster than CPU")
             else:
-                throughput = data.get('throughput', 0)
-                time_s = data.get('time', 0)
-                device_info = data.get('device_info', {})
-                report.append(f"  {device}: {throughput:.0f} emb/sec ({time_s:.2f}s) - {device_info}")
+                throughput = data.get("throughput", 0)
+                time_s = data.get("time", 0)
+                device_info = data.get("device_info", {})
+                report.append(
+                    f"  {device}: {throughput:.0f} emb/sec ({time_s:.2f}s) - {device_info}"
+                )
 
         report.append("")
 
@@ -290,63 +282,44 @@ def main():
     parser = argparse.ArgumentParser(
         description="Benchmark indexing pipeline performance",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__
+        epilog=__doc__,
     )
 
     parser.add_argument(
         "--benchmark",
         choices=["embeddings", "batches", "gpu-vs-cpu", "full"],
         default="full",
-        help="Which benchmark to run (default: full)"
+        help="Which benchmark to run (default: full)",
     )
 
     parser.add_argument(
-        "--model",
-        default="stella",
-        help="Embedding model to benchmark (default: stella)"
+        "--model", default="stella", help="Embedding model to benchmark (default: stella)"
     )
 
     parser.add_argument(
         "--batch-sizes",
         default="256,512,1024",
-        help="Comma-separated batch sizes to test (default: 256,512,1024)"
+        help="Comma-separated batch sizes to test (default: 256,512,1024)",
     )
 
     parser.add_argument(
         "--num-texts",
         type=int,
         default=10000,
-        help="Number of texts for embedding benchmark (default: 10000)"
+        help="Number of texts for embedding benchmark (default: 10000)",
     )
 
-    parser.add_argument(
-        "--no-gpu",
-        action="store_true",
-        help="Disable GPU acceleration (CPU only)"
-    )
+    parser.add_argument("--no-gpu", action="store_true", help="Disable GPU acceleration (CPU only)")
 
     parser.add_argument(
-        "--samples",
-        type=int,
-        default=3,
-        help="Number of samples for each benchmark (default: 3)"
+        "--samples", type=int, default=3, help="Number of samples for each benchmark (default: 3)"
     )
 
-    parser.add_argument(
-        "--output",
-        help="Output file for results (JSON)"
-    )
+    parser.add_argument("--output", help="Output file for results (JSON)")
 
-    parser.add_argument(
-        "--report",
-        help="Output file for report (TXT)"
-    )
+    parser.add_argument("--report", help="Output file for report (TXT)")
 
-    parser.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        help="Verbose output"
-    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
 
     args = parser.parse_args()
 
@@ -370,7 +343,7 @@ def main():
                 batch_sizes=batch_sizes,
                 gpu=not args.no_gpu,
                 num_texts=args.num_texts,
-                samples_per_batch=args.samples
+                samples_per_batch=args.samples,
             )
 
         if args.benchmark in ["gpu-vs-cpu", "full"]:
@@ -378,12 +351,12 @@ def main():
             results["gpu_vs_cpu"] = benchmark_embedding_comparison(
                 model_name=args.model,
                 batch_size=batch_sizes[0],  # Use first batch size
-                num_texts=args.num_texts // 2
+                num_texts=args.num_texts // 2,
             )
 
         # Save JSON results
         if args.output:
-            with open(args.output, 'w') as f:
+            with open(args.output, "w") as f:
                 json.dump(results, f, indent=2, default=str)
             logger.info(f"Results saved to {args.output}")
 

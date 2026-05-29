@@ -24,14 +24,12 @@ SOURCE_CODE_SETTINGS: Dict[str, Any] = {
     "typoTolerance": {
         "enabled": True,
         "minWordSizeForTypos": {
-            "oneTypo": 7,   # Higher threshold for code
-            "twoTypos": 12
-        }
+            "oneTypo": 7,  # Higher threshold for code
+            "twoTypos": 12,
+        },
     },
     "stopWords": [],  # Preserve all code keywords
-    "pagination": {
-        "maxTotalHits": 1000
-    }
+    "pagination": {"maxTotalHits": 1000},
 }
 
 
@@ -39,21 +37,21 @@ SOURCE_CODE_SETTINGS: Dict[str, Any] = {
 # This is optimized for function/class-level indexing with line ranges
 SOURCE_CODE_FULLTEXT_SETTINGS: Dict[str, Any] = {
     "searchableAttributes": [
-        "content",           # Primary search field (function/class code)
-        "function_name",     # For identifier search (single name, not array)
-        "class_name",        # For class search (single name, not array)
-        "qualified_name",    # For fully-qualified searches (e.g., "MyClass.method")
-        "filename",          # For file-specific searches
+        "content",  # Primary search field (function/class code)
+        "function_name",  # For identifier search (single name, not array)
+        "class_name",  # For class search (single name, not array)
+        "qualified_name",  # For fully-qualified searches (e.g., "MyClass.method")
+        "filename",  # For file-specific searches
     ],
     "filterableAttributes": [
-        "programming_language",     # Language filter (aligned with RDR-005)
-        "git_project_name",         # Project name only
-        "git_branch",               # Branch name
-        "git_project_identifier",   # Composite "project#branch" for branch-specific queries
-        "git_commit_hash",          # For change detection
-        "file_path",                # File location
-        "code_type",                # "function", "class", "method", "module"
-        "file_extension",           # For file type filtering
+        "programming_language",  # Language filter (aligned with RDR-005)
+        "git_project_name",  # Project name only
+        "git_branch",  # Branch name
+        "git_project_identifier",  # Composite "project#branch" for branch-specific queries
+        "git_commit_hash",  # For change detection
+        "file_path",  # File location
+        "code_type",  # "function", "class", "method", "module"
+        "file_extension",  # For file type filtering
     ],
     "sortableAttributes": [
         "start_line",  # For sorting by location in file
@@ -61,14 +59,14 @@ SOURCE_CODE_FULLTEXT_SETTINGS: Dict[str, Any] = {
     "typoTolerance": {
         "enabled": True,
         "minWordSizeForTypos": {
-            "oneTypo": 7,   # Higher threshold for code identifiers
-            "twoTypos": 12
-        }
+            "oneTypo": 7,  # Higher threshold for code identifiers
+            "twoTypos": 12,
+        },
     },
     "stopWords": [],  # Preserve all code keywords (def, class, function, etc.)
     "pagination": {
         "maxTotalHits": 10000  # Higher than default: function-level = more docs per file
-    }
+    },
 }
 
 
@@ -85,24 +83,16 @@ PDF_DOCS_SETTINGS: Dict[str, Any] = {
         "file_path",
         "page_number",
         "document_type",
-        "file_hash",           # RDR-010: Change detection
-        "extraction_method",   # RDR-010: Metadata tracking
-        "is_image_pdf",        # RDR-010: OCR flag
+        "file_hash",  # RDR-010: Change detection
+        "extraction_method",  # RDR-010: Metadata tracking
+        "is_image_pdf",  # RDR-010: OCR flag
     ],
     "sortableAttributes": ["page_number"],
-    "typoTolerance": {
-        "enabled": True,
-        "minWordSizeForTypos": {
-            "oneTypo": 5,
-            "twoTypos": 9
-        }
-    },
-    "stopWords": [
-        "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for"
-    ],
+    "typoTolerance": {"enabled": True, "minWordSizeForTypos": {"oneTypo": 5, "twoTypos": 9}},
+    "stopWords": ["the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for"],
     "pagination": {
         "maxTotalHits": 10000  # RDR-010: Increase for large PDF collections
-    }
+    },
 }
 
 
@@ -121,19 +111,9 @@ MARKDOWN_DOCS_SETTINGS: Dict[str, Any] = {
         "tags",
     ],
     "sortableAttributes": [],
-    "typoTolerance": {
-        "enabled": True,
-        "minWordSizeForTypos": {
-            "oneTypo": 5,
-            "twoTypos": 9
-        }
-    },
-    "stopWords": [
-        "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for"
-    ],
-    "pagination": {
-        "maxTotalHits": 1000
-    }
+    "typoTolerance": {"enabled": True, "minWordSizeForTypos": {"oneTypo": 5, "twoTypos": 9}},
+    "stopWords": ["the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for"],
+    "pagination": {"maxTotalHits": 1000},
 }
 
 
@@ -184,7 +164,12 @@ def get_index_settings(index_type: str) -> Dict[str, Any]:
 def get_available_index_types() -> list[str]:
     """Get list of available index types."""
     return [
-        "source-code", "source-code-fulltext",
-        "pdf-docs", "markdown-docs",
-        "code", "code-fulltext", "pdf", "markdown"
+        "source-code",
+        "source-code-fulltext",
+        "pdf-docs",
+        "markdown-docs",
+        "code",
+        "code-fulltext",
+        "pdf",
+        "markdown",
     ]

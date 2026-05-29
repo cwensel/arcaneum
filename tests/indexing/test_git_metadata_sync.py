@@ -25,10 +25,7 @@ def create_mock_point(point_id, identifier, commit_hash):
     """Helper to create a mock Qdrant point."""
     point = Mock(spec=Record)
     point.id = point_id
-    point.payload = {
-        "git_project_identifier": identifier,
-        "git_commit_hash": commit_hash
-    }
+    point.payload = {"git_project_identifier": identifier, "git_commit_hash": commit_hash}
     return point
 
 
@@ -91,11 +88,11 @@ class TestGitMetadataSync:
         """Test pagination through multiple batches."""
         # Mock scroll returning multiple batches
         batch1 = [create_mock_point(i, f"proj{i}#main", "a" * 40) for i in range(100)]
-        batch2 = [create_mock_point(i + 100, f"proj{i+100}#main", "b" * 40) for i in range(50)]
+        batch2 = [create_mock_point(i + 100, f"proj{i + 100}#main", "b" * 40) for i in range(50)]
 
         mock_qdrant.scroll.side_effect = [
             (batch1, "offset1"),  # First batch with offset
-            (batch2, None)        # Second batch, no more
+            (batch2, None),  # Second batch, no more
         ]
 
         indexed = metadata_sync.get_indexed_projects("test-collection")
@@ -138,9 +135,7 @@ class TestGitMetadataSync:
         mock_qdrant.scroll.return_value = ([], None)
 
         should_index = metadata_sync.should_reindex_project(
-            "test-collection",
-            "new-project#main",
-            "a" * 40
+            "test-collection", "new-project#main", "a" * 40
         )
 
         assert should_index is True
@@ -155,7 +150,7 @@ class TestGitMetadataSync:
         should_index = metadata_sync.should_reindex_project(
             "test-collection",
             "project#main",
-            "b" * 40  # Different commit
+            "b" * 40,  # Different commit
         )
 
         assert should_index is True
@@ -171,7 +166,7 @@ class TestGitMetadataSync:
         should_index = metadata_sync.should_reindex_project(
             "test-collection",
             "project#main",
-            commit  # Same commit
+            commit,  # Same commit
         )
 
         assert should_index is False
@@ -325,10 +320,7 @@ class TestGitMetadataSync:
     def test_verify_consistency_normal(self, metadata_sync, mock_qdrant):
         """Test consistency verification passes for normal projects."""
         # Project with sufficient chunks
-        points = [
-            create_mock_point(i, "project#main", "a" * 40)
-            for i in range(10)
-        ]
+        points = [create_mock_point(i, "project#main", "a" * 40) for i in range(10)]
         mock_qdrant.scroll.return_value = (points, None)
 
         is_consistent, message = metadata_sync.verify_consistency("test-collection")
@@ -339,6 +331,7 @@ class TestGitMetadataSync:
     def test_inconsistent_commits_warning(self, metadata_sync, mock_qdrant, caplog):
         """Test that inconsistent commits are warned about."""
         import logging
+
         caplog.set_level(logging.WARNING)
 
         # Same identifier with different commits (shouldn't happen normally)
@@ -373,8 +366,8 @@ class TestGitMetadataSync:
         # Verify the scroll was called with the correct filter
         mock_qdrant.scroll.assert_called()
         call_args = mock_qdrant.scroll.call_args
-        assert call_args.kwargs['collection_name'] == "test-collection"
-        assert call_args.kwargs['limit'] == 1
+        assert call_args.kwargs["collection_name"] == "test-collection"
+        assert call_args.kwargs["limit"] == 1
 
     def test_is_version_indexed_not_found(self, metadata_sync, mock_qdrant):
         """Test is_version_indexed returns False when version doesn't exist."""
@@ -399,9 +392,6 @@ class TestIndexedProject:
 
     def test_default_point_count(self):
         """Test default point count is 0."""
-        project = IndexedProject(
-            identifier="project#branch",
-            commit_hash="a" * 40
-        )
+        project = IndexedProject(identifier="project#branch", commit_hash="a" * 40)
 
         assert project.point_count == 0

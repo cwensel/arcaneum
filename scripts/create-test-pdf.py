@@ -5,6 +5,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from pathlib import Path
 
+
 def create_test_pdf(output_path: Path):
     """Create a simple test PDF with multiple pages."""
     c = canvas.Canvas(str(output_path), pagesize=letter)
@@ -21,9 +22,13 @@ def create_test_pdf(output_path: Path):
     c.setFont("Helvetica-Bold", 14)
     c.drawString(100, height - 230, "Section 1: Introduction")
     c.setFont("Helvetica", 12)
-    c.drawString(100, height - 260, "The PDF indexing system uses PyMuPDF for fast text extraction.")
+    c.drawString(
+        100, height - 260, "The PDF indexing system uses PyMuPDF for fast text extraction."
+    )
     c.drawString(100, height - 280, "It is approximately 95x faster than alternative libraries.")
-    c.drawString(100, height - 300, "The system also supports OCR for scanned documents using Tesseract.")
+    c.drawString(
+        100, height - 300, "The system also supports OCR for scanned documents using Tesseract."
+    )
 
     c.setFont("Helvetica-Bold", 14)
     c.drawString(100, height - 350, "Section 2: Features")
@@ -95,6 +100,7 @@ def create_test_pdf(output_path: Path):
     c.save()
 
     print(f"✓ Created test PDF: {output_path}")
+
 
 if __name__ == "__main__":
     test_dir = Path("test_pdfs")

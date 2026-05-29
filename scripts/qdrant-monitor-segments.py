@@ -19,12 +19,14 @@ def get_collection_stats(client):
 
     for collection in collections:
         info = client.get_collection(collection.name)
-        stats.append({
-            'name': collection.name,
-            'segments': info.segments_count,
-            'points': info.points_count,
-            'status': info.optimizer_status
-        })
+        stats.append(
+            {
+                "name": collection.name,
+                "segments": info.segments_count,
+                "points": info.points_count,
+                "status": info.optimizer_status,
+            }
+        )
 
     return stats
 
@@ -36,39 +38,25 @@ def print_stats(stats, show_header=True):
         print("=" * 65)
 
     for stat in stats:
-        print(f"{stat['name']:<25} {stat['segments']:>10} {stat['points']:>10} {stat['status']:>15}")
+        print(
+            f"{stat['name']:<25} {stat['segments']:>10} {stat['points']:>10} {stat['status']:>15}"
+        )
 
 
 def main():
     parser = argparse.ArgumentParser(description="Monitor Qdrant segment consolidation")
+    parser.add_argument("--host", default="localhost", help="Qdrant host (default: localhost)")
+    parser.add_argument("--port", type=int, default=6333, help="Qdrant port (default: 6333)")
     parser.add_argument(
-        "--host",
-        default="localhost",
-        help="Qdrant host (default: localhost)"
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=6333,
-        help="Qdrant port (default: 6333)"
-    )
-    parser.add_argument(
-        "--watch",
-        action="store_true",
-        help="Continuously monitor (Ctrl+C to stop)"
+        "--watch", action="store_true", help="Continuously monitor (Ctrl+C to stop)"
     )
     parser.add_argument(
         "--interval",
         type=int,
         default=30,
-        help="Update interval in seconds for --watch mode (default: 30)"
+        help="Update interval in seconds for --watch mode (default: 30)",
     )
-    parser.add_argument(
-        "--target",
-        type=int,
-        default=2,
-        help="Target segment count (default: 2)"
-    )
+    parser.add_argument("--target", type=int, default=2, help="Target segment count (default: 2)")
     args = parser.parse_args()
 
     # Connect to Qdrant
@@ -90,7 +78,7 @@ def main():
             print_stats(stats, show_header=(iteration == 0 or args.watch))
 
             # Check if all collections reached target
-            all_done = all(stat['segments'] <= args.target for stat in stats)
+            all_done = all(stat["segments"] <= args.target for stat in stats)
 
             if all_done:
                 print(f"\n✓ All collections at or below target ({args.target} segments)")
@@ -100,12 +88,14 @@ def main():
 
             if not args.watch:
                 # Show which collections still need work
-                pending = [stat for stat in stats if stat['segments'] > args.target]
+                pending = [stat for stat in stats if stat["segments"] > args.target]
                 if pending:
                     print(f"\n⏳ {len(pending)} collection(s) still consolidating:")
                     for stat in pending:
-                        remaining = stat['segments'] - args.target
-                        print(f"   {stat['name']}: {stat['segments']} → {args.target} ({remaining} to merge)")
+                        remaining = stat["segments"] - args.target
+                        print(
+                            f"   {stat['name']}: {stat['segments']} → {args.target} ({remaining} to merge)"
+                        )
                 return 0
 
             iteration += 1

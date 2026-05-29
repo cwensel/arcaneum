@@ -48,7 +48,7 @@ def index_pdfs_command(
     streaming: bool,
     verbose: bool,
     debug: bool,
-    output_json: bool
+    output_json: bool,
 ):
     """Index PDF files to Qdrant collection.
 
@@ -98,9 +98,9 @@ def index_pdfs_command(
 
     # Enable offline mode if requested (blocks all HuggingFace network calls)
     if offline:
-        os.environ['HF_HUB_OFFLINE'] = '1'
-        os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
-        os.environ['TRANSFORMERS_OFFLINE'] = '1'
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
     # Setup logging (centralized configuration)
     if debug:
@@ -119,7 +119,8 @@ def index_pdfs_command(
 
     # Start interaction logging (RDR-018)
     interaction_logger.start(
-        "index", "pdf",
+        "index",
+        "pdf",
         collection=collection,
         path=path,
         from_file=from_file,
@@ -133,7 +134,8 @@ def index_pdfs_command(
 
         if from_file:
             from .utils import read_file_list
-            file_list = read_file_list(from_file, allowed_extensions={'.pdf'})
+
+            file_list = read_file_list(from_file, allowed_extensions={".pdf"})
             if not file_list:
                 raise ValueError("No valid PDF files found in the provided list")
             # Use parent directory of first file as base directory for reporting
@@ -153,13 +155,14 @@ def index_pdfs_command(
         # Retrieve model from collection metadata if not provided
         if model is None:
             from arcaneum.indexing.collection_metadata import get_collection_metadata
+
             metadata = get_collection_metadata(qdrant, collection)
-            if not metadata or 'model' not in metadata:
+            if not metadata or "model" not in metadata:
                 raise ValueError(
                     f"Collection '{collection}' has no model metadata. "
                     "Please create the collection with 'arc collection create --type pdf' first."
                 )
-            model = metadata['model']
+            model = metadata["model"]
         else:
             # Warn about deprecated --model flag
             console.print(
@@ -174,19 +177,17 @@ def index_pdfs_command(
 
         model_config = DEFAULT_MODELS[model]
         model_dict = {
-            'chunk_size': model_config.chunk_size,
-            'chunk_overlap': model_config.chunk_overlap,
-            'char_to_token_ratio': model_config.char_to_token_ratio,
-            'late_chunking': model_config.late_chunking,
+            "chunk_size": model_config.chunk_size,
+            "chunk_overlap": model_config.chunk_overlap,
+            "char_to_token_ratio": model_config.char_to_token_ratio,
+            "late_chunking": model_config.late_chunking,
         }
 
         # Initialize embedding client with persistent model caching (arcaneum-pwd5)
         # get_cached_model ensures models are cached for the process lifetime,
         # saving 7-8 seconds on subsequent CLI invocations within the same session
         embeddings = get_cached_model(
-            model_name=model,
-            cache_dir=str(get_models_dir()),
-            use_gpu=not no_gpu
+            model_name=model, cache_dir=str(get_models_dir()), use_gpu=not no_gpu
         )
 
         # Validate collection type (must be 'pdf' or untyped)
@@ -215,12 +216,12 @@ def index_pdfs_command(
                         available_gpu_bytes=available_bytes,
                         pipeline_overhead_gb=0.3,  # Minimal GPU overhead (PDF extraction/chunking use CPU)
                         safety_factor=0.6,
-                        device_type=device_type  # Pass device type for MPS vs CUDA logic
+                        device_type=device_type,  # Pass device type for MPS vs CUDA logic
                     )
 
                     if not output_json:
-                        available_gb = available_bytes / (1024 ** 3)
-                        total_gb = total_bytes / (1024 ** 3)
+                        available_gb = available_bytes / (1024**3)
+                        total_gb = total_bytes / (1024**3)
                         console.print(
                             f"[blue]🔧 Auto-tuned batch size: {auto_batch_size} "
                             f"(GPU: {available_gb:.1f}GB / {total_gb:.1f}GB total, {device_type.upper()})[/blue]"
@@ -250,17 +251,21 @@ def index_pdfs_command(
                         available_gpu_bytes=available_bytes,
                         pipeline_overhead_gb=0.3,  # Minimal GPU overhead
                         safety_factor=0.6,
-                        device_type=device_type  # Pass device type for MPS vs CUDA logic
+                        device_type=device_type,  # Pass device type for MPS vs CUDA logic
                     )
 
                     if embedding_batch_size > safe_batch_size and not output_json:
-                        available_gb = available_bytes / (1024 ** 3)
+                        available_gb = available_bytes / (1024**3)
                         console.print(
                             f"\n[yellow]⚠️  WARNING: Batch size {embedding_batch_size} may exceed available GPU memory[/yellow]"
                         )
-                        console.print(f"   GPU: {device_type.upper()}, Available: {available_gb:.1f}GB")
+                        console.print(
+                            f"   GPU: {device_type.upper()}, Available: {available_gb:.1f}GB"
+                        )
                         console.print(f"   Recommended batch size: {safe_batch_size}")
-                        console.print(f"   Consider: --embedding-batch-size {safe_batch_size} or --no-gpu\n")
+                        console.print(
+                            f"   Consider: --embedding-batch-size {safe_batch_size} or --no-gpu\n"
+                        )
 
         # Create uploader with file parallelism (arcaneum-108, RDR-016)
         uploader = PDFBatchUploader(
@@ -302,8 +307,9 @@ def index_pdfs_command(
         if not output_json:
             # Get actual model name being used
             from arcaneum.embeddings.client import EMBEDDING_MODELS
-            actual_model = EMBEDDING_MODELS.get(model, {}).get('name', model)
-            model_desc = EMBEDDING_MODELS.get(model, {}).get('description', '')
+
+            actual_model = EMBEDDING_MODELS.get(model, {}).get("name", model)
+            model_desc = EMBEDDING_MODELS.get(model, {}).get("description", "")
 
             console.print(f"\n[bold blue]PDF Indexing Configuration[/bold blue]")
             console.print(f"  Collection: {collection} (type: pdf)")
@@ -317,28 +323,39 @@ def index_pdfs_command(
             device_info = embeddings.get_device_info()
             if no_gpu:
                 console.print(f"  Device: CPU (GPU acceleration disabled)")
-            elif device_info['gpu_available']:
-                console.print(f"  [green]Device: {device_info['device'].upper()} (GPU acceleration enabled)[/green]")
+            elif device_info["gpu_available"]:
+                console.print(
+                    f"  [green]Device: {device_info['device'].upper()} (GPU acceleration enabled)[/green]"
+                )
             else:
                 console.print(f"  Device: CPU (GPU not available)")
 
             # Show parallelism configuration
             console.print(f"  File processing: {actual_file_workers} workers")
-            console.print(f"  Embedding: {actual_embedding_workers} workers, batch size {embedding_batch_size}")
+            console.print(
+                f"  Embedding: {actual_embedding_workers} workers, batch size {embedding_batch_size}"
+            )
 
             # Show extraction strategy (RDR-016)
             if normalize_only:
-                console.print(f"  Extraction: Normalization-only (47-48% token savings, no structure)")
+                console.print(
+                    f"  Extraction: Normalization-only (47-48% token savings, no structure)"
+                )
             else:
-                console.print(f"  Extraction: Markdown conversion (quality-first, semantic structure)")
+                console.print(
+                    f"  Extraction: Markdown conversion (quality-first, semantic structure)"
+                )
 
             if preserve_images:
                 console.print(f"  Images: Preserved for multimodal search")
 
             if ocr_enabled:
                 from multiprocessing import cpu_count
+
                 workers_display = ocr_workers if ocr_workers else cpu_count()
-                console.print(f"  OCR: tesseract ({ocr_language}, {workers_display} parallel workers)")
+                console.print(
+                    f"  OCR: tesseract ({ocr_language}, {workers_display} parallel workers)"
+                )
             else:
                 console.print(f"  OCR: disabled")
             console.print(f"  Pipeline: PDF → Extract → [OCR if needed] → Chunk → Embed → Upload")
@@ -351,7 +368,7 @@ def index_pdfs_command(
             if offline:
                 console.print(f"  [yellow]Mode: Offline (cached models only)[/yellow]")
             # Check if offline mode set via environment
-            elif os.environ.get('HF_HUB_OFFLINE') == '1':
+            elif os.environ.get("HF_HUB_OFFLINE") == "1":
                 console.print(f"  [yellow]Mode: Offline (HF_HUB_OFFLINE=1)[/yellow]")
             console.print()
 
@@ -370,7 +387,7 @@ def index_pdfs_command(
             force_reindex=force,
             randomize=randomize,
             verbose=verbose,
-            file_list=file_list
+            file_list=file_list,
         )
 
         # Orphan-aware prompt-policy stamp gate (C3/C4)
@@ -388,9 +405,7 @@ def index_pdfs_command(
             # bars certification (stale vectors).
             covered_paths = {str(p.absolute()) for p in pdf_dir.rglob("*.pdf")}
             prune_warn = (
-                None
-                if output_json
-                else (lambda m: console.print(f"[yellow]⚠ {m}[/yellow]"))
+                None if output_json else (lambda m: console.print(f"[yellow]⚠ {m}[/yellow]"))
             )
             prune_orphans_and_stamp(
                 qdrant=qdrant,
@@ -422,7 +437,9 @@ def index_pdfs_command(
 
             if verification_result.is_healthy:
                 if not output_json:
-                    console.print(f"[green]✓ Collection verified - all {verification_result.complete_items} files complete[/green]")
+                    console.print(
+                        f"[green]✓ Collection verified - all {verification_result.complete_items} files complete[/green]"
+                    )
             else:
                 incomplete = verification_result.get_items_needing_repair()
                 if not output_json:
@@ -442,18 +459,13 @@ def index_pdfs_command(
 
         # Output results
         if output_json:
-            result = {
-                "success": True,
-                "collection": collection,
-                "model": model,
-                "stats": stats
-            }
+            result = {"success": True, "collection": collection, "model": model, "stats": stats}
             print(json.dumps(result, indent=2))
         else:
             # Minimal output by default (matches index-source style)
             if not verbose:
                 console.print(f"\n✓ Indexed {stats['files']} PDF(s): {stats['chunks']} chunks")
-                if stats['errors'] > 0:
+                if stats["errors"] > 0:
                     console.print(f"⚠ {stats['errors']} errors occurred")
             else:
                 # Verbose: Show detailed table
@@ -463,20 +475,20 @@ def index_pdfs_command(
                 table.add_column("Metric", style="cyan")
                 table.add_column("Value", style="magenta")
 
-                table.add_row("Files Processed", str(stats['files']))
-                table.add_row("Chunks Uploaded", str(stats['chunks']))
-                table.add_row("Errors", str(stats['errors']))
+                table.add_row("Files Processed", str(stats["files"]))
+                table.add_row("Chunks Uploaded", str(stats["chunks"]))
+                table.add_row("Errors", str(stats["errors"]))
 
                 console.print(table)
 
-                if stats['errors'] > 0:
+                if stats["errors"] > 0:
                     console.print(f"\n[yellow]⚠ {stats['errors']} errors occurred[/yellow]")
 
         # Log successful operation (RDR-018)
         interaction_logger.finish(
-            result_count=stats.get('files', 0),
-            chunks=stats.get('chunks', 0),
-            errors=stats.get('errors', 0),
+            result_count=stats.get("files", 0),
+            chunks=stats.get("chunks", 0),
+            errors=stats.get("errors", 0),
         )
 
     except KeyboardInterrupt:
@@ -497,10 +509,7 @@ def index_pdfs_command(
     except Exception as e:
         interaction_logger.finish(error=str(e))
         if output_json:
-            result = {
-                "success": False,
-                "error": str(e)
-            }
+            result = {"success": False, "error": str(e)}
             print(json.dumps(result, indent=2))
             sys.exit(1)
         else:

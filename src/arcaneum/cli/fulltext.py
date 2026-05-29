@@ -62,29 +62,29 @@ def format_location(hit: dict) -> str:
     Returns:
         Formatted location string (e.g., "file.py:42-67 (my_func function)")
     """
-    file_path = hit.get('file_path') or hit.get('filename', 'Unknown')
+    file_path = hit.get("file_path") or hit.get("filename", "Unknown")
 
     # Source code: Include line range and function/class name
-    if 'start_line' in hit:
-        start = hit['start_line']
-        end = hit.get('end_line', start)
+    if "start_line" in hit:
+        start = hit["start_line"]
+        end = hit.get("end_line", start)
         if start == end:
             location = f"{file_path}:{start}"
         else:
             location = f"{file_path}:{start}-{end}"
 
-        if hit.get('function_name'):
+        if hit.get("function_name"):
             location += f" ({hit['function_name']} function)"
-        elif hit.get('class_name'):
+        elif hit.get("class_name"):
             location += f" ({hit['class_name']} class)"
         return location
 
     # PDF: Include page number
-    if 'page_number' in hit:
+    if "page_number" in hit:
         return f"{file_path}:page{hit['page_number']}"
 
     # Legacy support: single line_number field
-    if 'line_number' in hit:
+    if "line_number" in hit:
         return f"{file_path}:{hit['line_number']}"
 
     return file_path
@@ -97,7 +97,7 @@ def search_text_command(
     limit: int,
     offset: int,
     output_json: bool,
-    verbose: bool
+    verbose: bool,
 ):
     """
     Implementation for 'arc search text' command.
@@ -114,14 +114,15 @@ def search_text_command(
     """
     # Setup logging based on verbose flag
     if verbose:
-        logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
+        logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
     else:
-        logging.basicConfig(level=logging.WARNING, format='[%(levelname)s] %(message)s')
+        logging.basicConfig(level=logging.WARNING, format="[%(levelname)s] %(message)s")
 
     client = None
     try:
         with interaction_logger.track(
-            "search", "text",
+            "search",
+            "text",
             corpora=corpora,
             query=query,
             limit=limit,
@@ -150,14 +151,14 @@ def search_text_command(
                     filter=filter_arg,
                     limit=fetch_limit,
                     offset=0,  # Apply offset after merge
-                    attributes_to_highlight=['content'],
+                    attributes_to_highlight=["content"],
                 )
-                hits = results.get('hits', [])
+                hits = results.get("hits", [])
                 for hit in hits:
-                    hit['_corpus'] = corpus_name
+                    hit["_corpus"] = corpus_name
                 nonlocal total_processing_time, total_estimated_hits
-                total_processing_time += results.get('processingTimeMs', 0)
-                total_estimated_hits += results.get('estimatedTotalHits', 0)
+                total_processing_time += results.get("processingTimeMs", 0)
+                total_estimated_hits += results.get("estimatedTotalHits", 0)
                 return hits
 
             per_corpus_hits, missing_corpora = fetch_from_corpora(
@@ -181,7 +182,7 @@ def search_text_command(
                 # Group hits by corpus for interleaving
                 hits_by_corpus = {}
                 for hit in all_hits:
-                    corpus = hit.get('_corpus', 'unknown')
+                    corpus = hit.get("_corpus", "unknown")
                     if corpus not in hits_by_corpus:
                         hits_by_corpus[corpus] = []
                     hits_by_corpus[corpus].append(hit)
@@ -197,7 +198,7 @@ def search_text_command(
                 all_hits = interleaved
 
             # Apply pagination
-            hits = all_hits[offset:offset + limit]
+            hits = all_hits[offset : offset + limit]
 
             execution_time_ms = (time.time() - start_time) * 1000
 
@@ -228,7 +229,7 @@ def search_text_command(
                     "limit": limit,
                     "offset": offset,
                 },
-                "errors": []
+                "errors": [],
             }
             print(json.dumps(output, indent=2))
         else:
@@ -253,22 +254,22 @@ def search_text_command(
 
                     # Show metadata if available
                     if verbose:
-                        if 'language' in hit:
+                        if "language" in hit:
                             console.print(f"   Language: {hit['language']}")
-                        if 'project' in hit:
+                        if "project" in hit:
                             console.print(f"   Project: {hit['project']}")
 
                     # Show highlighted content
-                    if '_formatted' in hit and 'content' in hit['_formatted']:
-                        content = hit['_formatted']['content']
+                    if "_formatted" in hit and "content" in hit["_formatted"]:
+                        content = hit["_formatted"]["content"]
                         # Truncate long content
                         if len(content) > 200:
                             content = content[:200] + "..."
                         # Replace MeiliSearch highlight markers with rich formatting
-                        content = content.replace('<em>', '[yellow]').replace('</em>', '[/yellow]')
+                        content = content.replace("<em>", "[yellow]").replace("</em>", "[/yellow]")
                         console.print(f"   {content}")
-                    elif 'content' in hit:
-                        content = hit['content']
+                    elif "content" in hit:
+                        content = hit["content"]
                         if len(content) > 200:
                             content = content[:200] + "..."
                         console.print(f"   {content}")
@@ -282,8 +283,11 @@ def search_text_command(
     except Exception as e:
         error_str = str(e)
         # Check for MeiliSearch filter attribute error
-        if ("is not filterable" in error_str or "invalid_search_filter" in error_str) and client is not None:
+        if (
+            "is not filterable" in error_str or "invalid_search_filter" in error_str
+        ) and client is not None:
             import re
+
             attr_match = re.search(r"Attribute `(\w+)`", error_str)
             bad_attr = attr_match.group(1) if attr_match else None
 
@@ -291,10 +295,12 @@ def search_text_command(
             index_name = corpora[0] if corpora else "unknown"
             try:
                 settings = client.get_index_settings(index_name)
-                filterable = settings.get('filterableAttributes', [])
+                filterable = settings.get("filterableAttributes", [])
 
                 if bad_attr:
-                    console.print(f"[red][ERROR] Filter attribute '{bad_attr}' is not filterable.[/red]")
+                    console.print(
+                        f"[red][ERROR] Filter attribute '{bad_attr}' is not filterable.[/red]"
+                    )
                 else:
                     console.print(f"[red][ERROR] Invalid filter attribute.[/red]")
 
@@ -306,10 +312,14 @@ def search_text_command(
                         # Suggest similar attribute if there's a close match
                         for attr in filterable:
                             if bad_attr.lower() in attr.lower() or attr.lower() in bad_attr.lower():
-                                console.print(f"\n[yellow]Hint: Try --filter \"{attr}=<value>\"[/yellow]")
+                                console.print(
+                                    f'\n[yellow]Hint: Try --filter "{attr}=<value>"[/yellow]'
+                                )
                                 break
                 else:
-                    console.print(f"\n[yellow]Index '{index_name}' has no filterable attributes configured.[/yellow]")
+                    console.print(
+                        f"\n[yellow]Index '{index_name}' has no filterable attributes configured.[/yellow]"
+                    )
                     console.print("[dim]Filters cannot be used with this index.[/dim]")
             except Exception:
                 console.print(f"[red][ERROR] Search failed: {e}[/red]")
@@ -318,6 +328,7 @@ def search_text_command(
 
         if verbose:
             import traceback
+
             traceback.print_exc()
         sys.exit(1)
 
@@ -330,14 +341,27 @@ def fulltext():
     pass
 
 
-@fulltext.command('create')
-@click.argument('name')
-@click.option('--type', 'index_type',
-              type=click.Choice(['source-code', 'source-code-fulltext', 'pdf-docs', 'markdown-docs',
-                                 'code', 'code-fulltext', 'pdf', 'markdown']),
-              required=True,
-              help='Index type (determines searchable/filterable attributes)')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@fulltext.command("create")
+@click.argument("name")
+@click.option(
+    "--type",
+    "index_type",
+    type=click.Choice(
+        [
+            "source-code",
+            "source-code-fulltext",
+            "pdf-docs",
+            "markdown-docs",
+            "code",
+            "code-fulltext",
+            "pdf",
+            "markdown",
+        ]
+    ),
+    required=True,
+    help="Index type (determines searchable/filterable attributes)",
+)
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def create_index(name, index_type, output_json):
     """Create a new MeiliSearch index."""
     try:
@@ -352,13 +376,13 @@ def create_index(name, index_type, output_json):
         if not output_json:
             print_info(f"Using {index_type} settings")
 
-        client.create_index(name, primary_key='id', settings=settings)
+        client.create_index(name, primary_key="id", settings=settings)
 
         data = {
             "name": name,
             "type": index_type,
-            "searchableAttributes": len(settings.get('searchableAttributes', [])),
-            "filterableAttributes": len(settings.get('filterableAttributes', [])),
+            "searchableAttributes": len(settings.get("searchableAttributes", [])),
+            "filterableAttributes": len(settings.get("filterableAttributes", [])),
         }
 
         print_success(f"Created index '{name}'", json_output=output_json, data=data)
@@ -374,8 +398,8 @@ def create_index(name, index_type, output_json):
         sys.exit(1)
 
 
-@fulltext.command('list')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@fulltext.command("list")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def list_indexes(output_json):
     """List all MeiliSearch indexes."""
     try:
@@ -400,29 +424,24 @@ def list_indexes(output_json):
         for idx in indexes:
             # Get document count
             try:
-                stats = client.get_index_stats(idx['uid'])
-                doc_count = str(stats.get('numberOfDocuments', 0))
+                stats = client.get_index_stats(idx["uid"])
+                doc_count = str(stats.get("numberOfDocuments", 0))
             except Exception:
                 doc_count = "?"
 
             # Format created date - handle both string and datetime
-            created_at = idx.get('createdAt')
+            created_at = idx.get("createdAt")
             if created_at:
-                if hasattr(created_at, 'strftime'):
-                    created_str = created_at.strftime('%Y-%m-%d')
+                if hasattr(created_at, "strftime"):
+                    created_str = created_at.strftime("%Y-%m-%d")
                 elif isinstance(created_at, str):
                     created_str = created_at[:10]
                 else:
                     created_str = str(created_at)[:10]
             else:
-                created_str = 'N/A'
+                created_str = "N/A"
 
-            table.add_row(
-                idx['uid'],
-                idx.get('primaryKey', 'N/A'),
-                doc_count,
-                created_str
-            )
+            table.add_row(idx["uid"], idx.get("primaryKey", "N/A"), doc_count, created_str)
 
         console.print(table)
 
@@ -433,9 +452,9 @@ def list_indexes(output_json):
         sys.exit(1)
 
 
-@fulltext.command('info')
-@click.argument('name')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@fulltext.command("info")
+@click.argument("name")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def index_info(name, output_json):
     """Show detailed information about an index."""
     try:
@@ -467,8 +486,8 @@ def index_info(name, output_json):
         stats_table = Table(title="Statistics")
         stats_table.add_column("Metric", style="cyan")
         stats_table.add_column("Value", style="green")
-        stats_table.add_row("Documents", str(stats.get('numberOfDocuments', 0)))
-        stats_table.add_row("Is Indexing", str(stats.get('isIndexing', False)))
+        stats_table.add_row("Documents", str(stats.get("numberOfDocuments", 0)))
+        stats_table.add_row("Is Indexing", str(stats.get("isIndexing", False)))
         console.print(stats_table)
         console.print()
 
@@ -477,20 +496,28 @@ def index_info(name, output_json):
         settings_table.add_column("Setting", style="cyan")
         settings_table.add_column("Value", style="dim")
 
-        searchable = settings.get('searchableAttributes', [])
-        if searchable == ['*']:
+        searchable = settings.get("searchableAttributes", [])
+        if searchable == ["*"]:
             settings_table.add_row("Searchable Attributes", "All (*)")
         else:
-            settings_table.add_row("Searchable Attributes", ", ".join(searchable[:5]) + ("..." if len(searchable) > 5 else ""))
+            settings_table.add_row(
+                "Searchable Attributes",
+                ", ".join(searchable[:5]) + ("..." if len(searchable) > 5 else ""),
+            )
 
-        filterable = settings.get('filterableAttributes', [])
-        settings_table.add_row("Filterable Attributes", ", ".join(filterable[:5]) + ("..." if len(filterable) > 5 else ""))
+        filterable = settings.get("filterableAttributes", [])
+        settings_table.add_row(
+            "Filterable Attributes",
+            ", ".join(filterable[:5]) + ("..." if len(filterable) > 5 else ""),
+        )
 
-        sortable = settings.get('sortableAttributes', [])
+        sortable = settings.get("sortableAttributes", [])
         settings_table.add_row("Sortable Attributes", ", ".join(sortable) if sortable else "None")
 
-        typo_config = settings.get('typoTolerance', {})
-        settings_table.add_row("Typo Tolerance", "Enabled" if typo_config.get('enabled', True) else "Disabled")
+        typo_config = settings.get("typoTolerance", {})
+        settings_table.add_row(
+            "Typo Tolerance", "Enabled" if typo_config.get("enabled", True) else "Disabled"
+        )
 
         console.print(settings_table)
 
@@ -501,10 +528,10 @@ def index_info(name, output_json):
         sys.exit(1)
 
 
-@fulltext.command('delete')
-@click.argument('name')
-@click.option('--confirm', is_flag=True, help='Skip confirmation prompt')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@fulltext.command("delete")
+@click.argument("name")
+@click.option("--confirm", is_flag=True, help="Skip confirmation prompt")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def delete_index(name, confirm, output_json):
     """Delete a MeiliSearch index."""
     try:
@@ -529,14 +556,27 @@ def delete_index(name, confirm, output_json):
         sys.exit(1)
 
 
-@fulltext.command('update-settings')
-@click.argument('name')
-@click.option('--type', 'index_type',
-              type=click.Choice(['source-code', 'source-code-fulltext', 'pdf-docs', 'markdown-docs',
-                                 'code', 'code-fulltext', 'pdf', 'markdown']),
-              required=True,
-              help='Index type to apply settings from')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@fulltext.command("update-settings")
+@click.argument("name")
+@click.option(
+    "--type",
+    "index_type",
+    type=click.Choice(
+        [
+            "source-code",
+            "source-code-fulltext",
+            "pdf-docs",
+            "markdown-docs",
+            "code",
+            "code-fulltext",
+            "pdf",
+            "markdown",
+        ]
+    ),
+    required=True,
+    help="Index type to apply settings from",
+)
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def update_settings(name, index_type, output_json):
     """Update index settings from a preset type."""
     try:
@@ -552,11 +592,15 @@ def update_settings(name, index_type, output_json):
         data = {
             "name": name,
             "type": index_type,
-            "searchableAttributes": len(settings.get('searchableAttributes', [])),
-            "filterableAttributes": len(settings.get('filterableAttributes', [])),
+            "searchableAttributes": len(settings.get("searchableAttributes", [])),
+            "filterableAttributes": len(settings.get("filterableAttributes", [])),
         }
 
-        print_success(f"Updated settings for index '{name}' using {index_type} template", json_output=output_json, data=data)
+        print_success(
+            f"Updated settings for index '{name}' using {index_type} template",
+            json_output=output_json,
+            data=data,
+        )
 
     except ResourceNotFoundError:
         raise
@@ -565,9 +609,9 @@ def update_settings(name, index_type, output_json):
         sys.exit(1)
 
 
-@fulltext.command('verify')
-@click.argument('name')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@fulltext.command("verify")
+@click.argument("name")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def verify_index(name, output_json):
     """Verify index health and integrity.
 
@@ -596,20 +640,20 @@ def verify_index(name, output_json):
             issues = []
             warnings = []
 
-            doc_count = stats.get('numberOfDocuments', 0)
-            is_indexing = stats.get('isIndexing', False)
+            doc_count = stats.get("numberOfDocuments", 0)
+            is_indexing = stats.get("isIndexing", False)
 
             # Check if index is currently processing
             if is_indexing:
                 warnings.append("Index is currently processing documents")
 
             # Check searchable attributes
-            searchable = settings.get('searchableAttributes', [])
-            if not searchable or searchable == ['*']:
+            searchable = settings.get("searchableAttributes", [])
+            if not searchable or searchable == ["*"]:
                 warnings.append("Searchable attributes not explicitly defined (using wildcard)")
 
             # Check filterable attributes
-            filterable = settings.get('filterableAttributes', [])
+            filterable = settings.get("filterableAttributes", [])
             if not filterable:
                 warnings.append("No filterable attributes defined")
 
@@ -617,7 +661,7 @@ def verify_index(name, output_json):
             sample_accessible = False
             try:
                 sample_results = client.search(name, "", limit=1)
-                if sample_results.get('hits'):
+                if sample_results.get("hits"):
                     sample_accessible = True
             except Exception as e:
                 issues.append(f"Failed to retrieve sample document: {e}")
@@ -629,7 +673,7 @@ def verify_index(name, output_json):
                 "is_healthy": is_healthy,
                 "document_count": doc_count,
                 "is_indexing": is_indexing,
-                "searchable_attributes": len(searchable) if searchable != ['*'] else "all",
+                "searchable_attributes": len(searchable) if searchable != ["*"] else "all",
                 "filterable_attributes": len(filterable),
                 "sample_accessible": sample_accessible,
                 "issues": issues,
@@ -655,7 +699,7 @@ def verify_index(name, output_json):
                     console.print(f"[yellow]Currently indexing...[/yellow]")
 
                 # Settings summary
-                if searchable == ['*']:
+                if searchable == ["*"]:
                     console.print(f"Searchable: All attributes")
                 else:
                     console.print(f"Searchable: {len(searchable)} attributes")
@@ -695,11 +739,11 @@ def verify_index(name, output_json):
             sys.exit(1)
 
 
-@fulltext.command('items')
-@click.argument('name')
-@click.option('--limit', type=int, default=100, help='Maximum number of items to show')
-@click.option('--offset', type=int, default=0, help='Number of items to skip')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@fulltext.command("items")
+@click.argument("name")
+@click.option("--limit", type=int, default=100, help="Maximum number of items to show")
+@click.option("--offset", type=int, default=0, help="Number of items to skip")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def list_items(name, limit, offset, output_json):
     """List indexed documents in an index.
 
@@ -736,26 +780,33 @@ def list_items(name, limit, offset, output_json):
                     "",
                     limit=batch_size,
                     offset=batch_offset,
-                    attributes_to_retrieve=['file_path', 'filename', 'file_hash', 'page_number', 'language', 'project']
+                    attributes_to_retrieve=[
+                        "file_path",
+                        "filename",
+                        "file_hash",
+                        "page_number",
+                        "language",
+                        "project",
+                    ],
                 )
 
-                hits = results.get('hits', [])
+                hits = results.get("hits", [])
                 if not hits:
                     break
 
                 for hit in hits:
-                    file_path = hit.get('file_path') or hit.get('filename')
+                    file_path = hit.get("file_path") or hit.get("filename")
                     if file_path and file_path not in items_by_path:
                         items_by_path[file_path] = {
-                            'file_path': file_path,
-                            'filename': hit.get('filename'),
-                            'file_hash': hit.get('file_hash'),
-                            'language': hit.get('language'),
-                            'project': hit.get('project'),
-                            'chunk_count': 1,
+                            "file_path": file_path,
+                            "filename": hit.get("filename"),
+                            "file_hash": hit.get("file_hash"),
+                            "language": hit.get("language"),
+                            "project": hit.get("project"),
+                            "chunk_count": 1,
                         }
                     elif file_path:
-                        items_by_path[file_path]['chunk_count'] += 1
+                        items_by_path[file_path]["chunk_count"] += 1
 
                 batch_offset += len(hits)
 
@@ -794,19 +845,23 @@ def list_items(name, limit, offset, output_json):
                     table.add_column("Project", style="yellow")
                     table.add_column("Chunks", style="magenta")
 
-                    for item in sorted(items_list, key=lambda x: x.get('filename') or x['file_path']):
-                        display_name = item.get('filename') or item['file_path']
+                    for item in sorted(
+                        items_list, key=lambda x: x.get("filename") or x["file_path"]
+                    ):
+                        display_name = item.get("filename") or item["file_path"]
                         table.add_row(
                             display_name,
-                            item.get('language') or '-',
-                            item.get('project') or '-',
-                            str(item['chunk_count']),
+                            item.get("language") or "-",
+                            item.get("project") or "-",
+                            str(item["chunk_count"]),
                         )
 
                     console.print(table)
 
                     if total_items > limit:
-                        console.print(f"\n[dim]Showing {len(items_list)} of {total_items} items. Use --limit to see more.[/dim]")
+                        console.print(
+                            f"\n[dim]Showing {len(items_list)} of {total_items} items. Use --limit to see more.[/dim]"
+                        )
 
             ctx["result_count"] = len(items_list)
             ctx["total_items"] = total_items
@@ -819,10 +874,10 @@ def list_items(name, limit, offset, output_json):
             sys.exit(1)
 
 
-@fulltext.command('export')
-@click.argument('name')
-@click.option('-o', '--output', required=True, type=click.Path(), help='Output file path (.jsonl)')
-@click.option('--json', 'output_json', is_flag=True, help='Output stats as JSON')
+@fulltext.command("export")
+@click.argument("name")
+@click.option("-o", "--output", required=True, type=click.Path(), help="Output file path (.jsonl)")
+@click.option("--json", "output_json", is_flag=True, help="Output stats as JSON")
 def export_index(name, output, output_json):
     """Export index documents to JSONL file.
 
@@ -836,9 +891,7 @@ def export_index(name, output, output_json):
     """
     from pathlib import Path
 
-    with interaction_logger.track(
-        "indexes", "export", index=name, output=output
-    ) as ctx:
+    with interaction_logger.track("indexes", "export", index=name, output=output) as ctx:
         try:
             client = _require_meili()
 
@@ -854,37 +907,37 @@ def export_index(name, output, output_json):
             if not output_json:
                 console.print(f"Exporting index '{name}'...")
 
-            with open(output_path, 'w') as f:
+            with open(output_path, "w") as f:
                 # Write header with index metadata
                 settings = client.get_index_settings(name)
                 index_obj = client.get_index(name)
 
                 header = {
-                    '_type': 'index_metadata',
-                    'name': name,
-                    'primary_key': index_obj.primary_key,
-                    'settings': settings,
-                    'exported_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                    "_type": "index_metadata",
+                    "name": name,
+                    "primary_key": index_obj.primary_key,
+                    "settings": settings,
+                    "exported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 }
-                f.write(json.dumps(header) + '\n')
+                f.write(json.dumps(header) + "\n")
 
                 # Export documents in batches
                 while True:
                     results = client.search(name, "", limit=batch_size, offset=batch_offset)
-                    hits = results.get('hits', [])
+                    hits = results.get("hits", [])
 
                     if not hits:
                         break
 
                     for hit in hits:
-                        doc = {'_type': 'document', **hit}
-                        f.write(json.dumps(doc) + '\n')
+                        doc = {"_type": "document", **hit}
+                        f.write(json.dumps(doc) + "\n")
                         exported_count += 1
 
                     batch_offset += len(hits)
 
                     if not output_json:
-                        console.print(f"  Exported {exported_count} documents...", end='\r')
+                        console.print(f"  Exported {exported_count} documents...", end="\r")
 
                     if len(hits) < batch_size:
                         break
@@ -900,7 +953,9 @@ def export_index(name, output, output_json):
                 }
                 print_json("success", f"Exported {exported_count} documents", data)
             else:
-                console.print(f"\n[green]Exported {exported_count} documents to {output_path}[/green]")
+                console.print(
+                    f"\n[green]Exported {exported_count} documents to {output_path}[/green]"
+                )
                 console.print(f"File size: {format_size(file_size)}")
 
             ctx["exported_count"] = exported_count
@@ -914,9 +969,9 @@ def export_index(name, output, output_json):
             sys.exit(1)
 
 
-@fulltext.command('list-projects')
-@click.argument('name')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@fulltext.command("list-projects")
+@click.argument("name")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def list_projects(name, output_json):
     """List indexed git projects in an index (RDR-011).
 
@@ -939,6 +994,7 @@ def list_projects(name, output_json):
 
             # Query for unique projects
             from ..indexing.fulltext.sync import GitCodeMetadataSync
+
             sync = GitCodeMetadataSync(client)
             indexed_projects = sync.get_indexed_projects(name)
 
@@ -949,7 +1005,7 @@ def list_projects(name, output_json):
                     "projects": [
                         {"identifier": identifier, "commit_hash": commit}
                         for identifier, commit in sorted(indexed_projects.items())
-                    ]
+                    ],
                 }
                 print_json("success", f"Found {len(indexed_projects)} indexed projects", data)
             else:
@@ -979,11 +1035,11 @@ def list_projects(name, output_json):
             sys.exit(1)
 
 
-@fulltext.command('delete-project')
-@click.argument('identifier')
-@click.option('--index', 'index_name', required=True, help='MeiliSearch index name')
-@click.option('--confirm', is_flag=True, help='Skip confirmation prompt')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@fulltext.command("delete-project")
+@click.argument("identifier")
+@click.option("--index", "index_name", required=True, help="MeiliSearch index name")
+@click.option("--confirm", is_flag=True, help="Skip confirmation prompt")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def delete_project(identifier, index_name, confirm, output_json):
     """Delete all documents for a specific git project/branch (RDR-011).
 
@@ -1008,18 +1064,21 @@ def delete_project(identifier, index_name, confirm, output_json):
 
             # Check how many documents will be deleted
             from ..indexing.fulltext.sync import GitCodeMetadataSync
+
             sync = GitCodeMetadataSync(client)
             doc_count = sync.get_project_document_count(index_name, identifier)
 
             if doc_count == 0:
                 if output_json:
-                    print_json("warning", f"No documents found for project '{identifier}'", {
-                        "index": index_name,
-                        "identifier": identifier,
-                        "deleted_count": 0
-                    })
+                    print_json(
+                        "warning",
+                        f"No documents found for project '{identifier}'",
+                        {"index": index_name, "identifier": identifier, "deleted_count": 0},
+                    )
                 else:
-                    print_info(f"No documents found for project '{identifier}' in index '{index_name}'")
+                    print_info(
+                        f"No documents found for project '{identifier}' in index '{index_name}'"
+                    )
                 ctx["deleted_count"] = 0
                 return
 
@@ -1037,11 +1096,11 @@ def delete_project(identifier, index_name, confirm, output_json):
             deleted_count = sync.delete_project_documents(index_name, identifier)
 
             if output_json:
-                print_json("success", f"Deleted {deleted_count} documents", {
-                    "index": index_name,
-                    "identifier": identifier,
-                    "deleted_count": deleted_count
-                })
+                print_json(
+                    "success",
+                    f"Deleted {deleted_count} documents",
+                    {"index": index_name, "identifier": identifier, "deleted_count": deleted_count},
+                )
             else:
                 print_success(f"Deleted {deleted_count} documents for project '{identifier}'")
 
@@ -1055,10 +1114,10 @@ def delete_project(identifier, index_name, confirm, output_json):
             sys.exit(1)
 
 
-@fulltext.command('import')
-@click.argument('file', type=click.Path(exists=True))
-@click.option('--into', 'target_name', help='Target index name (defaults to original name)')
-@click.option('--json', 'output_json', is_flag=True, help='Output stats as JSON')
+@fulltext.command("import")
+@click.argument("file", type=click.Path(exists=True))
+@click.option("--into", "target_name", help="Target index name (defaults to original name)")
+@click.option("--json", "output_json", is_flag=True, help="Output stats as JSON")
 def import_index(file, target_name, output_json):
     """Import index documents from JSONL file.
 
@@ -1089,17 +1148,17 @@ def import_index(file, target_name, output_json):
                 console.print(f"Reading export file...")
 
             # Read the file
-            with open(input_path, 'r') as f:
+            with open(input_path, "r") as f:
                 for line in f:
                     if not line.strip():
                         continue
 
                     record = json.loads(line)
-                    record_type = record.pop('_type', 'document')
+                    record_type = record.pop("_type", "document")
 
-                    if record_type == 'index_metadata':
+                    if record_type == "index_metadata":
                         metadata = record
-                    elif record_type == 'document':
+                    elif record_type == "document":
                         record = {**persisted_metadata_fields(), **record}
                         documents.append(record)
 
@@ -1107,7 +1166,7 @@ def import_index(file, target_name, output_json):
                 raise InvalidArgumentError("Export file missing index metadata header")
 
             # Determine target index name
-            index_name = target_name or metadata['name']
+            index_name = target_name or metadata["name"]
 
             # Create index if it doesn't exist
             if not client.index_exists(index_name):
@@ -1116,8 +1175,8 @@ def import_index(file, target_name, output_json):
 
                 client.create_index(
                     name=index_name,
-                    primary_key=metadata.get('primary_key', 'id'),
-                    settings=metadata.get('settings'),
+                    primary_key=metadata.get("primary_key", "id"),
+                    settings=metadata.get("settings"),
                 )
 
             # Import documents in batches
@@ -1126,12 +1185,12 @@ def import_index(file, target_name, output_json):
                 console.print(f"Importing {len(documents)} documents...")
 
             for i in range(0, len(documents), batch_size):
-                batch = documents[i:i + batch_size]
+                batch = documents[i : i + batch_size]
                 client.add_documents(index_name, batch)
                 imported_count += len(batch)
 
                 if not output_json:
-                    console.print(f"  Imported {imported_count} documents...", end='\r')
+                    console.print(f"  Imported {imported_count} documents...", end="\r")
 
             if output_json:
                 data = {
@@ -1139,9 +1198,13 @@ def import_index(file, target_name, output_json):
                     "imported_count": imported_count,
                     "source_file": str(input_path),
                 }
-                print_json("success", f"Imported {imported_count} documents into '{index_name}'", data)
+                print_json(
+                    "success", f"Imported {imported_count} documents into '{index_name}'", data
+                )
             else:
-                console.print(f"\n[green]Imported {imported_count} documents into '{index_name}'[/green]")
+                console.print(
+                    f"\n[green]Imported {imported_count} documents into '{index_name}'[/green]"
+                )
 
             ctx["imported_count"] = imported_count
             ctx["index"] = index_name

@@ -203,17 +203,13 @@ def build_export_filter(
 
             # Include check: if any includes specified, must match at least one
             if includes:
-                matches_include = any(
-                    fnmatch.fnmatch(file_path, pattern) for pattern in includes
-                )
+                matches_include = any(fnmatch.fnmatch(file_path, pattern) for pattern in includes)
                 if not matches_include:
                     return False
 
             # Exclude check: must not match any exclude pattern
             if excludes:
-                matches_exclude = any(
-                    fnmatch.fnmatch(file_path, pattern) for pattern in excludes
-                )
+                matches_exclude = any(fnmatch.fnmatch(file_path, pattern) for pattern in excludes)
                 if matches_exclude:
                     return False
 
@@ -321,9 +317,7 @@ class BaseExporter(ABC):
         """Export collection to file."""
         pass
 
-    def _get_collection_info(
-        self, collection_name: str
-    ) -> Tuple[Dict[str, Dict[str, Any]], int]:
+    def _get_collection_info(self, collection_name: str) -> Tuple[Dict[str, Dict[str, Any]], int]:
         """Get collection vector config and point count.
 
         Returns:
@@ -333,9 +327,7 @@ class BaseExporter(ABC):
         point_count = info.points_count
 
         vector_config = {}
-        if hasattr(info.config.params, "vectors") and isinstance(
-            info.config.params.vectors, dict
-        ):
+        if hasattr(info.config.params, "vectors") and isinstance(info.config.params.vectors, dict):
             for name, params in info.config.params.vectors.items():
                 vector_config[name] = {
                     "size": params.size,
@@ -474,9 +466,7 @@ class BinaryExporter(BaseExporter):
             f.write(header_bytes)
 
             # Stream points
-            for point in self._scroll_points(
-                collection_name, scroll_filter, path_filter
-            ):
+            for point in self._scroll_points(collection_name, scroll_filter, path_filter):
                 # Serialize point
                 point_data = self._serialize_point(point, root_prefix if detach else None)
                 f.write(msgpack.packb(point_data))
@@ -502,9 +492,7 @@ class BinaryExporter(BaseExporter):
             root_prefix=root_prefix,
         )
 
-    def _serialize_point(
-        self, point: Any, root_prefix: Optional[str] = None
-    ) -> Dict[str, Any]:
+    def _serialize_point(self, point: Any, root_prefix: Optional[str] = None) -> Dict[str, Any]:
         """Serialize point to msgpack-compatible format.
 
         Args:
@@ -521,9 +509,7 @@ class BinaryExporter(BaseExporter):
                 vectors_binary[name] = np.array(vec, dtype=np.float32).tobytes()
         else:
             # Single unnamed vector
-            vectors_binary["_default"] = np.array(
-                point.vector, dtype=np.float32
-            ).tobytes()
+            vectors_binary["_default"] = np.array(point.vector, dtype=np.float32).tobytes()
 
         # Process payload
         payload = dict(point.payload) if point.payload else {}
@@ -615,9 +601,7 @@ class BinaryImporter:
                 if point_data is None:  # EOF marker
                     break
 
-                point = self._deserialize_point(
-                    point_data, header, attach_root, path_remaps
-                )
+                point = self._deserialize_point(point_data, header, attach_root, path_remaps)
                 batch.append(point)
 
                 if len(batch) >= batch_size:
@@ -727,9 +711,7 @@ class BinaryImporter:
             if "file_path" in payload:
                 payload["file_path"] = remap_path(payload["file_path"], path_remaps)
             if "git_project_root" in payload:
-                payload["git_project_root"] = remap_path(
-                    payload["git_project_root"], path_remaps
-                )
+                payload["git_project_root"] = remap_path(payload["git_project_root"], path_remaps)
 
         return PointStruct(
             id=point_data["id"],
@@ -801,9 +783,7 @@ class JsonlExporter(BaseExporter):
             f.write(json.dumps(header) + "\n")
 
             # Stream points
-            for point in self._scroll_points(
-                collection_name, scroll_filter, path_filter
-            ):
+            for point in self._scroll_points(collection_name, scroll_filter, path_filter):
                 point_data = self._serialize_point(point, root_prefix if detach else None)
                 f.write(json.dumps(point_data) + "\n")
                 exported_count += 1
@@ -825,9 +805,7 @@ class JsonlExporter(BaseExporter):
             root_prefix=root_prefix,
         )
 
-    def _serialize_point(
-        self, point: Any, root_prefix: Optional[str] = None
-    ) -> Dict[str, Any]:
+    def _serialize_point(self, point: Any, root_prefix: Optional[str] = None) -> Dict[str, Any]:
         """Serialize point to JSON-compatible format."""
         # Convert vectors to lists
         vectors = {}
@@ -932,9 +910,7 @@ class JsonlImporter:
                     continue
 
                 point_data = json.loads(line)
-                point = self._deserialize_point(
-                    point_data, header, attach_root, path_remaps
-                )
+                point = self._deserialize_point(point_data, header, attach_root, path_remaps)
                 batch.append(point)
 
                 if len(batch) >= batch_size:
@@ -1023,9 +999,7 @@ class JsonlImporter:
             if "file_path" in payload:
                 payload["file_path"] = remap_path(payload["file_path"], path_remaps)
             if "git_project_root" in payload:
-                payload["git_project_root"] = remap_path(
-                    payload["git_project_root"], path_remaps
-                )
+                payload["git_project_root"] = remap_path(payload["git_project_root"], path_remaps)
 
         return PointStruct(
             id=point_data["id"],

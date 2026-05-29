@@ -24,6 +24,7 @@ class IndexedProject:
         commit_hash: Full 40-char SHA of indexed commit
         point_count: Number of chunks indexed for this project
     """
+
     identifier: str
     commit_hash: str
     point_count: int = 0
@@ -52,9 +53,7 @@ class GitMetadataSync:
         self._cache: Dict[str, Dict[str, IndexedProject]] = {}
 
     def get_indexed_projects(
-        self,
-        collection_name: str,
-        force_refresh: bool = False
+        self, collection_name: str, force_refresh: bool = False
     ) -> Dict[str, IndexedProject]:
         """Get all indexed projects from Qdrant metadata.
 
@@ -93,7 +92,7 @@ class GitMetadataSync:
                     with_payload=["git_project_identifier", "git_commit_hash"],
                     with_vectors=False,  # Don't fetch vectors (performance)
                     limit=1000,
-                    offset=offset
+                    offset=offset,
                 )
 
                 batch_count += 1
@@ -111,9 +110,7 @@ class GitMetadataSync:
                         if identifier not in indexed_projects:
                             # First time seeing this identifier
                             indexed_projects[identifier] = IndexedProject(
-                                identifier=identifier,
-                                commit_hash=commit_hash,
-                                point_count=1
+                                identifier=identifier, commit_hash=commit_hash, point_count=1
                             )
                         else:
                             # Already seen - increment count and verify commit match
@@ -147,10 +144,7 @@ class GitMetadataSync:
             return {}
 
     def should_reindex_project(
-        self,
-        collection_name: str,
-        project_identifier: str,
-        current_commit: str
+        self, collection_name: str, project_identifier: str, current_commit: str
     ) -> bool:
         """Check if a project needs re-indexing by comparing commits.
 
@@ -182,16 +176,11 @@ class GitMetadataSync:
             return True
 
         # Unchanged
-        logger.debug(
-            f"Project {project_identifier} unchanged "
-            f"(commit {current_commit[:12]})"
-        )
+        logger.debug(f"Project {project_identifier} unchanged (commit {current_commit[:12]})")
         return False
 
     def get_project_stats(
-        self,
-        collection_name: str,
-        project_identifier: str
+        self, collection_name: str, project_identifier: str
     ) -> Optional[IndexedProject]:
         """Get statistics for a specific indexed project.
 
@@ -205,11 +194,7 @@ class GitMetadataSync:
         indexed = self.get_indexed_projects(collection_name)
         return indexed.get(project_identifier)
 
-    def get_all_branches(
-        self,
-        collection_name: str,
-        project_name: str
-    ) -> Set[str]:
+    def get_all_branches(self, collection_name: str, project_name: str) -> Set[str]:
         """Get all indexed branches for a specific project.
 
         Args:
@@ -261,9 +246,7 @@ class GitMetadataSync:
             logger.debug("Cleared all cached metadata")
 
     def get_stale_identifiers(
-        self,
-        collection_name: str,
-        current_identifiers: Set[str]
+        self, collection_name: str, current_identifiers: Set[str]
     ) -> Set[str]:
         """Find stale project identifiers that are indexed but no longer exist.
 
@@ -291,11 +274,7 @@ class GitMetadataSync:
 
         return stale
 
-    def is_version_indexed(
-        self,
-        collection_name: str,
-        version_identifier: str
-    ) -> bool:
+    def is_version_indexed(self, collection_name: str, version_identifier: str) -> bool:
         """Check if a specific version (project#branch@commit) is already indexed.
 
         This supports the --git-version mode where multiple versions of the same
@@ -316,14 +295,13 @@ class GitMetadataSync:
                 scroll_filter=Filter(
                     must=[
                         FieldCondition(
-                            key="git_version_identifier",
-                            match=MatchValue(value=version_identifier)
+                            key="git_version_identifier", match=MatchValue(value=version_identifier)
                         )
                     ]
                 ),
                 with_payload=False,
                 with_vectors=False,
-                limit=1  # Only need to know if any exist
+                limit=1,  # Only need to know if any exist
             )
 
             points, _ = result
@@ -362,10 +340,7 @@ class GitMetadataSync:
                 return True, "Collection empty or no projects indexed"
 
             # Check for projects with very low chunk counts (might indicate partial index)
-            low_count_projects = [
-                p.identifier for p in indexed.values()
-                if p.point_count < 5
-            ]
+            low_count_projects = [p.identifier for p in indexed.values() if p.point_count < 5]
 
             if low_count_projects:
                 return False, (

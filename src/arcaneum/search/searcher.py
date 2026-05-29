@@ -33,6 +33,7 @@ class SearchResult:
         metadata: Full payload metadata dictionary
         point_id: Qdrant point ID (for debugging)
     """
+
     score: float
     collection: str
     location: str
@@ -67,7 +68,7 @@ def format_location(metadata: Dict[str, Any]) -> str:
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=10),
     retry=retry_if_exception_type((ConnectionError, OSError, TimeoutError)),
-    before_sleep=before_sleep_log(logger, logging.WARNING)
+    before_sleep=before_sleep_log(logger, logging.WARNING),
 )
 def search_collection(
     client: QdrantClient,
@@ -78,7 +79,7 @@ def search_collection(
     limit: int = 10,
     offset: int = 0,
     query_filter: Optional[models.Filter] = None,
-    score_threshold: Optional[float] = None
+    score_threshold: Optional[float] = None,
 ) -> List[SearchResult]:
     """Search single collection with semantic query.
 
@@ -126,7 +127,7 @@ def search_collection(
             offset=offset,
             score_threshold=score_threshold,
             with_payload=True,
-            with_vectors=False  # Don't return vectors (saves bandwidth)
+            with_vectors=False,  # Don't return vectors (saves bandwidth)
         )
         results = response.points
     except Exception as e:
@@ -142,7 +143,7 @@ def search_collection(
                 location=format_location(r.payload),
                 content=r.payload.get("content", r.payload.get("text", "")),
                 metadata=r.payload,
-                point_id=str(r.id)
+                point_id=str(r.id),
             )
         )
 

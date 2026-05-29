@@ -100,7 +100,7 @@ def get_dir_size(path: Path) -> int:
     """Get total size of a directory in bytes."""
     total = 0
     try:
-        for item in path.rglob('*'):
+        for item in path.rglob("*"):
             if item.is_file():
                 total += item.stat().st_size
     except (PermissionError, OSError):
@@ -111,25 +111,29 @@ def get_dir_size(path: Path) -> int:
 from arcaneum.cli.errors import HelpfulGroup
 
 
-@click.group(name='config', cls=HelpfulGroup, usage_examples=[
-    'arc config show-cache-dir',
-    'arc config clear-cache --confirm',
-])
+@click.group(
+    name="config",
+    cls=HelpfulGroup,
+    usage_examples=[
+        "arc config show-cache-dir",
+        "arc config clear-cache --confirm",
+    ],
+)
 def config_group():
     """Configuration and cache management"""
     pass
 
 
-@config_group.command('show-cache-dir')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@config_group.command("show-cache-dir")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def show_cache_dir_command(output_json):
     """Show cache directory location and sizes"""
     show_cache_dir(output_json)
 
 
-@config_group.command('clear-cache')
-@click.option('--confirm', is_flag=True, help='Confirm deletion')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@config_group.command("clear-cache")
+@click.option("--confirm", is_flag=True, help="Confirm deletion")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def clear_cache_command(confirm, output_json):
     """Clear model cache directory"""
     clear_cache(confirm, output_json)

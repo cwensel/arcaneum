@@ -25,9 +25,9 @@ def get_mp_context():
     Returns:
         Multiprocessing context object
     """
-    if hasattr(os, 'fork'):
+    if hasattr(os, "fork"):
         try:
-            return mp.get_context('fork')
+            return mp.get_context("fork")
         except ValueError:
             pass
     return mp.get_context()
@@ -46,9 +46,7 @@ def worker_init():
 
 
 def create_process_pool(
-    max_workers: Optional[int] = None,
-    initializer=None,
-    initargs=()
+    max_workers: Optional[int] = None, initializer=None, initargs=()
 ) -> ProcessPoolExecutor:
     """Create a ProcessPoolExecutor with consistent configuration.
 
@@ -79,8 +77,5 @@ def create_process_pool(
         initializer = worker_init
 
     return ProcessPoolExecutor(
-        max_workers=max_workers,
-        mp_context=ctx,
-        initializer=initializer,
-        initargs=initargs
+        max_workers=max_workers, mp_context=ctx, initializer=initializer, initargs=initargs
     )

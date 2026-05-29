@@ -22,13 +22,19 @@ class TestIndexesCreate:
         mock_meili_client.index_exists.return_value = False
 
         runner = CliRunner()
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_meili_client):
-            with patch('arcaneum.cli.fulltext.get_index_settings', return_value={'searchableAttributes': ['content'], 'filterableAttributes': ['language']}):
-                result = runner.invoke(create_index, ['TestIndex', '--type', 'code', '--json'])
+        with patch("arcaneum.cli.fulltext.create_meili_client", return_value=mock_meili_client):
+            with patch(
+                "arcaneum.cli.fulltext.get_index_settings",
+                return_value={
+                    "searchableAttributes": ["content"],
+                    "filterableAttributes": ["language"],
+                },
+            ):
+                result = runner.invoke(create_index, ["TestIndex", "--type", "code", "--json"])
 
         assert result.exit_code == 0
         output = json.loads(result.output)
-        assert output['status'] == 'success'
+        assert output["status"] == "success"
         mock_meili_client.create_index.assert_called_once()
 
     def test_create_already_exists(self, mock_meili_client):
@@ -40,13 +46,14 @@ class TestIndexesCreate:
         mock_meili_client.index_exists.return_value = True
 
         runner = CliRunner()
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_meili_client):
-            result = runner.invoke(create_index, ['TestIndex', '--type', 'code'])
+        with patch("arcaneum.cli.fulltext.create_meili_client", return_value=mock_meili_client):
+            result = runner.invoke(create_index, ["TestIndex", "--type", "code"])
 
         # Command should fail with exception
         assert result.exit_code != 0
         # Exception is raised, check the exception type
         assert result.exception is not None
+
 
 class TestIndexesList:
     """Test 'arc indexes list' command."""
@@ -59,13 +66,13 @@ class TestIndexesList:
         mock_meili_client.list_indexes.return_value = []
 
         runner = CliRunner()
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_meili_client):
-            result = runner.invoke(list_indexes, ['--json'])
+        with patch("arcaneum.cli.fulltext.create_meili_client", return_value=mock_meili_client):
+            result = runner.invoke(list_indexes, ["--json"])
 
         assert result.exit_code == 0
         output = json.loads(result.output)
-        assert output['status'] == 'success'
-        assert output['data']['indexes'] == []
+        assert output["status"] == "success"
+        assert output["data"]["indexes"] == []
 
     def test_with_indexes(self, mock_meili_client, capsys):
         """Test listing when indexes exist."""
@@ -73,18 +80,19 @@ class TestIndexesList:
         from click.testing import CliRunner
 
         mock_meili_client.list_indexes.return_value = [
-            {'uid': 'Index1', 'primaryKey': 'id', 'createdAt': '2024-01-01T00:00:00Z'},
-            {'uid': 'Index2', 'primaryKey': 'id', 'createdAt': '2024-01-02T00:00:00Z'},
+            {"uid": "Index1", "primaryKey": "id", "createdAt": "2024-01-01T00:00:00Z"},
+            {"uid": "Index2", "primaryKey": "id", "createdAt": "2024-01-02T00:00:00Z"},
         ]
 
         runner = CliRunner()
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_meili_client):
-            result = runner.invoke(list_indexes, ['--json'])
+        with patch("arcaneum.cli.fulltext.create_meili_client", return_value=mock_meili_client):
+            result = runner.invoke(list_indexes, ["--json"])
 
         assert result.exit_code == 0
         output = json.loads(result.output)
-        assert output['status'] == 'success'
-        assert len(output['data']['indexes']) == 2
+        assert output["status"] == "success"
+        assert len(output["data"]["indexes"]) == 2
+
 
 class TestIndexesInfo:
     """Test 'arc indexes info' command."""
@@ -95,24 +103,27 @@ class TestIndexesInfo:
         from click.testing import CliRunner
 
         mock_meili_client.index_exists.return_value = True
-        mock_meili_client.get_index.return_value = MagicMock(primary_key='id')
-        mock_meili_client.get_index_stats.return_value = {'numberOfDocuments': 100, 'isIndexing': False}
+        mock_meili_client.get_index.return_value = MagicMock(primary_key="id")
+        mock_meili_client.get_index_stats.return_value = {
+            "numberOfDocuments": 100,
+            "isIndexing": False,
+        }
         mock_meili_client.get_index_settings.return_value = {
-            'searchableAttributes': ['content', 'title'],
-            'filterableAttributes': ['language', 'project'],
-            'sortableAttributes': ['created_at'],
-            'typoTolerance': {'enabled': True},
+            "searchableAttributes": ["content", "title"],
+            "filterableAttributes": ["language", "project"],
+            "sortableAttributes": ["created_at"],
+            "typoTolerance": {"enabled": True},
         }
 
         runner = CliRunner()
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_meili_client):
-            result = runner.invoke(index_info, ['TestIndex', '--json'])
+        with patch("arcaneum.cli.fulltext.create_meili_client", return_value=mock_meili_client):
+            result = runner.invoke(index_info, ["TestIndex", "--json"])
 
         assert result.exit_code == 0
         output = json.loads(result.output)
-        assert output['status'] == 'success'
-        assert 'settings' in output['data']
-        assert 'stats' in output['data']
+        assert output["status"] == "success"
+        assert "settings" in output["data"]
+        assert "stats" in output["data"]
 
     def test_not_found(self, mock_meili_client):
         """Test error when index not found."""
@@ -122,8 +133,8 @@ class TestIndexesInfo:
         mock_meili_client.index_exists.return_value = False
 
         runner = CliRunner()
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_meili_client):
-            result = runner.invoke(index_info, ['NonExistent'])
+        with patch("arcaneum.cli.fulltext.create_meili_client", return_value=mock_meili_client):
+            result = runner.invoke(index_info, ["NonExistent"])
 
         assert result.exit_code != 0
 
@@ -139,11 +150,11 @@ class TestIndexesDelete:
         mock_meili_client.index_exists.return_value = True
 
         runner = CliRunner()
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_meili_client):
-            result = runner.invoke(delete_index, ['TestIndex'], input='n\n')
+        with patch("arcaneum.cli.fulltext.create_meili_client", return_value=mock_meili_client):
+            result = runner.invoke(delete_index, ["TestIndex"], input="n\n")
 
         # Should prompt and user cancels
-        assert 'Cancelled' in result.output or 'cancelled' in result.output.lower()
+        assert "Cancelled" in result.output or "cancelled" in result.output.lower()
 
     def test_with_confirm(self, mock_meili_client):
         """Test deletion with --confirm flag."""
@@ -153,11 +164,11 @@ class TestIndexesDelete:
         mock_meili_client.index_exists.return_value = True
 
         runner = CliRunner()
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_meili_client):
-            result = runner.invoke(delete_index, ['TestIndex', '--confirm'])
+        with patch("arcaneum.cli.fulltext.create_meili_client", return_value=mock_meili_client):
+            result = runner.invoke(delete_index, ["TestIndex", "--confirm"])
 
         assert result.exit_code == 0
-        mock_meili_client.delete_index.assert_called_once_with('TestIndex')
+        mock_meili_client.delete_index.assert_called_once_with("TestIndex")
 
 
 class TestIndexesVerify:
@@ -169,20 +180,23 @@ class TestIndexesVerify:
         from click.testing import CliRunner
 
         mock_meili_client.index_exists.return_value = True
-        mock_meili_client.get_index_stats.return_value = {'numberOfDocuments': 100, 'isIndexing': False}
-        mock_meili_client.get_index_settings.return_value = {
-            'searchableAttributes': ['content'],
-            'filterableAttributes': ['language'],
+        mock_meili_client.get_index_stats.return_value = {
+            "numberOfDocuments": 100,
+            "isIndexing": False,
         }
-        mock_meili_client.search.return_value = {'hits': [{'id': '1'}]}
+        mock_meili_client.get_index_settings.return_value = {
+            "searchableAttributes": ["content"],
+            "filterableAttributes": ["language"],
+        }
+        mock_meili_client.search.return_value = {"hits": [{"id": "1"}]}
 
         runner = CliRunner()
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_meili_client):
-            result = runner.invoke(verify_index, ['TestIndex', '--json'])
+        with patch("arcaneum.cli.fulltext.create_meili_client", return_value=mock_meili_client):
+            result = runner.invoke(verify_index, ["TestIndex", "--json"])
 
         assert result.exit_code == 0
         output = json.loads(result.output)
-        assert output['data']['is_healthy'] is True
+        assert output["data"]["is_healthy"] is True
 
     def test_with_warnings(self, mock_meili_client, mock_interaction_logger):
         """Test verifying index with warnings."""
@@ -190,20 +204,23 @@ class TestIndexesVerify:
         from click.testing import CliRunner
 
         mock_meili_client.index_exists.return_value = True
-        mock_meili_client.get_index_stats.return_value = {'numberOfDocuments': 100, 'isIndexing': True}
-        mock_meili_client.get_index_settings.return_value = {
-            'searchableAttributes': ['*'],  # Wildcard triggers warning
-            'filterableAttributes': [],  # Empty triggers warning
+        mock_meili_client.get_index_stats.return_value = {
+            "numberOfDocuments": 100,
+            "isIndexing": True,
         }
-        mock_meili_client.search.return_value = {'hits': [{'id': '1'}]}
+        mock_meili_client.get_index_settings.return_value = {
+            "searchableAttributes": ["*"],  # Wildcard triggers warning
+            "filterableAttributes": [],  # Empty triggers warning
+        }
+        mock_meili_client.search.return_value = {"hits": [{"id": "1"}]}
 
         runner = CliRunner()
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_meili_client):
-            result = runner.invoke(verify_index, ['TestIndex', '--json'])
+        with patch("arcaneum.cli.fulltext.create_meili_client", return_value=mock_meili_client):
+            result = runner.invoke(verify_index, ["TestIndex", "--json"])
 
         assert result.exit_code == 0
         output = json.loads(result.output)
-        assert len(output['data']['warnings']) > 0
+        assert len(output["data"]["warnings"]) > 0
 
 
 class TestIndexesItems:
@@ -216,20 +233,21 @@ class TestIndexesItems:
 
         mock_meili_client.index_exists.return_value = True
         mock_meili_client.search.return_value = {
-            'hits': [
-                {'file_path': '/path/to/file1.py', 'filename': 'file1.py', 'language': 'python'},
-                {'file_path': '/path/to/file1.py', 'filename': 'file1.py', 'language': 'python'},
-                {'file_path': '/path/to/file2.py', 'filename': 'file2.py', 'language': 'python'},
+            "hits": [
+                {"file_path": "/path/to/file1.py", "filename": "file1.py", "language": "python"},
+                {"file_path": "/path/to/file1.py", "filename": "file1.py", "language": "python"},
+                {"file_path": "/path/to/file2.py", "filename": "file2.py", "language": "python"},
             ]
         }
 
         runner = CliRunner()
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_meili_client):
-            result = runner.invoke(list_items, ['TestIndex', '--json'])
+        with patch("arcaneum.cli.fulltext.create_meili_client", return_value=mock_meili_client):
+            result = runner.invoke(list_items, ["TestIndex", "--json"])
 
         assert result.exit_code == 0
         output = json.loads(result.output)
-        assert output['data']['total_items'] == 2  # Deduplicated
+        assert output["data"]["total_items"] == 2  # Deduplicated
+
 
 class TestIndexesExport:
     """Test 'arc indexes export' command."""
@@ -240,23 +258,23 @@ class TestIndexesExport:
         from click.testing import CliRunner
 
         mock_meili_client.index_exists.return_value = True
-        mock_meili_client.get_index.return_value = MagicMock(primary_key='id')
-        mock_meili_client.get_index_stats.return_value = {'numberOfDocuments': 2}
+        mock_meili_client.get_index.return_value = MagicMock(primary_key="id")
+        mock_meili_client.get_index_stats.return_value = {"numberOfDocuments": 2}
         mock_meili_client.get_index_settings.return_value = {}
         mock_meili_client.search.side_effect = [
-            {'hits': [{'id': '1', 'content': 'test1'}, {'id': '2', 'content': 'test2'}]},
-            {'hits': []},
+            {"hits": [{"id": "1", "content": "test1"}, {"id": "2", "content": "test2"}]},
+            {"hits": []},
         ]
 
-        output_file = temp_dir / 'export.jsonl'
+        output_file = temp_dir / "export.jsonl"
 
         runner = CliRunner()
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_meili_client):
-            result = runner.invoke(export_index, ['TestIndex', '-o', str(output_file), '--json'])
+        with patch("arcaneum.cli.fulltext.create_meili_client", return_value=mock_meili_client):
+            result = runner.invoke(export_index, ["TestIndex", "-o", str(output_file), "--json"])
 
         assert result.exit_code == 0
         output = json.loads(result.output)
-        assert output['data']['exported_count'] == 2
+        assert output["data"]["exported_count"] == 2
 
 
 class TestIndexesImport:
@@ -268,21 +286,23 @@ class TestIndexesImport:
         from click.testing import CliRunner
 
         # Create a test export file
-        export_file = temp_dir / 'export.jsonl'
-        with open(export_file, 'w') as f:
-            f.write('{"_type": "index_metadata", "name": "TestIndex", "primary_key": "id", "settings": {}}\n')
+        export_file = temp_dir / "export.jsonl"
+        with open(export_file, "w") as f:
+            f.write(
+                '{"_type": "index_metadata", "name": "TestIndex", "primary_key": "id", "settings": {}}\n'
+            )
             f.write('{"_type": "document", "id": "1", "content": "test1"}\n')
             f.write('{"_type": "document", "id": "2", "content": "test2"}\n')
 
         mock_meili_client.index_exists.return_value = False
 
         runner = CliRunner()
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_meili_client):
-            result = runner.invoke(import_index, [str(export_file), '--json'])
+        with patch("arcaneum.cli.fulltext.create_meili_client", return_value=mock_meili_client):
+            result = runner.invoke(import_index, [str(export_file), "--json"])
 
         assert result.exit_code == 0
         output = json.loads(result.output)
-        assert output['data']['imported_count'] == 2
+        assert output["data"]["imported_count"] == 2
 
 
 class TestIndexesListProjects:
@@ -296,20 +316,20 @@ class TestIndexesListProjects:
         mock_meili_client.index_exists.return_value = True
 
         runner = CliRunner()
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_meili_client):
-            with patch('arcaneum.indexing.fulltext.sync.GitCodeMetadataSync') as mock_sync_class:
+        with patch("arcaneum.cli.fulltext.create_meili_client", return_value=mock_meili_client):
+            with patch("arcaneum.indexing.fulltext.sync.GitCodeMetadataSync") as mock_sync_class:
                 mock_sync = MagicMock()
                 mock_sync.get_indexed_projects.return_value = {
-                    'myrepo#main': 'abc123def456',
-                    'myrepo#feature': 'def456abc123',
+                    "myrepo#main": "abc123def456",
+                    "myrepo#feature": "def456abc123",
                 }
                 mock_sync_class.return_value = mock_sync
 
-                result = runner.invoke(list_projects, ['TestIndex', '--json'])
+                result = runner.invoke(list_projects, ["TestIndex", "--json"])
 
         assert result.exit_code == 0
         output = json.loads(result.output)
-        assert output['data']['total_projects'] == 2
+        assert output["data"]["total_projects"] == 2
 
 
 class TestIndexesDeleteProject:
@@ -323,18 +343,20 @@ class TestIndexesDeleteProject:
         mock_meili_client.index_exists.return_value = True
 
         runner = CliRunner()
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_meili_client):
-            with patch('arcaneum.indexing.fulltext.sync.GitCodeMetadataSync') as mock_sync_class:
+        with patch("arcaneum.cli.fulltext.create_meili_client", return_value=mock_meili_client):
+            with patch("arcaneum.indexing.fulltext.sync.GitCodeMetadataSync") as mock_sync_class:
                 mock_sync = MagicMock()
                 mock_sync.get_project_document_count.return_value = 100
                 mock_sync.delete_project_documents.return_value = 100
                 mock_sync_class.return_value = mock_sync
 
-                result = runner.invoke(delete_project, ['myrepo#main', '--index', 'TestIndex', '--confirm', '--json'])
+                result = runner.invoke(
+                    delete_project, ["myrepo#main", "--index", "TestIndex", "--confirm", "--json"]
+                )
 
         assert result.exit_code == 0
         output = json.loads(result.output)
-        assert output['data']['deleted_count'] == 100
+        assert output["data"]["deleted_count"] == 100
 
     def test_delete_project_not_found(self, mock_meili_client, mock_interaction_logger):
         """Test deleting a project that doesn't exist."""
@@ -344,17 +366,19 @@ class TestIndexesDeleteProject:
         mock_meili_client.index_exists.return_value = True
 
         runner = CliRunner()
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_meili_client):
-            with patch('arcaneum.indexing.fulltext.sync.GitCodeMetadataSync') as mock_sync_class:
+        with patch("arcaneum.cli.fulltext.create_meili_client", return_value=mock_meili_client):
+            with patch("arcaneum.indexing.fulltext.sync.GitCodeMetadataSync") as mock_sync_class:
                 mock_sync = MagicMock()
                 mock_sync.get_project_document_count.return_value = 0
                 mock_sync_class.return_value = mock_sync
 
-                result = runner.invoke(delete_project, ['nonexistent#main', '--index', 'TestIndex', '--json'])
+                result = runner.invoke(
+                    delete_project, ["nonexistent#main", "--index", "TestIndex", "--json"]
+                )
 
         output = json.loads(result.output)
-        assert output['status'] == 'warning'
-        assert output['data']['deleted_count'] == 0
+        assert output["status"] == "warning"
+        assert output["data"]["deleted_count"] == 0
 
 
 class TestIndexesServerUnavailable:
@@ -368,11 +392,11 @@ class TestIndexesServerUnavailable:
         mock_meili_client.health_check.return_value = False
 
         runner = CliRunner()
-        with patch('arcaneum.cli.fulltext.create_meili_client', return_value=mock_meili_client):
+        with patch("arcaneum.cli.fulltext.create_meili_client", return_value=mock_meili_client):
             result = runner.invoke(list_indexes)
 
         # Should fail with non-zero exit code
         assert result.exit_code != 0
         # Error could be in output or as an exception
-        error_info = result.output + (str(result.exception) if result.exception else '')
-        assert 'not available' in error_info.lower() or 'MeiliSearch' in error_info
+        error_info = result.output + (str(result.exception) if result.exception else "")
+        assert "not available" in error_info.lower() or "MeiliSearch" in error_info

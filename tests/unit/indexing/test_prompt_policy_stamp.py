@@ -29,9 +29,7 @@ class StampQdrant:
 
     def get_collection(self, _name):
         return SimpleNamespace(
-            config=SimpleNamespace(
-                params=SimpleNamespace(vectors=SimpleNamespace(size=2))
-            )
+            config=SimpleNamespace(params=SimpleNamespace(vectors=SimpleNamespace(size=2)))
         )
 
     def retrieve(self, collection_name, ids, with_payload, with_vectors):
@@ -48,54 +46,70 @@ class StampQdrant:
 
 # ---- should_stamp_prompt_policy gate -----------------------------------------
 
+
 def _stats(files=1, errors=0):
     return {"files": files, "errors": errors}
 
 
 def test_gate_true_when_force_full_clean_no_orphans():
-    assert should_stamp_prompt_policy(
-        force=True, file_list=None, stats=_stats(), orphans_remaining=0
-    ) is True
+    assert (
+        should_stamp_prompt_policy(force=True, file_list=None, stats=_stats(), orphans_remaining=0)
+        is True
+    )
 
 
 def test_gate_false_when_not_force():
-    assert should_stamp_prompt_policy(
-        force=False, file_list=None, stats=_stats(), orphans_remaining=0
-    ) is False
+    assert (
+        should_stamp_prompt_policy(force=False, file_list=None, stats=_stats(), orphans_remaining=0)
+        is False
+    )
 
 
 def test_gate_false_on_partial_file_list_force():
-    assert should_stamp_prompt_policy(
-        force=True, file_list=["/a.md"], stats=_stats(), orphans_remaining=0
-    ) is False
+    assert (
+        should_stamp_prompt_policy(
+            force=True, file_list=["/a.md"], stats=_stats(), orphans_remaining=0
+        )
+        is False
+    )
 
 
 def test_gate_false_when_errors_present():
-    assert should_stamp_prompt_policy(
-        force=True, file_list=None, stats=_stats(errors=2), orphans_remaining=0
-    ) is False
+    assert (
+        should_stamp_prompt_policy(
+            force=True, file_list=None, stats=_stats(errors=2), orphans_remaining=0
+        )
+        is False
+    )
 
 
 def test_gate_false_when_no_files_indexed():
-    assert should_stamp_prompt_policy(
-        force=True, file_list=None, stats=_stats(files=0), orphans_remaining=0
-    ) is False
+    assert (
+        should_stamp_prompt_policy(
+            force=True, file_list=None, stats=_stats(files=0), orphans_remaining=0
+        )
+        is False
+    )
 
 
 def test_gate_false_when_orphans_remain():
-    assert should_stamp_prompt_policy(
-        force=True, file_list=None, stats=_stats(), orphans_remaining=3
-    ) is False
+    assert (
+        should_stamp_prompt_policy(force=True, file_list=None, stats=_stats(), orphans_remaining=3)
+        is False
+    )
 
 
 # ---- stamp_embedding_prompt_policy writer ------------------------------------
 
+
 def test_stamp_writes_prompt_policy_into_metadata():
-    qdrant = StampQdrant(metadata={
-        "collection_type": "markdown",
-        "model": "stella",
-        "created_by": "arcaneum",
-    })
+    qdrant = StampQdrant(
+        metadata={
+            "collection_type": "markdown",
+            "model": "stella",
+            "created_by": "arcaneum",
+        }
+    )
 
     stamp_embedding_prompt_policy(qdrant, "md", "markdown", "stella")
 
@@ -132,11 +146,13 @@ def test_stamp_does_not_initialize_when_metadata_retrieve_fails():
 
 @pytest.mark.parametrize("collection_type", ["pdf", "markdown", "code"])
 def test_backfill_prompt_policy_supports_all_corpus_types(collection_type):
-    qdrant = StampQdrant(metadata={
-        "collection_type": collection_type,
-        "model": "stella",
-        "created_by": "arcaneum",
-    })
+    qdrant = StampQdrant(
+        metadata={
+            "collection_type": collection_type,
+            "model": "stella",
+            "created_by": "arcaneum",
+        }
+    )
 
     metadata = backfill_embedding_prompt_policy(
         qdrant,

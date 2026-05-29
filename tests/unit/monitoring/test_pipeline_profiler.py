@@ -12,6 +12,7 @@ from arcaneum.monitoring.pipeline_profiler import (
 
 # --- StageMetrics ---
 
+
 class TestStageMetrics:
     def test_duration(self):
         m = StageMetrics(name="test", start_time=1.0, end_time=3.5)
@@ -27,6 +28,7 @@ class TestStageMetrics:
 
 
 # --- PipelineProfiler.stage() context manager ---
+
 
 class TestStageContextManager:
     def test_records_duration(self):
@@ -69,6 +71,7 @@ class TestStageContextManager:
 
 # --- record_stage ---
 
+
 class TestRecordStage:
     def test_records_single_call(self):
         profiler = PipelineProfiler()
@@ -85,6 +88,7 @@ class TestRecordStage:
 
 
 # --- total_duration and elapsed_time ---
+
 
 class TestDuration:
     def test_total_duration_sums_stages(self):
@@ -110,6 +114,7 @@ class TestDuration:
 
 
 # --- report ---
+
 
 class TestReport:
     def test_report_contains_header(self):
@@ -150,6 +155,7 @@ class TestReport:
 
 # --- get_stage_summary ---
 
+
 class TestGetStageSummary:
     def test_known_stage(self):
         profiler = PipelineProfiler()
@@ -164,6 +170,7 @@ class TestGetStageSummary:
 
 
 # --- get_compact_summary ---
+
 
 class TestGetCompactSummary:
     def test_returns_string(self):
@@ -192,6 +199,7 @@ class TestGetCompactSummary:
 
 # --- reset ---
 
+
 class TestReset:
     def test_clears_stages(self):
         profiler = PipelineProfiler()
@@ -216,6 +224,7 @@ class TestReset:
 
 
 # --- Thread safety ---
+
 
 class TestThreadSafety:
     def test_concurrent_record_stage(self):

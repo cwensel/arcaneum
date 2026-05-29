@@ -40,6 +40,7 @@ def _source_hash_matches_disk(file_path: str, source_hash: str) -> bool:
     sha256 = hashlib.sha256()
     try:
         import xxhash
+
         xxh64 = xxhash.xxh64()
     except ImportError:
         xxh64 = None
@@ -53,12 +54,13 @@ def _source_hash_matches_disk(file_path: str, source_hash: str) -> bool:
     except OSError:
         return True
 
-    candidates = {sha256.hexdigest()[:len(source_hash)]}
+    candidates = {sha256.hexdigest()[: len(source_hash)]}
     if xxh64 is not None:
         candidates.add(xxh64.hexdigest())
 
     if len(source_hash) == 32:
         from arcaneum.indexing.common.sync import compute_text_file_hash
+
         candidates.add(compute_text_file_hash(Path(file_path)))
 
     return source_hash in candidates
@@ -75,6 +77,7 @@ def _page_count_from_disk(file_path: str) -> Optional[int]:
         return None
     try:
         import pymupdf
+
         with pymupdf.open(file_path) as doc:
             return doc.page_count
     except Exception as e:
@@ -157,8 +160,11 @@ class CollectionVerificationResult:
         if self.collection_type == "code":
             return [p.identifier for p in self.projects if not p.is_complete]
         else:
-            return [f.file_path for f in self.files
-                    if not f.is_complete or f.has_garbled_text or f.suspected_dropout]
+            return [
+                f.file_path
+                for f in self.files
+                if not f.is_complete or f.has_garbled_text or f.suspected_dropout
+            ]
 
 
 class CollectionVerifier:
@@ -219,7 +225,10 @@ class CollectionVerifier:
             )
         else:
             result = self._verify_file_collection(
-                collection_name, collection_type, total_points, verbose,
+                collection_name,
+                collection_type,
+                total_points,
+                verbose,
                 check_quality=check_quality,
                 quality_threshold=quality_threshold,
             )
@@ -374,9 +383,7 @@ class CollectionVerifier:
         return CollectionVerificationResult(
             collection_name=collection_name,
             collection_type="code",
-            total_points=sum(
-                project.total_actual_chunks for project in project_results
-            ),
+            total_points=sum(project.total_actual_chunks for project in project_results),
             total_items=len(project_results),
             complete_items=total_complete,
             incomplete_items=total_incomplete,
@@ -596,9 +603,7 @@ class CollectionVerifier:
                 missing = sorted(expected_indices - indices)
                 unexpected = indices - expected_indices
                 is_complete = (
-                    len(missing) == 0
-                    and len(unexpected) == 0
-                    and not conflicting_chunk_counts
+                    len(missing) == 0 and len(unexpected) == 0 and not conflicting_chunk_counts
                 )
 
             # Check text quality
@@ -637,9 +642,7 @@ class CollectionVerifier:
                 if page_count and total_text_chars:
                     if file_data["extraction_floor"]:
                         # Already tried the bypass; don't flag for re-indexing
-                        if looks_like_dropout(
-                            "x" * total_text_chars, page_count
-                        ):
+                        if looks_like_dropout("x" * total_text_chars, page_count):
                             dropout_at_floor += 1
                     else:
                         # Use a sentinel string of matching length — looks_like_dropout
@@ -681,9 +684,7 @@ class CollectionVerifier:
         return CollectionVerificationResult(
             collection_name=collection_name,
             collection_type=collection_type,
-            total_points=sum(
-                len(file_data["indices"]) for file_data in file_chunks.values()
-            ),
+            total_points=sum(len(file_data["indices"]) for file_data in file_chunks.values()),
             total_items=len(file_results),
             complete_items=complete_count,
             incomplete_items=incomplete_count,

@@ -26,17 +26,14 @@ def _exit_on_json_error(output_json: bool, code: int = 1):
 def check_docker_available(output_json: bool = False):
     """Check if Docker is installed and running."""
     if not shutil.which("docker"):
-        print_error("Docker is not installed. Please install Docker Desktop or Docker Engine.", output_json)
+        print_error(
+            "Docker is not installed. Please install Docker Desktop or Docker Engine.", output_json
+        )
         print_info("Visit: https://docs.docker.com/get-docker/", output_json)
         return False
 
     try:
-        subprocess.run(
-            ["docker", "info"],
-            capture_output=True,
-            check=True,
-            timeout=5
-        )
+        subprocess.run(["docker", "info"], capture_output=True, check=True, timeout=5)
         return True
     except subprocess.CalledProcessError:
         print_error("Docker is installed but not running. Please start Docker.", output_json)
@@ -65,11 +62,16 @@ def get_compose_file(output_json: bool = False):
             return str(path.resolve())
 
     print_error("docker-compose.yml not found", output_json)
-    print_info(f"Expected locations: {repo_root}/deploy/docker-compose.yml or ./docker-compose.yml", output_json)
+    print_info(
+        f"Expected locations: {repo_root}/deploy/docker-compose.yml or ./docker-compose.yml",
+        output_json,
+    )
     return None
 
 
-def run_compose_command(args, check=True, capture_output=False, env=None, output_json: bool = False):
+def run_compose_command(
+    args, check=True, capture_output=False, env=None, output_json: bool = False
+):
     """Run a docker compose command.
 
     Args:
@@ -86,17 +88,14 @@ def run_compose_command(args, check=True, capture_output=False, env=None, output
 
     # Merge environment variables
     import os
+
     run_env = os.environ.copy()
     if env:
         run_env.update(env)
 
     try:
         result = subprocess.run(
-            cmd,
-            check=check,
-            capture_output=capture_output,
-            text=True,
-            env=run_env
+            cmd, check=check, capture_output=capture_output, text=True, env=run_env
         )
         return result
     except subprocess.CalledProcessError as e:
@@ -128,12 +127,16 @@ def check_qdrant_health():
         return False
 
 
-@click.group(name='container', cls=HelpfulGroup, usage_examples=[
-    'arc container start',
-    'arc container stop',
-    'arc container status',
-    'arc container logs -f',
-])
+@click.group(
+    name="container",
+    cls=HelpfulGroup,
+    usage_examples=[
+        "arc container start",
+        "arc container stop",
+        "arc container status",
+        "arc container logs -f",
+    ],
+)
 def container_group():
     """Manage container services (Qdrant, MeiliSearch)"""
     pass
@@ -148,8 +151,8 @@ def check_meilisearch_health():
         return False
 
 
-@container_group.command('start')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@container_group.command("start")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def start_command(output_json=False):
     """Start container services"""
     if not check_docker_available(output_json):
@@ -178,20 +181,24 @@ def start_command(output_json=False):
     meili_healthy = check_meilisearch_health()
 
     if output_json:
-        print_json("success", "Container services start requested", {
-            "services": {
-                "qdrant": {
-                    "healthy": qdrant_healthy,
-                    "rest_api": "http://localhost:6333",
-                    "dashboard": "http://localhost:6333/dashboard",
+        print_json(
+            "success",
+            "Container services start requested",
+            {
+                "services": {
+                    "qdrant": {
+                        "healthy": qdrant_healthy,
+                        "rest_api": "http://localhost:6333",
+                        "dashboard": "http://localhost:6333/dashboard",
+                    },
+                    "meilisearch": {
+                        "healthy": meili_healthy,
+                        "http_api": "http://localhost:7700",
+                    },
                 },
-                "meilisearch": {
-                    "healthy": meili_healthy,
-                    "http_api": "http://localhost:7700",
-                },
+                "data_directory": str(get_data_dir()),
             },
-            "data_directory": str(get_data_dir()),
-        })
+        )
         return
 
     # Check Qdrant
@@ -213,8 +220,8 @@ def start_command(output_json=False):
     print_info(f"Data directory: {get_data_dir()}")
 
 
-@container_group.command('stop')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@container_group.command("stop")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def stop_command(output_json=False):
     """Stop container services"""
     if not check_docker_available(output_json):
@@ -230,8 +237,8 @@ def stop_command(output_json=False):
         _exit_on_json_error(output_json)
 
 
-@container_group.command('restart')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@container_group.command("restart")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def restart_command(output_json=False):
     """Restart container services"""
     if not check_docker_available(output_json):
@@ -251,20 +258,24 @@ def restart_command(output_json=False):
     meili_healthy = check_meilisearch_health()
 
     if output_json:
-        print_json("success", "Container services restart requested", {
-            "services": {
-                "qdrant": {"healthy": qdrant_healthy},
-                "meilisearch": {"healthy": meili_healthy},
-            }
-        })
+        print_json(
+            "success",
+            "Container services restart requested",
+            {
+                "services": {
+                    "qdrant": {"healthy": qdrant_healthy},
+                    "meilisearch": {"healthy": meili_healthy},
+                }
+            },
+        )
     elif qdrant_healthy:
         print_success("Container services restarted")
     else:
         print_warning("Services may not be ready yet")
 
 
-@container_group.command('status')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@container_group.command("status")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def status_command(output_json=False):
     """Show container services status"""
     if not check_docker_available(output_json):
@@ -307,37 +318,37 @@ def status_command(output_json=False):
             ["docker", "system", "df", "-v", "--format", "json"],
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
 
         df_data = json.loads(df_result.stdout)
-        volumes_data = {v['Name']: v for v in df_data.get('Volumes', [])}
+        volumes_data = {v["Name"]: v for v in df_data.get("Volumes", [])}
 
         # List volumes for this project
         result = subprocess.run(
             ["docker", "volume", "ls", "--filter", "name=arcaneum", "--format", "{{.Name}}"],
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
 
-        volumes = result.stdout.strip().split('\n')
+        volumes = result.stdout.strip().split("\n")
         volume_results = []
         for volume in volumes:
             if volume:
                 # Get volume details
                 volume_info = volumes_data.get(volume, {})
-                size = volume_info.get('Size', 'unknown')
+                size = volume_info.get("Size", "unknown")
 
                 # Get mountpoint
                 inspect_result = subprocess.run(
                     ["docker", "volume", "inspect", volume, "--format", "{{.Mountpoint}}"],
                     capture_output=True,
                     text=True,
-                    check=False
+                    check=False,
                 )
 
-                volume_result = {"name": volume, "size": None if size == 'unknown' else size}
+                volume_result = {"name": volume, "size": None if size == "unknown" else size}
                 if inspect_result.returncode == 0:
                     mountpoint = inspect_result.stdout.strip()
                     volume_result["mountpoint"] = mountpoint
@@ -345,43 +356,51 @@ def status_command(output_json=False):
 
                 if not output_json:
                     print(f"  {volume}")
-                    if size != 'unknown':
+                    if size != "unknown":
                         print(f"    Size: {size}")
                     if inspect_result.returncode == 0:
                         print(f"    Mountpoint: {mountpoint}")
 
         if output_json:
-            print_json("success", "Container services status", {
-                "compose": {
-                    "stdout": ps_result.stdout if ps_result is not None else "",
+            print_json(
+                "success",
+                "Container services status",
+                {
+                    "compose": {
+                        "stdout": ps_result.stdout if ps_result is not None else "",
+                    },
+                    "services": {
+                        "qdrant": {"healthy": qdrant_healthy},
+                        "meilisearch": {"healthy": meili_healthy},
+                    },
+                    "volumes": volume_results,
                 },
-                "services": {
-                    "qdrant": {"healthy": qdrant_healthy},
-                    "meilisearch": {"healthy": meili_healthy},
-                },
-                "volumes": volume_results,
-            })
+            )
     except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
         if output_json:
-            print_json("success", "Container services status", {
-                "compose": {
-                    "stdout": ps_result.stdout if ps_result is not None else "",
+            print_json(
+                "success",
+                "Container services status",
+                {
+                    "compose": {
+                        "stdout": ps_result.stdout if ps_result is not None else "",
+                    },
+                    "services": {
+                        "qdrant": {"healthy": qdrant_healthy},
+                        "meilisearch": {"healthy": meili_healthy},
+                    },
+                    "volumes": [],
+                    "warnings": [f"Could not retrieve volume information: {e}"],
                 },
-                "services": {
-                    "qdrant": {"healthy": qdrant_healthy},
-                    "meilisearch": {"healthy": meili_healthy},
-                },
-                "volumes": [],
-                "warnings": [f"Could not retrieve volume information: {e}"],
-            })
+            )
         else:
             print_warning(f"Could not retrieve volume information: {e}")
 
 
-@container_group.command('logs')
-@click.option('--follow', '-f', is_flag=True, help='Follow log output')
-@click.option('--tail', type=int, default=100, help='Number of lines to show')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@container_group.command("logs")
+@click.option("--follow", "-f", is_flag=True, help="Follow log output")
+@click.option("--tail", type=int, default=100, help="Number of lines to show")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def logs_command(follow, tail, output_json=False):
     """Show container services logs"""
     if output_json and follow:
@@ -402,13 +421,17 @@ def logs_command(follow, tail, output_json=False):
         return
 
     if output_json and result is not None:
-        print_json("success", "Container logs", {
-            "follow": follow,
-            "tail": tail,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "lines": result.stdout.splitlines(),
-        })
+        print_json(
+            "success",
+            "Container logs",
+            {
+                "follow": follow,
+                "tail": tail,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "lines": result.stdout.splitlines(),
+            },
+        )
 
 
 def _request_json(method: str, url: str, **kwargs):
@@ -482,11 +505,13 @@ def _backup_qdrant(
             f"{qdrant_url}/collections/{name}/snapshots/{snapshot_name}",
             timeout=timeout,
         )
-        snapshots.append({
-            "collection": name,
-            "snapshot": snapshot_name,
-            "file": f"qdrant/{snapshot_name}",
-        })
+        snapshots.append(
+            {
+                "collection": name,
+                "snapshot": snapshot_name,
+                "file": f"qdrant/{snapshot_name}",
+            }
+        )
 
     return snapshots
 
@@ -584,13 +609,15 @@ def _backup_meilisearch(
             "documents": document_count,
         }
         metadata_file.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-        exported.append({
-            "index": uid,
-            "primaryKey": index.get("primaryKey"),
-            "documents": document_count,
-            "metadata_file": f"meilisearch/{uid}.metadata.json",
-            "documents_file": f"meilisearch/{uid}.documents.jsonl",
-        })
+        exported.append(
+            {
+                "index": uid,
+                "primaryKey": index.get("primaryKey"),
+                "documents": document_count,
+                "metadata_file": f"meilisearch/{uid}.metadata.json",
+                "documents_file": f"meilisearch/{uid}.documents.jsonl",
+            }
+        )
 
     _ensure_meilisearch_idle(meilisearch_url, headers)
     ending_task_uid = _latest_meilisearch_task_uid(meilisearch_url, headers)
@@ -732,12 +759,14 @@ def _load_meilisearch_restore_specs(backup_path: Path, indexes: list[dict]) -> l
         metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
         uid = metadata["uid"]
         _validate_jsonl_documents(documents_file, metadata.get("documents"))
-        specs.append({
-            "uid": uid,
-            "primary_key": metadata.get("primaryKey"),
-            "settings": metadata.get("settings", {}),
-            "documents_file": documents_file,
-        })
+        specs.append(
+            {
+                "uid": uid,
+                "primary_key": metadata.get("primaryKey"),
+                "settings": metadata.get("settings", {}),
+                "documents_file": documents_file,
+            }
+        )
 
     return specs
 
@@ -798,19 +827,19 @@ def _restore_meilisearch(
             )
 
 
-@container_group.command('backup')
-@click.option('--output', '-o', type=click.Path(), help='Backup directory to create')
-@click.option('--qdrant-url', default='http://localhost:6333', help='Qdrant URL')
-@click.option('--meilisearch-url', default='http://localhost:7700', help='MeiliSearch URL')
-@click.option('--qdrant-container', default='qdrant-arcaneum', help='Qdrant container name')
+@container_group.command("backup")
+@click.option("--output", "-o", type=click.Path(), help="Backup directory to create")
+@click.option("--qdrant-url", default="http://localhost:6333", help="Qdrant URL")
+@click.option("--meilisearch-url", default="http://localhost:7700", help="MeiliSearch URL")
+@click.option("--qdrant-container", default="qdrant-arcaneum", help="Qdrant container name")
 @click.option(
-    '--qdrant-timeout',
+    "--qdrant-timeout",
     default=300,
     show_default=True,
-    help='Qdrant operation timeout in seconds',
+    help="Qdrant operation timeout in seconds",
 )
-@click.option('--skip-meilisearch', is_flag=True, help='Only back up Qdrant snapshots')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@click.option("--skip-meilisearch", is_flag=True, help="Only back up Qdrant snapshots")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def backup_command(
     output,
     qdrant_url,
@@ -879,25 +908,25 @@ def backup_command(
     print_success(f"Backup complete: {backup_path}", output_json, data=data)
 
 
-@container_group.command('restore')
-@click.argument('backup_directory', type=click.Path(exists=True, file_okay=False))
-@click.option('--qdrant-url', default='http://localhost:6333', help='Qdrant URL')
-@click.option('--meilisearch-url', default='http://localhost:7700', help='MeiliSearch URL')
-@click.option('--qdrant-container', default='qdrant-arcaneum', help='Qdrant container name')
+@container_group.command("restore")
+@click.argument("backup_directory", type=click.Path(exists=True, file_okay=False))
+@click.option("--qdrant-url", default="http://localhost:6333", help="Qdrant URL")
+@click.option("--meilisearch-url", default="http://localhost:7700", help="MeiliSearch URL")
+@click.option("--qdrant-container", default="qdrant-arcaneum", help="Qdrant container name")
 @click.option(
-    '--qdrant-timeout',
+    "--qdrant-timeout",
     default=300,
     show_default=True,
-    help='Qdrant operation timeout in seconds',
+    help="Qdrant operation timeout in seconds",
 )
 @click.option(
-    '--meilisearch-timeout',
+    "--meilisearch-timeout",
     default=1800,
     show_default=True,
-    help='MeiliSearch task timeout in seconds',
+    help="MeiliSearch task timeout in seconds",
 )
-@click.option('--skip-meilisearch', is_flag=True, help='Only restore Qdrant snapshots')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@click.option("--skip-meilisearch", is_flag=True, help="Only restore Qdrant snapshots")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def restore_command(
     backup_directory,
     qdrant_url,
@@ -943,9 +972,9 @@ def restore_command(
     print_success(f"Restore complete: {backup_path}", output_json, data=data)
 
 
-@container_group.command('reset')
-@click.option('--confirm', is_flag=True, help='Confirm deletion of all data')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@container_group.command("reset")
+@click.option("--confirm", is_flag=True, help="Confirm deletion of all data")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def reset_command(confirm, output_json=False):
     """Reset all container data (WARNING: deletes all collections)"""
     if not confirm:
@@ -1007,7 +1036,7 @@ def get_dir_size(path: Path) -> int:
     """Get total size of a directory in bytes."""
     total = 0
     try:
-        for item in path.rglob('*'):
+        for item in path.rglob("*"):
             if item.is_file():
                 total += item.stat().st_size
     except (PermissionError, OSError):

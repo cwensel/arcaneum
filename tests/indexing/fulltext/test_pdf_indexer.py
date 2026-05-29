@@ -94,9 +94,7 @@ class TestFindFilesToIndex:
 
             pdf_files = [file1]
             # Index has old hash
-            indexed_files = {
-                str(file1.absolute()): "old_hash_value"
-            }
+            indexed_files = {str(file1.absolute()): "old_hash_value"}
 
             new, modified, unchanged = find_files_to_index(pdf_files, indexed_files)
 
@@ -113,9 +111,7 @@ class TestFindFilesToIndex:
             pdf_files = [file1]
             # Index has matching hash
             current_hash = compute_file_hash(file1)
-            indexed_files = {
-                str(file1.absolute()): current_hash
-            }
+            indexed_files = {str(file1.absolute()): current_hash}
 
             new, modified, unchanged = find_files_to_index(pdf_files, indexed_files)
 
@@ -131,9 +127,7 @@ class TestFindFilesToIndex:
 
             pdf_files = [file1]
             current_hash = compute_file_hash(file1)
-            indexed_files = {
-                str(file1.absolute()): current_hash
-            }
+            indexed_files = {str(file1.absolute()): current_hash}
 
             new, modified, unchanged = find_files_to_index(
                 pdf_files, indexed_files, force_reindex=True
@@ -197,13 +191,13 @@ class TestPDFFullTextIndexerDocumentBuilding:
     @pytest.fixture
     def indexer(self, mock_meili_client):
         """Create indexer with mocked client."""
-        with patch('arcaneum.indexing.fulltext.pdf_indexer.PDFExtractor') as mock_extractor:
-            with patch('arcaneum.indexing.fulltext.pdf_indexer.OCREngine') as mock_ocr:
+        with patch("arcaneum.indexing.fulltext.pdf_indexer.PDFExtractor") as mock_extractor:
+            with patch("arcaneum.indexing.fulltext.pdf_indexer.OCREngine") as mock_ocr:
                 indexer = PDFFullTextIndexer(
                     meili_client=mock_meili_client,
                     index_name="test-index",
                     ocr_enabled=False,  # Disable OCR for unit tests
-                    batch_size=100
+                    batch_size=100,
                 )
                 # Access the mocked extractor
                 indexer.pdf_extractor = mock_extractor.return_value
@@ -224,9 +218,7 @@ class TestPDFFullTextIndexerDocumentBuilding:
             }
 
             documents = indexer._build_meilisearch_documents(
-                pdf_path,
-                "Page 1 content\f Page 2 content",
-                metadata
+                pdf_path, "Page 1 content\f Page 2 content", metadata
             )
 
             assert len(documents) == 2
@@ -263,12 +255,10 @@ class TestPDFFullTextIndexerDocumentBuilding:
                 "page_boundaries": [
                     {"page_number": 1, "start_char": 0, "page_text_length": 18},
                     {"page_number": 2, "start_char": 19, "page_text_length": 19},
-                ]
+                ],
             }
 
-            documents = indexer._build_meilisearch_documents(
-                pdf_path, full_text, metadata
-            )
+            documents = indexer._build_meilisearch_documents(pdf_path, full_text, metadata)
 
             assert len(documents) == 2
             assert "First page" in documents[0]["content"]
@@ -319,11 +309,7 @@ class TestPDFFullTextIndexerDocumentBuilding:
             }
 
             # Second page is empty
-            documents = indexer._build_meilisearch_documents(
-                pdf_path,
-                "Page 1\f\fPage 3",
-                metadata
-            )
+            documents = indexer._build_meilisearch_documents(pdf_path, "Page 1\f\fPage 3", metadata)
 
             # Only 2 documents (pages 1 and 3)
             assert len(documents) == 2
@@ -354,9 +340,7 @@ class TestPDFFullTextIndexerDocumentBuilding:
                 "ocr_merge_strategy": "append_ocr_to_extracted_text",
             }
 
-            documents = indexer._build_meilisearch_documents(
-                pdf_path, "OCR text", metadata
-            )
+            documents = indexer._build_meilisearch_documents(pdf_path, "OCR text", metadata)
 
             assert len(documents) == 1
             doc = documents[0]
@@ -390,12 +374,10 @@ class TestPDFFullTextIndexerPageSplitting:
     def indexer(self):
         """Create indexer with mocked dependencies."""
         mock_client = Mock()
-        with patch('arcaneum.indexing.fulltext.pdf_indexer.PDFExtractor'):
-            with patch('arcaneum.indexing.fulltext.pdf_indexer.OCREngine'):
+        with patch("arcaneum.indexing.fulltext.pdf_indexer.PDFExtractor"):
+            with patch("arcaneum.indexing.fulltext.pdf_indexer.OCREngine"):
                 return PDFFullTextIndexer(
-                    meili_client=mock_client,
-                    index_name="test",
-                    ocr_enabled=False
+                    meili_client=mock_client, index_name="test", ocr_enabled=False
                 )
 
     def test_split_by_form_feed(self, indexer):
@@ -418,7 +400,7 @@ class TestPDFFullTextIndexerPageSplitting:
             "page_boundaries": [
                 {"page_number": 1, "start_char": 0, "page_text_length": 18},
                 {"page_number": 2, "start_char": 18, "page_text_length": 19},
-            ]
+            ],
         }
 
         pages = indexer._split_into_pages(text, 2, metadata)
@@ -480,12 +462,10 @@ class TestPDFFullTextIndexerChangeDetection:
         mock_client = Mock()
         mock_client.search.return_value = {"hits": [], "estimatedTotalHits": 0}
 
-        with patch('arcaneum.indexing.fulltext.pdf_indexer.PDFExtractor'):
-            with patch('arcaneum.indexing.fulltext.pdf_indexer.OCREngine'):
+        with patch("arcaneum.indexing.fulltext.pdf_indexer.PDFExtractor"):
+            with patch("arcaneum.indexing.fulltext.pdf_indexer.OCREngine"):
                 return PDFFullTextIndexer(
-                    meili_client=mock_client,
-                    index_name="test",
-                    ocr_enabled=False
+                    meili_client=mock_client, index_name="test", ocr_enabled=False
                 )
 
     def test_is_already_indexed_false(self, indexer):
@@ -495,10 +475,7 @@ class TestPDFFullTextIndexerChangeDetection:
             pdf_path = Path(f.name)
 
         try:
-            indexer.meili_client.search.return_value = {
-                "hits": [],
-                "estimatedTotalHits": 0
-            }
+            indexer.meili_client.search.return_value = {"hits": [], "estimatedTotalHits": 0}
 
             result = indexer._is_already_indexed(pdf_path)
             assert result is False
@@ -517,7 +494,7 @@ class TestPDFFullTextIndexerChangeDetection:
 
             indexer.meili_client.search.return_value = {
                 "hits": [{"id": "doc1", "file_hash": file_hash}],
-                "estimatedTotalHits": 1
+                "estimatedTotalHits": 1,
             }
 
             result = indexer._is_already_indexed(pdf_path)

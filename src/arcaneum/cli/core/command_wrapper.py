@@ -30,7 +30,7 @@ def command_context(
     operation: str,
     output_json: bool = False,
     error_prefix: str = "Failed",
-    **log_kwargs
+    **log_kwargs,
 ):
     """Context manager for CLI command error handling and logging.
 
@@ -109,17 +109,19 @@ def with_error_handling(
         - InvalidArgumentError and ResourceNotFoundError are re-raised
         - All other exceptions result in sys.exit(1)
     """
+
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             # Extract output_json from kwargs or try to find it in args
             # by inspecting the function signature
-            output_json = kwargs.get('output_json', False)
+            output_json = kwargs.get("output_json", False)
 
             # Build log kwargs from specified parameters
             log_kwargs = {}
             if log_params:
                 import inspect
+
                 sig = inspect.signature(func)
                 param_names = list(sig.parameters.keys())
 
@@ -136,9 +138,10 @@ def with_error_handling(
                 operation,
                 output_json=output_json,
                 error_prefix=error_prefix,
-                **log_kwargs
+                **log_kwargs,
             ):
                 return func(*args, **kwargs)
 
         return wrapper
+
     return decorator

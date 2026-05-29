@@ -17,8 +17,8 @@ import re
 HAS_PYMUPDF_LAYOUT = importlib.util.find_spec("pymupdf.layout") is not None
 
 # Suppress PyMuPDF warnings about invalid PDF values
-warnings.filterwarnings('ignore', message='.*Cannot set.*is an invalid.*')
-warnings.filterwarnings('ignore', category=UserWarning, module='pymupdf')
+warnings.filterwarnings("ignore", message=".*Cannot set.*is an invalid.*")
+warnings.filterwarnings("ignore", category=UserWarning, module="pymupdf")
 
 # Suppress PyMuPDF C library warnings to stderr
 pymupdf.TOOLS.mupdf_display_errors(False)
@@ -91,8 +91,10 @@ class PDFExtractor:
                         # font tuple: (xref, ext, type, basefont, name, encoding)
                         font_type = font[2] if len(font) > 2 else ""
                         if "Type3" in font_type:
-                            logger.debug(f"Type3 font detected in {pdf_path.name}, "
-                                       f"will use normalized extraction")
+                            logger.debug(
+                                f"Type3 font detected in {pdf_path.name}, "
+                                f"will use normalized extraction"
+                            )
                             return True
                 return False
         except Exception as e:
@@ -110,8 +112,8 @@ class PDFExtractor:
             return None
 
         return {
-            'layout_detected': True,
-            'has_pymupdf_layout': HAS_PYMUPDF_LAYOUT,
+            "layout_detected": True,
+            "has_pymupdf_layout": HAS_PYMUPDF_LAYOUT,
         }
 
     def _normalize_whitespace_edge_cases(self, text: str) -> str:
@@ -132,14 +134,14 @@ class PDFExtractor:
             return text
 
         # Convert tabs to spaces (PyMuPDF4LLM doesn't handle tabs)
-        text = text.replace('\t', ' ')
+        text = text.replace("\t", " ")
 
         # Normalize Unicode whitespace characters
         # Includes non-breaking space, thin space, etc.
-        text = re.sub(r'[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]+', ' ', text)
+        text = re.sub(r"[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]+", " ", text)
 
         # Handle 4+ newlines (PyMuPDF4LLM only reduces 3 to 2)
-        text = re.sub(r'\n{4,}', '\n\n\n', text)
+        text = re.sub(r"\n{4,}", "\n\n\n", text)
 
         return text.strip()
 
@@ -160,8 +162,10 @@ class PDFExtractor:
         """
         # Check for Type3 fonts which cause PyMuPDF4LLM to hang indefinitely
         if self._has_type3_fonts(pdf_path):
-            logger.debug(f"Skipping markdown conversion for {pdf_path.name} "
-                        f"(Type3 fonts detected - known PyMuPDF4LLM hang issue)")
+            logger.debug(
+                f"Skipping markdown conversion for {pdf_path.name} "
+                f"(Type3 fonts detected - known PyMuPDF4LLM hang issue)"
+            )
             return self._extract_with_pymupdf_normalized(pdf_path)
 
         try:
@@ -196,25 +200,27 @@ class PDFExtractor:
                     page_md = self._normalize_whitespace_edge_cases(page_md)
 
                     if page_md.strip():
-                        page_boundaries.append({
-                            'page_number': page_num + 1,
-                            'start_char': current_pos,
-                            'page_text_length': len(page_md)
-                        })
+                        page_boundaries.append(
+                            {
+                                "page_number": page_num + 1,
+                                "start_char": current_pos,
+                                "page_text_length": len(page_md),
+                            }
+                        )
                         page_texts.append(page_md)
                         current_pos += len(page_md) + 1  # +1 for newline separator
 
             # Join pages with newline
-            md_text = '\n'.join(page_texts)
+            md_text = "\n".join(page_texts)
 
             metadata = {
-                'extraction_method': 'pymupdf4llm_ocr' if self.use_ocr else 'pymupdf4llm_markdown',
-                'is_image_pdf': False,
-                'page_count': page_count,
-                'file_size': pdf_path.stat().st_size,
-                'format': 'markdown',
-                'layout_analyzed': layout_info is not None,
-                'page_boundaries': page_boundaries,
+                "extraction_method": "pymupdf4llm_ocr" if self.use_ocr else "pymupdf4llm_markdown",
+                "is_image_pdf": False,
+                "page_count": page_count,
+                "file_size": pdf_path.stat().st_size,
+                "format": "markdown",
+                "layout_analyzed": layout_info is not None,
+                "page_boundaries": page_boundaries,
             }
 
             # Add layout analysis details if available
@@ -230,9 +236,11 @@ class PDFExtractor:
             # not core text extraction. Fallback maintains quality.
             error_msg = str(e)
             if "font" in error_msg.lower() or "code=4" in error_msg:
-                logger.debug(f"Markdown conversion failed for {pdf_path.name} "
-                            f"(font digest error: {error_msg}). This is a known PyMuPDF4LLM "
-                            f"limitation with certain fonts. Falling back to normalized extraction.")
+                logger.debug(
+                    f"Markdown conversion failed for {pdf_path.name} "
+                    f"(font digest error: {error_msg}). This is a known PyMuPDF4LLM "
+                    f"limitation with certain fonts. Falling back to normalized extraction."
+                )
                 # Fall back to normalized extraction - quality is maintained
                 # (only loses fake-bold deduplication optimization)
                 return self._extract_with_pymupdf_normalized(pdf_path)
@@ -257,34 +265,36 @@ class PDFExtractor:
                 page_text = page.get_text(sort=True)
 
                 if page_text.strip():
-                    page_boundaries.append({
-                        'page_number': page_num + 1,
-                        'start_char': current_pos,
-                        'page_text_length': len(page_text)
-                    })
+                    page_boundaries.append(
+                        {
+                            "page_number": page_num + 1,
+                            "start_char": current_pos,
+                            "page_text_length": len(page_text),
+                        }
+                    )
                     text_parts.append(page_text)
                     current_pos += len(page_text) + 1
 
-        text = '\n'.join(text_parts)
+        text = "\n".join(text_parts)
 
         # Apply comprehensive normalization
         # Note: Raw PyMuPDF extraction doesn't normalize (unlike PyMuPDF4LLM)
         # Collapse multiple spaces
-        text = re.sub(r' +', ' ', text)
+        text = re.sub(r" +", " ", text)
         # Reduce excessive newlines
-        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
         # Remove trailing whitespace from lines
-        text = '\n'.join(line.rstrip() for line in text.split('\n'))
+        text = "\n".join(line.rstrip() for line in text.split("\n"))
         # Handle edge cases (tabs, Unicode whitespace)
         text = self._normalize_whitespace_edge_cases(text)
 
         metadata = {
-            'extraction_method': 'pymupdf_normalized',
-            'is_image_pdf': False,
-            'page_count': page_count,
-            'file_size': pdf_path.stat().st_size,
-            'format': 'normalized',
-            'page_boundaries': page_boundaries,
+            "extraction_method": "pymupdf_normalized",
+            "is_image_pdf": False,
+            "page_count": page_count,
+            "file_size": pdf_path.stat().st_size,
+            "format": "normalized",
+            "page_boundaries": page_boundaries,
         }
 
         return text, metadata

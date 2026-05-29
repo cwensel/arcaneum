@@ -99,7 +99,7 @@ def get_meilisearch_api_key() -> str:
             return key
 
     # Generate a new secure key (32 bytes = 43 chars base64, URL-safe)
-    key = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode('ascii').rstrip('=')
+    key = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode("ascii").rstrip("=")
 
     # Save with restricted permissions (readable only by owner)
     key_file.write_text(key)

@@ -23,6 +23,7 @@ class GitMetadata:
         project_name: Derived from remote URL or directory basename
         remote_url: Sanitized remote URL (origin > upstream > first remote)
     """
+
     project_root: str
     commit_hash: str
     branch: str
@@ -174,6 +175,7 @@ class CodeChunk:
     - Vector embedding for semantic search
     - Rich metadata for filtering and branch management
     """
+
     content: str  # The actual code text
     metadata: CodeChunkMetadata  # Rich metadata
     embedding: Optional[List[float]] = None  # Vector embedding (computed lazily)
@@ -217,11 +219,7 @@ class CodeChunk:
         }
         payload["text"] = self.content  # Add content field for search snippets
 
-        return PointStruct(
-            id=self.id,
-            vector=vector,
-            payload=payload
-        )
+        return PointStruct(id=self.id, vector=vector, payload=payload)
 
 
 @dataclass
@@ -230,5 +228,6 @@ class Chunk:
 
     Used by ASTCodeChunker before full metadata is attached.
     """
+
     content: str  # The code text
     method: str  # Extraction method (e.g., "ast_python", "line_based")

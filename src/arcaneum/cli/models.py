@@ -168,8 +168,7 @@ def list_models_command(output_json: bool):
     if output_json:
         # JSON output
         models_data = [
-            _model_catalog_row(alias, config)
-            for alias, config in EMBEDDING_MODELS.items()
+            _model_catalog_row(alias, config) for alias, config in EMBEDDING_MODELS.items()
         ]
         print_json("success", f"Found {len(models_data)} embedding models", {"models": models_data})
     else:

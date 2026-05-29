@@ -10,7 +10,6 @@ Exit Codes:
 - 3: Resource not found
 """
 
-
 # Exit codes (same as main.py)
 EXIT_SUCCESS = 0
 EXIT_ERROR = 1
@@ -24,6 +23,7 @@ class ArcaneumError(Exception):
     All custom Arcaneum exceptions should inherit from this class.
     Default exit code is EXIT_ERROR (1).
     """
+
     exit_code = EXIT_ERROR
 
 
@@ -38,6 +38,7 @@ class InvalidArgumentError(ArcaneumError):
 
     Exit code: 2
     """
+
     exit_code = EXIT_INVALID_ARGS
 
 
@@ -52,6 +53,7 @@ class ResourceNotFoundError(ArcaneumError):
 
     Exit code: 3
     """
+
     exit_code = EXIT_NOT_FOUND
 
 
@@ -64,6 +66,7 @@ class SearchSlotUnavailable(ArcaneumError):
     via a file-lock semaphore and surface this error instead of letting the
     machine grind.
     """
+
     exit_code = EXIT_ERROR
 
 

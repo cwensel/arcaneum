@@ -13,23 +13,25 @@ import pytest
 # Auto-mark tests based on directory
 # ============================================================================
 
+
 def pytest_collection_modifyitems(config, items):
     """Automatically mark tests based on their location."""
     for item in items:
         # Get the test file path relative to tests/
         test_path = str(item.fspath)
 
-        if '/tests/unit/' in test_path or '\\tests\\unit\\' in test_path:
+        if "/tests/unit/" in test_path or "\\tests\\unit\\" in test_path:
             item.add_marker(pytest.mark.unit)
-        elif '/tests/integration/' in test_path or '\\tests\\integration\\' in test_path:
+        elif "/tests/integration/" in test_path or "\\tests\\integration\\" in test_path:
             item.add_marker(pytest.mark.integration)
-        elif '/tests/e2e/' in test_path or '\\tests\\e2e\\' in test_path:
+        elif "/tests/e2e/" in test_path or "\\tests\\e2e\\" in test_path:
             item.add_marker(pytest.mark.e2e)
 
 
 # ============================================================================
 # Mock Qdrant Client Fixtures
 # ============================================================================
+
 
 @pytest.fixture
 def mock_qdrant_client():
@@ -42,9 +44,8 @@ def mock_qdrant_client():
         points_count=0,
         status="green",
         config=MagicMock(
-            params=MagicMock(vectors={}),
-            hnsw_config=MagicMock(m=16, ef_construct=100)
-        )
+            params=MagicMock(vectors={}), hnsw_config=MagicMock(m=16, ef_construct=100)
+        ),
     )
     client.scroll.return_value = ([], None)
     client.create_collection.return_value = True
@@ -76,22 +77,18 @@ def mock_qdrant_client_with_collections(mock_qdrant_client):
                 points_count=100,
                 status="green",
                 config=MagicMock(
-                    params=MagicMock(vectors={
-                        "stella": MagicMock(size=1024, distance="Cosine")
-                    }),
-                    hnsw_config=MagicMock(m=16, ef_construct=100)
-                )
+                    params=MagicMock(vectors={"stella": MagicMock(size=1024, distance="Cosine")}),
+                    hnsw_config=MagicMock(m=16, ef_construct=100),
+                ),
             )
         elif name == "CodeCollection":
             return MagicMock(
                 points_count=500,
                 status="green",
                 config=MagicMock(
-                    params=MagicMock(vectors={
-                        "jina-code": MagicMock(size=768, distance="Cosine")
-                    }),
-                    hnsw_config=MagicMock(m=16, ef_construct=100)
-                )
+                    params=MagicMock(vectors={"jina-code": MagicMock(size=768, distance="Cosine")}),
+                    hnsw_config=MagicMock(m=16, ef_construct=100),
+                ),
             )
         raise Exception(f"Collection {name} not found")
 
@@ -104,6 +101,7 @@ def mock_qdrant_client_with_collections(mock_qdrant_client):
 # Mock MeiliSearch Client Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def mock_meili_client():
     """Create a mocked FullTextClient for testing."""
@@ -112,9 +110,9 @@ def mock_meili_client():
     client.index_exists.return_value = True
     client.get_indexes.return_value = []
     client.search.return_value = {
-        'hits': [],
-        'estimatedTotalHits': 0,
-        'processingTimeMs': 5,
+        "hits": [],
+        "estimatedTotalHits": 0,
+        "processingTimeMs": 5,
     }
     return client
 
@@ -123,8 +121,8 @@ def mock_meili_client():
 def mock_meili_client_with_indexes(mock_meili_client):
     """Mock MeiliSearch client with sample indexes."""
     mock_meili_client.get_indexes.return_value = [
-        {'uid': 'TestIndex', 'primaryKey': 'id'},
-        {'uid': 'CodeIndex', 'primaryKey': 'id'},
+        {"uid": "TestIndex", "primaryKey": "id"},
+        {"uid": "CodeIndex", "primaryKey": "id"},
     ]
     return mock_meili_client
 
@@ -133,10 +131,11 @@ def mock_meili_client_with_indexes(mock_meili_client):
 # Subprocess Mock Fixtures (for container commands)
 # ============================================================================
 
+
 @pytest.fixture
 def mock_subprocess():
     """Mock subprocess.run for container command tests."""
-    with patch('subprocess.run') as mock_run:
+    with patch("subprocess.run") as mock_run:
         # Default to successful command execution
         mock_result = MagicMock()
         mock_result.returncode = 0
@@ -149,14 +148,14 @@ def mock_subprocess():
 @pytest.fixture
 def mock_docker_available(mock_subprocess):
     """Mock Docker being available."""
-    with patch('shutil.which', return_value='/usr/bin/docker'):
+    with patch("shutil.which", return_value="/usr/bin/docker"):
         yield mock_subprocess
 
 
 @pytest.fixture
 def mock_docker_unavailable():
     """Mock Docker not being available."""
-    with patch('shutil.which', return_value=None):
+    with patch("shutil.which", return_value=None):
         yield
 
 
@@ -164,16 +163,18 @@ def mock_docker_unavailable():
 # Interaction Logger Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def mock_interaction_logger():
     """Mock the interaction logger."""
-    with patch('arcaneum.cli.interaction_logger.interaction_logger') as mock_logger:
+    with patch("arcaneum.cli.interaction_logger.interaction_logger") as mock_logger:
         yield mock_logger
 
 
 # ============================================================================
 # File System Fixtures
 # ============================================================================
+
 
 @pytest.fixture
 def temp_dir():
@@ -193,22 +194,15 @@ def temp_git_repo(temp_dir):
     # Initialize git repo
     subprocess.run(["git", "init"], cwd=repo_dir, capture_output=True)
     subprocess.run(
-        ["git", "config", "user.email", "test@test.com"],
-        cwd=repo_dir, capture_output=True
+        ["git", "config", "user.email", "test@test.com"], cwd=repo_dir, capture_output=True
     )
-    subprocess.run(
-        ["git", "config", "user.name", "Test User"],
-        cwd=repo_dir, capture_output=True
-    )
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo_dir, capture_output=True)
 
     # Create a sample file and commit
     test_file = repo_dir / "test.py"
     test_file.write_text("def hello():\n    print('Hello')\n")
     subprocess.run(["git", "add", "."], cwd=repo_dir, capture_output=True)
-    subprocess.run(
-        ["git", "commit", "-m", "Initial commit"],
-        cwd=repo_dir, capture_output=True
-    )
+    subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=repo_dir, capture_output=True)
 
     yield repo_dir
 
@@ -259,10 +253,11 @@ def sample_pdf_file(temp_dir):
 # Health Check Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def mock_qdrant_health():
     """Mock Qdrant health check."""
-    with patch('requests.get') as mock_get:
+    with patch("requests.get") as mock_get:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_get.return_value = mock_response
@@ -272,8 +267,8 @@ def mock_qdrant_health():
 @pytest.fixture
 def mock_services_healthy(mock_qdrant_health):
     """Mock both Qdrant and MeiliSearch as healthy."""
-    with patch('arcaneum.cli.docker.check_qdrant_health', return_value=True):
-        with patch('arcaneum.cli.docker.check_meilisearch_health', return_value=True):
+    with patch("arcaneum.cli.docker.check_qdrant_health", return_value=True):
+        with patch("arcaneum.cli.docker.check_meilisearch_health", return_value=True):
             yield
 
 
@@ -281,14 +276,18 @@ def mock_services_healthy(mock_qdrant_health):
 # Environment Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def clean_env():
     """Provide a clean environment without Arcaneum env vars."""
     env_vars = [
-        'QDRANT_URL', 'ARC_QDRANT_URL',
-        'ARC_QDRANT_TIMEOUT',
-        'QDRANT_API_KEY', 'ARC_QDRANT_API_KEY',
-        'MEILISEARCH_URL', 'MEILISEARCH_API_KEY',
+        "QDRANT_URL",
+        "ARC_QDRANT_URL",
+        "ARC_QDRANT_TIMEOUT",
+        "QDRANT_API_KEY",
+        "ARC_QDRANT_API_KEY",
+        "MEILISEARCH_URL",
+        "MEILISEARCH_API_KEY",
     ]
     old_values = {}
     for var in env_vars:
@@ -306,15 +305,18 @@ def clean_env():
 # Output Capture Helpers
 # ============================================================================
 
+
 @pytest.fixture
 def capture_json_output(capsys):
     """Helper to capture and parse JSON output."""
+
     def _capture():
         captured = capsys.readouterr()
         try:
             return json.loads(captured.out)
         except json.JSONDecodeError:
             return {"raw": captured.out, "error": "Not valid JSON"}
+
     return _capture
 
 
@@ -322,18 +324,19 @@ def capture_json_output(capsys):
 # Collection Metadata Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def mock_collection_metadata():
     """Mock collection metadata functions."""
-    with patch('arcaneum.cli.collections.get_collection_metadata') as mock_get:
-        with patch('arcaneum.cli.collections.set_collection_metadata') as mock_set:
-            with patch('arcaneum.cli.collections.get_collection_type') as mock_type:
+    with patch("arcaneum.cli.collections.get_collection_metadata") as mock_get:
+        with patch("arcaneum.cli.collections.set_collection_metadata") as mock_set:
+            with patch("arcaneum.cli.collections.get_collection_type") as mock_type:
                 mock_get.return_value = {"model": "stella", "collection_type": "pdf"}
                 mock_type.return_value = "pdf"
                 yield {
-                    'get': mock_get,
-                    'set': mock_set,
-                    'type': mock_type,
+                    "get": mock_get,
+                    "set": mock_set,
+                    "type": mock_type,
                 }
 
 
@@ -341,8 +344,10 @@ def mock_collection_metadata():
 # CLI Runner Fixture
 # ============================================================================
 
+
 @pytest.fixture
 def cli_runner():
     """Provide Click's CliRunner for testing CLI commands."""
     from click.testing import CliRunner
+
     return CliRunner()

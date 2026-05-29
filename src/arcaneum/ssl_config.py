@@ -79,6 +79,7 @@ def disable_ssl_verification(quiet: bool = False) -> bool:
 
     try:
         import urllib3
+
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     except (ImportError, AttributeError):
         pass
@@ -86,6 +87,7 @@ def disable_ssl_verification(quiet: bool = False) -> bool:
     try:
         import requests
         from requests.packages.urllib3.exceptions import InsecureRequestWarning
+
         requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
     except (ImportError, AttributeError):
         pass
@@ -93,6 +95,7 @@ def disable_ssl_verification(quiet: bool = False) -> bool:
     # === PHASE 4: Monkey-patch requests library (for already-imported sessions) ===
     try:
         import requests
+
         _original_request = requests.Session.request
 
         def _patched_request(self, method, url, **kwargs):
@@ -106,6 +109,7 @@ def disable_ssl_verification(quiet: bool = False) -> bool:
     # === PHASE 5: Patch huggingface_hub if already imported ===
     try:
         import huggingface_hub
+
         # HF Hub uses its own HTTP backend, try to patch it
         if hasattr(huggingface_hub, "constants"):
             huggingface_hub.constants.HF_HUB_DISABLE_SSL_VERIFICATION = True
@@ -113,6 +117,7 @@ def disable_ssl_verification(quiet: bool = False) -> bool:
         try:
             from huggingface_hub import configure_http_backend
             import requests
+
             session = requests.Session()
             session.verify = False
             configure_http_backend(backend_factory=lambda: session)
@@ -124,6 +129,7 @@ def disable_ssl_verification(quiet: bool = False) -> bool:
     # === PHASE 6: Patch httpx if present (used by some HF libraries) ===
     try:
         import httpx
+
         _original_httpx_client_init = httpx.Client.__init__
 
         def _patched_httpx_client_init(self, *args, **kwargs):

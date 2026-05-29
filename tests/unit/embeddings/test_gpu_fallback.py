@@ -20,9 +20,10 @@ def _install_fake_sentence_transformers(monkeypatch, side_effect=None, return_va
 @pytest.fixture
 def embedding_client():
     """Create an EmbeddingClient with GPU enabled but mocked internals."""
-    with patch('arcaneum.embeddings.client.get_models_dir', return_value='/tmp/models'):
+    with patch("arcaneum.embeddings.client.get_models_dir", return_value="/tmp/models"):
         from arcaneum.embeddings.client import EmbeddingClient
-        client = EmbeddingClient(cache_dir='/tmp/models', use_gpu=True)
+
+        client = EmbeddingClient(cache_dir="/tmp/models", use_gpu=True)
         # Override device detection for tests
         client._device = "mps"
         yield client
@@ -50,8 +51,8 @@ class TestGetModelReturnsCPUWhenPoisoned:
 
         mock_model = MagicMock()
         with patch(
-            'arcaneum.embeddings.client.EmbeddingClient._get_cpu_fallback_model',
-            return_value=mock_model
+            "arcaneum.embeddings.client.EmbeddingClient._get_cpu_fallback_model",
+            return_value=mock_model,
         ) as mock_get_fallback:
             result = embedding_client.get_model("jina-code-st")
 
@@ -105,8 +106,8 @@ class TestGetModelReturnsCPUWhenPoisoned:
         # jina-code is a FastEmbed default — get_model should try to load it normally
         # We mock the actual loading to avoid needing the model files
         mock_model = MagicMock()
-        with patch('arcaneum.embeddings.client.TextEmbedding', return_value=mock_model):
-            with patch.object(embedding_client, 'is_model_cached', return_value=True):
+        with patch("arcaneum.embeddings.client.TextEmbedding", return_value=mock_model):
+            with patch.object(embedding_client, "is_model_cached", return_value=True):
                 result = embedding_client.get_model("jina-code")
 
         assert result is mock_model
@@ -115,10 +116,10 @@ class TestGetModelReturnsCPUWhenPoisoned:
         """FastEmbed cache may exist without backend-specific ONNX artifacts."""
         mock_model = MagicMock()
         with patch(
-            'arcaneum.embeddings.client.TextEmbedding',
+            "arcaneum.embeddings.client.TextEmbedding",
             side_effect=[OSError("incomplete onnx cache"), mock_model],
         ) as mock_text_embedding:
-            with patch.object(embedding_client, 'is_model_cached', return_value=True):
+            with patch.object(embedding_client, "is_model_cached", return_value=True):
                 result = embedding_client.get_model("jina-code")
 
         assert result is mock_model
@@ -260,7 +261,7 @@ class TestDeferredGpuCleanup:
 
         embedding_client._pending_gpu_cleanup["jina-code-st"] = (dead_thread, model_ref)
 
-        with patch.object(embedding_client, '_clear_gpu_cache'):
+        with patch.object(embedding_client, "_clear_gpu_cache"):
             result = embedding_client._try_deferred_gpu_cleanup()
 
         assert result is True
@@ -292,7 +293,7 @@ class TestDeferredGpuCleanup:
         embedding_client._pending_gpu_cleanup["model-a"] = (dead_thread, MagicMock())
         embedding_client._pending_gpu_cleanup["model-b"] = (alive_thread, MagicMock())
 
-        with patch.object(embedding_client, '_clear_gpu_cache'):
+        with patch.object(embedding_client, "_clear_gpu_cache"):
             result = embedding_client._try_deferred_gpu_cleanup()
 
         assert result is True
@@ -315,12 +316,10 @@ class TestEmbedImplCpuBatchSizingWhenPoisoned:
         embedding_client._cpu_fallback_models["jina-code-st"] = mock_model
 
         # Mock _encode_with_oom_recovery to capture that CPU path is used
-        with patch.object(embedding_client, '_encode_with_oom_recovery') as mock_encode:
+        with patch.object(embedding_client, "_encode_with_oom_recovery") as mock_encode:
             mock_encode.return_value = np.random.rand(2, 768).astype(np.float32)
-            with patch.object(embedding_client, '_validate_embeddings', return_value=True):
-                with patch(
-                    'arcaneum.utils.memory.get_gpu_memory_info'
-                ) as mock_gpu_mem:
+            with patch.object(embedding_client, "_validate_embeddings", return_value=True):
+                with patch("arcaneum.utils.memory.get_gpu_memory_info") as mock_gpu_mem:
                     embedding_client._embed_impl(
                         ["text1", "text2"],
                         model_name="jina-code-st",
@@ -405,17 +404,17 @@ class TestTimeoutHandlerReleasesModel:
         mock_cpu_model = MagicMock()
         mock_cpu_model.encode.return_value = np.random.rand(2, 768).astype(np.float32)
 
-        with patch.object(threading.Thread, 'join', mock_thread_join):
-            with patch.object(threading.Thread, 'is_alive', return_value=True):
+        with patch.object(threading.Thread, "join", mock_thread_join):
+            with patch.object(threading.Thread, "is_alive", return_value=True):
                 with patch.object(
-                    embedding_client, '_get_cpu_fallback_model',
-                    return_value=mock_cpu_model
+                    embedding_client, "_get_cpu_fallback_model", return_value=mock_cpu_model
                 ):
                     embedding_client._encode_with_oom_recovery(
-                        mock_model, ["text1", "text2"],
+                        mock_model,
+                        ["text1", "text2"],
                         internal_batch_size=8,
                         model_name="jina-code-st",
-                        encode_timeout=0  # Immediate timeout
+                        encode_timeout=0,  # Immediate timeout
                     )
 
         # Model should be removed from _models
@@ -468,9 +467,7 @@ class TestCpuFallbackBounded:
         cpu_model = MagicMock()
         cpu_model.encode.return_value = np.random.rand(2, 768).astype(np.float32)
 
-        embedding_client._encode_on_cpu_fallback(
-            cpu_model, ["a", "b"], "jina-code-st", "document"
-        )
+        embedding_client._encode_on_cpu_fallback(cpu_model, ["a", "b"], "jina-code-st", "document")
 
         assert cpu_model.encode.call_count == 1
         kwargs = cpu_model.encode.call_args.kwargs
@@ -502,12 +499,8 @@ class TestCpuFallbackBounded:
         cpu_model = MagicMock()
         cpu_model.encode.return_value = np.random.rand(1, 768).astype(np.float32)
 
-        with patch.object(
-            embedding_client, '_configure_cpu_threading'
-        ) as mock_configure:
-            embedding_client._encode_on_cpu_fallback(
-                cpu_model, ["a"], "jina-code-st", "document"
-            )
+        with patch.object(embedding_client, "_configure_cpu_threading") as mock_configure:
+            embedding_client._encode_on_cpu_fallback(cpu_model, ["a"], "jina-code-st", "document")
 
         mock_configure.assert_called_once()
 
@@ -523,7 +516,7 @@ class TestCpuShortCircuit:
         mock_model = MagicMock()
         mock_model.encode.return_value = np.random.rand(3, 768).astype(np.float32)
 
-        with patch('threading.Thread') as mock_thread_ctor:
+        with patch("threading.Thread") as mock_thread_ctor:
             result = embedding_client._encode_with_oom_recovery(
                 mock_model,
                 ["a", "b", "c"],
@@ -534,8 +527,10 @@ class TestCpuShortCircuit:
         mock_thread_ctor.assert_not_called()
         assert result.shape == (3, 768)
         # Inner batch size must be the bounded CPU value, not the 256 passed in
-        assert mock_model.encode.call_args.kwargs["batch_size"] == \
-            embedding_client._CPU_FALLBACK_INNER_BATCH
+        assert (
+            mock_model.encode.call_args.kwargs["batch_size"]
+            == embedding_client._CPU_FALLBACK_INNER_BATCH
+        )
 
     def test_cpu_device_does_not_poison(self, embedding_client):
         """Even if the underlying encode takes a long time, CPU path must never
@@ -546,7 +541,8 @@ class TestCpuShortCircuit:
         mock_model.encode.return_value = np.random.rand(1, 768).astype(np.float32)
 
         embedding_client._encode_with_oom_recovery(
-            mock_model, ["a"],
+            mock_model,
+            ["a"],
             internal_batch_size=256,
             model_name="jina-code-st",
         )
@@ -567,6 +563,7 @@ class TestEmbedSortsByLength:
         """Wire up a SentenceTransformers-style mock model that the
         SentenceTransformers branch in _embed_impl will use."""
         from arcaneum.embeddings.client import EMBEDDING_MODELS  # noqa: F401
+
         mock_model = MagicMock()
         mock_model._backend = "sentence-transformers"
         embedding_client._models["jina-code-st"] = mock_model
@@ -578,9 +575,7 @@ class TestEmbedSortsByLength:
 
         # encode echoes the *input order* it was given as a 1-D float per item
         def encode_side_effect(input_texts, **kwargs):
-            return np.array(
-                [[float(len(t))] * 768 for t in input_texts], dtype=np.float32
-            )
+            return np.array([[float(len(t))] * 768 for t in input_texts], dtype=np.float32)
 
         mock_model.encode.side_effect = encode_side_effect
 
@@ -588,7 +583,8 @@ class TestEmbedSortsByLength:
         texts = ["xxxxxxxxxx", "x", "xxxxx", "xx", "xxxxxxxx"]
         # _encode_with_oom_recovery on MPS would spawn a daemon thread; bypass it
         with patch.object(
-            embedding_client, '_encode_with_oom_recovery',
+            embedding_client,
+            "_encode_with_oom_recovery",
             side_effect=lambda model, t, ibs, mn, pt: encode_side_effect(t),
         ) as mock_recover:
             result = embedding_client.embed(texts, "jina-code-st")
@@ -602,8 +598,7 @@ class TestEmbedSortsByLength:
         for i, t in enumerate(texts):
             # Each row's first value equals len(original_text_at_that_index)
             assert result[i][0] == float(len(t)), (
-                f"Row {i} (text len {len(t)}) got value {result[i][0]} — "
-                f"unsort failed"
+                f"Row {i} (text len {len(t)}) got value {result[i][0]} — unsort failed"
             )
 
     def test_unsort_preserves_unique_embeddings(self, embedding_client):
@@ -623,7 +618,8 @@ class TestEmbedSortsByLength:
         texts = ["aaaa", "bbbb", "cccc"]
 
         with patch.object(
-            embedding_client, '_encode_with_oom_recovery',
+            embedding_client,
+            "_encode_with_oom_recovery",
             side_effect=lambda model, t, ibs, mn, pt: encode_side_effect(t),
         ):
             result = embedding_client.embed(texts, "jina-code-st")

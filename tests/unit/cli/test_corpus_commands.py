@@ -85,12 +85,12 @@ def test_corpus_module_exports_expected_commands():
     from arcaneum.cli import corpus
 
     expected = {
-        'create_corpus_command',
-        'update_corpus_command',
-        'list_corpora_command',
-        'delete_corpus_command',
-        'corpus_info_command',
-        'corpus_verify_command',
+        "create_corpus_command",
+        "update_corpus_command",
+        "list_corpora_command",
+        "delete_corpus_command",
+        "corpus_info_command",
+        "corpus_verify_command",
     }
     missing = [name for name in expected if not callable(getattr(corpus, name, None))]
     assert missing == [], f"corpus module missing exported commands: {missing}"
@@ -112,8 +112,9 @@ class TestCorpusCollectionMetadata:
         from arcaneum.indexing.collection_metadata import CollectionType
 
         values = set(CollectionType.values())
-        assert {'pdf', 'code', 'markdown'}.issubset(values), \
+        assert {"pdf", "code", "markdown"}.issubset(values), (
             f"CollectionType missing required values: {values}"
+        )
 
 
 class TestCorpusDefaultModels:
@@ -171,9 +172,7 @@ class TestCorpusListModelInfo:
                 }
             },
             collection_info_by_name={
-                "docs": _collection_info(
-                    vectors=SimpleNamespace(size=768, distance="Cosine")
-                )
+                "docs": _collection_info(vectors=SimpleNamespace(size=768, distance="Cosine"))
             },
             meili_chunks={"docs": 5},
         )
@@ -184,18 +183,20 @@ class TestCorpusListModelInfo:
         corpus = payload["data"]["corpora"][0]
         assert corpus["description"] is None
         assert corpus["model_summary"] == "arctic-m (fastembed)"
-        assert corpus["models"] == [{
-            "alias": "arctic-m",
-            "name": "snowflake/snowflake-arctic-embed-m",
-            "backend": "fastembed",
-            "vector_name": "unknown/legacy",
-            "dimensions": 768,
-            "distance": "Cosine",
-            "policy": {
-                "prompt_policy": "none",
-                "schema_policy": "rdr-009",
-            },
-        }]
+        assert corpus["models"] == [
+            {
+                "alias": "arctic-m",
+                "name": "snowflake/snowflake-arctic-embed-m",
+                "backend": "fastembed",
+                "vector_name": "unknown/legacy",
+                "dimensions": 768,
+                "distance": "Cosine",
+                "policy": {
+                    "prompt_policy": "none",
+                    "schema_policy": "rdr-009",
+                },
+            }
+        ]
 
     def test_json_includes_named_vector_multi_model_details(self, monkeypatch, capsys):
         from arcaneum.cli.corpus import list_corpora_command
@@ -223,8 +224,7 @@ class TestCorpusListModelInfo:
 
         corpus = json.loads(capsys.readouterr().out)["data"]["corpora"][0]
         assert corpus["model_summary"] == (
-            "jina-code (fastembed), "
-            "codesage-large (sentence-transformers)"
+            "jina-code (fastembed), codesage-large (sentence-transformers)"
         )
         assert [model["vector_name"] for model in corpus["models"]] == [
             "jina-code",
@@ -241,9 +241,7 @@ class TestCorpusListModelInfo:
         _mock_corpus_list_clients(
             monkeypatch,
             metadata_by_name={"legacy": {}},
-            collection_info_by_name={
-                "legacy": _collection_info(points_count=1, vectors=None)
-            },
+            collection_info_by_name={"legacy": _collection_info(points_count=1, vectors=None)},
         )
 
         list_corpora_command(details=False, output_json=True)
@@ -281,9 +279,7 @@ class TestCorpusListModelInfo:
 
         _mock_corpus_list_clients(
             monkeypatch,
-            metadata_by_name={
-                "docs": {"collection_type": "pdf", "model": "arctic-m"}
-            },
+            metadata_by_name={"docs": {"collection_type": "pdf", "model": "arctic-m"}},
             collection_info_by_name={"docs": _collection_info()},
         )
 
@@ -344,8 +340,7 @@ class TestCorpusListModelInfo:
         list_corpora_command(details=False, output_json=True)
 
         corpora = {
-            item["name"]: item
-            for item in json.loads(capsys.readouterr().out)["data"]["corpora"]
+            item["name"]: item for item in json.loads(capsys.readouterr().out)["data"]["corpora"]
         }
         assert corpora["code"]["last_sync"] == "2026-05-28T22:01:02+00:00"
         assert corpora["code"]["item_count"] is None
@@ -391,14 +386,24 @@ class TestCorpusListModelInfo:
     def test_chunk_summary_collapses_equal_counts(self):
         from arcaneum.cli.corpus import _format_chunk_summary
 
-        assert _format_chunk_summary({
-            "qdrant_chunks": 5,
-            "meili_chunks": 5,
-        }) == "5"
-        assert _format_chunk_summary({
-            "qdrant_chunks": 5,
-            "meili_chunks": 4,
-        }) == "Q: 5 / M: 4"
+        assert (
+            _format_chunk_summary(
+                {
+                    "qdrant_chunks": 5,
+                    "meili_chunks": 5,
+                }
+            )
+            == "5"
+        )
+        assert (
+            _format_chunk_summary(
+                {
+                    "qdrant_chunks": 5,
+                    "meili_chunks": 4,
+                }
+            )
+            == "Q: 5 / M: 4"
+        )
 
     def test_json_details_includes_last_sync_and_type_specific_item_counts(
         self, monkeypatch, capsys
@@ -461,8 +466,7 @@ class TestCorpusListModelInfo:
         list_corpora_command(details=True, output_json=True)
 
         corpora = {
-            item["name"]: item
-            for item in json.loads(capsys.readouterr().out)["data"]["corpora"]
+            item["name"]: item for item in json.loads(capsys.readouterr().out)["data"]["corpora"]
         }
         assert corpora["code"]["last_sync"] == "2026-05-28T22:01:02+00:00"
         assert corpora["code"]["item_count"] == 2
@@ -486,15 +490,21 @@ class TestCorpusListModelInfo:
         class Qdrant:
             def scroll(self, **_kwargs):
                 return [
-                    SimpleNamespace(payload={
-                        "git_project_identifier": "repo-a#main",
-                    }),
-                    SimpleNamespace(payload={
-                        "git_project_identifier": "repo-a#main",
-                    }),
-                    SimpleNamespace(payload={
-                        "git_project_identifier": "repo-b#main",
-                    }),
+                    SimpleNamespace(
+                        payload={
+                            "git_project_identifier": "repo-a#main",
+                        }
+                    ),
+                    SimpleNamespace(
+                        payload={
+                            "git_project_identifier": "repo-a#main",
+                        }
+                    ),
+                    SimpleNamespace(
+                        payload={
+                            "git_project_identifier": "repo-b#main",
+                        }
+                    ),
                 ], None
 
         assert _get_qdrant_item_count(Qdrant(), "code", "code") == 2
@@ -505,10 +515,12 @@ class TestCorpusListModelInfo:
         class Qdrant:
             def scroll(self, **_kwargs):
                 return [
-                    SimpleNamespace(payload={
-                        "file_path": "/docs/renamed-a.md",
-                        "file_paths": ["/docs/a.md", "/docs/b.md"],
-                    }),
+                    SimpleNamespace(
+                        payload={
+                            "file_path": "/docs/renamed-a.md",
+                            "file_paths": ["/docs/a.md", "/docs/b.md"],
+                        }
+                    ),
                     SimpleNamespace(payload={"file_path": "/docs/c.md"}),
                 ], None
 
@@ -520,19 +532,25 @@ class TestCorpusListModelInfo:
         class Qdrant:
             def scroll(self, **_kwargs):
                 return [
-                    SimpleNamespace(payload={
-                        "git_project_identifier": "repo-a#main",
-                        "file_path": "/repo-a/renamed-a.py",
-                        "file_paths": ["/repo-a/a.py", "/repo-a/b.py"],
-                    }),
-                    SimpleNamespace(payload={
-                        "git_project_identifier": "repo-a#main",
-                        "file_path": "/repo-a/c.py",
-                    }),
-                    SimpleNamespace(payload={
-                        "git_project_identifier": "repo-b#main",
-                        "file_path": "/repo-b/d.py",
-                    }),
+                    SimpleNamespace(
+                        payload={
+                            "git_project_identifier": "repo-a#main",
+                            "file_path": "/repo-a/renamed-a.py",
+                            "file_paths": ["/repo-a/a.py", "/repo-a/b.py"],
+                        }
+                    ),
+                    SimpleNamespace(
+                        payload={
+                            "git_project_identifier": "repo-a#main",
+                            "file_path": "/repo-a/c.py",
+                        }
+                    ),
+                    SimpleNamespace(
+                        payload={
+                            "git_project_identifier": "repo-b#main",
+                            "file_path": "/repo-b/d.py",
+                        }
+                    ),
                 ], None
 
         assert _get_qdrant_list_item_count(Qdrant(), "code", "code") == {

@@ -18,6 +18,7 @@ from ..common.sync import compute_text_file_hash
 
 try:
     import frontmatter
+
     FRONTMATTER_AVAILABLE = True
 except ImportError:
     FRONTMATTER_AVAILABLE = False
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class MarkdownFileMetadata:
     """Metadata for a discovered markdown file."""
+
     file_path: str  # Absolute path
     file_name: str  # Basename
     file_size: int  # Size in bytes
@@ -52,12 +54,10 @@ class MarkdownDiscovery:
     """Discover and analyze markdown files with frontmatter support."""
 
     # Default file extensions to search for
-    MARKDOWN_EXTENSIONS = ['.md', '.markdown', '.mdown', '.mkd', '.mkdn']
+    MARKDOWN_EXTENSIONS = [".md", ".markdown", ".mdown", ".mkd", ".mkdn"]
 
     def __init__(
-        self,
-        extensions: Optional[List[str]] = None,
-        exclude_patterns: Optional[List[str]] = None
+        self, extensions: Optional[List[str]] = None, exclude_patterns: Optional[List[str]] = None
     ):
         """Initialize markdown discovery.
 
@@ -70,8 +70,7 @@ class MarkdownDiscovery:
 
         if not FRONTMATTER_AVAILABLE:
             logger.warning(
-                "python-frontmatter not available. "
-                "Frontmatter extraction will be disabled."
+                "python-frontmatter not available. Frontmatter extraction will be disabled."
             )
 
     def discover_files(self, directory: Path, recursive: bool = True) -> List[Path]:
@@ -134,11 +133,11 @@ class MarkdownDiscovery:
 
         # Read file content
         try:
-            content = file_path.read_text(encoding='utf-8')
+            content = file_path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             # Try with latin-1 as fallback
             logger.warning(f"UTF-8 decode failed for {file_path}, trying latin-1")
-            content = file_path.read_text(encoding='latin-1')
+            content = file_path.read_text(encoding="latin-1")
 
         # Compute content hash (using common function for consistency)
         content_hash = compute_text_file_hash(file_path)
@@ -166,23 +165,31 @@ class MarkdownDiscovery:
                     has_frontmatter = True
 
                     # Extract standard fields
-                    title = post.metadata.get('title')
-                    author = post.metadata.get('author')
+                    title = post.metadata.get("title")
+                    author = post.metadata.get("author")
 
                     # Handle tags (can be string, list, or comma-separated)
-                    tags_raw = post.metadata.get('tags', [])
+                    tags_raw = post.metadata.get("tags", [])
                     if isinstance(tags_raw, str):
                         # Split comma-separated tags
-                        tags = [t.strip() for t in tags_raw.split(',') if t.strip()]
+                        tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
                     elif isinstance(tags_raw, list):
                         tags = [str(t) for t in tags_raw]
 
-                    category = post.metadata.get('category')
-                    project = post.metadata.get('project')
-                    created_at = post.metadata.get('created_at') or post.metadata.get('date')
+                    category = post.metadata.get("category")
+                    project = post.metadata.get("project")
+                    created_at = post.metadata.get("created_at") or post.metadata.get("date")
 
                     # Store all other fields as custom metadata
-                    standard_fields = {'title', 'author', 'tags', 'category', 'project', 'created_at', 'date'}
+                    standard_fields = {
+                        "title",
+                        "author",
+                        "tags",
+                        "category",
+                        "project",
+                        "created_at",
+                        "date",
+                    }
                     for key, value in post.metadata.items():
                         if key not in standard_fields:
                             custom_metadata[key] = value
@@ -204,7 +211,7 @@ class MarkdownDiscovery:
             category=category,
             project=project,
             created_at=created_at,
-            custom_metadata=custom_metadata
+            custom_metadata=custom_metadata,
         )
 
     def discover_and_extract(
@@ -244,9 +251,9 @@ class MarkdownDiscovery:
             Tuple of (content, frontmatter_dict)
         """
         try:
-            content = file_path.read_text(encoding='utf-8')
+            content = file_path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
-            content = file_path.read_text(encoding='latin-1')
+            content = file_path.read_text(encoding="latin-1")
 
         if FRONTMATTER_AVAILABLE:
             try:
@@ -263,7 +270,7 @@ def discover_markdown_files(
     directory: Path,
     recursive: bool = True,
     extensions: Optional[List[str]] = None,
-    exclude_patterns: Optional[List[str]] = None
+    exclude_patterns: Optional[List[str]] = None,
 ) -> List[MarkdownFileMetadata]:
     """Convenience function to discover and extract markdown file metadata.
 
@@ -276,8 +283,5 @@ def discover_markdown_files(
     Returns:
         List of MarkdownFileMetadata
     """
-    discovery = MarkdownDiscovery(
-        extensions=extensions,
-        exclude_patterns=exclude_patterns
-    )
+    discovery = MarkdownDiscovery(extensions=extensions, exclude_patterns=exclude_patterns)
     return discovery.discover_and_extract(directory, recursive=recursive)

@@ -73,7 +73,7 @@ def compute_file_hash(file_path: Path) -> str:
         xxh64 hash (16 hex characters, 64-bit digest)
     """
     hasher = xxhash.xxh64()
-    with open(file_path, 'rb') as f:
+    with open(file_path, "rb") as f:
         while chunk := f.read(262144):  # 256KB chunks for better throughput
             hasher.update(chunk)
     return hasher.hexdigest()
@@ -100,12 +100,12 @@ def compute_text_file_hash(file_path: Path) -> str:
         xxh3_128 hash (32 hex characters)
     """
     try:
-        content = file_path.read_text(encoding='utf-8')
+        content = file_path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
         logger.warning(f"UTF-8 decode failed for {file_path}, trying latin-1")
-        content = file_path.read_text(encoding='latin-1')
+        content = file_path.read_text(encoding="latin-1")
 
-    return xxhash.xxh3_128(content.encode('utf-8')).hexdigest()
+    return xxhash.xxh3_128(content.encode("utf-8")).hexdigest()
 
 
 def _compute_hash_worker(args: Tuple[Path, Callable]) -> Tuple[Path, str]:
@@ -122,9 +122,9 @@ def _compute_hash_worker(args: Tuple[Path, Callable]) -> Tuple[Path, str]:
     file_path, hash_fn = args
 
     # Set low priority UNLESS disabled by --not-nice flag (arcaneum-mql4)
-    if os.environ.get('ARCANEUM_DISABLE_WORKER_NICE') != '1':
+    if os.environ.get("ARCANEUM_DISABLE_WORKER_NICE") != "1":
         try:
-            if hasattr(os, 'nice'):
+            if hasattr(os, "nice"):
                 os.nice(19)  # Lowest priority for hash workers
         except Exception:
             pass  # Ignore if we can't set priority
@@ -137,9 +137,9 @@ def _compute_hash_worker(args: Tuple[Path, Callable]) -> Tuple[Path, str]:
         return (file_path, None)
 
 
-def _compute_hashes_parallel(file_list: List[Path],
-                             hash_fn: Callable,
-                             num_workers: int = None) -> dict:
+def _compute_hashes_parallel(
+    file_list: List[Path], hash_fn: Callable, num_workers: int = None
+) -> dict:
     """Compute file hashes in parallel using all CPU cores at low priority.
 
     Args:
@@ -167,10 +167,7 @@ def _compute_hashes_parallel(file_list: List[Path],
     pool = None
 
     try:
-        pool = ctx.Pool(
-            processes=num_workers,
-            initializer=worker_init
-        )
+        pool = ctx.Pool(processes=num_workers, initializer=worker_init)
         results = pool.map(_compute_hash_worker, work_items, chunksize=chunksize)
         for file_path, file_hash in results:
             if file_hash is not None:
@@ -201,6 +198,7 @@ class MetadataBasedSync:
             qdrant_client: Qdrant client instance
         """
         self.qdrant = qdrant_client
+
     def _get_indexed_quick_hashes(self, collection_name: str) -> set:
         """Get all indexed (file_path, quick_hash) pairs for Pass 1 matching.
 
@@ -228,7 +226,7 @@ class MetadataBasedSync:
                     limit=1000,
                     offset=offset,
                     with_payload=["file_path", "quick_hash", "file_quick_hashes"],
-                    with_vectors=False
+                    with_vectors=False,
                 )
 
                 if not points:
@@ -256,7 +254,9 @@ class MetadataBasedSync:
                 if offset is None:
                     break
 
-            logger.debug(f"Pass 1: Loaded {len(indexed_pairs)} unique (path, quick_hash) pairs from {total_chunks} chunks ({chunks_with_dict} with dict)")
+            logger.debug(
+                f"Pass 1: Loaded {len(indexed_pairs)} unique (path, quick_hash) pairs from {total_chunks} chunks ({chunks_with_dict} with dict)"
+            )
 
             return indexed_pairs
 
@@ -286,7 +286,7 @@ class MetadataBasedSync:
                     limit=1000,
                     offset=offset,
                     with_payload=["file_path"],
-                    with_vectors=False
+                    with_vectors=False,
                 )
 
                 if not points:
@@ -326,7 +326,7 @@ class MetadataBasedSync:
                     limit=1000,
                     offset=offset,
                     with_payload=["file_path"],
-                    with_vectors=False
+                    with_vectors=False,
                 )
 
                 if not points:
@@ -347,8 +347,9 @@ class MetadataBasedSync:
             logger.warning(f"Error querying chunk counts: {e}")
             return {}
 
-    def get_unindexed_files(self, collection_name: str,
-                            file_list: List[Path]) -> Tuple[List[Path], List[Path]]:
+    def get_unindexed_files(
+        self, collection_name: str, file_list: List[Path]
+    ) -> Tuple[List[Path], List[Path]]:
         """Filter file list using fast metadata check to identify files needing processing.
 
         **Single-pass strategy** (deferred content hashing):
@@ -379,6 +380,7 @@ class MetadataBasedSync:
         """
         try:
             import time
+
             start_time = time.time()
 
             # Brief delay to ensure Qdrant consistency (in case previous run just finished)
@@ -420,19 +422,22 @@ class MetadataBasedSync:
             pass1_check_time = time.time() - pass1_check_start
             pass1_total = time.time() - pass1_start
 
-            logger.info(f"Pass 1 (metadata gate): {len(file_list)} files "
-                       f"→ {len(already_indexed)} hits, {len(needs_processing)} need processing "
-                       f"(hash: {quick_hash_time:.3f}s, qdrant: {pass1_qdrant_time:.3f}s, check: {pass1_check_time:.3f}s, total: {pass1_total:.3f}s)")
+            logger.info(
+                f"Pass 1 (metadata gate): {len(file_list)} files "
+                f"→ {len(already_indexed)} hits, {len(needs_processing)} need processing "
+                f"(hash: {quick_hash_time:.3f}s, qdrant: {pass1_qdrant_time:.3f}s, check: {pass1_check_time:.3f}s, total: {pass1_total:.3f}s)"
+            )
 
             total_time = time.time() - start_time
-            logger.info(f"Sync complete: {len(needs_processing)} files to process, "
-                       f"{len(already_indexed)} already indexed "
-                       f"(total {len(file_list)} files, {total_time:.3f}s)")
+            logger.info(
+                f"Sync complete: {len(needs_processing)} files to process, "
+                f"{len(already_indexed)} already indexed "
+                f"(total {len(file_list)} files, {total_time:.3f}s)"
+            )
             return (needs_processing, already_indexed)
 
         except Exception as e:
-            logger.warning(f"Error querying collection: {e}, "
-                          "processing all files")
+            logger.warning(f"Error querying collection: {e}, processing all files")
             return (file_list, [])
 
     def delete_chunks_by_file_hash(self, collection_name: str, file_hash: str) -> int:
@@ -453,16 +458,11 @@ class MetadataBasedSync:
             points_before, _ = self.qdrant.scroll(
                 collection_name=collection_name,
                 scroll_filter=Filter(
-                    must=[
-                        FieldCondition(
-                            key="file_hash",
-                            match=MatchValue(value=file_hash)
-                        )
-                    ]
+                    must=[FieldCondition(key="file_hash", match=MatchValue(value=file_hash))]
                 ),
                 limit=1,
                 with_payload=False,
-                with_vectors=False
+                with_vectors=False,
             )
 
             if not points_before:
@@ -473,19 +473,16 @@ class MetadataBasedSync:
                 collection_name=collection_name,
                 points_selector=FilterSelector(
                     filter=Filter(
-                        must=[
-                            FieldCondition(
-                                key="file_hash",
-                                match=MatchValue(value=file_hash)
-                            )
-                        ]
+                        must=[FieldCondition(key="file_hash", match=MatchValue(value=file_hash))]
                     )
-                )
+                ),
             )
 
             # UpdateResult only has operation_id and status, count the deleted chunks from before
             deleted_count = len(points_before) if points_before else 0
-            logger.debug(f"Deleted {deleted_count} chunks for file_hash {file_hash} from {collection_name}")
+            logger.debug(
+                f"Deleted {deleted_count} chunks for file_hash {file_hash} from {collection_name}"
+            )
             return deleted_count
 
         except Exception as e:
@@ -509,12 +506,7 @@ class MetadataBasedSync:
             Number of points deleted (0 if no chunks found)
         """
         path_filter = Filter(
-            must=[
-                FieldCondition(
-                    key="file_path",
-                    match=MatchValue(value=file_path)
-                )
-            ]
+            must=[FieldCondition(key="file_path", match=MatchValue(value=file_path))]
         )
         try:
             # Count chunks before deletion by scrolling all matching points.
@@ -527,7 +519,7 @@ class MetadataBasedSync:
                     limit=1000,
                     offset=offset,
                     with_payload=False,
-                    with_vectors=False
+                    with_vectors=False,
                 )
                 deleted_count += len(points)
                 if offset is None:
@@ -538,11 +530,12 @@ class MetadataBasedSync:
 
             # Delete all points with this file_path
             self.qdrant.delete(
-                collection_name=collection_name,
-                points_selector=FilterSelector(filter=path_filter)
+                collection_name=collection_name, points_selector=FilterSelector(filter=path_filter)
             )
 
-            logger.debug(f"Deleted {deleted_count} chunks for file_path {file_path} from {collection_name}")
+            logger.debug(
+                f"Deleted {deleted_count} chunks for file_path {file_path} from {collection_name}"
+            )
             return deleted_count
 
         except Exception as e:
@@ -588,9 +581,7 @@ class MetadataBasedSync:
             )
             return len(points) > 0
         except Exception as e:
-            logger.warning(
-                f"Error checking chunks for file_path {file_path}: {e}"
-            )
+            logger.warning(f"Error checking chunks for file_path {file_path}: {e}")
             return True
 
     def find_file_by_content_hash(self, collection_name: str, file_hash: str) -> List[str]:
@@ -614,17 +605,12 @@ class MetadataBasedSync:
                 points, offset = self.qdrant.scroll(
                     collection_name=collection_name,
                     scroll_filter=Filter(
-                        must=[
-                            FieldCondition(
-                                key="file_hash",
-                                match=MatchValue(value=file_hash)
-                            )
-                        ]
+                        must=[FieldCondition(key="file_hash", match=MatchValue(value=file_hash))]
                     ),
                     limit=100,
                     offset=offset,
                     with_payload=["file_path", "file_paths"],
-                    with_vectors=False
+                    with_vectors=False,
                 )
 
                 if not points:
@@ -663,10 +649,10 @@ class MetadataBasedSync:
             List of paths that exist on disk
         """
         from pathlib import Path
+
         return [p for p in paths if Path(p).exists()]
 
-    def handle_renames(self, collection_name: str,
-                      renames: List[Tuple]) -> int:
+    def handle_renames(self, collection_name: str, renames: List[Tuple]) -> int:
         """Update metadata for renamed/moved files.
 
         Updates all chunks with old_path to use new_path and updates
@@ -716,19 +702,16 @@ class MetadataBasedSync:
                     payload=payload,
                     points=FilterSelector(
                         filter=Filter(
-                            must=[
-                                FieldCondition(
-                                    key="file_path",
-                                    match=MatchValue(value=old_path)
-                                )
-                            ]
+                            must=[FieldCondition(key="file_path", match=MatchValue(value=old_path))]
                         )
-                    )
+                    ),
                 )
                 renamed_count += 1
 
                 if new_metadata:
-                    logger.info(f"Renamed: {old_path} -> {new_path} (updated {len(payload)} fields)")
+                    logger.info(
+                        f"Renamed: {old_path} -> {new_path} (updated {len(payload)} fields)"
+                    )
                 else:
                     logger.info(f"Renamed: {old_path} -> {new_path}")
 
@@ -740,7 +723,9 @@ class MetadataBasedSync:
 
         return renamed_count
 
-    def add_alternate_path(self, collection_name: str, file_hash: str, new_path: str, quick_hash: str) -> int:
+    def add_alternate_path(
+        self, collection_name: str, file_hash: str, new_path: str, quick_hash: str
+    ) -> int:
         """Add an alternate file path to existing chunks with same content.
 
         When a duplicate file is found (same content, different path), this adds
@@ -760,16 +745,11 @@ class MetadataBasedSync:
             points, _ = self.qdrant.scroll(
                 collection_name=collection_name,
                 scroll_filter=Filter(
-                    must=[
-                        FieldCondition(
-                            key="file_hash",
-                            match=MatchValue(value=file_hash)
-                        )
-                    ]
+                    must=[FieldCondition(key="file_hash", match=MatchValue(value=file_hash))]
                 ),
                 limit=1,
                 with_payload=True,
-                with_vectors=False
+                with_vectors=False,
             )
 
             if not points:
@@ -788,7 +768,11 @@ class MetadataBasedSync:
 
             # IMPORTANT: Also migrate primary path's quick_hash if missing from dict
             primary_path = current_payload.get("file_path")
-            if primary_path and primary_path not in file_quick_hashes and "quick_hash" in current_payload:
+            if (
+                primary_path
+                and primary_path not in file_quick_hashes
+                and "quick_hash" in current_payload
+            ):
                 file_quick_hashes[primary_path] = current_payload["quick_hash"]
                 logger.debug("Migrated primary path quick_hash to file_quick_hashes dict")
 
@@ -800,7 +784,9 @@ class MetadataBasedSync:
                         file_quick_hashes[existing_path] = current_payload["quick_hash"]
                         logger.debug(f"Auto-fixed: migrated missing dict entry for {existing_path}")
                     else:
-                        logger.warning(f"Path {existing_path} missing dict entry and cannot auto-fix")
+                        logger.warning(
+                            f"Path {existing_path} missing dict entry and cannot auto-fix"
+                        )
 
             # Add new path if not already present
             new_path_abs = str(new_path) if not isinstance(new_path, str) else new_path
@@ -823,10 +809,7 @@ class MetadataBasedSync:
 
             # Update all chunks with this file_hash
             # Keep old quick_hash field in sync with primary path's dict entry for consistency
-            update_payload = {
-                "file_paths": file_paths,
-                "file_quick_hashes": file_quick_hashes
-            }
+            update_payload = {"file_paths": file_paths, "file_quick_hashes": file_quick_hashes}
             if primary_path and primary_path in file_quick_hashes:
                 update_payload["quick_hash"] = file_quick_hashes[primary_path]
 
@@ -835,17 +818,14 @@ class MetadataBasedSync:
                 payload=update_payload,
                 points=FilterSelector(
                     filter=Filter(
-                        must=[
-                            FieldCondition(
-                                key="file_hash",
-                                match=MatchValue(value=file_hash)
-                            )
-                        ]
+                        must=[FieldCondition(key="file_hash", match=MatchValue(value=file_hash))]
                     )
-                )
+                ),
             )
 
-            logger.debug(f"Added alternate path {new_path} to {len(file_paths)} total paths for hash {file_hash[:8]}")
+            logger.debug(
+                f"Added alternate path {new_path} to {len(file_paths)} total paths for hash {file_hash[:8]}"
+            )
             return len(file_paths)
 
         except Exception as e:

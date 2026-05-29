@@ -18,7 +18,7 @@ from arcaneum.indexing.markdown.discovery import (
     MarkdownDiscovery,
     MarkdownFileMetadata,
     discover_markdown_files,
-    FRONTMATTER_AVAILABLE
+    FRONTMATTER_AVAILABLE,
 )
 from arcaneum.indexing.common.sync import compute_text_file_hash
 
@@ -100,14 +100,14 @@ class TestMarkdownDiscovery:
     def test_initialization(self):
         """Test discovery initializes with correct defaults."""
         discovery = MarkdownDiscovery()
-        assert '.md' in discovery.extensions
-        assert '.markdown' in discovery.extensions
+        assert ".md" in discovery.extensions
+        assert ".markdown" in discovery.extensions
         assert discovery.exclude_patterns == []
 
     def test_initialization_custom_extensions(self):
         """Test discovery accepts custom extensions."""
-        discovery = MarkdownDiscovery(extensions=['.md', '.txt'])
-        assert discovery.extensions == ['.md', '.txt']
+        discovery = MarkdownDiscovery(extensions=[".md", ".txt"])
+        assert discovery.extensions == [".md", ".txt"]
 
     def test_discover_files_recursive(self, sample_markdown_tree):
         """Test recursive file discovery."""
@@ -116,11 +116,11 @@ class TestMarkdownDiscovery:
 
         # Should find all .md and .markdown files
         filenames = [f.name for f in files]
-        assert 'sample.md' in filenames
-        assert 'simple.md' in filenames
-        assert 'nested.md' in filenames
-        assert 'readme.markdown' in filenames
-        assert 'excluded.md' in filenames  # Not excluded yet
+        assert "sample.md" in filenames
+        assert "simple.md" in filenames
+        assert "nested.md" in filenames
+        assert "readme.markdown" in filenames
+        assert "excluded.md" in filenames  # Not excluded yet
 
     def test_discover_files_non_recursive(self, sample_markdown_tree):
         """Test non-recursive file discovery."""
@@ -129,18 +129,18 @@ class TestMarkdownDiscovery:
         files = discovery.discover_files(docs_dir, recursive=False)
 
         filenames = [f.name for f in files]
-        assert 'sample.md' in filenames
-        assert 'simple.md' in filenames
-        assert 'nested.md' not in filenames  # Should not find nested
-        assert 'readme.markdown' in filenames
+        assert "sample.md" in filenames
+        assert "simple.md" in filenames
+        assert "nested.md" not in filenames  # Should not find nested
+        assert "readme.markdown" in filenames
 
     def test_discover_files_with_exclusion(self, sample_markdown_tree):
         """Test file discovery with exclusion patterns."""
-        discovery = MarkdownDiscovery(exclude_patterns=['**/node_modules/**'])
+        discovery = MarkdownDiscovery(exclude_patterns=["**/node_modules/**"])
         files = discovery.discover_files(sample_markdown_tree, recursive=True)
 
         filenames = [f.name for f in files]
-        assert 'excluded.md' not in filenames
+        assert "excluded.md" not in filenames
 
     def test_discover_files_nonexistent_directory(self):
         """Test discovery raises error for nonexistent directory."""
@@ -181,7 +181,7 @@ class TestMarkdownDiscovery:
         assert metadata.project == "arcaneum"
         # created_at might be parsed as datetime object or string
         assert metadata.created_at is not None
-        assert metadata.custom_metadata.get('custom_field') == "custom value"
+        assert metadata.custom_metadata.get("custom_field") == "custom value"
 
     def test_extract_metadata_without_frontmatter(self, sample_markdown_tree):
         """Test metadata extraction from file without frontmatter."""
@@ -233,14 +233,14 @@ Content"""
 
     def test_discover_and_extract(self, sample_markdown_tree):
         """Test combined discover and extract operation."""
-        discovery = MarkdownDiscovery(exclude_patterns=['**/node_modules/**'])
+        discovery = MarkdownDiscovery(exclude_patterns=["**/node_modules/**"])
         metadata_list = discovery.discover_and_extract(sample_markdown_tree, recursive=True)
 
         assert len(metadata_list) > 0
         filenames = [m.file_name for m in metadata_list]
-        assert 'sample.md' in filenames
-        assert 'simple.md' in filenames
-        assert 'excluded.md' not in filenames
+        assert "sample.md" in filenames
+        assert "simple.md" in filenames
+        assert "excluded.md" not in filenames
 
     def test_content_hash_consistency(self, temp_dir):
         """Test that content hash is consistent for same content."""
@@ -277,9 +277,9 @@ Content"""
         content, frontmatter_dict = MarkdownDiscovery.read_file_with_frontmatter(file_path)
 
         if FRONTMATTER_AVAILABLE:
-            assert '---' not in content  # Body only
-            assert '# Introduction' in content
-            assert frontmatter_dict.get('title') == "Sample Document"
+            assert "---" not in content  # Body only
+            assert "# Introduction" in content
+            assert frontmatter_dict.get("title") == "Sample Document"
         else:
             assert content  # Should still return content
             assert frontmatter_dict == {}
@@ -295,7 +295,7 @@ title: Unicode Test
 Content with spéciål characters.
 """
         file_path = temp_dir / "unicode.md"
-        file_path.write_text(unicode_content, encoding='utf-8')
+        file_path.write_text(unicode_content, encoding="utf-8")
 
         discovery = MarkdownDiscovery()
         metadata = discovery.extract_metadata(file_path)
@@ -311,14 +311,12 @@ class TestConvenienceFunctions:
     def test_discover_markdown_files(self, sample_markdown_tree):
         """Test discover_markdown_files convenience function."""
         metadata_list = discover_markdown_files(
-            sample_markdown_tree,
-            recursive=True,
-            exclude_patterns=['**/node_modules/**']
+            sample_markdown_tree, recursive=True, exclude_patterns=["**/node_modules/**"]
         )
 
         assert len(metadata_list) > 0
         filenames = [m.file_name for m in metadata_list]
-        assert 'sample.md' in filenames
+        assert "sample.md" in filenames
 
     def test_compute_file_hash(self, temp_dir):
         """Test compute_file_hash convenience function."""

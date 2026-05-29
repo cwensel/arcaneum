@@ -36,7 +36,9 @@ class TestDetectRenames:
 
         with patch("arcaneum.cli.sync.compute_file_hash", return_value="abc123"):
             renames = _detect_renames(
-                {new_path}, mock_sync_manager, "test-corpus",
+                {new_path},
+                mock_sync_manager,
+                "test-corpus",
             )
 
         assert len(renames) == 1
@@ -59,7 +61,9 @@ class TestDetectRenames:
 
         with patch("arcaneum.cli.sync.compute_file_hash", return_value="abc123"):
             renames = _detect_renames(
-                {new_path}, mock_sync_manager, "test-corpus",
+                {new_path},
+                mock_sync_manager,
+                "test-corpus",
             )
 
         assert len(renames) == 0
@@ -76,7 +80,9 @@ class TestDetectRenames:
 
         with patch("arcaneum.cli.sync.compute_file_hash", return_value="xyz789"):
             renames = _detect_renames(
-                {new_path}, mock_sync_manager, "test-corpus",
+                {new_path},
+                mock_sync_manager,
+                "test-corpus",
             )
 
         assert len(renames) == 0
@@ -93,7 +99,9 @@ class TestDetectRenames:
 
         with patch("arcaneum.cli.sync.compute_file_hash", return_value="newhash"):
             renames = _detect_renames(
-                {new_path}, mock_sync_manager, "test-corpus",
+                {new_path},
+                mock_sync_manager,
+                "test-corpus",
             )
 
         assert len(renames) == 0
@@ -127,7 +135,10 @@ class TestHandleRenamesMeili:
         renames = [("/old/dir/doc.pdf", "/new/dir/doc.pdf")]
 
         updated = _handle_renames_meili(
-            renames, mock_qdrant, mock_meili, "test-corpus",
+            renames,
+            mock_qdrant,
+            mock_meili,
+            "test-corpus",
         )
 
         assert updated == 2

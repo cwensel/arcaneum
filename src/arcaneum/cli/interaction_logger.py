@@ -60,11 +60,11 @@ class InteractionLogger:
             return {}
         env = {}
         claude_vars = [
-            "CLAUDECODE",           # Primary indicator (always set)
+            "CLAUDECODE",  # Primary indicator (always set)
             "CLAUDE_CODE_ENTRYPOINT",  # How Claude was launched (cli, etc.)
-            "CLAUDE_PLUGIN_ROOT",   # Plugin directory (when via plugin)
-            "CLAUDE_SESSION_ID",    # Future-proofing
-            "CLAUDE_AGENT_ID",      # Future-proofing
+            "CLAUDE_PLUGIN_ROOT",  # Plugin directory (when via plugin)
+            "CLAUDE_SESSION_ID",  # Future-proofing
+            "CLAUDE_AGENT_ID",  # Future-proofing
         ]
         for var in claude_vars:
             value = os.environ.get(var)
@@ -86,18 +86,9 @@ class InteractionLogger:
             **kwargs: Additional context to log (query, collection, filters, etc.)
         """
         self._start_time = time.perf_counter()
-        self._context = {
-            "command": command,
-            "subcommand": subcommand,
-            **kwargs
-        }
+        self._context = {"command": command, "subcommand": subcommand, **kwargs}
 
-    def finish(
-        self,
-        result_count: Optional[int] = None,
-        error: Optional[str] = None,
-        **extra
-    ):
+    def finish(self, result_count: Optional[int] = None, error: Optional[str] = None, **extra):
         """Complete and write the interaction log entry.
 
         Args:

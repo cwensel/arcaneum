@@ -28,4 +28,3 @@ def test_markdown_extraction_marks_auto_ocr_method(monkeypatch, tmp_path):
     _, metadata = PDFExtractor(use_ocr=True).extract(pdf_path)
 
     assert metadata["extraction_method"] == "pymupdf4llm_ocr"
-

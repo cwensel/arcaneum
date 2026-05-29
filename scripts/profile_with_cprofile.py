@@ -5,12 +5,14 @@ Generates test PDFs and indexes them, collecting CPU profiling data.
 
 Usage: python profile_with_cprofile.py --pdfs NUM --pages PAGES
 """
+
 import argparse
 import cProfile
 import pstats
 import sys
 import os
 from pathlib import Path
+
 
 def main():
     parser = argparse.ArgumentParser(description="Profile PDF indexing with cProfile")
@@ -50,7 +52,9 @@ def main():
                     y -= 20
                     c.drawString(50, y, "Lorem ipsum dolor sit amet, consectetur adipiscing elit.")
                     y -= 20
-                    c.drawString(50, y, "Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.")
+                    c.drawString(
+                        50, y, "Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
+                    )
                     y -= 20
                     c.drawString(50, y, f"Document ID: {pdf_idx}-{page_idx}")
                     c.showPage()
@@ -83,7 +87,7 @@ def main():
                         collection_name=collection_name,
                         vectors_config={
                             "default": VectorParams(size=1024, distance=Distance.COSINE)
-                        }
+                        },
                     )
                 except Exception as e:
                     print(f"Error creating collection: {e}")
@@ -91,9 +95,7 @@ def main():
                 # Load embedding model
                 print("Loading embedding model...")
                 embeddings = get_cached_model(
-                    model_name="stella",
-                    cache_dir=str(get_models_dir()),
-                    use_gpu=True
+                    model_name="stella", cache_dir=str(get_models_dir()), use_gpu=True
                 )
 
                 # Create uploader
@@ -102,7 +104,7 @@ def main():
                     qdrant_client=qdrant_client,
                     embedding_client=embeddings,
                     file_workers=1,
-                    embedding_batch_size=256
+                    embedding_batch_size=256,
                 )
 
                 # Index PDFs
@@ -113,7 +115,7 @@ def main():
                     model_name="stella",
                     model_config={"chunk_size": 512, "chunk_overlap": 50},
                     force_reindex=True,
-                    verbose=False
+                    verbose=False,
                 )
 
                 print(f"Indexing complete!")
@@ -140,13 +142,13 @@ def main():
     print("=" * 70)
     ps = pstats.Stats(args.output)
     ps.strip_dirs()
-    ps.sort_stats('cumulative')
+    ps.sort_stats("cumulative")
     ps.print_stats(40)
 
     print("\n" + "=" * 70)
     print("TOP 40 FUNCTIONS BY TOTAL TIME")
     print("=" * 70)
-    ps.sort_stats('time')
+    ps.sort_stats("time")
     ps.print_stats(40)
 
     print(f"\nFull profile: python -m pstats {args.output}")

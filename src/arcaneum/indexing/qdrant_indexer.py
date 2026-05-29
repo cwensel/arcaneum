@@ -44,11 +44,7 @@ class QdrantIndexer:
     MAX_RETRIES = 3
     INITIAL_RETRY_WAIT = 1  # seconds
 
-    def __init__(
-        self,
-        client: QdrantClient,
-        batch_size: int = DEFAULT_BATCH_SIZE
-    ):
+    def __init__(self, client: QdrantClient, batch_size: int = DEFAULT_BATCH_SIZE):
         """Initialize Qdrant indexer.
 
         Args:
@@ -58,11 +54,7 @@ class QdrantIndexer:
         self.client = client
         self.batch_size = batch_size
 
-    def delete_branch_chunks(
-        self,
-        collection_name: str,
-        project_identifier: str
-    ) -> int:
+    def delete_branch_chunks(self, collection_name: str, project_identifier: str) -> int:
         """Delete all chunks for a specific (project, branch) combination.
 
         Uses filter-based deletion which is 40-100x faster than ID-based deletion.
@@ -93,11 +85,10 @@ class QdrantIndexer:
                 points_selector=Filter(
                     must=[
                         FieldCondition(
-                            key="git_project_identifier",
-                            match=MatchValue(value=project_identifier)
+                            key="git_project_identifier", match=MatchValue(value=project_identifier)
                         )
                     ]
-                )
+                ),
             )
 
             elapsed = time.time() - start_time
@@ -118,14 +109,14 @@ class QdrantIndexer:
         retry=retry_if_exception_type(Exception),
         stop=stop_after_attempt(MAX_RETRIES),
         wait=wait_exponential(multiplier=INITIAL_RETRY_WAIT, min=1, max=10),
-        reraise=True
+        reraise=True,
     )
     def upload_chunks_batch(
         self,
         collection_name: str,
         chunks: List[CodeChunk],
         wait: bool = True,
-        vector_name: Optional[str] = None
+        vector_name: Optional[str] = None,
     ) -> int:
         """Upload a batch of code chunks to Qdrant.
 
@@ -165,11 +156,7 @@ class QdrantIndexer:
             points = [chunk.to_point(vector_name=vector_name) for chunk in chunks]
 
             # Upload to Qdrant
-            self.client.upsert(
-                collection_name=collection_name,
-                points=points,
-                wait=wait
-            )
+            self.client.upsert(collection_name=collection_name, points=points, wait=wait)
 
             logger.debug(f"Successfully uploaded {len(chunks)} chunks")
             return len(chunks)
@@ -184,7 +171,7 @@ class QdrantIndexer:
         chunks: List[CodeChunk],
         show_progress: bool = False,
         vector_name: Optional[str] = None,
-        bulk_mode: bool = False
+        bulk_mode: bool = False,
     ) -> int:
         """Upload multiple chunks in optimized batches.
 
@@ -212,10 +199,11 @@ class QdrantIndexer:
             if show_progress:
                 try:
                     from tqdm import tqdm
+
                     chunk_iter = tqdm(
                         range(0, len(chunks), self.batch_size),
                         desc="Uploading chunks",
-                        unit="batch"
+                        unit="batch",
                     )
                 except ImportError:
                     chunk_iter = range(0, len(chunks), self.batch_size)
@@ -224,12 +212,12 @@ class QdrantIndexer:
 
             # Upload in batches with wait=False for bulk mode
             for i in chunk_iter:
-                batch = chunks[i:i + self.batch_size]
+                batch = chunks[i : i + self.batch_size]
                 uploaded = self.upload_chunks_batch(
                     collection_name,
                     batch,
                     wait=not bulk_mode,  # Don't wait if bulk mode
-                    vector_name=vector_name
+                    vector_name=vector_name,
                 )
                 total_uploaded += uploaded
 
@@ -241,10 +229,7 @@ class QdrantIndexer:
         return total_uploaded
 
     def create_collection(
-        self,
-        collection_name: str,
-        vector_size: int,
-        distance: Distance = Distance.COSINE
+        self, collection_name: str, vector_size: int, distance: Distance = Distance.COSINE
     ):
         """Create a new Qdrant collection for source code.
 
@@ -260,10 +245,7 @@ class QdrantIndexer:
         try:
             self.client.create_collection(
                 collection_name=collection_name,
-                vectors_config=VectorParams(
-                    size=vector_size,
-                    distance=distance
-                )
+                vectors_config=VectorParams(size=vector_size, distance=distance),
             )
             logger.info(f"Collection {collection_name} created successfully")
 
@@ -309,11 +291,7 @@ class QdrantIndexer:
             logger.error(f"Error getting collection info: {e}")
             raise
 
-    def count_chunks_for_project(
-        self,
-        collection_name: str,
-        project_identifier: str
-    ) -> int:
+    def count_chunks_for_project(self, collection_name: str, project_identifier: str) -> int:
         """Count chunks for a specific project/branch.
 
         Args:
@@ -329,11 +307,10 @@ class QdrantIndexer:
                 count_filter=Filter(
                     must=[
                         FieldCondition(
-                            key="git_project_identifier",
-                            match=MatchValue(value=project_identifier)
+                            key="git_project_identifier", match=MatchValue(value=project_identifier)
                         )
                     ]
-                )
+                ),
             )
             return result.count
 
@@ -356,7 +333,7 @@ class QdrantIndexer:
                 collection_name=collection_name,
                 optimizer_config=OptimizersConfigDiff(
                     indexing_threshold=0  # Disable indexing during upload
-                )
+                ),
             )
         except Exception as e:
             logger.error(f"Error enabling bulk mode: {e}")
@@ -376,7 +353,7 @@ class QdrantIndexer:
                 collection_name=collection_name,
                 optimizer_config=OptimizersConfigDiff(
                     indexing_threshold=20000  # Restore default
-                )
+                ),
             )
         except Exception as e:
             logger.error(f"Error disabling bulk mode: {e}")

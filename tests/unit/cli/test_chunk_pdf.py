@@ -17,6 +17,7 @@ from arcaneum.cli.sync import _build_quality_manifest, chunk_pdf_file
 
 def _make_chunk(text, metadata):
     from arcaneum.indexing.pdf.chunker import Chunk
+
     return Chunk(text=text, chunk_index=0, token_count=len(text) // 4, metadata=metadata)
 
 
@@ -51,8 +52,14 @@ class TestDropoutFallback:
     @patch("arcaneum.indexing.pdf.quality.score_text")
     @patch("arcaneum.indexing.pdf.quality.needs_ocr")
     def test_fallback_uses_normalized_extraction(
-        self, mock_needs_ocr, mock_score, mock_dropout, mock_extractor_cls, mock_chunker_cls,
-        fake_pdf, model_config,
+        self,
+        mock_needs_ocr,
+        mock_score,
+        mock_dropout,
+        mock_extractor_cls,
+        mock_chunker_cls,
+        fake_pdf,
+        model_config,
     ):
         mock_needs_ocr.return_value = False
         mock_score.return_value = 0.9  # High quality — no OCR trigger
@@ -102,8 +109,14 @@ class TestDropoutFallback:
     @patch("arcaneum.indexing.pdf.quality.score_text")
     @patch("arcaneum.indexing.pdf.quality.needs_ocr")
     def test_extraction_floor_set_when_bypass_fails(
-        self, mock_needs_ocr, mock_score, mock_dropout, mock_extractor_cls, mock_chunker_cls,
-        fake_pdf, model_config,
+        self,
+        mock_needs_ocr,
+        mock_score,
+        mock_dropout,
+        mock_extractor_cls,
+        mock_chunker_cls,
+        fake_pdf,
+        model_config,
     ):
         mock_needs_ocr.return_value = False
         mock_score.return_value = 0.9  # High quality — no OCR trigger
@@ -154,9 +167,14 @@ class TestSoftQualityGate:
     @patch("arcaneum.indexing.pdf.quality.score_text")
     @patch("arcaneum.indexing.pdf.quality.needs_ocr")
     def test_low_quality_triggers_ocr(
-        self, mock_needs_ocr, mock_score, mock_dropout,
-        mock_extractor_cls, mock_chunker_cls,
-        fake_pdf, model_config,
+        self,
+        mock_needs_ocr,
+        mock_score,
+        mock_dropout,
+        mock_extractor_cls,
+        mock_chunker_cls,
+        fake_pdf,
+        model_config,
     ):
         mock_needs_ocr.return_value = False
         mock_score.return_value = 0.55  # Below the 0.7 soft gate
@@ -226,7 +244,11 @@ class TestSoftQualityGate:
     @patch("arcaneum.indexing.pdf.chunker.PDFChunker")
     @patch("arcaneum.indexing.pdf.extractor.PDFExtractor")
     def test_empty_text_ocr_retry_records_empty_trigger(
-        self, mock_extractor_cls, mock_chunker_cls, fake_pdf, model_config,
+        self,
+        mock_extractor_cls,
+        mock_chunker_cls,
+        fake_pdf,
+        model_config,
     ):
         initial_extractor = MagicMock()
         initial_extractor.extract.return_value = (
@@ -269,9 +291,14 @@ class TestSoftQualityGate:
     @patch("arcaneum.indexing.pdf.quality.score_text")
     @patch("arcaneum.indexing.pdf.quality.needs_ocr")
     def test_high_quality_skips_ocr(
-        self, mock_needs_ocr, mock_score, mock_dropout,
-        mock_extractor_cls, mock_chunker_cls,
-        fake_pdf, model_config,
+        self,
+        mock_needs_ocr,
+        mock_score,
+        mock_dropout,
+        mock_extractor_cls,
+        mock_chunker_cls,
+        fake_pdf,
+        model_config,
     ):
         mock_needs_ocr.return_value = False
         mock_score.return_value = 0.85  # Above the 0.7 soft gate

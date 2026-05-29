@@ -20,21 +20,10 @@ from qdrant_client.models import VectorParamsDiff, HnswConfigDiff
 
 def main():
     parser = argparse.ArgumentParser(description="Enable on-disk storage for Qdrant collections")
+    parser.add_argument("--host", default="localhost", help="Qdrant host (default: localhost)")
+    parser.add_argument("--port", type=int, default=6333, help="Qdrant port (default: 6333)")
     parser.add_argument(
-        "--host",
-        default="localhost",
-        help="Qdrant host (default: localhost)"
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=6333,
-        help="Qdrant port (default: 6333)"
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be done without making changes"
+        "--dry-run", action="store_true", help="Show what would be done without making changes"
     )
     args = parser.parse_args()
 
@@ -85,8 +74,10 @@ def main():
                 # Build updated vectors config with on_disk=True
                 new_vectors_config = {}
                 for vector_name, vector_config in vectors_config.items():
-                    current_on_disk = getattr(vector_config, 'on_disk', False)
-                    print(f"    - {vector_name}: size={vector_config.size}, on_disk={current_on_disk}")
+                    current_on_disk = getattr(vector_config, "on_disk", False)
+                    print(
+                        f"    - {vector_name}: size={vector_config.size}, on_disk={current_on_disk}"
+                    )
 
                     new_vectors_config[vector_name] = VectorParamsDiff(
                         on_disk=True  # Enable on-disk storage
@@ -95,16 +86,14 @@ def main():
             else:
                 # Single vector config (less common)
                 print(f"  Vectors:  Single vector config")
-                current_on_disk = getattr(vectors_config, 'on_disk', False)
+                current_on_disk = getattr(vectors_config, "on_disk", False)
                 print(f"    size={vectors_config.size}, on_disk={current_on_disk}")
 
-                new_vectors_config = VectorParamsDiff(
-                    on_disk=True
-                )
+                new_vectors_config = VectorParamsDiff(on_disk=True)
 
             # Check current HNSW config
             hnsw_config = info.config.hnsw_config
-            hnsw_on_disk = getattr(hnsw_config, 'on_disk', False)
+            hnsw_on_disk = getattr(hnsw_config, "on_disk", False)
             print(f"  HNSW:     on_disk={hnsw_on_disk}")
 
             if args.dry_run:
@@ -120,8 +109,8 @@ def main():
                 hnsw_config=HnswConfigDiff(
                     m=hnsw_config.m,
                     ef_construct=hnsw_config.ef_construct,
-                    on_disk=True  # Enable on-disk HNSW
-                )
+                    on_disk=True,  # Enable on-disk HNSW
+                ),
             )
 
             print(f"  ✓ On-disk storage enabled")

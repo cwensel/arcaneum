@@ -109,6 +109,7 @@ def test_install_dump_handler_registers_sigusr1():
 def test_snapshot_accepts_embedding_client_with_pending_cleanup():
     class Stub:
         _pending_gpu_cleanup = {"jina-code": (object(), object())}
+
     snap = snapshot(embedding_client=Stub())
     assert snap.pending_gpu_cleanup == 1
 
@@ -128,9 +129,20 @@ def test_format_snapshot_jsonl_is_parseable_with_expected_keys():
     assert "\n" not in line
     obj = json.loads(line)
     # Required keys for downstream analysis
-    for key in ("ts", "phase", "rss", "vsz", "threads", "gc_objs",
-                "mps_current", "mps_driver", "sys_used_pct",
-                "sys_available", "sys_total", "pending_gpu_cleanup"):
+    for key in (
+        "ts",
+        "phase",
+        "rss",
+        "vsz",
+        "threads",
+        "gc_objs",
+        "mps_current",
+        "mps_driver",
+        "sys_used_pct",
+        "sys_available",
+        "sys_total",
+        "pending_gpu_cleanup",
+    ):
         assert key in obj, f"missing {key} in {obj}"
     assert obj["phase"] == "encoding:test.pdf"
     assert obj["rss"] > 0

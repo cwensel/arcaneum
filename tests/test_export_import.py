@@ -72,9 +72,7 @@ def test_collection(qdrant_client):
     # Create collection
     qdrant_client.create_collection(
         collection_name=collection_name,
-        vectors_config={
-            "stella": VectorParams(size=1024, distance=Distance.COSINE)
-        },
+        vectors_config={"stella": VectorParams(size=1024, distance=Distance.COSINE)},
         hnsw_config=HnswConfigDiff(m=16, ef_construct=100),
     )
 
@@ -128,9 +126,7 @@ def test_code_collection(qdrant_client):
     # Create collection
     qdrant_client.create_collection(
         collection_name=collection_name,
-        vectors_config={
-            "jina-code-0.5b": VectorParams(size=896, distance=Distance.COSINE)
-        },
+        vectors_config={"jina-code-0.5b": VectorParams(size=896, distance=Distance.COSINE)},
         hnsw_config=HnswConfigDiff(m=16, ef_construct=100),
     )
 
@@ -257,17 +253,13 @@ class TestFilterBuilding:
 
     def test_build_export_filter_no_filters(self):
         """Test with no filters."""
-        scroll_filter, path_filter = build_export_filter(
-            includes=(), excludes=(), repos=()
-        )
+        scroll_filter, path_filter = build_export_filter(includes=(), excludes=(), repos=())
         assert scroll_filter is None
         assert path_filter is None
 
     def test_build_export_filter_include(self):
         """Test with include pattern."""
-        scroll_filter, path_filter = build_export_filter(
-            includes=("*.pdf",), excludes=(), repos=()
-        )
+        scroll_filter, path_filter = build_export_filter(includes=("*.pdf",), excludes=(), repos=())
         assert scroll_filter is None
         assert path_filter is not None
 
@@ -294,6 +286,7 @@ class TestFilterBuilding:
         )
         assert scroll_filter is not None
         assert path_filter is None
+
 
 class TestExportHeader:
     """Tests for ExportHeader serialization."""
@@ -694,9 +687,7 @@ class TestRepoFiltering:
 
         try:
             # Build filter for arcaneum repo only
-            scroll_filter, _ = build_export_filter(
-                includes=(), excludes=(), repos=("arcaneum",)
-            )
+            scroll_filter, _ = build_export_filter(includes=(), excludes=(), repos=("arcaneum",))
 
             result = exporter.export(
                 collection_name=test_code_collection,

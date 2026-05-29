@@ -99,7 +99,9 @@ class DualIndexDocument:
     git_project_identifier: Optional[str] = None
     git_commit_hash: Optional[str] = None
     git_remote_url: Optional[str] = None
-    git_version_identifier: Optional[str] = None  # "project#branch@commit" for multi-version indexing
+    git_version_identifier: Optional[str] = (
+        None  # "project#branch@commit" for multi-version indexing
+    )
 
     # Code-specific
     function_names: List[str] = field(default_factory=list)
@@ -269,7 +271,7 @@ def to_qdrant_point(doc: DualIndexDocument, point_id: Optional[int] = None):
     return PointStruct(
         id=pid,
         vector=doc.vectors,  # Named vectors dict
-        payload=payload
+        payload=payload,
     )
 
 

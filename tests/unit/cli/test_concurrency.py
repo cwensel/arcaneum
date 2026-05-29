@@ -99,10 +99,7 @@ def test_cross_process_blocking(isolated_locks, monkeypatch, tmp_path):
             time.sleep(0.05)
         else:
             stdout, stderr = proc.communicate(timeout=2)
-            pytest.fail(
-                f"holder process never reported ready. "
-                f"stdout={stdout!r} stderr={stderr!r}"
-            )
+            pytest.fail(f"holder process never reported ready. stdout={stdout!r} stderr={stderr!r}")
 
         with pytest.raises(SearchSlotUnavailable):
             with concurrency.acquire_embedder_slot():

@@ -76,4 +76,3 @@ def get_cached_model(
 
         _model_cache[cache_key] = client
         return client
-

@@ -11,12 +11,46 @@ import logging
 logger = logging.getLogger(__name__)
 
 # High-frequency English stop words for readability detection
-STOP_WORDS = frozenset({
-    'the', 'of', 'and', 'is', 'in', 'to', 'for', 'a', 'that', 'with',
-    'on', 'are', 'was', 'it', 'be', 'as', 'at', 'by', 'this', 'from',
-    'or', 'an', 'have', 'has', 'not', 'but', 'can', 'which', 'their',
-    'will', 'been', 'would', 'each', 'were', 'do', 'there',
-})
+STOP_WORDS = frozenset(
+    {
+        "the",
+        "of",
+        "and",
+        "is",
+        "in",
+        "to",
+        "for",
+        "a",
+        "that",
+        "with",
+        "on",
+        "are",
+        "was",
+        "it",
+        "be",
+        "as",
+        "at",
+        "by",
+        "this",
+        "from",
+        "or",
+        "an",
+        "have",
+        "has",
+        "not",
+        "but",
+        "can",
+        "which",
+        "their",
+        "will",
+        "been",
+        "would",
+        "each",
+        "were",
+        "do",
+        "there",
+    }
+)
 
 
 def score_text(text: str) -> float:
@@ -40,12 +74,12 @@ def score_text(text: str) -> float:
     text_len = len(text)
 
     # Signal 1: Replacement character ratio (weight: 0.35)
-    replacement_count = text.count('\ufffd')
+    replacement_count = text.count("\ufffd")
     replacement_ratio = replacement_count / text_len
     replacement_score = max(0.0, 1.0 - (replacement_ratio * 10))
 
     # Signal 2: Stop word ratio (weight: 0.30)
-    words = re.findall(r'[a-zA-Z]+', text.lower())
+    words = re.findall(r"[a-zA-Z]+", text.lower())
     if words:
         stop_count = sum(1 for w in words if w in STOP_WORDS)
         stop_ratio = stop_count / len(words)
@@ -55,7 +89,7 @@ def score_text(text: str) -> float:
         stop_score = 0.0
 
     # Signal 3: ASCII printable ratio (weight: 0.20)
-    printable_count = sum(1 for c in text if 32 <= ord(c) <= 126 or c in '\n\r\t')
+    printable_count = sum(1 for c in text if 32 <= ord(c) <= 126 or c in "\n\r\t")
     ascii_ratio = printable_count / text_len
     ascii_score = min(1.0, ascii_ratio / 0.7)
 
@@ -71,12 +105,7 @@ def score_text(text: str) -> float:
     else:
         length_score = 0.0
 
-    score = (
-        0.35 * replacement_score
-        + 0.30 * stop_score
-        + 0.20 * ascii_score
-        + 0.15 * length_score
-    )
+    score = 0.35 * replacement_score + 0.30 * stop_score + 0.20 * ascii_score + 0.15 * length_score
 
     return round(min(1.0, max(0.0, score)), 3)
 
@@ -90,7 +119,7 @@ def score_chunks(chunks: list) -> float:
     Returns:
         Average score (0.0-1.0), or 0.0 if no text found
     """
-    scores = [score_text(c['text']) for c in chunks if c.get('text')]
+    scores = [score_text(c["text"]) for c in chunks if c.get("text")]
     return round(sum(scores) / len(scores), 3) if scores else 0.0
 
 
@@ -112,18 +141,18 @@ def needs_ocr(text: str) -> bool:
     text_len = len(text)
 
     # High replacement character ratio = broken font mapping → OCR helps
-    replacement_ratio = text.count('\ufffd') / text_len
+    replacement_ratio = text.count("\ufffd") / text_len
     if replacement_ratio > 0.05:
         return True
 
     # No English words at all — check if it's encoding garbage or just non-text content.
     # Non-text content (chart bullets ●, math symbols) has valid Unicode but no words.
     # Encoding garbage has high non-printable or non-Unicode-category chars.
-    words = re.findall(r'[a-zA-Z]+', text.lower())
+    words = re.findall(r"[a-zA-Z]+", text.lower())
     if not words and text_len > 100:
         # Only flag as needing OCR if text is mostly non-printable ASCII
         # (not just Unicode symbols like ● which are valid extraction)
-        printable_count = sum(1 for c in text if 32 <= ord(c) <= 126 or c in '\n\r\t')
+        printable_count = sum(1 for c in text if 32 <= ord(c) <= 126 or c in "\n\r\t")
         if printable_count / text_len < 0.1:
             return True
 

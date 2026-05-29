@@ -40,6 +40,7 @@ def config_file(tmp_path):
 
 # --- ModelConfig ---
 
+
 class TestModelConfig:
     def test_defaults(self):
         m = ModelConfig(**MINIMAL_MODEL)
@@ -72,6 +73,7 @@ class TestModelConfig:
 
 # --- QdrantConfig ---
 
+
 class TestQdrantConfig:
     def test_defaults(self):
         q = QdrantConfig()
@@ -91,6 +93,7 @@ class TestQdrantConfig:
 
 # --- ArcaneumConfig ---
 
+
 class TestArcaneumConfig:
     def test_minimal_config(self):
         cfg = ArcaneumConfig(**MINIMAL_CONFIG_DATA)
@@ -105,6 +108,7 @@ class TestArcaneumConfig:
 
 
 # --- load_config ---
+
 
 class TestLoadConfig:
     def test_loads_valid_yaml(self, config_file):
@@ -139,6 +143,7 @@ class TestLoadConfig:
 
 
 # --- save_config ---
+
 
 class TestSaveConfig:
     def test_save_creates_parent_dirs(self, tmp_path):

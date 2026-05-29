@@ -17,28 +17,16 @@ from qdrant_client.models import ScalarQuantization, ScalarQuantizationConfig, S
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Enable scalar quantization for Qdrant collections")
+    parser = argparse.ArgumentParser(
+        description="Enable scalar quantization for Qdrant collections"
+    )
+    parser.add_argument("--host", default="localhost", help="Qdrant host (default: localhost)")
+    parser.add_argument("--port", type=int, default=6333, help="Qdrant port (default: 6333)")
     parser.add_argument(
-        "--host",
-        default="localhost",
-        help="Qdrant host (default: localhost)"
+        "--quantile", type=float, default=0.99, help="Quantization quantile (default: 0.99)"
     )
     parser.add_argument(
-        "--port",
-        type=int,
-        default=6333,
-        help="Qdrant port (default: 6333)"
-    )
-    parser.add_argument(
-        "--quantile",
-        type=float,
-        default=0.99,
-        help="Quantization quantile (default: 0.99)"
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be done without making changes"
+        "--dry-run", action="store_true", help="Show what would be done without making changes"
     )
     args = parser.parse_args()
 
@@ -89,7 +77,9 @@ def main():
             print(f"  Quantization:   Not enabled")
 
             if args.dry_run:
-                print(f"  → [DRY RUN] Would enable int8 scalar quantization (quantile={args.quantile})")
+                print(
+                    f"  → [DRY RUN] Would enable int8 scalar quantization (quantile={args.quantile})"
+                )
                 success_count += 1
                 continue
 
@@ -101,9 +91,9 @@ def main():
                     scalar=ScalarQuantizationConfig(
                         type=ScalarType.INT8,
                         quantile=args.quantile,
-                        always_ram=True  # Keep quantized vectors in RAM
+                        always_ram=True,  # Keep quantized vectors in RAM
                     )
-                )
+                ),
             )
 
             print(f"  ✓ Quantization enabled")

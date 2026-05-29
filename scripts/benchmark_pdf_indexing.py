@@ -48,10 +48,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
 def generate_synthetic_pdfs(count: int, output_dir: Path, pages_per_pdf: int = 5) -> List[Path]:
@@ -78,7 +75,8 @@ def generate_synthetic_pdfs(count: int, output_dir: Path, pages_per_pdf: int = 5
         for page in range(pages_per_pdf):
             # Add text content
             c.drawString(100, 750, f"Document {i} - Page {page + 1}")
-            text = f"""
+            text = (
+                f"""
 This is a synthetic document created for benchmarking purposes.
 
 Document Index: {i}
@@ -90,11 +88,13 @@ Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
 Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.
 
 Content repeated for realistic testing:
-""" * 10
+"""
+                * 10
+            )
 
             c.drawString(100, 700, "Synthetic PDF Content for Benchmarking")
             y = 680
-            for line in text.split('\n')[:30]:  # Limit lines per page
+            for line in text.split("\n")[:30]:  # Limit lines per page
                 if y > 50:
                     c.drawString(100, y, line[:80])
                     y -= 15
@@ -117,7 +117,7 @@ def benchmark_pdf_indexing(
     gpu: bool = True,
     file_workers: int = 1,
     embedding_workers: int = 4,
-    force_reindex: bool = True
+    force_reindex: bool = True,
 ) -> Dict:
     """Benchmark PDF indexing performance.
 
@@ -154,10 +154,7 @@ def benchmark_pdf_indexing(
         qdrant = QdrantClient(":memory:")
 
         # Initialize embedding client
-        embeddings = EmbeddingClient(
-            cache_dir=str(get_models_dir()),
-            use_gpu=gpu
-        )
+        embeddings = EmbeddingClient(cache_dir=str(get_models_dir()), use_gpu=gpu)
 
         # Initialize uploader with test parameters
         uploader = PDFBatchUploader(
@@ -168,7 +165,7 @@ def benchmark_pdf_indexing(
             file_workers=file_workers,
             embedding_workers=embedding_workers,
             markdown_conversion=True,
-            ocr_enabled=False  # Skip OCR for benchmarking
+            ocr_enabled=False,  # Skip OCR for benchmarking
         )
 
         # Pre-create collection with named vectors
@@ -178,7 +175,7 @@ def benchmark_pdf_indexing(
                 collection_name=collection_name,
                 vectors_config={
                     model_name: VectorParams(size=vector_size, distance=Distance.COSINE)
-                }
+                },
             )
         except Exception as e:
             logger.warning(f"Collection creation failed (may already exist): {e}")
@@ -192,48 +189,50 @@ def benchmark_pdf_indexing(
             collection_name=collection_name,
             model_name=model_name,
             model_config={
-                'chunk_size': 512,
-                'chunk_overlap': 50,
-                'char_to_token_ratio': 3.3,
+                "chunk_size": 512,
+                "chunk_overlap": 50,
+                "char_to_token_ratio": 3.3,
             },
             force_reindex=force_reindex,
-            verbose=False
+            verbose=False,
         )
 
         elapsed = time.time() - start_time
 
         # Calculate metrics
-        chunks = stats.get('chunks', 0)
-        files = stats.get('files', 0)
-        errors = stats.get('errors', 0)
+        chunks = stats.get("chunks", 0)
+        files = stats.get("files", 0)
+        errors = stats.get("errors", 0)
 
         throughput_chunks = chunks / elapsed if elapsed > 0 else 0
         throughput_bytes = total_bytes / elapsed if elapsed > 0 else 0
 
         result = {
-            'pdf_count': len(pdf_files),
-            'files_indexed': files,
-            'errors': errors,
-            'total_bytes': total_bytes,
-            'chunks_created': chunks,
-            'time_seconds': elapsed,
-            'throughput': {
-                'chunks_per_second': throughput_chunks,
-                'bytes_per_second': throughput_bytes,
-                'mb_per_minute': (throughput_bytes * 60) / (1024 * 1024)
+            "pdf_count": len(pdf_files),
+            "files_indexed": files,
+            "errors": errors,
+            "total_bytes": total_bytes,
+            "chunks_created": chunks,
+            "time_seconds": elapsed,
+            "throughput": {
+                "chunks_per_second": throughput_chunks,
+                "bytes_per_second": throughput_bytes,
+                "mb_per_minute": (throughput_bytes * 60) / (1024 * 1024),
             },
-            'averages': {
-                'seconds_per_pdf': elapsed / files if files > 0 else 0,
-                'chunks_per_pdf': chunks / files if files > 0 else 0,
-                'bytes_per_chunk': total_bytes / chunks if chunks > 0 else 0
-            }
+            "averages": {
+                "seconds_per_pdf": elapsed / files if files > 0 else 0,
+                "chunks_per_pdf": chunks / files if files > 0 else 0,
+                "bytes_per_chunk": total_bytes / chunks if chunks > 0 else 0,
+            },
         }
 
         logger.info(f"\n=== RESULTS ===")
         logger.info(f"Time: {elapsed:.2f}s")
         logger.info(f"Files: {files}/{len(pdf_files)}")
         logger.info(f"Chunks: {chunks}")
-        logger.info(f"Throughput: {throughput_chunks:.1f} chunks/sec ({throughput_bytes / 1024 / 1024:.1f} MB/sec)")
+        logger.info(
+            f"Throughput: {throughput_chunks:.1f} chunks/sec ({throughput_bytes / 1024 / 1024:.1f} MB/sec)"
+        )
         logger.info(f"Per PDF: {elapsed / files:.2f}s ({chunks / files:.0f} chunks)")
 
         return result
@@ -244,11 +243,7 @@ def benchmark_pdf_indexing(
             shutil.rmtree(temp_qdrant_dir)
 
 
-def benchmark_batch_sizes(
-    pdf_dir: Path,
-    batch_sizes: List[int],
-    num_runs: int = 2
-) -> Dict:
+def benchmark_batch_sizes(pdf_dir: Path, batch_sizes: List[int], num_runs: int = 2) -> Dict:
     """Compare performance across different batch sizes."""
 
     logger.info(f"Benchmarking batch sizes: {batch_sizes}")
@@ -265,21 +260,23 @@ def benchmark_batch_sizes(
                 pdf_dir=pdf_dir,
                 batch_size=batch_size,
                 embedding_batch_size=batch_size,
-                force_reindex=(run == 0)  # Only force first run
+                force_reindex=(run == 0),  # Only force first run
             )
 
             if result:
-                timings.append(result['time_seconds'])
+                timings.append(result["time_seconds"])
 
         if timings:
             avg_time = statistics.mean(timings)
             results[batch_size] = {
-                'avg_time': avg_time,
-                'throughput': result['throughput']['chunks_per_second'] if result else 0,
-                'timings': timings
+                "avg_time": avg_time,
+                "throughput": result["throughput"]["chunks_per_second"] if result else 0,
+                "timings": timings,
             }
 
-            logger.info(f"  Average time: {avg_time:.2f}s ({result['throughput']['chunks_per_second']:.1f} chunks/sec)")
+            logger.info(
+                f"  Average time: {avg_time:.2f}s ({result['throughput']['chunks_per_second']:.1f} chunks/sec)"
+            )
 
     return results
 
@@ -297,15 +294,21 @@ def generate_report(benchmark_results: Dict, output_file: str = None) -> str:
     if isinstance(result, dict):
         report.append("INDEXING PERFORMANCE")
         report.append("-" * 80)
-        report.append(f"Files indexed: {result.get('files_indexed', 0)}/{result.get('pdf_count', 0)}")
+        report.append(
+            f"Files indexed: {result.get('files_indexed', 0)}/{result.get('pdf_count', 0)}"
+        )
         report.append(f"Chunks created: {result.get('chunks_created', 0)}")
         report.append(f"Total time: {result.get('time_seconds', 0):.2f}s")
-        report.append(f"Throughput: {result.get('throughput', {}).get('chunks_per_second', 0):.1f} chunks/sec")
-        report.append(f"           {result.get('throughput', {}).get('mb_per_minute', 0):.1f} MB/min")
+        report.append(
+            f"Throughput: {result.get('throughput', {}).get('chunks_per_second', 0):.1f} chunks/sec"
+        )
+        report.append(
+            f"           {result.get('throughput', {}).get('mb_per_minute', 0):.1f} MB/min"
+        )
         report.append("")
         report.append("PER-FILE AVERAGES")
         report.append("-" * 80)
-        averages = result.get('averages', {})
+        averages = result.get("averages", {})
         report.append(f"Time per PDF: {averages.get('seconds_per_pdf', 0):.2f}s")
         report.append(f"Chunks per PDF: {averages.get('chunks_per_pdf', 0):.0f}")
         report.append("")
@@ -325,89 +328,54 @@ def main():
     parser = argparse.ArgumentParser(
         description="Benchmark PDF indexing performance",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__
+        epilog=__doc__,
     )
 
-    parser.add_argument(
-        "--pdf-dir",
-        type=Path,
-        help="Directory containing PDF files to index"
-    )
+    parser.add_argument("--pdf-dir", type=Path, help="Directory containing PDF files to index")
 
     parser.add_argument(
         "--generate-test-pdfs",
         type=int,
         metavar="COUNT",
-        help="Generate synthetic PDFs for testing (count)"
+        help="Generate synthetic PDFs for testing (count)",
     )
 
     parser.add_argument(
-        "--pages-per-pdf",
-        type=int,
-        default=5,
-        help="Pages per synthetic PDF (default: 5)"
+        "--pages-per-pdf", type=int, default=5, help="Pages per synthetic PDF (default: 5)"
+    )
+
+    parser.add_argument("--model", default="stella", help="Embedding model (default: stella)")
+
+    parser.add_argument(
+        "--batch-size", type=int, default=300, help="Qdrant upload batch size (default: 300)"
     )
 
     parser.add_argument(
-        "--model",
-        default="stella",
-        help="Embedding model (default: stella)"
+        "--embedding-batch-size", type=int, default=256, help="Embedding batch size (default: 256)"
     )
 
     parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=300,
-        help="Qdrant upload batch size (default: 300)"
+        "--batch-sizes", help="Comma-separated batch sizes to compare (overrides --batch-size)"
     )
 
     parser.add_argument(
-        "--embedding-batch-size",
-        type=int,
-        default=256,
-        help="Embedding batch size (default: 256)"
-    )
-
-    parser.add_argument(
-        "--batch-sizes",
-        help="Comma-separated batch sizes to compare (overrides --batch-size)"
-    )
-
-    parser.add_argument(
-        "--file-workers",
-        type=int,
-        default=1,
-        help="Number of parallel PDF workers (default: 1)"
+        "--file-workers", type=int, default=1, help="Number of parallel PDF workers (default: 1)"
     )
 
     parser.add_argument(
         "--embedding-workers",
         type=int,
         default=4,
-        help="Number of parallel embedding workers (default: 4)"
+        help="Number of parallel embedding workers (default: 4)",
     )
 
-    parser.add_argument(
-        "--no-gpu",
-        action="store_true",
-        help="Disable GPU acceleration"
-    )
+    parser.add_argument("--no-gpu", action="store_true", help="Disable GPU acceleration")
 
-    parser.add_argument(
-        "--output",
-        help="Output file for JSON results"
-    )
+    parser.add_argument("--output", help="Output file for JSON results")
 
-    parser.add_argument(
-        "--report",
-        help="Output file for text report"
-    )
+    parser.add_argument("--report", help="Output file for text report")
 
-    parser.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        help="Verbose output"
-    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
 
     args = parser.parse_args()
 
@@ -419,9 +387,7 @@ def main():
         pdf_dir = Path(tempfile.mkdtemp(prefix="arcaneum_test_pdfs_"))
         logger.info(f"Generating test PDFs in {pdf_dir}")
         generate_synthetic_pdfs(
-            count=args.generate_test_pdfs,
-            output_dir=pdf_dir,
-            pages_per_pdf=args.pages_per_pdf
+            count=args.generate_test_pdfs, output_dir=pdf_dir, pages_per_pdf=args.pages_per_pdf
         )
     elif args.pdf_dir:
         pdf_dir = args.pdf_dir
@@ -446,12 +412,12 @@ def main():
                 embedding_batch_size=args.embedding_batch_size,
                 gpu=not args.no_gpu,
                 file_workers=args.file_workers,
-                embedding_workers=args.embedding_workers
+                embedding_workers=args.embedding_workers,
             )
 
         # Save results
         if args.output:
-            with open(args.output, 'w') as f:
+            with open(args.output, "w") as f:
                 json.dump(results, f, indent=2, default=str)
             logger.info(f"Results saved to {args.output}")
 

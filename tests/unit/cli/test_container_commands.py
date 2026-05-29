@@ -19,57 +19,73 @@ class TestContainerStart:
         """Test that docker compose up is called with correct arguments."""
         from arcaneum.cli.docker import start_command
 
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            with patch('subprocess.run') as mock_run:
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run") as mock_run:
                 mock_result = MagicMock()
                 mock_result.returncode = 0
                 mock_run.return_value = mock_result
 
-                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
-                    with patch('arcaneum.cli.docker.get_container_env', return_value={'MEILISEARCH_API_KEY': 'test'}):
-                        with patch('arcaneum.cli.docker.check_qdrant_health', return_value=True):
-                            with patch('arcaneum.cli.docker.check_meilisearch_health', return_value=True):
-                                with patch('time.sleep'):
+                with patch(
+                    "arcaneum.cli.docker.get_compose_file",
+                    return_value="/path/to/docker-compose.yml",
+                ):
+                    with patch(
+                        "arcaneum.cli.docker.get_container_env",
+                        return_value={"MEILISEARCH_API_KEY": "test"},
+                    ):
+                        with patch("arcaneum.cli.docker.check_qdrant_health", return_value=True):
+                            with patch(
+                                "arcaneum.cli.docker.check_meilisearch_health", return_value=True
+                            ):
+                                with patch("time.sleep"):
                                     start_command.callback()
 
                 # Verify docker compose up was called
                 calls = mock_run.call_args_list
-                compose_calls = [c for c in calls if 'compose' in str(c)]
-                assert any('up' in str(c) and '-d' in str(c) for c in compose_calls)
+                compose_calls = [c for c in calls if "compose" in str(c)]
+                assert any("up" in str(c) and "-d" in str(c) for c in compose_calls)
 
     def test_health_status_reported(self, capsys):
         """Test that health status is reported after start."""
         from arcaneum.cli.docker import start_command
 
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            with patch('subprocess.run') as mock_run:
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run") as mock_run:
                 mock_result = MagicMock()
                 mock_result.returncode = 0
                 mock_run.return_value = mock_result
 
-                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
-                    with patch('arcaneum.cli.docker.get_container_env', return_value={'MEILISEARCH_API_KEY': 'test'}):
-                        with patch('arcaneum.cli.docker.check_qdrant_health', return_value=True):
-                            with patch('arcaneum.cli.docker.check_meilisearch_health', return_value=True):
-                                with patch('time.sleep'):
+                with patch(
+                    "arcaneum.cli.docker.get_compose_file",
+                    return_value="/path/to/docker-compose.yml",
+                ):
+                    with patch(
+                        "arcaneum.cli.docker.get_container_env",
+                        return_value={"MEILISEARCH_API_KEY": "test"},
+                    ):
+                        with patch("arcaneum.cli.docker.check_qdrant_health", return_value=True):
+                            with patch(
+                                "arcaneum.cli.docker.check_meilisearch_health", return_value=True
+                            ):
+                                with patch("time.sleep"):
                                     start_command.callback()
 
         captured = capsys.readouterr()
-        assert 'Qdrant' in captured.out
-        assert 'MeiliSearch' in captured.out
+        assert "Qdrant" in captured.out
+        assert "MeiliSearch" in captured.out
 
     def test_docker_unavailable_error(self, capsys):
         """Test error message when Docker is not available."""
         from arcaneum.cli.docker import start_command
 
-        with patch('shutil.which', return_value=None):
+        with patch("shutil.which", return_value=None):
             start_command.callback()
 
         captured = capsys.readouterr()
         # Error messages go to stderr
         output = captured.out + captured.err
-        assert 'Docker' in output
-        assert 'not installed' in output.lower()
+        assert "Docker" in output
+        assert "not installed" in output.lower()
 
 
 class TestContainerStop:
@@ -79,58 +95,62 @@ class TestContainerStop:
         """Test that docker compose down is called."""
         from arcaneum.cli.docker import stop_command
 
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            with patch('subprocess.run') as mock_run:
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run") as mock_run:
                 mock_result = MagicMock()
                 mock_result.returncode = 0
                 mock_run.return_value = mock_result
 
                 with patch(
-                    'arcaneum.cli.docker.get_compose_file',
-                    return_value='/path/to/docker-compose.yml',
+                    "arcaneum.cli.docker.get_compose_file",
+                    return_value="/path/to/docker-compose.yml",
                 ):
                     stop_command.callback()
 
                 calls = mock_run.call_args_list
-                compose_calls = [c for c in calls if 'compose' in str(c)]
-                assert any('down' in str(c) for c in compose_calls)
+                compose_calls = [c for c in calls if "compose" in str(c)]
+                assert any("down" in str(c) for c in compose_calls)
 
     def test_stop_preserves_named_volumes(self):
         """Test that stop does not delete Docker named volumes."""
         from arcaneum.cli.docker import stop_command
 
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            with patch('subprocess.run') as mock_run:
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run") as mock_run:
                 mock_result = MagicMock()
                 mock_result.returncode = 0
                 mock_run.return_value = mock_result
 
-                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
+                with patch(
+                    "arcaneum.cli.docker.get_compose_file",
+                    return_value="/path/to/docker-compose.yml",
+                ):
                     stop_command.callback()
 
-                compose_args = [
-                    c.args[0] for c in mock_run.call_args_list if 'compose' in str(c)
-                ]
-                assert any('down' in args for args in compose_args)
-                assert all('--volumes' not in args for args in compose_args)
-                assert all('-v' not in args for args in compose_args)
+                compose_args = [c.args[0] for c in mock_run.call_args_list if "compose" in str(c)]
+                assert any("down" in args for args in compose_args)
+                assert all("--volumes" not in args for args in compose_args)
+                assert all("-v" not in args for args in compose_args)
 
     def test_already_stopped_handling(self, capsys):
         """Test graceful handling when services are already stopped."""
         from arcaneum.cli.docker import stop_command
 
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            with patch('subprocess.run') as mock_run:
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run") as mock_run:
                 mock_result = MagicMock()
                 mock_result.returncode = 0
                 mock_run.return_value = mock_result
 
-                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
+                with patch(
+                    "arcaneum.cli.docker.get_compose_file",
+                    return_value="/path/to/docker-compose.yml",
+                ):
                     stop_command.callback()
 
         captured = capsys.readouterr()
         # Should show success message even if already stopped
-        assert 'stopped' in captured.out.lower() or 'Container' in captured.out
+        assert "stopped" in captured.out.lower() or "Container" in captured.out
 
 
 class TestContainerRestart:
@@ -140,20 +160,23 @@ class TestContainerRestart:
         """Test that docker compose restart is called."""
         from arcaneum.cli.docker import restart_command
 
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            with patch('subprocess.run') as mock_run:
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run") as mock_run:
                 mock_result = MagicMock()
                 mock_result.returncode = 0
                 mock_run.return_value = mock_result
 
-                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
-                    with patch('arcaneum.cli.docker.check_qdrant_health', return_value=True):
-                        with patch('time.sleep'):
+                with patch(
+                    "arcaneum.cli.docker.get_compose_file",
+                    return_value="/path/to/docker-compose.yml",
+                ):
+                    with patch("arcaneum.cli.docker.check_qdrant_health", return_value=True):
+                        with patch("time.sleep"):
                             restart_command.callback()
 
                 calls = mock_run.call_args_list
-                compose_calls = [c for c in calls if 'compose' in str(c)]
-                assert any('restart' in str(c) for c in compose_calls)
+                compose_calls = [c for c in calls if "compose" in str(c)]
+                assert any("restart" in str(c) for c in compose_calls)
 
 
 class TestContainerStatus:
@@ -163,41 +186,51 @@ class TestContainerStatus:
         """Test that running containers are shown."""
         from arcaneum.cli.docker import status_command
 
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            with patch('subprocess.run') as mock_run:
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run") as mock_run:
                 mock_result = MagicMock()
                 mock_result.returncode = 0
                 mock_result.stdout = "CONTAINER ID   IMAGE   STATUS\nabc123   qdrant   Up 5 minutes"
                 mock_run.return_value = mock_result
 
-                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
-                    with patch('arcaneum.cli.docker.check_qdrant_health', return_value=True):
-                        with patch('arcaneum.cli.docker.check_meilisearch_health', return_value=True):
+                with patch(
+                    "arcaneum.cli.docker.get_compose_file",
+                    return_value="/path/to/docker-compose.yml",
+                ):
+                    with patch("arcaneum.cli.docker.check_qdrant_health", return_value=True):
+                        with patch(
+                            "arcaneum.cli.docker.check_meilisearch_health", return_value=True
+                        ):
                             status_command.callback()
 
         captured = capsys.readouterr()
-        assert 'Status' in captured.out or 'Healthy' in captured.out
+        assert "Status" in captured.out or "Healthy" in captured.out
 
     def test_health_checks_shown(self, capsys):
         """Test that health status is shown for each service."""
         from arcaneum.cli.docker import status_command
 
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            with patch('subprocess.run') as mock_run:
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run") as mock_run:
                 mock_result = MagicMock()
                 mock_result.returncode = 0
                 mock_result.stdout = '{"Volumes": []}'
                 mock_run.return_value = mock_result
 
-                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
-                    with patch('arcaneum.cli.docker.check_qdrant_health', return_value=True):
-                        with patch('arcaneum.cli.docker.check_meilisearch_health', return_value=False):
+                with patch(
+                    "arcaneum.cli.docker.get_compose_file",
+                    return_value="/path/to/docker-compose.yml",
+                ):
+                    with patch("arcaneum.cli.docker.check_qdrant_health", return_value=True):
+                        with patch(
+                            "arcaneum.cli.docker.check_meilisearch_health", return_value=False
+                        ):
                             status_command.callback()
 
         captured = capsys.readouterr()
         output = captured.out + captured.err
-        assert 'Qdrant' in output
-        assert 'MeiliSearch' in output
+        assert "Qdrant" in output
+        assert "MeiliSearch" in output
 
     def test_json_status_is_single_parseable_document(self, capsys):
         """Test that status JSON mode does not mix prose into stdout."""
@@ -210,8 +243,8 @@ class TestContainerStatus:
             mock_result.stderr = ""
             return mock_result
 
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            with patch('subprocess.run') as mock_run:
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run") as mock_run:
                 mock_run.side_effect = [
                     result(),  # docker info
                     result("NAME STATUS\nqdrant Up\n"),  # compose ps
@@ -220,9 +253,14 @@ class TestContainerStatus:
                     result("/var/lib/docker/volumes/arcaneum_qdrant/_data\n"),
                 ]
 
-                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
-                    with patch('arcaneum.cli.docker.check_qdrant_health', return_value=True):
-                        with patch('arcaneum.cli.docker.check_meilisearch_health', return_value=False):
+                with patch(
+                    "arcaneum.cli.docker.get_compose_file",
+                    return_value="/path/to/docker-compose.yml",
+                ):
+                    with patch("arcaneum.cli.docker.check_qdrant_health", return_value=True):
+                        with patch(
+                            "arcaneum.cli.docker.check_meilisearch_health", return_value=False
+                        ):
                             status_command.callback(output_json=True)
 
         captured = capsys.readouterr()
@@ -237,8 +275,8 @@ class TestContainerStatus:
         """Test that compose failure emits only the error envelope."""
         from arcaneum.cli.docker import status_command
 
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            with patch('subprocess.run') as mock_run:
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run") as mock_run:
                 info_result = MagicMock(returncode=0, stdout="", stderr="")
                 compose_error = subprocess.CalledProcessError(
                     1,
@@ -247,7 +285,10 @@ class TestContainerStatus:
                 )
                 mock_run.side_effect = [info_result, compose_error]
 
-                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
+                with patch(
+                    "arcaneum.cli.docker.get_compose_file",
+                    return_value="/path/to/docker-compose.yml",
+                ):
                     with pytest.raises(SystemExit) as exc_info:
                         status_command.callback(output_json=True)
 
@@ -266,65 +307,77 @@ class TestContainerLogs:
         """Test that logs show recent output."""
         from arcaneum.cli.docker import logs_command
 
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            with patch('subprocess.run') as mock_run:
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run") as mock_run:
                 mock_result = MagicMock()
                 mock_result.returncode = 0
                 mock_run.return_value = mock_result
 
-                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
+                with patch(
+                    "arcaneum.cli.docker.get_compose_file",
+                    return_value="/path/to/docker-compose.yml",
+                ):
                     logs_command.callback(follow=False, tail=100)
 
                 calls = mock_run.call_args_list
-                compose_calls = [c for c in calls if 'compose' in str(c)]
-                assert any('logs' in str(c) for c in compose_calls)
-                assert any('--tail=100' in str(c) for c in compose_calls)
+                compose_calls = [c for c in calls if "compose" in str(c)]
+                assert any("logs" in str(c) for c in compose_calls)
+                assert any("--tail=100" in str(c) for c in compose_calls)
 
     def test_follow_flag(self):
         """Test that --follow flag is passed."""
         from arcaneum.cli.docker import logs_command
 
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            with patch('subprocess.run') as mock_run:
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run") as mock_run:
                 mock_result = MagicMock()
                 mock_result.returncode = 0
                 mock_run.return_value = mock_result
 
-                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
+                with patch(
+                    "arcaneum.cli.docker.get_compose_file",
+                    return_value="/path/to/docker-compose.yml",
+                ):
                     logs_command.callback(follow=True, tail=50)
 
                 calls = mock_run.call_args_list
-                compose_calls = [c for c in calls if 'compose' in str(c)]
-                assert any('-f' in str(c) for c in compose_calls)
+                compose_calls = [c for c in calls if "compose" in str(c)]
+                assert any("-f" in str(c) for c in compose_calls)
 
     def test_tail_limit(self):
         """Test that --tail limit is respected."""
         from arcaneum.cli.docker import logs_command
 
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            with patch('subprocess.run') as mock_run:
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run") as mock_run:
                 mock_result = MagicMock()
                 mock_result.returncode = 0
                 mock_run.return_value = mock_result
 
-                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
+                with patch(
+                    "arcaneum.cli.docker.get_compose_file",
+                    return_value="/path/to/docker-compose.yml",
+                ):
                     logs_command.callback(follow=False, tail=50)
 
                 calls = mock_run.call_args_list
-                compose_calls = [c for c in calls if 'compose' in str(c)]
-                assert any('--tail=50' in str(c) for c in compose_calls)
+                compose_calls = [c for c in calls if "compose" in str(c)]
+                assert any("--tail=50" in str(c) for c in compose_calls)
 
     def test_logs_json_captures_compose_output(self, capsys):
         """Test logs JSON mode wraps compose output instead of streaming prose."""
         from arcaneum.cli.docker import logs_command
 
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            with patch('subprocess.run') as mock_run:
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run") as mock_run:
                 info_result = MagicMock(returncode=0, stdout="", stderr="")
                 logs_result = MagicMock(returncode=0, stdout="qdrant ready\n", stderr="")
                 mock_run.side_effect = [info_result, logs_result]
 
-                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
+                with patch(
+                    "arcaneum.cli.docker.get_compose_file",
+                    return_value="/path/to/docker-compose.yml",
+                ):
                     logs_command.callback(follow=False, tail=5, output_json=True)
 
         captured = capsys.readouterr()
@@ -350,8 +403,8 @@ class TestContainerLogs:
         """Test logs JSON mode exits non-zero after compose failure."""
         from arcaneum.cli.docker import logs_command
 
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            with patch('subprocess.run') as mock_run:
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run") as mock_run:
                 info_result = MagicMock(returncode=0, stdout="", stderr="")
                 logs_error = subprocess.CalledProcessError(
                     1,
@@ -360,7 +413,10 @@ class TestContainerLogs:
                 )
                 mock_run.side_effect = [info_result, logs_error]
 
-                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
+                with patch(
+                    "arcaneum.cli.docker.get_compose_file",
+                    return_value="/path/to/docker-compose.yml",
+                ):
                     with pytest.raises(SystemExit) as exc_info:
                         logs_command.callback(follow=False, tail=5, output_json=True)
 
@@ -399,16 +455,16 @@ class TestContainerBackupRestore:
 
         backup_path = temp_dir / "backup"
 
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            with patch('subprocess.run') as mock_run:
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
-                with patch('requests.request', side_effect=fake_request):
-                    with patch('arcaneum.paths.get_meilisearch_api_key', return_value='secret-key'):
+                with patch("requests.request", side_effect=fake_request):
+                    with patch("arcaneum.paths.get_meilisearch_api_key", return_value="secret-key"):
                         backup_command.callback(
                             output=str(backup_path),
-                            qdrant_url='http://qdrant',
-                            meilisearch_url='http://meili',
-                            qdrant_container='qdrant',
+                            qdrant_url="http://qdrant",
+                            meilisearch_url="http://meili",
+                            qdrant_container="qdrant",
                             qdrant_timeout=300,
                             skip_meilisearch=False,
                             output_json=False,
@@ -435,13 +491,13 @@ class TestContainerBackupRestore:
         """Test backup JSON mode uses a structured Docker availability error."""
         from arcaneum.cli.docker import backup_command
 
-        with patch('shutil.which', return_value=None):
+        with patch("shutil.which", return_value=None):
             with pytest.raises(SystemExit) as exc_info:
                 backup_command.callback(
                     output=None,
-                    qdrant_url='http://qdrant',
-                    meilisearch_url='http://meili',
-                    qdrant_container='qdrant',
+                    qdrant_url="http://qdrant",
+                    meilisearch_url="http://meili",
+                    qdrant_container="qdrant",
                     qdrant_timeout=300,
                     skip_meilisearch=True,
                     output_json=True,
@@ -462,29 +518,41 @@ class TestContainerBackupRestore:
         (backup_path / "qdrant").mkdir(parents=True)
         (backup_path / "meilisearch").mkdir()
         (backup_path / "qdrant" / "Docs-123.snapshot").write_text("snapshot")
-        (backup_path / "meilisearch" / "DocsText.metadata.json").write_text(json.dumps({
-            "uid": "DocsText",
-            "primaryKey": "id",
-            "settings": {"searchableAttributes": ["content"]},
-            "documents": 1,
-        }))
+        (backup_path / "meilisearch" / "DocsText.metadata.json").write_text(
+            json.dumps(
+                {
+                    "uid": "DocsText",
+                    "primaryKey": "id",
+                    "settings": {"searchableAttributes": ["content"]},
+                    "documents": 1,
+                }
+            )
+        )
         (backup_path / "meilisearch" / "DocsText.documents.jsonl").write_text(
             json.dumps({"id": "1", "content": "hello"}) + "\n"
         )
-        (backup_path / "manifest.json").write_text(json.dumps({
-            "qdrant": [{
-                "collection": "Docs",
-                "snapshot": "Docs-123.snapshot",
-                "file": "qdrant/Docs-123.snapshot",
-            }],
-            "meilisearch": [{
-                "index": "DocsText",
-                "primaryKey": "id",
-                "documents": 1,
-                "metadata_file": "meilisearch/DocsText.metadata.json",
-                "documents_file": "meilisearch/DocsText.documents.jsonl",
-            }],
-        }))
+        (backup_path / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "qdrant": [
+                        {
+                            "collection": "Docs",
+                            "snapshot": "Docs-123.snapshot",
+                            "file": "qdrant/Docs-123.snapshot",
+                        }
+                    ],
+                    "meilisearch": [
+                        {
+                            "index": "DocsText",
+                            "primaryKey": "id",
+                            "documents": 1,
+                            "metadata_file": "meilisearch/DocsText.metadata.json",
+                            "documents_file": "meilisearch/DocsText.documents.jsonl",
+                        }
+                    ],
+                }
+            )
+        )
 
         requests_seen = []
 
@@ -494,43 +562,59 @@ class TestContainerBackupRestore:
             if "/tasks/" in url:
                 response.json.return_value = {"status": "succeeded"}
             elif method in {"DELETE", "POST", "PATCH"} and "meili" in url:
-                task_count = len([
-                    r for r in requests_seen
-                    if "meili" in r[1] and r[0] in {"DELETE", "POST", "PATCH"}
-                ])
+                task_count = len(
+                    [
+                        r
+                        for r in requests_seen
+                        if "meili" in r[1] and r[0] in {"DELETE", "POST", "PATCH"}
+                    ]
+                )
                 response.json.return_value = {"taskUid": task_count}
             else:
                 response.json.return_value = {"status": "ok"}
             response.raise_for_status.return_value = None
             return response
 
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            with patch('subprocess.run') as mock_run:
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
-                with patch('requests.request', side_effect=fake_request):
-                    with patch('arcaneum.paths.get_meilisearch_api_key', return_value='secret-key'):
+                with patch("requests.request", side_effect=fake_request):
+                    with patch("arcaneum.paths.get_meilisearch_api_key", return_value="secret-key"):
                         restore_command.callback(
                             backup_directory=str(backup_path),
-                            qdrant_url='http://qdrant',
-                            meilisearch_url='http://meili',
-                            qdrant_container='qdrant',
+                            qdrant_url="http://qdrant",
+                            meilisearch_url="http://meili",
+                            qdrant_container="qdrant",
                             qdrant_timeout=300,
                             meilisearch_timeout=1800,
                             skip_meilisearch=False,
                             output_json=False,
                         )
 
-        assert ("PUT", "http://qdrant/collections/Docs/snapshots/recover", {
-            "location": "file:///qdrant/snapshots/Docs/Docs-123.snapshot",
-        }) in requests_seen
+        assert (
+            "PUT",
+            "http://qdrant/collections/Docs/snapshots/recover",
+            {
+                "location": "file:///qdrant/snapshots/Docs/Docs-123.snapshot",
+            },
+        ) in requests_seen
         docker_calls = [call.args[0] for call in mock_run.call_args_list]
         assert [
-            "docker", "exec", "qdrant", "mkdir", "-p", "/qdrant/snapshots/Docs",
+            "docker",
+            "exec",
+            "qdrant",
+            "mkdir",
+            "-p",
+            "/qdrant/snapshots/Docs",
         ] in docker_calls
         assert ("DELETE", "http://meili/indexes/DocsText", None) in requests_seen
-        assert ("PATCH", "http://meili/indexes/DocsText/settings", {
-            "searchableAttributes": ["content"],
-        }) in requests_seen
+        assert (
+            "PATCH",
+            "http://meili/indexes/DocsText/settings",
+            {
+                "searchableAttributes": ["content"],
+            },
+        ) in requests_seen
         assert any(
             method == "POST" and url == "http://meili/indexes/DocsText/documents"
             for method, url, _ in requests_seen
@@ -543,13 +627,13 @@ class TestContainerBackupRestore:
         backup_path = temp_dir / "backup"
         backup_path.mkdir()
 
-        with patch('shutil.which', return_value=None):
+        with patch("shutil.which", return_value=None):
             with pytest.raises(SystemExit) as exc_info:
                 restore_command.callback(
                     backup_directory=str(backup_path),
-                    qdrant_url='http://qdrant',
-                    meilisearch_url='http://meili',
-                    qdrant_container='qdrant',
+                    qdrant_url="http://qdrant",
+                    meilisearch_url="http://meili",
+                    qdrant_container="qdrant",
                     qdrant_timeout=300,
                     meilisearch_timeout=1800,
                     skip_meilisearch=True,
@@ -584,17 +668,17 @@ class TestContainerBackupRestore:
             response.raise_for_status.return_value = None
             return response
 
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            with patch('subprocess.run') as mock_run:
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
-                with patch('requests.request', side_effect=fake_request):
-                    with patch('arcaneum.paths.get_meilisearch_api_key', return_value='secret-key'):
+                with patch("requests.request", side_effect=fake_request):
+                    with patch("arcaneum.paths.get_meilisearch_api_key", return_value="secret-key"):
                         with pytest.raises(RuntimeError, match="task history changed"):
                             backup_command.callback(
                                 output=str(temp_dir / "backup"),
-                                qdrant_url='http://qdrant',
-                                meilisearch_url='http://meili',
-                                qdrant_container='qdrant',
+                                qdrant_url="http://qdrant",
+                                meilisearch_url="http://meili",
+                                qdrant_container="qdrant",
                                 qdrant_timeout=300,
                                 skip_meilisearch=False,
                                 output_json=False,
@@ -613,7 +697,7 @@ class TestContainerReset:
         captured = capsys.readouterr()
         # Error messages go to stderr
         output = captured.out + captured.err
-        assert '--confirm' in output or 'confirm' in output.lower()
+        assert "--confirm" in output or "confirm" in output.lower()
 
     def test_data_deletion_with_confirm(self, temp_dir, capsys):
         """Test that data is deleted when --confirm is provided."""
@@ -624,18 +708,21 @@ class TestContainerReset:
         qdrant_dir.mkdir()
         (qdrant_dir / "test_data.db").touch()
 
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            with patch('subprocess.run') as mock_run:
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run") as mock_run:
                 mock_result = MagicMock()
                 mock_result.returncode = 0
                 mock_run.return_value = mock_result
 
-                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
-                    with patch('arcaneum.cli.docker.get_data_dir', return_value=temp_dir):
+                with patch(
+                    "arcaneum.cli.docker.get_compose_file",
+                    return_value="/path/to/docker-compose.yml",
+                ):
+                    with patch("arcaneum.cli.docker.get_data_dir", return_value=temp_dir):
                         reset_command.callback(confirm=True)
 
         captured = capsys.readouterr()
-        assert 'reset' in captured.out.lower() or 'complete' in captured.out.lower()
+        assert "reset" in captured.out.lower() or "complete" in captured.out.lower()
 
     def test_stops_services_first(self, temp_dir):
         """Test that services are stopped before reset."""
@@ -644,20 +731,23 @@ class TestContainerReset:
         call_order = []
 
         def track_calls(*args, **kwargs):
-            if 'down' in str(args):
-                call_order.append('down')
+            if "down" in str(args):
+                call_order.append("down")
             result = MagicMock()
             result.returncode = 0
             return result
 
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            with patch('subprocess.run', side_effect=track_calls):
-                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
-                    with patch('arcaneum.cli.docker.get_data_dir', return_value=temp_dir):
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run", side_effect=track_calls):
+                with patch(
+                    "arcaneum.cli.docker.get_compose_file",
+                    return_value="/path/to/docker-compose.yml",
+                ):
+                    with patch("arcaneum.cli.docker.get_data_dir", return_value=temp_dir):
                         reset_command.callback(confirm=True)
 
         # Verify 'down' was called
-        assert 'down' in call_order
+        assert "down" in call_order
 
     def test_json_stops_after_compose_down_failure(self, temp_dir, capsys):
         """Test reset JSON mode does not delete data after compose down fails."""
@@ -669,8 +759,8 @@ class TestContainerReset:
         protected = qdrant_dir / "collection.bin"
         protected.write_text("keep")
 
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            with patch('subprocess.run') as mock_run:
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run") as mock_run:
                 info_result = MagicMock(returncode=0, stdout="", stderr="")
                 down_error = subprocess.CalledProcessError(
                     1,
@@ -679,8 +769,11 @@ class TestContainerReset:
                 )
                 mock_run.side_effect = [info_result, down_error]
 
-                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
-                    with patch('arcaneum.cli.docker.get_data_dir', return_value=data_dir):
+                with patch(
+                    "arcaneum.cli.docker.get_compose_file",
+                    return_value="/path/to/docker-compose.yml",
+                ):
+                    with patch("arcaneum.cli.docker.get_data_dir", return_value=data_dir):
                         with pytest.raises(SystemExit) as exc_info:
                             reset_command.callback(confirm=True, output_json=True)
 
@@ -701,16 +794,19 @@ class TestContainerReset:
         qdrant_dir.mkdir(parents=True)
         (qdrant_dir / "collection.bin").write_text("delete")
 
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            with patch('subprocess.run') as mock_run:
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run") as mock_run:
                 mock_run.side_effect = [
                     MagicMock(returncode=0, stdout="", stderr=""),
                     MagicMock(returncode=0, stdout="", stderr=""),
                 ]
 
-                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
-                    with patch('arcaneum.cli.docker.get_data_dir', return_value=data_dir):
-                        with patch('shutil.rmtree', side_effect=OSError("permission denied")):
+                with patch(
+                    "arcaneum.cli.docker.get_compose_file",
+                    return_value="/path/to/docker-compose.yml",
+                ):
+                    with patch("arcaneum.cli.docker.get_data_dir", return_value=data_dir):
+                        with patch("shutil.rmtree", side_effect=OSError("permission denied")):
                             with pytest.raises(SystemExit) as exc_info:
                                 reset_command.callback(confirm=True, output_json=True)
 
@@ -728,8 +824,8 @@ class TestCheckDockerAvailable:
         """Test when Docker is installed and running."""
         from arcaneum.cli.docker import check_docker_available
 
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            with patch('subprocess.run') as mock_run:
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run") as mock_run:
                 mock_result = MagicMock()
                 mock_result.returncode = 0
                 mock_run.return_value = mock_result
@@ -742,29 +838,29 @@ class TestCheckDockerAvailable:
         """Test when Docker is not installed."""
         from arcaneum.cli.docker import check_docker_available
 
-        with patch('shutil.which', return_value=None):
+        with patch("shutil.which", return_value=None):
             result = check_docker_available()
 
         assert result is False
         captured = capsys.readouterr()
         # Error messages go to stderr
         output = captured.out + captured.err
-        assert 'not installed' in output.lower()
+        assert "not installed" in output.lower()
 
     def test_docker_not_running(self, capsys):
         """Test when Docker is installed but not running."""
         from arcaneum.cli.docker import check_docker_available
 
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            with patch('subprocess.run') as mock_run:
-                mock_run.side_effect = subprocess.CalledProcessError(1, 'docker info')
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run") as mock_run:
+                mock_run.side_effect = subprocess.CalledProcessError(1, "docker info")
                 result = check_docker_available()
 
         assert result is False
         captured = capsys.readouterr()
         # Error messages go to stderr
         output = captured.out + captured.err
-        assert 'not running' in output.lower()
+        assert "not running" in output.lower()
 
 
 class TestHealthChecks:
@@ -774,7 +870,7 @@ class TestHealthChecks:
         """Test Qdrant health check when healthy."""
         from arcaneum.cli.docker import check_qdrant_health
 
-        with patch('requests.get') as mock_get:
+        with patch("requests.get") as mock_get:
             mock_response = MagicMock()
             mock_response.status_code = 200
             mock_get.return_value = mock_response
@@ -789,7 +885,7 @@ class TestHealthChecks:
         from arcaneum.cli.docker import check_qdrant_health
         import requests
 
-        with patch('requests.get') as mock_get:
+        with patch("requests.get") as mock_get:
             mock_get.side_effect = requests.RequestException("Connection refused")
 
             result = check_qdrant_health()
@@ -800,7 +896,7 @@ class TestHealthChecks:
         """Test MeiliSearch health check when healthy."""
         from arcaneum.cli.docker import check_meilisearch_health
 
-        with patch('requests.get') as mock_get:
+        with patch("requests.get") as mock_get:
             mock_response = MagicMock()
             mock_response.status_code = 200
             mock_get.return_value = mock_response
@@ -815,7 +911,7 @@ class TestHealthChecks:
         from arcaneum.cli.docker import check_meilisearch_health
         import requests
 
-        with patch('requests.get') as mock_get:
+        with patch("requests.get") as mock_get:
             mock_get.side_effect = requests.RequestException("Connection refused")
 
             result = check_meilisearch_health()
@@ -842,7 +938,7 @@ class TestGetComposeFile:
         compose_file = deploy_dir / "docker-compose.yml"
         compose_file.touch()
 
-        monkeypatch.setattr(docker_module, '__file__', str(fake_source))
+        monkeypatch.setattr(docker_module, "__file__", str(fake_source))
 
         result = docker_module.get_compose_file()
 
@@ -853,7 +949,7 @@ class TestGetComposeFile:
         """Test error when compose file not found."""
         from arcaneum.cli.docker import get_compose_file
 
-        with patch('pathlib.Path.exists', return_value=False):
+        with patch("pathlib.Path.exists", return_value=False):
             result = get_compose_file()
 
         # Should return None and print error

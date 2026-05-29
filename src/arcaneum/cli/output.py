@@ -29,7 +29,7 @@ def format_json_response(
     status: str,
     message: str = "",
     data: Optional[Dict[str, Any]] = None,
-    errors: Optional[List[str]] = None
+    errors: Optional[List[str]] = None,
 ) -> str:
     """Format a consistent JSON response.
 
@@ -46,12 +46,7 @@ def format_json_response(
         >>> format_json_response("success", "Created collection", {"name": "MyCollection"})
         '{"status": "success", "message": "Created collection", "data": {"name": "MyCollection"}, "errors": []}'
     """
-    response = {
-        "status": status,
-        "message": message,
-        "data": data or {},
-        "errors": errors or []
-    }
+    response = {"status": status, "message": message, "data": data or {}, "errors": errors or []}
     return json.dumps(response, indent=2)
 
 
@@ -59,7 +54,7 @@ def print_json(
     status: str,
     message: str = "",
     data: Optional[Dict[str, Any]] = None,
-    errors: Optional[List[str]] = None
+    errors: Optional[List[str]] = None,
 ):
     """Print JSON response to stdout.
 
@@ -129,5 +124,3 @@ def print_warning(message: str, json_output: bool = False):
     """
     if not json_output:
         print(f"[WARNING] {message}", file=sys.stderr)
-
-

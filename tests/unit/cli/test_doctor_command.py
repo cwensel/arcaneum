@@ -17,7 +17,7 @@ class TestDoctorChecks:
         """Test Python version check when version is sufficient."""
         from arcaneum.cli.doctor import check_python_version
 
-        with patch.object(sys, 'version_info', (3, 12, 0)):
+        with patch.object(sys, "version_info", (3, 12, 0)):
             success, message = check_python_version()
 
         assert success is True
@@ -27,7 +27,7 @@ class TestDoctorChecks:
         """Test Python version check when version is insufficient."""
         from arcaneum.cli.doctor import check_python_version
 
-        with patch.object(sys, 'version_info', (3, 10, 0)):
+        with patch.object(sys, "version_info", (3, 10, 0)):
             success, message = check_python_version()
 
         assert success is False
@@ -70,7 +70,7 @@ class TestDoctorChecks:
         mock_collections.collections = [MagicMock(), MagicMock()]
         mock_client.get_collections.return_value = mock_collections
 
-        with patch('arcaneum.cli.doctor.create_qdrant_client', return_value=mock_client):
+        with patch("arcaneum.cli.doctor.create_qdrant_client", return_value=mock_client):
             success, message = check_qdrant_connection()
 
         assert success is True
@@ -81,7 +81,7 @@ class TestDoctorChecks:
         """Test Qdrant connection check when server is not available."""
         from arcaneum.cli.doctor import check_qdrant_connection
 
-        with patch('arcaneum.cli.doctor.create_qdrant_client') as mock_create:
+        with patch("arcaneum.cli.doctor.create_qdrant_client") as mock_create:
             mock_create.side_effect = Exception("Connection refused")
             success, message = check_qdrant_connection()
 
@@ -93,10 +93,10 @@ class TestDoctorChecks:
         from arcaneum.cli.doctor import check_meilisearch_connection
 
         mock_client = MagicMock()
-        mock_client.health.return_value = {'status': 'available'}
-        mock_client.get_indexes.return_value = {'results': [MagicMock(), MagicMock()]}
+        mock_client.health.return_value = {"status": "available"}
+        mock_client.get_indexes.return_value = {"results": [MagicMock(), MagicMock()]}
 
-        with patch('meilisearch.Client', return_value=mock_client):
+        with patch("meilisearch.Client", return_value=mock_client):
             success, message = check_meilisearch_connection()
 
         assert success is True
@@ -106,7 +106,7 @@ class TestDoctorChecks:
         """Test MeiliSearch connection check when server is not available."""
         from arcaneum.cli.doctor import check_meilisearch_connection
 
-        with patch('meilisearch.Client') as mock_client_class:
+        with patch("meilisearch.Client") as mock_client_class:
             mock_client_class.side_effect = Exception("Connection refused")
             success, message = check_meilisearch_connection()
 
@@ -118,12 +118,12 @@ class TestDoctorChecks:
         from arcaneum.cli.doctor import check_embedding_models
 
         mock_models = {
-            'stella': {'dimensions': 1024, 'available': True},
-            'jina-code': {'dimensions': 768, 'available': True},
+            "stella": {"dimensions": 1024, "available": True},
+            "jina-code": {"dimensions": 768, "available": True},
         }
 
         # Import happens inside function, so patch at the source
-        with patch('arcaneum.embeddings.client.EMBEDDING_MODELS', mock_models):
+        with patch("arcaneum.embeddings.client.EMBEDDING_MODELS", mock_models):
             success, message = check_embedding_models()
 
         assert success is True
@@ -133,7 +133,7 @@ class TestDoctorChecks:
         """Test temp directory writability check."""
         from arcaneum.cli.doctor import check_temp_dir_writable
 
-        with patch('tempfile.gettempdir', return_value=str(temp_dir)):
+        with patch("tempfile.gettempdir", return_value=str(temp_dir)):
             success, message = check_temp_dir_writable()
 
         assert success is True
@@ -144,27 +144,27 @@ class TestDoctorChecks:
         from arcaneum.cli.doctor import check_environment_vars
         import os
 
-        os.environ['QDRANT_URL'] = 'http://localhost:6333'
+        os.environ["QDRANT_URL"] = "http://localhost:6333"
 
         success, message = check_environment_vars(verbose=True)
 
         assert success is True
-        assert 'QDRANT_URL' in message
+        assert "QDRANT_URL" in message
 
     def test_environment_vars_check_with_arc_qdrant_vars(self, clean_env):
         """Test prefixed Qdrant environment variables are detected."""
         from arcaneum.cli.doctor import check_environment_vars
         import os
 
-        os.environ['ARC_QDRANT_URL'] = 'https://qdrant.example'
-        os.environ['ARC_QDRANT_API_KEY'] = 'secret-token'
+        os.environ["ARC_QDRANT_URL"] = "https://qdrant.example"
+        os.environ["ARC_QDRANT_API_KEY"] = "secret-token"
 
         success, message = check_environment_vars(verbose=True)
 
         assert success is True
-        assert 'ARC_QDRANT_URL' in message
-        assert 'ARC_QDRANT_API_KEY' in message
-        assert 'secret-token' not in message
+        assert "ARC_QDRANT_URL" in message
+        assert "ARC_QDRANT_API_KEY" in message
+        assert "secret-token" not in message
 
     def test_environment_vars_check_no_vars(self, clean_env):
         """Test environment variables check when no vars are set."""
@@ -184,53 +184,95 @@ class TestDoctorOutput:
         from arcaneum.cli.doctor import doctor_command
 
         # Mock all checks to return success
-        with patch('arcaneum.cli.doctor.check_python_version', return_value=(True, "Python 3.12")):
-            with patch('arcaneum.cli.doctor.check_dependency', return_value=(True, "installed")):
-                with patch('arcaneum.cli.doctor.check_qdrant_connection', return_value=(True, "connected")):
-                    with patch('arcaneum.cli.doctor.check_meilisearch_connection', return_value=(True, "connected")):
-                        with patch('arcaneum.cli.doctor.check_embedding_models', return_value=(True, "available")):
-                            with patch('arcaneum.cli.doctor.check_temp_dir_writable', return_value=(True, "writable")):
-                                with patch('arcaneum.cli.doctor.check_environment_vars', return_value=(True, "defaults")):
+        with patch("arcaneum.cli.doctor.check_python_version", return_value=(True, "Python 3.12")):
+            with patch("arcaneum.cli.doctor.check_dependency", return_value=(True, "installed")):
+                with patch(
+                    "arcaneum.cli.doctor.check_qdrant_connection", return_value=(True, "connected")
+                ):
+                    with patch(
+                        "arcaneum.cli.doctor.check_meilisearch_connection",
+                        return_value=(True, "connected"),
+                    ):
+                        with patch(
+                            "arcaneum.cli.doctor.check_embedding_models",
+                            return_value=(True, "available"),
+                        ):
+                            with patch(
+                                "arcaneum.cli.doctor.check_temp_dir_writable",
+                                return_value=(True, "writable"),
+                            ):
+                                with patch(
+                                    "arcaneum.cli.doctor.check_environment_vars",
+                                    return_value=(True, "defaults"),
+                                ):
                                     doctor_command(verbose=False, output_json=True)
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
 
-        assert output['status'] == 'success'
-        assert 'data' in output
-        assert 'checks' in output['data']
-        assert 'summary' in output['data']
+        assert output["status"] == "success"
+        assert "data" in output
+        assert "checks" in output["data"]
+        assert "summary" in output["data"]
 
     def test_table_format(self, capsys):
         """Test table output format."""
         from arcaneum.cli.doctor import doctor_command
 
         # Mock all checks to return success
-        with patch('arcaneum.cli.doctor.check_python_version', return_value=(True, "Python 3.12")):
-            with patch('arcaneum.cli.doctor.check_dependency', return_value=(True, "installed")):
-                with patch('arcaneum.cli.doctor.check_qdrant_connection', return_value=(True, "connected")):
-                    with patch('arcaneum.cli.doctor.check_meilisearch_connection', return_value=(True, "connected")):
-                        with patch('arcaneum.cli.doctor.check_embedding_models', return_value=(True, "available")):
-                            with patch('arcaneum.cli.doctor.check_temp_dir_writable', return_value=(True, "writable")):
-                                with patch('arcaneum.cli.doctor.check_environment_vars', return_value=(True, "defaults")):
+        with patch("arcaneum.cli.doctor.check_python_version", return_value=(True, "Python 3.12")):
+            with patch("arcaneum.cli.doctor.check_dependency", return_value=(True, "installed")):
+                with patch(
+                    "arcaneum.cli.doctor.check_qdrant_connection", return_value=(True, "connected")
+                ):
+                    with patch(
+                        "arcaneum.cli.doctor.check_meilisearch_connection",
+                        return_value=(True, "connected"),
+                    ):
+                        with patch(
+                            "arcaneum.cli.doctor.check_embedding_models",
+                            return_value=(True, "available"),
+                        ):
+                            with patch(
+                                "arcaneum.cli.doctor.check_temp_dir_writable",
+                                return_value=(True, "writable"),
+                            ):
+                                with patch(
+                                    "arcaneum.cli.doctor.check_environment_vars",
+                                    return_value=(True, "defaults"),
+                                ):
                                     doctor_command(verbose=False, output_json=False)
 
         captured = capsys.readouterr()
         # Table format should show check names
-        assert 'Python' in captured.out or 'Diagnostics' in captured.out
+        assert "Python" in captured.out or "Diagnostics" in captured.out
 
     def test_exit_code_all_pass(self):
         """Test exit code when all checks pass."""
         from arcaneum.cli.doctor import doctor_command
         from arcaneum.cli.errors import EXIT_SUCCESS
 
-        with patch('arcaneum.cli.doctor.check_python_version', return_value=(True, "Python 3.12")):
-            with patch('arcaneum.cli.doctor.check_dependency', return_value=(True, "installed")):
-                with patch('arcaneum.cli.doctor.check_qdrant_connection', return_value=(True, "connected")):
-                    with patch('arcaneum.cli.doctor.check_meilisearch_connection', return_value=(True, "connected")):
-                        with patch('arcaneum.cli.doctor.check_embedding_models', return_value=(True, "available")):
-                            with patch('arcaneum.cli.doctor.check_temp_dir_writable', return_value=(True, "writable")):
-                                with patch('arcaneum.cli.doctor.check_environment_vars', return_value=(True, "defaults")):
+        with patch("arcaneum.cli.doctor.check_python_version", return_value=(True, "Python 3.12")):
+            with patch("arcaneum.cli.doctor.check_dependency", return_value=(True, "installed")):
+                with patch(
+                    "arcaneum.cli.doctor.check_qdrant_connection", return_value=(True, "connected")
+                ):
+                    with patch(
+                        "arcaneum.cli.doctor.check_meilisearch_connection",
+                        return_value=(True, "connected"),
+                    ):
+                        with patch(
+                            "arcaneum.cli.doctor.check_embedding_models",
+                            return_value=(True, "available"),
+                        ):
+                            with patch(
+                                "arcaneum.cli.doctor.check_temp_dir_writable",
+                                return_value=(True, "writable"),
+                            ):
+                                with patch(
+                                    "arcaneum.cli.doctor.check_environment_vars",
+                                    return_value=(True, "defaults"),
+                                ):
                                     result = doctor_command(verbose=False, output_json=True)
 
         assert result == EXIT_SUCCESS
@@ -240,13 +282,29 @@ class TestDoctorOutput:
         from arcaneum.cli.doctor import doctor_command
         from arcaneum.cli.errors import EXIT_ERROR
 
-        with patch('arcaneum.cli.doctor.check_python_version', return_value=(True, "Python 3.12")):
-            with patch('arcaneum.cli.doctor.check_dependency', return_value=(False, "not installed")):
-                with patch('arcaneum.cli.doctor.check_qdrant_connection', return_value=(False, "failed")):
-                    with patch('arcaneum.cli.doctor.check_meilisearch_connection', return_value=(False, "failed")):
-                        with patch('arcaneum.cli.doctor.check_embedding_models', return_value=(True, "available")):
-                            with patch('arcaneum.cli.doctor.check_temp_dir_writable', return_value=(True, "writable")):
-                                with patch('arcaneum.cli.doctor.check_environment_vars', return_value=(True, "defaults")):
+        with patch("arcaneum.cli.doctor.check_python_version", return_value=(True, "Python 3.12")):
+            with patch(
+                "arcaneum.cli.doctor.check_dependency", return_value=(False, "not installed")
+            ):
+                with patch(
+                    "arcaneum.cli.doctor.check_qdrant_connection", return_value=(False, "failed")
+                ):
+                    with patch(
+                        "arcaneum.cli.doctor.check_meilisearch_connection",
+                        return_value=(False, "failed"),
+                    ):
+                        with patch(
+                            "arcaneum.cli.doctor.check_embedding_models",
+                            return_value=(True, "available"),
+                        ):
+                            with patch(
+                                "arcaneum.cli.doctor.check_temp_dir_writable",
+                                return_value=(True, "writable"),
+                            ):
+                                with patch(
+                                    "arcaneum.cli.doctor.check_environment_vars",
+                                    return_value=(True, "defaults"),
+                                ):
                                     result = doctor_command(verbose=False, output_json=True)
 
         assert result == EXIT_ERROR
@@ -259,11 +317,11 @@ class TestDoctorIntegration:
         """Test full doctor command with JSON output."""
         from arcaneum.cli.doctor import doctor_command
 
-        with patch('arcaneum.cli.doctor.create_qdrant_client', return_value=mock_qdrant_client):
-            with patch('meilisearch.Client') as mock_meili:
+        with patch("arcaneum.cli.doctor.create_qdrant_client", return_value=mock_qdrant_client):
+            with patch("meilisearch.Client") as mock_meili:
                 mock_meili_instance = MagicMock()
-                mock_meili_instance.health.return_value = {'status': 'available'}
-                mock_meili_instance.get_indexes.return_value = {'results': []}
+                mock_meili_instance.health.return_value = {"status": "available"}
+                mock_meili_instance.get_indexes.return_value = {"results": []}
                 mock_meili.return_value = mock_meili_instance
 
                 result = doctor_command(verbose=False, output_json=True)
@@ -271,6 +329,6 @@ class TestDoctorIntegration:
         captured = capsys.readouterr()
         output = json.loads(captured.out)
 
-        assert 'status' in output
-        assert 'data' in output
-        assert isinstance(output['data']['checks'], list)
+        assert "status" in output
+        assert "data" in output
+        assert isinstance(output["data"]["checks"], list)

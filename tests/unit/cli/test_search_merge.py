@@ -74,9 +74,7 @@ class TestFetchFromCorpora:
             raise _Missing(name)
 
         with pytest.raises(ResourceNotFoundError) as exc_info:
-            fetch_from_corpora(
-                ["only"], fetch, _is_missing, logger, verbose=False
-            )
+            fetch_from_corpora(["only"], fetch, _is_missing, logger, verbose=False)
         assert "'only'" in str(exc_info.value)
 
     def test_all_corpora_missing_raises(self):
@@ -86,9 +84,7 @@ class TestFetchFromCorpora:
             raise _Missing(name)
 
         with pytest.raises(ResourceNotFoundError) as exc_info:
-            fetch_from_corpora(
-                ["a", "b", "c"], fetch, _is_missing, logger, verbose=False
-            )
+            fetch_from_corpora(["a", "b", "c"], fetch, _is_missing, logger, verbose=False)
         msg = str(exc_info.value)
         assert "a" in msg and "b" in msg and "c" in msg
 
@@ -102,9 +98,7 @@ class TestFetchFromCorpora:
             raise OtherError("boom")
 
         with pytest.raises(OtherError):
-            fetch_from_corpora(
-                ["a", "b"], fetch, _is_missing, logger, verbose=False
-            )
+            fetch_from_corpora(["a", "b"], fetch, _is_missing, logger, verbose=False)
 
     def test_verbose_logs_skip_warning(self, caplog):
         logger = logging.getLogger("test_verbose_logs_skip_warning")
@@ -115,9 +109,7 @@ class TestFetchFromCorpora:
             return f"hits-{name}"
 
         with caplog.at_level(logging.WARNING, logger=logger.name):
-            fetch_from_corpora(
-                ["a", "b"], fetch, _is_missing, logger, verbose=True
-            )
+            fetch_from_corpora(["a", "b"], fetch, _is_missing, logger, verbose=True)
         assert any("'b'" in rec.message for rec in caplog.records)
 
     def test_non_verbose_does_not_log(self, caplog):
@@ -129,7 +121,5 @@ class TestFetchFromCorpora:
             return f"hits-{name}"
 
         with caplog.at_level(logging.WARNING, logger=logger.name):
-            fetch_from_corpora(
-                ["a", "b"], fetch, _is_missing, logger, verbose=False
-            )
+            fetch_from_corpora(["a", "b"], fetch, _is_missing, logger, verbose=False)
         assert caplog.records == []

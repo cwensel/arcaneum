@@ -47,8 +47,8 @@ def meili_client():
     try:
         indexes = client.list_indexes()
         for idx in indexes:
-            if idx['uid'].startswith("test_code_"):
-                client.delete_index(idx['uid'])
+            if idx["uid"].startswith("test_code_"):
+                client.delete_index(idx["uid"])
     except Exception:
         pass
 
@@ -64,9 +64,7 @@ def test_index(meili_client):
 
     # Create with source code fulltext settings
     meili_client.create_index(
-        name=index_name,
-        primary_key='id',
-        settings=SOURCE_CODE_FULLTEXT_SETTINGS
+        name=index_name, primary_key="id", settings=SOURCE_CODE_FULLTEXT_SETTINGS
     )
 
     yield index_name
@@ -89,11 +87,15 @@ def git_project():
         subprocess.run(["git", "init"], cwd=project_path, check=True, capture_output=True)
         subprocess.run(
             ["git", "config", "user.email", "test@example.com"],
-            cwd=project_path, check=True, capture_output=True
+            cwd=project_path,
+            check=True,
+            capture_output=True,
         )
         subprocess.run(
             ["git", "config", "user.name", "Test User"],
-            cwd=project_path, check=True, capture_output=True
+            cwd=project_path,
+            check=True,
+            capture_output=True,
         )
 
         # Create source directory
@@ -131,7 +133,7 @@ def helper_function():
 ''')
 
         # Create JavaScript file
-        (src_dir / "utils.js").write_text('''// Utility functions
+        (src_dir / "utils.js").write_text("""// Utility functions
 
 function formatDate(date) {
     return date.toISOString();
@@ -150,10 +152,10 @@ class DateFormatter {
 function calculateSum(numbers) {
     return numbers.reduce((a, b) => a + b, 0);
 }
-''')
+""")
 
         # Create TypeScript file
-        (src_dir / "types.ts").write_text('''// Type definitions
+        (src_dir / "types.ts").write_text("""// Type definitions
 
 interface User {
     id: number;
@@ -176,13 +178,15 @@ class UserService {
         return this.users.find(u => u.id === id);
     }
 }
-''')
+""")
 
         # Git add and commit
         subprocess.run(["git", "add", "."], cwd=project_path, check=True, capture_output=True)
         subprocess.run(
             ["git", "commit", "-m", "Initial commit"],
-            cwd=project_path, check=True, capture_output=True
+            cwd=project_path,
+            check=True,
+            capture_output=True,
         )
 
         yield str(project_path)
@@ -194,102 +198,74 @@ class TestSourceCodeFullTextIndexerIntegration:
     def test_index_single_project(self, meili_client, test_index, git_project):
         """Test indexing a single git project."""
         indexer = SourceCodeFullTextIndexer(
-            meili_client=meili_client,
-            index_name=test_index,
-            batch_size=100
+            meili_client=meili_client, index_name=test_index, batch_size=100
         )
 
         # Index the project
-        stats = indexer.index_single_project(
-            project_root=git_project,
-            force=True,
-            verbose=False
-        )
+        stats = indexer.index_single_project(project_root=git_project, force=True, verbose=False)
 
-        assert stats['indexed_projects'] == 1
-        assert stats['indexed_files'] >= 3  # main.py, utils.js, types.ts
-        assert stats['total_definitions'] >= 6  # Multiple functions/classes
+        assert stats["indexed_projects"] == 1
+        assert stats["indexed_files"] >= 3  # main.py, utils.js, types.ts
+        assert stats["total_definitions"] >= 6  # Multiple functions/classes
 
         # Verify documents in index
         index_stats = meili_client.get_index_stats(test_index)
-        assert index_stats['numberOfDocuments'] >= 6
+        assert index_stats["numberOfDocuments"] >= 6
 
     def test_search_function_name(self, meili_client, test_index, git_project):
         """Test searching by function name."""
         indexer = SourceCodeFullTextIndexer(
-            meili_client=meili_client,
-            index_name=test_index,
-            batch_size=100
+            meili_client=meili_client, index_name=test_index, batch_size=100
         )
 
         indexer.index_single_project(project_root=git_project, force=True)
 
         # Search for function name
-        results = meili_client.search(
-            test_index,
-            "helper_function",
-            limit=10
-        )
+        results = meili_client.search(test_index, "helper_function", limit=10)
 
-        assert results['estimatedTotalHits'] >= 1
+        assert results["estimatedTotalHits"] >= 1
         # Verify we found the helper_function
-        hits = results['hits']
+        hits = results["hits"]
         assert any(
-            h.get('function_name') == 'helper_function' or
-            'helper_function' in h.get('content', '')
+            h.get("function_name") == "helper_function" or "helper_function" in h.get("content", "")
             for h in hits
         )
 
     def test_search_class_name(self, meili_client, test_index, git_project):
         """Test searching by class name."""
         indexer = SourceCodeFullTextIndexer(
-            meili_client=meili_client,
-            index_name=test_index,
-            batch_size=100
+            meili_client=meili_client, index_name=test_index, batch_size=100
         )
 
         indexer.index_single_project(project_root=git_project, force=True)
 
         # Search for class name
-        results = meili_client.search(
-            test_index,
-            "Application",
-            limit=10
-        )
+        results = meili_client.search(test_index, "Application", limit=10)
 
-        assert results['estimatedTotalHits'] >= 1
-        hits = results['hits']
+        assert results["estimatedTotalHits"] >= 1
+        hits = results["hits"]
         assert any(
-            h.get('class_name') == 'Application' or
-            'Application' in h.get('content', '')
+            h.get("class_name") == "Application" or "Application" in h.get("content", "")
             for h in hits
         )
 
     def test_search_code_content(self, meili_client, test_index, git_project):
         """Test searching in code content."""
         indexer = SourceCodeFullTextIndexer(
-            meili_client=meili_client,
-            index_name=test_index,
-            batch_size=100
+            meili_client=meili_client, index_name=test_index, batch_size=100
         )
 
         indexer.index_single_project(project_root=git_project, force=True)
 
         # Search for code content
-        results = meili_client.search(
-            test_index,
-            "print Hello World",
-            limit=10
-        )
+        results = meili_client.search(test_index, "print Hello World", limit=10)
 
-        assert results['estimatedTotalHits'] >= 1
+        assert results["estimatedTotalHits"] >= 1
 
     def test_filter_by_language(self, meili_client, test_index, git_project):
         """Test filtering by programming language."""
         indexer = SourceCodeFullTextIndexer(
-            meili_client=meili_client,
-            index_name=test_index,
-            batch_size=100
+            meili_client=meili_client, index_name=test_index, batch_size=100
         )
 
         indexer.index_single_project(project_root=git_project, force=True)
@@ -299,61 +275,50 @@ class TestSourceCodeFullTextIndexerIntegration:
             test_index,
             "",  # Empty query to get all
             filter='programming_language = "python"',
-            limit=100
+            limit=100,
         )
 
-        assert results['estimatedTotalHits'] >= 1
-        for hit in results['hits']:
-            assert hit['programming_language'] == 'python'
+        assert results["estimatedTotalHits"] >= 1
+        for hit in results["hits"]:
+            assert hit["programming_language"] == "python"
 
     def test_filter_by_code_type(self, meili_client, test_index, git_project):
         """Test filtering by code type (function, class, etc.)."""
         indexer = SourceCodeFullTextIndexer(
-            meili_client=meili_client,
-            index_name=test_index,
-            batch_size=100
+            meili_client=meili_client, index_name=test_index, batch_size=100
         )
 
         indexer.index_single_project(project_root=git_project, force=True)
 
         # Search for classes only
-        results = meili_client.search(
-            test_index,
-            "",
-            filter='code_type = "class"',
-            limit=100
-        )
+        results = meili_client.search(test_index, "", filter='code_type = "class"', limit=100)
 
-        assert results['estimatedTotalHits'] >= 1
-        for hit in results['hits']:
-            assert hit['code_type'] == 'class'
+        assert results["estimatedTotalHits"] >= 1
+        for hit in results["hits"]:
+            assert hit["code_type"] == "class"
 
     def test_change_detection_skip_unchanged(self, meili_client, test_index, git_project):
         """Test that unchanged projects are skipped on re-index."""
         indexer = SourceCodeFullTextIndexer(
-            meili_client=meili_client,
-            index_name=test_index,
-            batch_size=100
+            meili_client=meili_client, index_name=test_index, batch_size=100
         )
 
         # First index
         stats1 = indexer.index_single_project(project_root=git_project, force=True)
-        assert stats1['indexed_projects'] == 1
+        assert stats1["indexed_projects"] == 1
 
         # Clear cache so second index sees the indexed project
         indexer.sync.clear_cache()
 
         # Second index without force should skip
         stats2 = indexer.index_single_project(project_root=git_project, force=False)
-        assert stats2['skipped_projects'] == 1
-        assert stats2['indexed_projects'] == 0
+        assert stats2["skipped_projects"] == 1
+        assert stats2["indexed_projects"] == 0
 
     def test_delete_project(self, meili_client, test_index, git_project):
         """Test deleting all documents for a project."""
         indexer = SourceCodeFullTextIndexer(
-            meili_client=meili_client,
-            index_name=test_index,
-            batch_size=100
+            meili_client=meili_client, index_name=test_index, batch_size=100
         )
 
         # Index the project
@@ -367,7 +332,7 @@ class TestSourceCodeFullTextIndexerIntegration:
 
         # Verify documents exist
         stats = meili_client.get_index_stats(test_index)
-        initial_count = stats['numberOfDocuments']
+        initial_count = stats["numberOfDocuments"]
         assert initial_count > 0
 
         # Delete project
@@ -376,14 +341,12 @@ class TestSourceCodeFullTextIndexerIntegration:
 
         # Verify documents deleted
         stats = meili_client.get_index_stats(test_index)
-        assert stats['numberOfDocuments'] == 0
+        assert stats["numberOfDocuments"] == 0
 
     def test_get_indexed_projects(self, meili_client, test_index, git_project):
         """Test getting list of indexed projects."""
         indexer = SourceCodeFullTextIndexer(
-            meili_client=meili_client,
-            index_name=test_index,
-            batch_size=100
+            meili_client=meili_client, index_name=test_index, batch_size=100
         )
 
         # Initially empty
@@ -406,28 +369,22 @@ class TestSourceCodeFullTextIndexerIntegration:
     def test_line_number_stored(self, meili_client, test_index, git_project):
         """Test that line numbers are stored correctly."""
         indexer = SourceCodeFullTextIndexer(
-            meili_client=meili_client,
-            index_name=test_index,
-            batch_size=100
+            meili_client=meili_client, index_name=test_index, batch_size=100
         )
 
         indexer.index_single_project(project_root=git_project, force=True)
 
         # Get all documents
-        results = meili_client.search(
-            test_index,
-            "",
-            limit=100
-        )
+        results = meili_client.search(test_index, "", limit=100)
 
         # Verify all documents have line numbers
-        for hit in results['hits']:
-            assert 'start_line' in hit
-            assert 'end_line' in hit
-            assert 'line_count' in hit
-            assert hit['start_line'] >= 1
-            assert hit['end_line'] >= hit['start_line']
-            assert hit['line_count'] == hit['end_line'] - hit['start_line'] + 1
+        for hit in results["hits"]:
+            assert "start_line" in hit
+            assert "end_line" in hit
+            assert "line_count" in hit
+            assert hit["start_line"] >= 1
+            assert hit["end_line"] >= hit["start_line"]
+            assert hit["line_count"] == hit["end_line"] - hit["start_line"] + 1
 
 
 class TestSourceCodeFullTextSettingsIntegration:
@@ -475,23 +432,29 @@ class TestMultiBranchSupport:
             subprocess.run(["git", "init"], cwd=project_path, check=True, capture_output=True)
             subprocess.run(
                 ["git", "config", "user.email", "test@example.com"],
-                cwd=project_path, check=True, capture_output=True
+                cwd=project_path,
+                check=True,
+                capture_output=True,
             )
             subprocess.run(
                 ["git", "config", "user.name", "Test User"],
-                cwd=project_path, check=True, capture_output=True
+                cwd=project_path,
+                check=True,
+                capture_output=True,
             )
 
             # Create initial file on main
-            (project_path / "main.py").write_text('''
+            (project_path / "main.py").write_text("""
 def main():
     print("main branch")
-''')
+""")
 
             subprocess.run(["git", "add", "."], cwd=project_path, check=True, capture_output=True)
             subprocess.run(
                 ["git", "commit", "-m", "Initial commit"],
-                cwd=project_path, check=True, capture_output=True
+                cwd=project_path,
+                check=True,
+                capture_output=True,
             )
 
             yield str(project_path)
@@ -499,9 +462,7 @@ def main():
     def test_branch_specific_identifier(self, meili_client, test_index, git_project_with_branches):
         """Test that branch is included in project identifier."""
         indexer = SourceCodeFullTextIndexer(
-            meili_client=meili_client,
-            index_name=test_index,
-            batch_size=100
+            meili_client=meili_client, index_name=test_index, batch_size=100
         )
 
         indexer.index_single_project(project_root=git_project_with_branches, force=True)
@@ -520,4 +481,4 @@ def main():
         project_name, branch = parts
         assert project_name == "multi-branch-project"
         # Branch could be 'main' or 'master' depending on git config
-        assert branch in ['main', 'master']
+        assert branch in ["main", "master"]

@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from fastembed import TextEmbedding
 
@@ -19,6 +19,7 @@ MODELS = {
     "bge": "BAAI/bge-large-en-v1.5",
     "jina": "jinaai/jina-embeddings-v2-base-code",
 }
+
 
 def download_models(cache_dir: str = "./models_cache"):
     """Download all embedding models to cache directory."""
@@ -51,7 +52,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--cache-dir",
         default="./models_cache",
-        help="Directory to cache models (default: ./models_cache)"
+        help="Directory to cache models (default: ./models_cache)",
     )
     args = parser.parse_args()
 

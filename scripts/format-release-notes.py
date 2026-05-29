@@ -3,6 +3,7 @@
 
 Usage: format-release-notes.py <range> <prev_tag> <tag> <repo_url>
 """
+
 import re
 import subprocess
 import sys
@@ -37,9 +38,7 @@ def main() -> int:
         text=True,
     )
 
-    grouped: dict[str, list[tuple[str, str, str | None, bool]]] = {
-        t: [] for t, _ in TYPE_HEADINGS
-    }
+    grouped: dict[str, list[tuple[str, str, str | None, bool]]] = {t: [] for t, _ in TYPE_HEADINGS}
     other: list[tuple[str, str]] = []
     breaking_any = False
 
@@ -52,9 +51,7 @@ def main() -> int:
         if match and match["type"] in CONVENTIONAL_TYPES:
             is_breaking = bool(match["breaking"])
             breaking_any = breaking_any or is_breaking
-            grouped[match["type"]].append(
-                (short, match["desc"], match["scope"], is_breaking)
-            )
+            grouped[match["type"]].append((short, match["desc"], match["scope"], is_breaking))
         else:
             other.append((short, subject))
 

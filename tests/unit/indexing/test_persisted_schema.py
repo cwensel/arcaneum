@@ -77,18 +77,24 @@ def test_prompt_policy_issues_flag_missing_and_changed_policy():
     }
 
     assert "differs" in prompt_policy_issues(stale_metadata, "stella")[0]
-    assert prompt_policy_issues(
-        {"embedding_prompt_policy": {"stella": get_embedding_prompt_policy("stella")}},
-        "stella",
-    ) == []
+    assert (
+        prompt_policy_issues(
+            {"embedding_prompt_policy": {"stella": get_embedding_prompt_policy("stella")}},
+            "stella",
+        )
+        == []
+    )
 
 
 def test_missing_prompt_policy_can_be_backfilled():
     assert prompt_policy_can_be_backfilled({}, ["stella"]) is True
-    assert prompt_policy_can_be_backfilled(
-        {"embedding_prompt_policy": {"stella": get_embedding_prompt_policy("stella")}},
-        ["stella"],
-    ) is False
+    assert (
+        prompt_policy_can_be_backfilled(
+            {"embedding_prompt_policy": {"stella": get_embedding_prompt_policy("stella")}},
+            ["stella"],
+        )
+        is False
+    )
 
 
 def test_partially_missing_prompt_policy_can_be_backfilled():
@@ -129,14 +135,15 @@ def test_prompt_policy_issues_reject_legacy_jina_code_backend():
 
 
 def test_prompt_policy_issues_accept_legacy_jina_provider_id():
-    metadata = {
-        "embedding_prompt_policy": {"jina-code": get_embedding_prompt_policy("jina-code")}
-    }
+    metadata = {"embedding_prompt_policy": {"jina-code": get_embedding_prompt_policy("jina-code")}}
 
-    assert prompt_policy_issues(
-        metadata,
-        "jinaai/jina-embeddings-v2-base-code",
-    ) == []
+    assert (
+        prompt_policy_issues(
+            metadata,
+            "jinaai/jina-embeddings-v2-base-code",
+        )
+        == []
+    )
 
 
 def test_persisted_schema_issues_rejects_non_integer_version():

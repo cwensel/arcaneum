@@ -20,10 +20,7 @@ class TestSourceCodeFullTextIndexerInit:
     def test_init_defaults(self):
         """Test initialization with default parameters."""
         mock_client = Mock()
-        indexer = SourceCodeFullTextIndexer(
-            meili_client=mock_client,
-            index_name="test-index"
-        )
+        indexer = SourceCodeFullTextIndexer(meili_client=mock_client, index_name="test-index")
 
         assert indexer.meili_client is mock_client
         assert indexer.index_name == "test-index"
@@ -33,9 +30,7 @@ class TestSourceCodeFullTextIndexerInit:
         """Test initialization with custom batch size."""
         mock_client = Mock()
         indexer = SourceCodeFullTextIndexer(
-            meili_client=mock_client,
-            index_name="test-index",
-            batch_size=500
+            meili_client=mock_client, index_name="test-index", batch_size=500
         )
 
         assert indexer.batch_size == 500
@@ -55,10 +50,7 @@ class TestSourceCodeFullTextIndexerDocumentBuilding:
     @pytest.fixture
     def indexer(self, mock_client):
         """Create indexer with mocked client."""
-        return SourceCodeFullTextIndexer(
-            meili_client=mock_client,
-            index_name="test-code-index"
-        )
+        return SourceCodeFullTextIndexer(meili_client=mock_client, index_name="test-code-index")
 
     @pytest.fixture
     def sample_git_metadata(self):
@@ -68,7 +60,7 @@ class TestSourceCodeFullTextIndexerDocumentBuilding:
             branch="main",
             commit_hash="abc123def456",
             remote_url="https://github.com/test/project.git",
-            project_root="/path/to/project"
+            project_root="/path/to/project",
         )
 
     def test_build_document_function(self, indexer, sample_git_metadata):
@@ -80,7 +72,7 @@ class TestSourceCodeFullTextIndexerDocumentBuilding:
             start_line=10,
             end_line=20,
             content="def my_function():\n    pass",
-            file_path="/path/to/project/src/module.py"
+            file_path="/path/to/project/src/module.py",
         )
 
         doc = indexer._build_document(
@@ -115,7 +107,7 @@ class TestSourceCodeFullTextIndexerDocumentBuilding:
             start_line=1,
             end_line=50,
             content="class MyClass:\n    pass",
-            file_path="/path/to/project/src/module.py"
+            file_path="/path/to/project/src/module.py",
         )
 
         doc = indexer._build_document(
@@ -135,7 +127,7 @@ class TestSourceCodeFullTextIndexerDocumentBuilding:
             start_line=10,
             end_line=15,
             content="def my_method(self):\n    pass",
-            file_path="/path/to/project/src/module.py"
+            file_path="/path/to/project/src/module.py",
         )
 
         doc = indexer._build_document(
@@ -155,7 +147,7 @@ class TestSourceCodeFullTextIndexerDocumentBuilding:
             start_line=1,
             end_line=5,
             content="def func(): pass",
-            file_path="/path/to/project/src/a.py"
+            file_path="/path/to/project/src/a.py",
         )
 
         defn2 = CodeDefinition(
@@ -165,7 +157,7 @@ class TestSourceCodeFullTextIndexerDocumentBuilding:
             start_line=1,
             end_line=5,
             content="def func(): pass",
-            file_path="/path/to/project/src/b.py"
+            file_path="/path/to/project/src/b.py",
         )
 
         doc1 = indexer._build_document(
@@ -184,7 +176,7 @@ class TestSourceCodeFullTextIndexerDocumentBuilding:
             branch="main",
             commit_hash="abc",
             remote_url="https://github.com/test/project.git",
-            project_root="/path/to/project"
+            project_root="/path/to/project",
         )
 
         metadata_dev = GitMetadata(
@@ -192,7 +184,7 @@ class TestSourceCodeFullTextIndexerDocumentBuilding:
             branch="develop",
             commit_hash="def",
             remote_url="https://github.com/test/project.git",
-            project_root="/path/to/project"
+            project_root="/path/to/project",
         )
 
         defn = CodeDefinition(
@@ -202,7 +194,7 @@ class TestSourceCodeFullTextIndexerDocumentBuilding:
             start_line=1,
             end_line=5,
             content="def func(): pass",
-            file_path="/path/to/project/src/module.py"
+            file_path="/path/to/project/src/module.py",
         )
 
         doc_main = indexer._build_document(
@@ -235,15 +227,14 @@ class TestSourceCodeFullTextIndexerDocumentBuilding:
                 start_line=1,
                 end_line=5,
                 content="code",
-                file_path=file_path
+                file_path=file_path,
             )
 
-            doc = indexer._build_document(
-                defn, sample_git_metadata, "test#main", file_path
-            )
+            doc = indexer._build_document(defn, sample_git_metadata, "test#main", file_path)
 
-            assert doc["programming_language"] == expected_lang, \
+            assert doc["programming_language"] == expected_lang, (
                 f"Expected {expected_lang} for {file_path}"
+            )
 
 
 class TestSourceCodeFullTextIndexerCodeExtensions:
@@ -251,7 +242,7 @@ class TestSourceCodeFullTextIndexerCodeExtensions:
 
     def test_code_extensions_includes_common(self):
         """Test that common extensions are included."""
-        expected = ['.py', '.js', '.ts', '.java', '.go', '.rs', '.cpp', '.c']
+        expected = [".py", ".js", ".ts", ".java", ".go", ".rs", ".cpp", ".c"]
         for ext in expected:
             assert ext in SourceCodeFullTextIndexer.CODE_EXTENSIONS
 
@@ -275,9 +266,7 @@ class TestSourceCodeFullTextIndexerBatchUpload:
     def indexer(self, mock_client):
         """Create indexer with mocked client."""
         return SourceCodeFullTextIndexer(
-            meili_client=mock_client,
-            index_name="test-index",
-            batch_size=100
+            meili_client=mock_client, index_name="test-index", batch_size=100
         )
 
     def test_upload_batch_empty(self, indexer):
@@ -291,9 +280,7 @@ class TestSourceCodeFullTextIndexerBatchUpload:
         indexer._upload_batch(documents)
 
         indexer.meili_client.add_documents_sync.assert_called_once_with(
-            index_name="test-index",
-            documents=documents,
-            timeout_ms=120000
+            index_name="test-index", documents=documents, timeout_ms=120000
         )
 
     def test_upload_batch_error(self, indexer):
@@ -325,35 +312,32 @@ class TestSourceCodeFullTextIndexerWithMockedGit:
             src_dir.mkdir()
 
             # Create Python files
-            (src_dir / "main.py").write_text('''
+            (src_dir / "main.py").write_text("""
 def main():
     print("Hello, World!")
 
 class App:
     def run(self):
         pass
-''')
+""")
 
-            (src_dir / "utils.py").write_text('''
+            (src_dir / "utils.py").write_text("""
 def helper():
     return 42
-''')
+""")
 
             # Create JavaScript file
-            (src_dir / "index.js").write_text('''
+            (src_dir / "index.js").write_text("""
 function greet(name) {
     console.log("Hello, " + name);
 }
-''')
+""")
 
             yield tmpdir
 
     def test_get_code_files(self, mock_client, sample_project):
         """Test getting code files from project."""
-        indexer = SourceCodeFullTextIndexer(
-            meili_client=mock_client,
-            index_name="test-index"
-        )
+        indexer = SourceCodeFullTextIndexer(meili_client=mock_client, index_name="test-index")
 
         # Mock git_discovery to return our test files
         src_dir = Path(sample_project) / "src"
@@ -364,7 +348,7 @@ function greet(name) {
             str(src_dir / "README.md"),  # Should be filtered out
         ]
 
-        with patch.object(indexer.git_discovery, 'get_tracked_files', return_value=mock_files):
+        with patch.object(indexer.git_discovery, "get_tracked_files", return_value=mock_files):
             code_files = indexer._get_code_files(sample_project)
 
         assert len(code_files) == 3
@@ -390,9 +374,7 @@ class TestGitCodeMetadataSync:
         mock_client.search.return_value = {"hits": [], "estimatedTotalHits": 0}
         sync = GitCodeMetadataSync(mock_client)
 
-        result = sync.should_reindex_project(
-            "test-index", "project#main", "abc123"
-        )
+        result = sync.should_reindex_project("test-index", "project#main", "abc123")
 
         assert result is True
 
@@ -401,17 +383,12 @@ class TestGitCodeMetadataSync:
         from arcaneum.indexing.fulltext.sync import GitCodeMetadataSync
 
         mock_client.search.return_value = {
-            "hits": [{
-                "git_project_identifier": "project#main",
-                "git_commit_hash": "old_commit"
-            }],
-            "estimatedTotalHits": 1
+            "hits": [{"git_project_identifier": "project#main", "git_commit_hash": "old_commit"}],
+            "estimatedTotalHits": 1,
         }
         sync = GitCodeMetadataSync(mock_client)
 
-        result = sync.should_reindex_project(
-            "test-index", "project#main", "new_commit"
-        )
+        result = sync.should_reindex_project("test-index", "project#main", "new_commit")
 
         assert result is True
 
@@ -420,17 +397,12 @@ class TestGitCodeMetadataSync:
         from arcaneum.indexing.fulltext.sync import GitCodeMetadataSync
 
         mock_client.search.return_value = {
-            "hits": [{
-                "git_project_identifier": "project#main",
-                "git_commit_hash": "same_commit"
-            }],
-            "estimatedTotalHits": 1
+            "hits": [{"git_project_identifier": "project#main", "git_commit_hash": "same_commit"}],
+            "estimatedTotalHits": 1,
         }
         sync = GitCodeMetadataSync(mock_client)
 
-        result = sync.should_reindex_project(
-            "test-index", "project#main", "same_commit"
-        )
+        result = sync.should_reindex_project("test-index", "project#main", "same_commit")
 
         assert result is False
 
@@ -439,11 +411,8 @@ class TestGitCodeMetadataSync:
         from arcaneum.indexing.fulltext.sync import GitCodeMetadataSync
 
         mock_client.search.return_value = {
-            "hits": [{
-                "git_project_identifier": "project#main",
-                "git_commit_hash": "abc123"
-            }],
-            "estimatedTotalHits": 1
+            "hits": [{"git_project_identifier": "project#main", "git_commit_hash": "abc123"}],
+            "estimatedTotalHits": 1,
         }
         sync = GitCodeMetadataSync(mock_client)
 
@@ -461,10 +430,7 @@ class TestGitCodeMetadataSync:
         """Test cache clearing."""
         from arcaneum.indexing.fulltext.sync import GitCodeMetadataSync
 
-        mock_client.search.return_value = {
-            "hits": [],
-            "estimatedTotalHits": 0
-        }
+        mock_client.search.return_value = {"hits": [], "estimatedTotalHits": 0}
         sync = GitCodeMetadataSync(mock_client)
 
         # First call
@@ -496,55 +462,43 @@ class TestSourceCodeFullTextIndexerParallel:
     def test_init_workers_default(self, mock_client):
         """Test default workers is auto-calculated."""
         from multiprocessing import cpu_count
-        indexer = SourceCodeFullTextIndexer(
-            meili_client=mock_client,
-            index_name="test-index"
-        )
+
+        indexer = SourceCodeFullTextIndexer(meili_client=mock_client, index_name="test-index")
         expected_workers = max(1, cpu_count() // 2)
         assert indexer.workers == expected_workers
 
     def test_init_workers_explicit(self, mock_client):
         """Test explicit workers setting."""
         indexer = SourceCodeFullTextIndexer(
-            meili_client=mock_client,
-            index_name="test-index",
-            workers=4
+            meili_client=mock_client, index_name="test-index", workers=4
         )
         assert indexer.workers == 4
 
     def test_init_workers_zero_means_sequential(self, mock_client):
         """Test workers=0 means sequential (1 worker)."""
         indexer = SourceCodeFullTextIndexer(
-            meili_client=mock_client,
-            index_name="test-index",
-            workers=0
+            meili_client=mock_client, index_name="test-index", workers=0
         )
         assert indexer.workers == 1
 
     def test_init_workers_one_is_sequential(self, mock_client):
         """Test workers=1 means sequential."""
         indexer = SourceCodeFullTextIndexer(
-            meili_client=mock_client,
-            index_name="test-index",
-            workers=1
+            meili_client=mock_client, index_name="test-index", workers=1
         )
         assert indexer.workers == 1
 
     def test_init_workers_negative_means_sequential(self, mock_client):
         """Test negative workers means sequential (1 worker)."""
         indexer = SourceCodeFullTextIndexer(
-            meili_client=mock_client,
-            index_name="test-index",
-            workers=-5
+            meili_client=mock_client, index_name="test-index", workers=-5
         )
         assert indexer.workers == 1
 
     def test_init_workers_large(self, mock_client):
         """Test large worker count is respected."""
         indexer = SourceCodeFullTextIndexer(
-            meili_client=mock_client,
-            index_name="test-index",
-            workers=16
+            meili_client=mock_client, index_name="test-index", workers=16
         )
         assert indexer.workers == 16
 
@@ -566,7 +520,7 @@ class TestExtractDefinitionsWorker:
         assert error is None
         assert len(defn_dicts) >= 1
         # Should find the function
-        function_found = any(d['name'] == 'hello' for d in defn_dicts)
+        function_found = any(d["name"] == "hello" for d in defn_dicts)
         assert function_found
 
     def test_worker_handles_missing_file(self, tmp_path):
@@ -594,10 +548,10 @@ class TestExtractDefinitionsWorker:
         for d in defn_dicts:
             assert isinstance(d, dict)
             # Check expected keys
-            assert 'name' in d
-            assert 'qualified_name' in d
-            assert 'code_type' in d
-            assert 'start_line' in d
-            assert 'end_line' in d
-            assert 'content' in d
-            assert 'file_path' in d
+            assert "name" in d
+            assert "qualified_name" in d
+            assert "code_type" in d
+            assert "start_line" in d
+            assert "end_line" in d
+            assert "content" in d
+            assert "file_path" in d

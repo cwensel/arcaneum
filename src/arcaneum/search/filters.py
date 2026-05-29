@@ -26,9 +26,9 @@ def parse_filter(filter_arg: str) -> Optional[models.Filter]:
         return None
 
     # Detect format
-    if filter_arg.startswith('{'):
+    if filter_arg.startswith("{"):
         return parse_json_filter(filter_arg)
-    elif ':' in filter_arg and not filter_arg.count(':') == filter_arg.count('='):
+    elif ":" in filter_arg and not filter_arg.count(":") == filter_arg.count("="):
         # Extended format uses colons, simple uses equals
         # If we have colons but not all are in key=value pairs, it's extended
         return parse_extended_filter(filter_arg)
@@ -49,17 +49,14 @@ def parse_simple_filter(filter_str: str) -> Optional[models.Filter]:
     """
     conditions = []
 
-    for pair in filter_str.split(','):
+    for pair in filter_str.split(","):
         pair = pair.strip()
-        if '=' not in pair:
+        if "=" not in pair:
             continue
 
-        key, value = pair.split('=', 1)
+        key, value = pair.split("=", 1)
         conditions.append(
-            models.FieldCondition(
-                key=key.strip(),
-                match=models.MatchValue(value=value.strip())
-            )
+            models.FieldCondition(key=key.strip(), match=models.MatchValue(value=value.strip()))
         )
 
     return models.Filter(must=conditions) if conditions else None
@@ -107,55 +104,37 @@ def parse_extended_filter(filter_str: str) -> Optional[models.Filter]:
     """
     conditions = []
 
-    for term in filter_str.split(','):
+    for term in filter_str.split(","):
         term = term.strip()
-        parts = term.split(':', 2)
+        parts = term.split(":", 2)
 
         if len(parts) != 3:
             continue
 
         key, op, value = [p.strip() for p in parts]
 
-        if op == 'in':
+        if op == "in":
             # Multiple values: language:in:python,java
             # Note: Value might contain commas, so we need to handle this
             # We'll split on comma but this is a known limitation
-            values = [v.strip() for v in value.split(',')]
-            conditions.append(
-                models.FieldCondition(
-                    key=key,
-                    match=models.MatchAny(any=values)
-                )
-            )
-        elif op in ('gte', 'gt', 'lte', 'lt'):
+            values = [v.strip() for v in value.split(",")]
+            conditions.append(models.FieldCondition(key=key, match=models.MatchAny(any=values)))
+        elif op in ("gte", "gt", "lte", "lt"):
             # Range query: priority:gte:5
             try:
                 numeric_value = float(value)
                 conditions.append(
-                    models.FieldCondition(
-                        key=key,
-                        range=models.Range(**{op: numeric_value})
-                    )
+                    models.FieldCondition(key=key, range=models.Range(**{op: numeric_value}))
                 )
             except ValueError:
                 # If not numeric, skip this condition
                 continue
-        elif op == 'contains':
+        elif op == "contains":
             # Text search: path:contains:/src/
-            conditions.append(
-                models.FieldCondition(
-                    key=key,
-                    match=models.MatchText(text=value)
-                )
-            )
-        elif op == 'match':
+            conditions.append(models.FieldCondition(key=key, match=models.MatchText(text=value)))
+        elif op == "match":
             # Explicit exact match: language:match:python
-            conditions.append(
-                models.FieldCondition(
-                    key=key,
-                    match=models.MatchValue(value=value)
-                )
-            )
+            conditions.append(models.FieldCondition(key=key, match=models.MatchValue(value=value)))
 
     return models.Filter(must=conditions) if conditions else None
 

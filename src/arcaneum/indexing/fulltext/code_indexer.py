@@ -48,9 +48,9 @@ def _extract_definitions_worker(
         Tuple of (file_path, list of definition dicts, error message or None)
     """
     # Set low priority for background processing
-    if os.environ.get('ARCANEUM_DISABLE_WORKER_NICE') != '1':
+    if os.environ.get("ARCANEUM_DISABLE_WORKER_NICE") != "1":
         try:
-            if hasattr(os, 'nice'):
+            if hasattr(os, "nice"):
                 os.nice(10)
         except Exception:
             pass
@@ -58,10 +58,11 @@ def _extract_definitions_worker(
     try:
         # Import inside worker to avoid pickling issues
         from .ast_extractor import ASTFunctionExtractor
+
         extractor = ASTFunctionExtractor()
 
         # Read file
-        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
             code = f.read()
 
         # Extract definitions
@@ -70,13 +71,13 @@ def _extract_definitions_worker(
         # Convert CodeDefinition objects to dicts for pickling
         defn_dicts = [
             {
-                'name': d.name,
-                'qualified_name': d.qualified_name,
-                'code_type': d.code_type,
-                'start_line': d.start_line,
-                'end_line': d.end_line,
-                'content': d.content,
-                'file_path': d.file_path,
+                "name": d.name,
+                "qualified_name": d.qualified_name,
+                "code_type": d.code_type,
+                "start_line": d.start_line,
+                "end_line": d.end_line,
+                "content": d.content,
+                "file_path": d.file_path,
             }
             for d in definitions
         ]
@@ -105,12 +106,46 @@ class SourceCodeFullTextIndexer:
 
     # File extensions to index (same as ast_chunker.py for consistency)
     CODE_EXTENSIONS = {
-        '.py', '.java', '.js', '.jsx', '.ts', '.tsx',
-        '.cs', '.go', '.rs', '.c', '.h', '.cpp', '.cc', '.cxx', '.hpp',
-        '.php', '.rb', '.kt', '.kts', '.scala', '.sc', '.swift',
-        '.sh', '.bash', '.zsh', '.r', '.R',
-        '.lua', '.vim', '.el', '.clj', '.ex', '.exs',
-        '.erl', '.hrl', '.hs', '.ml', '.nim', '.pl', '.pm',
+        ".py",
+        ".java",
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".cs",
+        ".go",
+        ".rs",
+        ".c",
+        ".h",
+        ".cpp",
+        ".cc",
+        ".cxx",
+        ".hpp",
+        ".php",
+        ".rb",
+        ".kt",
+        ".kts",
+        ".scala",
+        ".sc",
+        ".swift",
+        ".sh",
+        ".bash",
+        ".zsh",
+        ".r",
+        ".R",
+        ".lua",
+        ".vim",
+        ".el",
+        ".clj",
+        ".ex",
+        ".exs",
+        ".erl",
+        ".hrl",
+        ".hs",
+        ".ml",
+        ".nim",
+        ".pl",
+        ".pm",
     }
 
     def __init__(
@@ -118,7 +153,7 @@ class SourceCodeFullTextIndexer:
         meili_client: FullTextClient,
         index_name: str,
         batch_size: int = 1000,
-        workers: Optional[int] = None
+        workers: Optional[int] = None,
     ):
         """Initialize source code full-text indexer.
 
@@ -153,7 +188,7 @@ class SourceCodeFullTextIndexer:
         input_path: str,
         depth: Optional[int] = None,
         force: bool = False,
-        verbose: bool = False
+        verbose: bool = False,
     ) -> Dict[str, Any]:
         """Index all git repositories in directory to MeiliSearch.
 
@@ -170,14 +205,14 @@ class SourceCodeFullTextIndexer:
             Dict with indexing statistics
         """
         stats = {
-            'total_projects': 0,
-            'indexed_projects': 0,
-            'skipped_projects': 0,
-            'failed_projects': 0,
-            'total_files': 0,
-            'indexed_files': 0,
-            'total_definitions': 0,
-            'errors': [],
+            "total_projects": 0,
+            "indexed_projects": 0,
+            "skipped_projects": 0,
+            "failed_projects": 0,
+            "total_files": 0,
+            "indexed_files": 0,
+            "total_definitions": 0,
+            "errors": [],
         }
 
         # Query MeiliSearch for indexed projects (unless forcing)
@@ -189,7 +224,7 @@ class SourceCodeFullTextIndexer:
 
         # Discover git projects (RDR-005)
         git_projects = self.git_discovery.find_git_projects(input_path, depth)
-        stats['total_projects'] = len(git_projects)
+        stats["total_projects"] = len(git_projects)
 
         if not git_projects:
             logger.info("No git projects found to index")
@@ -206,8 +241,7 @@ class SourceCodeFullTextIndexer:
             transient=False,
         ) as progress:
             task = progress.add_task(
-                "[cyan]Indexing git projects to MeiliSearch",
-                total=len(git_projects)
+                "[cyan]Indexing git projects to MeiliSearch", total=len(git_projects)
             )
 
             for project_root in git_projects:
@@ -215,11 +249,10 @@ class SourceCodeFullTextIndexer:
                     # Extract git metadata
                     git_metadata = self.git_discovery.extract_metadata(project_root)
                     if not git_metadata:
-                        stats['failed_projects'] += 1
-                        stats['errors'].append({
-                            'project': project_root,
-                            'error': 'Failed to extract git metadata'
-                        })
+                        stats["failed_projects"] += 1
+                        stats["errors"].append(
+                            {"project": project_root, "error": "Failed to extract git metadata"}
+                        )
                         progress.update(task, advance=1)
                         continue
 
@@ -235,7 +268,7 @@ class SourceCodeFullTextIndexer:
                             progress.console.print(
                                 f"  [dim]Skipped:[/dim] {identifier} [dim](up to date)[/dim]"
                             )
-                        stats['skipped_projects'] += 1
+                        stats["skipped_projects"] += 1
                         progress.update(task, advance=1)
                         continue
 
@@ -245,14 +278,12 @@ class SourceCodeFullTextIndexer:
                         self.sync.clear_cache()
 
                     # Index project
-                    project_stats = self._index_project(
-                        project_root, git_metadata, identifier
-                    )
+                    project_stats = self._index_project(project_root, git_metadata, identifier)
 
-                    stats['indexed_projects'] += 1
-                    stats['total_files'] += project_stats['total_files']
-                    stats['indexed_files'] += project_stats['indexed_files']
-                    stats['total_definitions'] += project_stats['total_definitions']
+                    stats["indexed_projects"] += 1
+                    stats["total_files"] += project_stats["total_files"]
+                    stats["indexed_files"] += project_stats["indexed_files"]
+                    stats["total_definitions"] += project_stats["total_definitions"]
 
                     if verbose:
                         progress.console.print(
@@ -262,11 +293,8 @@ class SourceCodeFullTextIndexer:
                         )
 
                 except Exception as e:
-                    stats['failed_projects'] += 1
-                    stats['errors'].append({
-                        'project': project_root,
-                        'error': str(e)
-                    })
+                    stats["failed_projects"] += 1
+                    stats["errors"].append({"project": project_root, "error": str(e)})
                     if verbose:
                         progress.console.print(f"  [red]Failed:[/red] {project_root}: {e}")
 
@@ -293,15 +321,15 @@ class SourceCodeFullTextIndexer:
             Dict with project indexing statistics
         """
         stats = {
-            'total_files': 0,
-            'indexed_files': 0,
-            'total_definitions': 0,
-            'errors': [],
+            "total_files": 0,
+            "indexed_files": 0,
+            "total_definitions": 0,
+            "errors": [],
         }
 
         # Get tracked files (RDR-005 pattern)
         code_files = self._get_code_files(project_root)
-        stats['total_files'] = len(code_files)
+        stats["total_files"] = len(code_files)
 
         if not code_files:
             return stats
@@ -327,7 +355,7 @@ class SourceCodeFullTextIndexer:
         code_files: List[str],
         git_metadata: GitMetadata,
         identifier: str,
-        stats: Dict[str, Any]
+        stats: Dict[str, Any],
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """Process files sequentially (original implementation).
 
@@ -346,7 +374,7 @@ class SourceCodeFullTextIndexer:
             try:
                 # Read file content
                 try:
-                    with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
                         code = f.read()
                 except Exception as e:
                     logger.warning(f"Failed to read {file_path}: {e}")
@@ -359,9 +387,9 @@ class SourceCodeFullTextIndexer:
                 for defn in definitions:
                     doc = self._build_document(defn, git_metadata, identifier, file_path)
                     documents.append(doc)
-                    stats['total_definitions'] += 1
+                    stats["total_definitions"] += 1
 
-                stats['indexed_files'] += 1
+                stats["indexed_files"] += 1
 
                 # Upload in batches
                 if len(documents) >= self.batch_size:
@@ -370,7 +398,7 @@ class SourceCodeFullTextIndexer:
 
             except Exception as e:
                 logger.warning(f"Error processing {file_path}: {e}")
-                stats['errors'].append({'file': file_path, 'error': str(e)})
+                stats["errors"].append({"file": file_path, "error": str(e)})
 
         return documents, stats
 
@@ -379,7 +407,7 @@ class SourceCodeFullTextIndexer:
         code_files: List[str],
         git_metadata: GitMetadata,
         identifier: str,
-        stats: Dict[str, Any]
+        stats: Dict[str, Any],
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """Process files in parallel using ProcessPoolExecutor.
 
@@ -417,20 +445,18 @@ class SourceCodeFullTextIndexer:
 
                     if error:
                         logger.warning(f"Error processing {result_path}: {error}")
-                        stats['errors'].append({'file': result_path, 'error': error})
+                        stats["errors"].append({"file": result_path, "error": error})
                         continue
 
                     if defn_dicts:
                         # Convert dicts back to CodeDefinition and build documents
                         for defn_dict in defn_dicts:
                             defn = CodeDefinition(**defn_dict)
-                            doc = self._build_document(
-                                defn, git_metadata, identifier, file_path
-                            )
+                            doc = self._build_document(defn, git_metadata, identifier, file_path)
                             documents.append(doc)
-                            stats['total_definitions'] += 1
+                            stats["total_definitions"] += 1
 
-                        stats['indexed_files'] += 1
+                        stats["indexed_files"] += 1
 
                     # Batch upload
                     if len(documents) >= self.batch_size:
@@ -439,7 +465,7 @@ class SourceCodeFullTextIndexer:
 
                 except Exception as e:
                     logger.warning(f"Error processing {file_path}: {e}")
-                    stats['errors'].append({'file': file_path, 'error': str(e)})
+                    stats["errors"].append({"file": file_path, "error": str(e)})
 
         except KeyboardInterrupt:
             logger.warning("Interrupted - shutting down workers...")
@@ -468,19 +494,12 @@ class SourceCodeFullTextIndexer:
         all_files = self.git_discovery.get_tracked_files(project_root)
 
         # Filter by code extensions
-        code_files = [
-            f for f in all_files
-            if Path(f).suffix.lower() in self.CODE_EXTENSIONS
-        ]
+        code_files = [f for f in all_files if Path(f).suffix.lower() in self.CODE_EXTENSIONS]
 
         return code_files
 
     def _build_document(
-        self,
-        defn: CodeDefinition,
-        git_metadata: GitMetadata,
-        identifier: str,
-        file_path: str
+        self, defn: CodeDefinition, git_metadata: GitMetadata, identifier: str, file_path: str
     ) -> Dict[str, Any]:
         """Build MeiliSearch document from CodeDefinition.
 
@@ -498,47 +517,43 @@ class SourceCodeFullTextIndexer:
         # Generate unique ID: identifier:file_path:qualified_name:start_line
         # Sanitize for MeiliSearch ID constraints (alphanumeric, hyphen, underscore)
         # Note: identifier contains '#' which needs to be replaced
-        sanitized_identifier = re.sub(r'[^a-zA-Z0-9_-]', '_', identifier)[:100]
+        sanitized_identifier = re.sub(r"[^a-zA-Z0-9_-]", "_", identifier)[:100]
         file_rel = os.path.relpath(file_path, git_metadata.project_root)
-        sanitized_path = re.sub(r'[^a-zA-Z0-9_-]', '_', file_rel)[:200]
-        sanitized_name = re.sub(r'[^a-zA-Z0-9_-]', '_', defn.qualified_name)[:100]
+        sanitized_path = re.sub(r"[^a-zA-Z0-9_-]", "_", file_rel)[:200]
+        sanitized_name = re.sub(r"[^a-zA-Z0-9_-]", "_", defn.qualified_name)[:100]
         doc_id = f"{sanitized_identifier}_{sanitized_path}_{sanitized_name}_{defn.start_line}"
-        doc_id = re.sub(r'_+', '_', doc_id)  # Collapse multiple underscores
+        doc_id = re.sub(r"_+", "_", doc_id)  # Collapse multiple underscores
         doc_id = doc_id[:511]  # MeiliSearch ID limit
 
         # Detect programming language
         file_ext = Path(file_path).suffix.lower()
-        language = self.ast_extractor.LANGUAGE_MAP.get(file_ext, 'unknown')
+        language = self.ast_extractor.LANGUAGE_MAP.get(file_ext, "unknown")
 
         return {
             # Primary key
-            'id': doc_id,
+            "id": doc_id,
             **persisted_metadata_fields(),
-
             # Searchable content
-            'content': defn.content,
-            'function_name': defn.name if defn.code_type in ['function', 'method'] else None,
-            'class_name': defn.name if defn.code_type == 'class' else None,
-            'qualified_name': defn.qualified_name,
-            'filename': os.path.basename(file_path),
-
+            "content": defn.content,
+            "function_name": defn.name if defn.code_type in ["function", "method"] else None,
+            "class_name": defn.name if defn.code_type == "class" else None,
+            "qualified_name": defn.qualified_name,
+            "filename": os.path.basename(file_path),
             # Git metadata (from RDR-005 pattern)
-            'git_project_identifier': identifier,
-            'git_project_name': git_metadata.project_name,
-            'git_branch': git_metadata.branch,
-            'git_commit_hash': git_metadata.commit_hash,
-            'git_remote_url': git_metadata.remote_url,
-            'file_path': file_path,
-
+            "git_project_identifier": identifier,
+            "git_project_name": git_metadata.project_name,
+            "git_branch": git_metadata.branch,
+            "git_commit_hash": git_metadata.commit_hash,
+            "git_remote_url": git_metadata.remote_url,
+            "file_path": file_path,
             # Location metadata (function/class-level)
-            'start_line': defn.start_line,
-            'end_line': defn.end_line,
-            'line_count': defn.line_count,
-            'code_type': defn.code_type,
-
+            "start_line": defn.start_line,
+            "end_line": defn.end_line,
+            "line_count": defn.line_count,
+            "code_type": defn.code_type,
             # Language
-            'programming_language': language,
-            'file_extension': file_ext,
+            "programming_language": language,
+            "file_extension": file_ext,
         }
 
     def _upload_batch(self, documents: List[Dict[str, Any]]):
@@ -557,7 +572,7 @@ class SourceCodeFullTextIndexer:
             self.meili_client.add_documents_sync(
                 index_name=self.index_name,
                 documents=documents,
-                timeout_ms=120000  # 2 minutes for large batches
+                timeout_ms=120000,  # 2 minutes for large batches
             )
             logger.debug(f"Uploaded batch of {len(documents)} documents")
         except Exception as e:
@@ -565,10 +580,7 @@ class SourceCodeFullTextIndexer:
             raise
 
     def index_single_project(
-        self,
-        project_root: str,
-        force: bool = False,
-        verbose: bool = False
+        self, project_root: str, force: bool = False, verbose: bool = False
     ) -> Dict[str, Any]:
         """Index a single git repository.
 
@@ -584,24 +596,23 @@ class SourceCodeFullTextIndexer:
             Dict with indexing statistics
         """
         stats = {
-            'indexed_projects': 0,
-            'skipped_projects': 0,
-            'failed_projects': 0,
-            'total_files': 0,
-            'indexed_files': 0,
-            'total_definitions': 0,
-            'errors': [],
+            "indexed_projects": 0,
+            "skipped_projects": 0,
+            "failed_projects": 0,
+            "total_files": 0,
+            "indexed_files": 0,
+            "total_definitions": 0,
+            "errors": [],
         }
 
         try:
             # Extract git metadata
             git_metadata = self.git_discovery.extract_metadata(project_root)
             if not git_metadata:
-                stats['failed_projects'] = 1
-                stats['errors'].append({
-                    'project': project_root,
-                    'error': 'Failed to extract git metadata'
-                })
+                stats["failed_projects"] = 1
+                stats["errors"].append(
+                    {"project": project_root, "error": "Failed to extract git metadata"}
+                )
                 return stats
 
             identifier = git_metadata.identifier
@@ -612,7 +623,7 @@ class SourceCodeFullTextIndexer:
             )
 
             if not needs_indexing:
-                stats['skipped_projects'] = 1
+                stats["skipped_projects"] = 1
                 return stats
 
             # Delete old documents if reindexing
@@ -622,22 +633,17 @@ class SourceCodeFullTextIndexer:
                 self.sync.clear_cache()
 
             # Index project (without progress bar for single project)
-            project_stats = self._index_project(
-                project_root, git_metadata, identifier
-            )
+            project_stats = self._index_project(project_root, git_metadata, identifier)
 
-            stats['indexed_projects'] = 1
-            stats['total_files'] = project_stats['total_files']
-            stats['indexed_files'] = project_stats['indexed_files']
-            stats['total_definitions'] = project_stats['total_definitions']
-            stats['errors'].extend(project_stats.get('errors', []))
+            stats["indexed_projects"] = 1
+            stats["total_files"] = project_stats["total_files"]
+            stats["indexed_files"] = project_stats["indexed_files"]
+            stats["total_definitions"] = project_stats["total_definitions"]
+            stats["errors"].extend(project_stats.get("errors", []))
 
         except Exception as e:
-            stats['failed_projects'] = 1
-            stats['errors'].append({
-                'project': project_root,
-                'error': str(e)
-            })
+            stats["failed_projects"] = 1
+            stats["errors"].append({"project": project_root, "error": str(e)})
 
         return stats
 

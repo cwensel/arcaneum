@@ -44,7 +44,7 @@ class DualIndexer:
         meili_client: FullTextClient,
         collection_name: str,
         index_name: str,
-        batch_size: int = DEFAULT_BATCH_SIZE
+        batch_size: int = DEFAULT_BATCH_SIZE,
     ):
         """Initialize dual indexer.
 
@@ -61,11 +61,7 @@ class DualIndexer:
         self.index_name = index_name
         self.batch_size = batch_size
 
-    def index_batch(
-        self,
-        documents: List[DualIndexDocument],
-        wait: bool = True
-    ) -> Tuple[int, int]:
+    def index_batch(self, documents: List[DualIndexDocument], wait: bool = True) -> Tuple[int, int]:
         """Index a batch of documents to both Qdrant and MeiliSearch.
 
         Args:
@@ -101,12 +97,8 @@ class DualIndexer:
         qdrant_points = [to_qdrant_point(doc) for doc in documents]
         qdrant_count = 0
         for i in range(0, len(qdrant_points), self.batch_size):
-            batch = qdrant_points[i:i + self.batch_size]
-            self.qdrant.upsert(
-                collection_name=self.collection_name,
-                points=batch,
-                wait=wait
-            )
+            batch = qdrant_points[i : i + self.batch_size]
+            self.qdrant.upsert(collection_name=self.collection_name, points=batch, wait=wait)
             qdrant_count += len(batch)
         logger.debug(f"Indexed {qdrant_count} points to Qdrant")
 
@@ -116,14 +108,13 @@ class DualIndexer:
 
         # Split into batches
         batches = [
-            meili_docs[i:i + self.batch_size]
-            for i in range(0, len(meili_docs), self.batch_size)
+            meili_docs[i : i + self.batch_size] for i in range(0, len(meili_docs), self.batch_size)
         ]
 
         if wait and len(batches) > 1:
             # Use parallel batch upload for multiple batches
             result = self.meili.add_documents_batch_parallel(self.index_name, batches)
-            meili_count = result['total_documents']
+            meili_count = result["total_documents"]
         else:
             # Single batch or async mode
             for batch in batches:
@@ -137,11 +128,7 @@ class DualIndexer:
 
         return qdrant_count, meili_count
 
-    def index_single(
-        self,
-        document: DualIndexDocument,
-        wait: bool = True
-    ) -> Tuple[int, int]:
+    def index_single(self, document: DualIndexDocument, wait: bool = True) -> Tuple[int, int]:
         """Index a single document to both systems.
 
         Convenience method for single document indexing.
@@ -172,13 +159,8 @@ class DualIndexer:
         self.qdrant.delete(
             collection_name=self.collection_name,
             points_selector=Filter(
-                must=[
-                    FieldCondition(
-                        key="file_path",
-                        match=MatchValue(value=file_path)
-                    )
-                ]
-            )
+                must=[FieldCondition(key="file_path", match=MatchValue(value=file_path))]
+            ),
         )
 
         # MeiliSearch doesn't support filter-based deletion easily
@@ -207,11 +189,10 @@ class DualIndexer:
             points_selector=Filter(
                 must=[
                     FieldCondition(
-                        key="git_project_identifier",
-                        match=MatchValue(value=project_identifier)
+                        key="git_project_identifier", match=MatchValue(value=project_identifier)
                     )
                 ]
-            )
+            ),
         )
 
         # MeiliSearch filter deletion would require search + delete by IDs

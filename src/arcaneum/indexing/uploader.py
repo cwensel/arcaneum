@@ -36,7 +36,7 @@ class PDFBatchUploader:
         batch_size: int = 300,
         parallel_workers: int = 4,
         ocr_enabled: bool = True,
-        ocr_language: str = 'eng',
+        ocr_language: str = "eng",
         ocr_threshold: int = 100,
         ocr_workers: Optional[int] = None,
         embedding_workers: int = 4,
@@ -95,7 +95,7 @@ class PDFBatchUploader:
             requested_workers=max(1, file_workers),
             estimated_memory_per_worker_mb=memory_per_worker_mb,
             max_memory_gb=max_memory_gb,
-            min_workers=1
+            min_workers=1,
         )
         self.file_workers = safe_file_workers
 
@@ -127,7 +127,7 @@ class PDFBatchUploader:
                 image_scale=2.0,
                 ocr_workers=ocr_workers,
                 max_memory_gb=max_memory_gb,
-                page_timeout=ocr_page_timeout
+                page_timeout=ocr_page_timeout,
             )
         else:
             self.ocr = None
@@ -143,12 +143,12 @@ class PDFBatchUploader:
         pdf_path: Path,
         collection_name: str,
         model_name: str,
-        chunker: 'PDFChunker',
+        chunker: "PDFChunker",
         point_id_start: int,
         verbose: bool,
         pdf_idx: int,
         total_pdfs: int,
-        force_reindex: bool = False
+        force_reindex: bool = False,
     ) -> Tuple[List[PointStruct], int, Optional[str], Dict]:
         """Process a single PDF: extract, OCR, chunk, embed, create points.
 
@@ -167,9 +167,9 @@ class PDFBatchUploader:
             Tuple of (points list, chunk count, error message or None, OCR stats)
         """
         ocr_stats = {
-            'ocr_pages_processed': 0,
-            'ocr_pages_failed': 0,
-            'ocr_confidence': None,
+            "ocr_pages_processed": 0,
+            "ocr_pages_failed": 0,
+            "ocr_confidence": None,
         }
         try:
             # Stage 0: Computing hashes (two-pass sync)
@@ -185,7 +185,11 @@ class PDFBatchUploader:
             # Stage 0.5: Check if content exists (by file_hash) - if so, handle as metadata update, not re-index
             # This prevents re-indexing files that just need metadata migration (file_quick_hashes dict)
             # Skip this check if force_reindex is True - we want to reindex regardless
-            old_paths = self.sync.find_file_by_content_hash(collection_name, file_hash) if not force_reindex else []
+            old_paths = (
+                self.sync.find_file_by_content_hash(collection_name, file_hash)
+                if not force_reindex
+                else []
+            )
             if old_paths:
                 # Check if any old paths still exist on filesystem
                 existing_old_paths = self.sync.filter_existing_paths(old_paths)
@@ -194,11 +198,10 @@ class PDFBatchUploader:
                 if not existing_old_paths:
                     # None of the old paths exist - this is a rename, not a duplicate
                     old_path = old_paths[0]  # Use the primary (first) path as the source
-                    new_metadata = {
-                        'filename': pdf_path.name,
-                        'quick_hash': quick_hash
-                    }
-                    result = self.sync.handle_renames(collection_name, [(old_path, new_path, new_metadata)])
+                    new_metadata = {"filename": pdf_path.name, "quick_hash": quick_hash}
+                    result = self.sync.handle_renames(
+                        collection_name, [(old_path, new_path, new_metadata)]
+                    )
 
                     if verbose:
                         print(f"{timestamp()}   ↪ File renamed/moved")
@@ -206,14 +209,19 @@ class PDFBatchUploader:
                         print(f"{timestamp()}      New location: {new_path}")
                         print(f"{timestamp()}      Updated {result} chunks")
                     elif not verbose:
-                        print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → renamed (updated {result} chunks){' '*20}", flush=True)
+                        print(
+                            f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → renamed (updated {result} chunks){' ' * 20}",
+                            flush=True,
+                        )
 
                     return ([], 0, None, ocr_stats)
 
                 # Content already indexed - always call add_alternate_path to ensure metadata is complete
                 # This handles both new duplicate paths and migration of existing paths to new dict format
                 path_already_tracked = new_path in old_paths
-                result = self.sync.add_alternate_path(collection_name, file_hash, new_path, quick_hash)
+                result = self.sync.add_alternate_path(
+                    collection_name, file_hash, new_path, quick_hash
+                )
 
                 if verbose:
                     if not path_already_tracked:
@@ -229,8 +237,13 @@ class PDFBatchUploader:
                         # Everything already up to date
                         print(f"{timestamp()}   ✓ Already indexed with complete metadata")
                 elif not verbose:
-                    status = "alternate path added" if not path_already_tracked else "already tracked"
-                    print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → {status}{' '*20}", flush=True)
+                    status = (
+                        "alternate path added" if not path_already_tracked else "already tracked"
+                    )
+                    print(
+                        f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → {status}{' ' * 20}",
+                        flush=True,
+                    )
 
                 return ([], 0, None, ocr_stats)
 
@@ -245,14 +258,18 @@ class PDFBatchUploader:
 
             # Stage 1: Extract text
             if not verbose:
-                print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → extracting{' '*20}", end="", flush=True)
+                print(
+                    f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → extracting{' ' * 20}",
+                    end="",
+                    flush=True,
+                )
             else:
                 print(f"{timestamp()}   → extracting text", flush=True)
 
             if not verbose:
                 # Suppress PyMuPDF warnings to stderr
                 stderr_fd = sys.stderr.fileno()
-                with open(os.devnull, 'w') as devnull:
+                with open(os.devnull, "w") as devnull:
                     old_stderr = os.dup(stderr_fd)
                     os.dup2(devnull.fileno(), stderr_fd)
                     try:
@@ -271,13 +288,17 @@ class PDFBatchUploader:
             run_ocr = self.ocr_enabled and len(text) < self.ocr_threshold
             if not run_ocr and self.ocr_enabled and text:
                 from .pdf.quality import needs_ocr as check_needs_ocr
+
                 if check_needs_ocr(text):
                     run_ocr = True
                     if verbose:
-                        print(f"{timestamp()}   → garbled text detected, triggering OCR", flush=True)
+                        print(
+                            f"{timestamp()}   → garbled text detected, triggering OCR", flush=True
+                        )
 
             if run_ocr:
                 import pymupdf as fitz
+
                 try:
                     temp_doc = fitz.open(pdf_path)
                     page_count = len(temp_doc)
@@ -286,7 +307,11 @@ class PDFBatchUploader:
                     page_count = 0
 
                 if not verbose:
-                    print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → OCR ({page_count}p){' '*20}", end="", flush=True)
+                    print(
+                        f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → OCR ({page_count}p){' ' * 20}",
+                        end="",
+                        flush=True,
+                    )
                 else:
                     print(f"{timestamp()}   → running OCR ({page_count} pages)", flush=True)
 
@@ -298,9 +323,9 @@ class PDFBatchUploader:
                     ocr_meta,
                 )
                 ocr_stats = {
-                    'ocr_pages_processed': extract_meta.get('ocr_pages_processed', 0),
-                    'ocr_pages_failed': extract_meta.get('ocr_pages_failed', 0),
-                    'ocr_confidence': extract_meta.get('ocr_confidence'),
+                    "ocr_pages_processed": extract_meta.get("ocr_pages_processed", 0),
+                    "ocr_pages_failed": extract_meta.get("ocr_pages_failed", 0),
+                    "ocr_confidence": extract_meta.get("ocr_confidence"),
                 }
 
                 if verbose:
@@ -312,46 +337,62 @@ class PDFBatchUploader:
             # Chunk text with file metadata (two-pass sync support)
             file_path_abs = str(pdf_path.absolute())
             payload_extract_meta = {
-                key: value for key, value in extract_meta.items() if key != 'ocr_pages'
+                key: value for key, value in extract_meta.items() if key != "ocr_pages"
             }
             base_metadata = {
-                'filename': pdf_path.name,
-                'file_path': file_path_abs,  # Primary path (always store absolute path)
-                'file_paths': [file_path_abs],  # All locations with this content (multi-path tracking)
-                'file_quick_hashes': {file_path_abs: quick_hash},  # Map of path → quick_hash for Pass 1
-                'quick_hash': quick_hash,  # Pass 1: Fast metadata-based hash (mtime+size) - kept for compatibility
-                'file_hash': file_hash,     # Pass 2: Full content hash (for deep verification)
-                'source_hash': file_hash,
-                'chunking_version': 'pdf:v1',
-                'file_size': pdf_path.stat().st_size,
-                'store_type': 'pdf',
-                **payload_extract_meta
+                "filename": pdf_path.name,
+                "file_path": file_path_abs,  # Primary path (always store absolute path)
+                "file_paths": [
+                    file_path_abs
+                ],  # All locations with this content (multi-path tracking)
+                "file_quick_hashes": {
+                    file_path_abs: quick_hash
+                },  # Map of path → quick_hash for Pass 1
+                "quick_hash": quick_hash,  # Pass 1: Fast metadata-based hash (mtime+size) - kept for compatibility
+                "file_hash": file_hash,  # Pass 2: Full content hash (for deep verification)
+                "source_hash": file_hash,
+                "chunking_version": "pdf:v1",
+                "file_size": pdf_path.stat().st_size,
+                "store_type": "pdf",
+                **payload_extract_meta,
             }
 
             # Stage 3: Chunking
             if not verbose:
-                print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → chunking ({len(text)} chars){' '*15}", end="", flush=True)
+                print(
+                    f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → chunking ({len(text)} chars){' ' * 15}",
+                    end="",
+                    flush=True,
+                )
             else:
                 print(f"{timestamp()}   → chunking ({len(text)} chars)", flush=True)
 
             chunks = chunker.chunk(text, base_metadata)
             file_chunk_count = len(chunks)
             for chunk in chunks:
-                chunk.metadata['chunk_count'] = file_chunk_count
+                chunk.metadata["chunk_count"] = file_chunk_count
 
             if verbose:
                 print(f"{timestamp()}      created {file_chunk_count} chunks", flush=True)
 
             # Stage 4: Embedding
             texts = [chunk.text for chunk in chunks]
-            total_batches = (file_chunk_count + self.embedding_batch_size - 1) // self.embedding_batch_size
+            total_batches = (
+                file_chunk_count + self.embedding_batch_size - 1
+            ) // self.embedding_batch_size
             embedding_ts = timestamp()  # Capture timestamp at start of embedding
 
             if not verbose:
-                print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → embedding ({file_chunk_count} chunks){' '*15}", end="", flush=True)
+                print(
+                    f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → embedding ({file_chunk_count} chunks){' ' * 15}",
+                    end="",
+                    flush=True,
+                )
             else:
                 # Print initial line without newline so we can update it in-place
-                print(f"{embedding_ts}   → embedding ({file_chunk_count} chunks)", end="", flush=True)
+                print(
+                    f"{embedding_ts}   → embedding ({file_chunk_count} chunks)", end="", flush=True
+                )
 
             # Progress callback for verbose mode - updates line in-place with ETA
             def embedding_progress(batch_idx: int, total_batches: int):
@@ -365,7 +406,11 @@ class PDFBatchUploader:
                     else:
                         progress = f"[0/{total_batches} batches]"
                     # \r returns to line start, spaces clear previous longer text
-                    print(f"\r{embedding_ts}   → embedding ({file_chunk_count} chunks) {progress}    ", end="", flush=True)
+                    print(
+                        f"\r{embedding_ts}   → embedding ({file_chunk_count} chunks) {progress}    ",
+                        end="",
+                        flush=True,
+                    )
 
             # Use shared embedding client (arcaneum-q9ak)
             # Single client shared across workers prevents duplicate model loading.
@@ -384,23 +429,28 @@ class PDFBatchUploader:
                 def on_embed_batch(batch_idx: int, start_idx: int, batch_embeddings):
                     nonlocal point_id, uploaded_count
                     # Get corresponding chunks for this batch
-                    batch_chunks = chunks[start_idx:start_idx + len(batch_embeddings)]
+                    batch_chunks = chunks[start_idx : start_idx + len(batch_embeddings)]
                     # Create and upload points immediately
                     points = []
                     for chunk, embedding in zip(batch_chunks, batch_embeddings):
-                        points.append(PointStruct(
-                            id=point_id,
-                            vector={model_name: embedding},
-                            payload={
-                                **persisted_metadata_fields(),
-                                'text': chunk.text,
-                                **chunk.metadata
-                            }
-                        ))
+                        points.append(
+                            PointStruct(
+                                id=point_id,
+                                vector={model_name: embedding},
+                                payload={
+                                    **persisted_metadata_fields(),
+                                    "text": chunk.text,
+                                    **chunk.metadata,
+                                },
+                            )
+                        )
                         point_id += 1
                     # Upload batch
                     if verbose:
-                        print(f"\n{timestamp()}   → uploading batch ({len(points)} chunks, {uploaded_count}/{file_chunk_count} total)", flush=True)
+                        print(
+                            f"\n{timestamp()}   → uploading batch ({len(points)} chunks, {uploaded_count}/{file_chunk_count} total)",
+                            flush=True,
+                        )
                     self._upload_batch(collection_name, points)
                     uploaded_count += len(points)
 
@@ -416,14 +466,19 @@ class PDFBatchUploader:
                     timeout=self.embedding_timeout,
                     progress_callback=embedding_progress if verbose else None,
                     on_batch_complete=on_embed_batch,
-                    accumulate=False
+                    accumulate=False,
                 )
                 embedding_elapsed = time.time() - embedding_start_time
 
                 if verbose:
                     # Show final batch count, then newline and summary
-                    print(f"\r{embedding_ts}   → embedding ({file_chunk_count} chunks) [{total_batches}/{total_batches} batches]    ")
-                    print(f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed/total_batches:.2f}s/batch)", flush=True)
+                    print(
+                        f"\r{embedding_ts}   → embedding ({file_chunk_count} chunks) [{total_batches}/{total_batches} batches]    "
+                    )
+                    print(
+                        f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed / total_batches:.2f}s/batch)",
+                        flush=True,
+                    )
 
                 # Memory cleanup (streaming mode)
                 # Release large data structures and clear GPU cache between PDFs
@@ -441,14 +496,19 @@ class PDFBatchUploader:
                     max_workers=self.embedding_workers,
                     batch_size=self.embedding_batch_size,
                     timeout=self.embedding_timeout,
-                    progress_callback=embedding_progress if verbose else None
+                    progress_callback=embedding_progress if verbose else None,
                 )
                 embedding_elapsed = time.time() - embedding_start_time
 
                 if verbose:
                     # Show final batch count, then newline and summary
-                    print(f"\r{embedding_ts}   → embedding ({file_chunk_count} chunks) [{total_batches}/{total_batches} batches]    ")
-                    print(f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed/total_batches:.2f}s/batch)", flush=True)
+                    print(
+                        f"\r{embedding_ts}   → embedding ({file_chunk_count} chunks) [{total_batches}/{total_batches} batches]    "
+                    )
+                    print(
+                        f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed / total_batches:.2f}s/batch)",
+                        flush=True,
+                    )
 
                 # Stage 5: Create and upload points in batches
                 # This avoids holding all points in memory at once
@@ -461,9 +521,9 @@ class PDFBatchUploader:
                         vector={model_name: embedding},
                         payload={
                             **persisted_metadata_fields(),
-                            'text': chunk.text,
-                            **chunk.metadata
-                        }
+                            "text": chunk.text,
+                            **chunk.metadata,
+                        },
                     )
                     points_batch.append(point)
                     point_id += 1
@@ -471,9 +531,16 @@ class PDFBatchUploader:
                     # Upload batch when threshold reached
                     if len(points_batch) >= UPLOAD_BATCH_SIZE:
                         if not verbose:
-                            print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → uploading batch ({uploaded_count}/{file_chunk_count}){' '*15}", end="", flush=True)
+                            print(
+                                f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → uploading batch ({uploaded_count}/{file_chunk_count}){' ' * 15}",
+                                end="",
+                                flush=True,
+                            )
                         else:
-                            print(f"{timestamp()}   → uploading batch ({len(points_batch)} chunks, {uploaded_count}/{file_chunk_count} total)", flush=True)
+                            print(
+                                f"{timestamp()}   → uploading batch ({len(points_batch)} chunks, {uploaded_count}/{file_chunk_count} total)",
+                                flush=True,
+                            )
 
                         self._upload_batch(collection_name, points_batch)
                         uploaded_count += len(points_batch)
@@ -484,9 +551,16 @@ class PDFBatchUploader:
                 # Upload remaining points
                 if points_batch:
                     if not verbose:
-                        print(f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → uploading final batch ({uploaded_count}/{file_chunk_count}){' '*15}", end="", flush=True)
+                        print(
+                            f"\r[{pdf_idx}/{total_pdfs}] {pdf_path.name} → uploading final batch ({uploaded_count}/{file_chunk_count}){' ' * 15}",
+                            end="",
+                            flush=True,
+                        )
                     else:
-                        print(f"{timestamp()}   → uploading final batch ({len(points_batch)} chunks)", flush=True)
+                        print(
+                            f"{timestamp()}   → uploading final batch ({len(points_batch)} chunks)",
+                            flush=True,
+                        )
 
                     self._upload_batch(collection_name, points_batch)
                     uploaded_count += len(points_batch)
@@ -507,11 +581,14 @@ class PDFBatchUploader:
         except RuntimeError as e:
             # Check if this is a GPU OOM error
             error_msg = str(e)
-            if any(oom_marker in error_msg for oom_marker in [
-                "MPS backend out of memory",
-                "CUDA out of memory",
-                "out of memory"
-            ]):
+            if any(
+                oom_marker in error_msg
+                for oom_marker in [
+                    "MPS backend out of memory",
+                    "CUDA out of memory",
+                    "out of memory",
+                ]
+            ):
                 # Return special marker for GPU OOM that CLI can detect
                 return ([], 0, f"GPU_OOM: {error_msg}", ocr_stats)
             else:
@@ -532,7 +609,7 @@ class PDFBatchUploader:
         force_reindex: bool = False,
         randomize: bool = False,
         verbose: bool = False,
-        file_list: List[Path] = None
+        file_list: List[Path] = None,
     ) -> Dict:
         """Index PDFs in directory with incremental sync and optional parallel processing.
 
@@ -550,7 +627,7 @@ class PDFBatchUploader:
             Statistics dict with files, chunks, errors counts
         """
         # Suppress tokenizers fork warning
-        os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
+        os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
         # Start CPU monitoring (RDR-013 Phase 1)
         cpu_monitor = create_monitor()
@@ -561,9 +638,9 @@ class PDFBatchUploader:
         chunker = PDFChunker(
             model_config=model_config,
             overlap_percent=0.15,  # 15% overlap (NVIDIA recommendation)
-            late_chunking_enabled=model_config.get('late_chunking', False),
+            late_chunking_enabled=model_config.get("late_chunking", False),
             min_doc_tokens=2000,
-            max_doc_tokens=8000
+            max_doc_tokens=8000,
         )
 
         # Discover all PDFs (from file_list or directory scanning)
@@ -588,14 +665,20 @@ class PDFBatchUploader:
             if verbose:
                 print(f"{timestamp()} 🔍 Scanning collection for existing files...")
 
-            pdf_files, already_indexed = self.sync.get_unindexed_files(collection_name, all_pdf_files)
+            pdf_files, already_indexed = self.sync.get_unindexed_files(
+                collection_name, all_pdf_files
+            )
 
-            logger.info(f"Incremental sync: {len(pdf_files)} need processing, "
-                       f"{len(already_indexed)} already indexed")
+            logger.info(
+                f"Incremental sync: {len(pdf_files)} need processing, "
+                f"{len(already_indexed)} already indexed"
+            )
 
             if verbose:
-                print(f"{timestamp()} 📊 Found {len(all_pdf_files)} PDFs: {len(pdf_files)} need processing, "
-                      f"{len(already_indexed)} already indexed")
+                print(
+                    f"{timestamp()} 📊 Found {len(all_pdf_files)} PDFs: {len(pdf_files)} need processing, "
+                    f"{len(already_indexed)} already indexed"
+                )
                 print(f"{timestamp()}    (duplicate content will be tracked via file_paths array)")
 
         if not pdf_files:
@@ -616,6 +699,7 @@ class PDFBatchUploader:
         # Randomize file order if requested (useful for parallel indexing)
         if randomize:
             import random
+
             random.shuffle(pdf_files)
             if verbose:
                 print(f"{timestamp()} 🔀 Randomized file processing order")
@@ -662,7 +746,7 @@ class PDFBatchUploader:
                             verbose,
                             pdf_idx,
                             total_pdfs,
-                            force_reindex
+                            force_reindex,
                         )
                         future_to_pdf[future] = (pdf_idx, pdf_path)
 
@@ -670,7 +754,9 @@ class PDFBatchUploader:
                     for future in as_completed(future_to_pdf):
                         pdf_idx, pdf_path = future_to_pdf[future]
                         try:
-                            points, file_chunk_count, error, ocr_stats = future.result(timeout=self.pdf_timeout)
+                            points, file_chunk_count, error, ocr_stats = future.result(
+                                timeout=self.pdf_timeout
+                            )
                         except TimeoutError:
                             error = f"TimeoutError: PDF processing exceeded {self.pdf_timeout}s"
                             points, file_chunk_count = [], 0
@@ -686,25 +772,41 @@ class PDFBatchUploader:
                                 print("\n" + "=" * 80, file=sys.stderr)
                                 print("❌ GPU OUT OF MEMORY", file=sys.stderr)
                                 print("=" * 80, file=sys.stderr)
-                                print(f"\nThe GPU ran out of memory while processing: {pdf_path.name}", file=sys.stderr)
-                                print(f"Current batch size: {self.embedding_batch_size}", file=sys.stderr)
+                                print(
+                                    f"\nThe GPU ran out of memory while processing: {pdf_path.name}",
+                                    file=sys.stderr,
+                                )
+                                print(
+                                    f"Current batch size: {self.embedding_batch_size}",
+                                    file=sys.stderr,
+                                )
                                 print("\nTry one of these solutions:", file=sys.stderr)
-                                print(f"  1. Reduce batch size: --embedding-batch-size 50", file=sys.stderr)
-                                print(f"  2. Use CPU instead: --no-gpu (2-3x slower but uses system RAM)", file=sys.stderr)
+                                print(
+                                    f"  1. Reduce batch size: --embedding-batch-size 50",
+                                    file=sys.stderr,
+                                )
+                                print(
+                                    f"  2. Use CPU instead: --no-gpu (2-3x slower but uses system RAM)",
+                                    file=sys.stderr,
+                                )
                                 print(f"  3. Process fewer files at once", file=sys.stderr)
                                 print(f"\nTechnical details:", file=sys.stderr)
                                 print(f"  {oom_details}", file=sys.stderr)
                                 print("=" * 80 + "\n", file=sys.stderr)
 
                                 # Raise exception to stop processing immediately
-                                raise RuntimeError(f"GPU out of memory. See error message above for solutions.")
+                                raise RuntimeError(
+                                    f"GPU out of memory. See error message above for solutions."
+                                )
 
                             # Show error (non-OOM)
                             if not verbose:
                                 status_line = f"[{pdf_idx}/{total_pdfs}] {pdf_path.name} ✗ ({error.split(':')[0]})"
                                 print(f"\r{status_line:<80}")
                             else:
-                                print(f"{timestamp()}   ✗ ERROR: {error}", file=sys.stderr, flush=True)
+                                print(
+                                    f"{timestamp()}   ✗ ERROR: {error}", file=sys.stderr, flush=True
+                                )
                             stats["errors"] += 1
                         else:
                             # Points are already uploaded via streaming (points list will be empty)
@@ -719,7 +821,10 @@ class PDFBatchUploader:
                                     status_line = f"[{pdf_idx}/{total_pdfs}] {pdf_path.name} ✓ ({file_chunk_count} chunks)"
                                     print(f"\r{status_line:<80}")
                                 else:
-                                    print(f"{timestamp()}   ✓ complete ({file_chunk_count} chunks)", flush=True)
+                                    print(
+                                        f"{timestamp()}   ✓ complete ({file_chunk_count} chunks)",
+                                        flush=True,
+                                    )
 
             else:
                 # Sequential mode: Process PDFs one at a time
@@ -733,7 +838,7 @@ class PDFBatchUploader:
                         verbose,
                         pdf_idx,
                         total_pdfs,
-                        force_reindex
+                        force_reindex,
                     )
 
                     if error:
@@ -746,18 +851,31 @@ class PDFBatchUploader:
                             print("\n" + "=" * 80, file=sys.stderr)
                             print("❌ GPU OUT OF MEMORY", file=sys.stderr)
                             print("=" * 80, file=sys.stderr)
-                            print(f"\nThe GPU ran out of memory while processing: {pdf_path.name}", file=sys.stderr)
-                            print(f"Current batch size: {self.embedding_batch_size}", file=sys.stderr)
+                            print(
+                                f"\nThe GPU ran out of memory while processing: {pdf_path.name}",
+                                file=sys.stderr,
+                            )
+                            print(
+                                f"Current batch size: {self.embedding_batch_size}", file=sys.stderr
+                            )
                             print("\nTry one of these solutions:", file=sys.stderr)
-                            print(f"  1. Reduce batch size: --embedding-batch-size 50", file=sys.stderr)
-                            print(f"  2. Use CPU instead: --no-gpu (2-3x slower but uses system RAM)", file=sys.stderr)
+                            print(
+                                f"  1. Reduce batch size: --embedding-batch-size 50",
+                                file=sys.stderr,
+                            )
+                            print(
+                                f"  2. Use CPU instead: --no-gpu (2-3x slower but uses system RAM)",
+                                file=sys.stderr,
+                            )
                             print(f"  3. Process fewer files at once", file=sys.stderr)
                             print(f"\nTechnical details:", file=sys.stderr)
                             print(f"  {oom_details}", file=sys.stderr)
                             print("=" * 80 + "\n", file=sys.stderr)
 
                             # Raise exception to stop processing immediately
-                            raise RuntimeError(f"GPU out of memory. See error message above for solutions.")
+                            raise RuntimeError(
+                                f"GPU out of memory. See error message above for solutions."
+                            )
 
                         # Show error (non-OOM)
                         if not verbose:
@@ -780,7 +898,10 @@ class PDFBatchUploader:
                                 status_line = f"[{pdf_idx}/{total_pdfs}] {pdf_path.name} ✓ ({file_chunk_count} chunks)"
                                 print(f"\r{status_line:<80}")
                             else:
-                                print(f"{timestamp()}   ✓ complete ({file_chunk_count} chunks)", flush=True)
+                                print(
+                                    f"{timestamp()}   ✓ complete ({file_chunk_count} chunks)",
+                                    flush=True,
+                                )
 
         except KeyboardInterrupt:
             # Let the signal handler in CLI handle it
@@ -801,27 +922,31 @@ class PDFBatchUploader:
             if cpu_monitor:
                 logger.info("")
                 cpu_stats = cpu_monitor.get_stats()
-                logger.info(f"CPU usage: {cpu_stats['cpu_percent']:.1f}% total ({cpu_stats['cpu_percent_per_core']:.1f}% per core)")
-                logger.info(f"Threads: {cpu_stats['num_threads']} | Cores: {cpu_stats['num_cores']}")
+                logger.info(
+                    f"CPU usage: {cpu_stats['cpu_percent']:.1f}% total ({cpu_stats['cpu_percent_per_core']:.1f}% per core)"
+                )
+                logger.info(
+                    f"Threads: {cpu_stats['num_threads']} | Cores: {cpu_stats['num_cores']}"
+                )
                 logger.info(f"Elapsed: {cpu_stats['elapsed_time']:.1f}s")
 
             logger.info("=" * 60)
         else:
             # Normal mode: clean summary
             print(f"✅ Indexed {stats['files']} PDFs → {stats['chunks']} chunks")
-            if stats['errors'] > 0:
+            if stats["errors"] > 0:
                 print(f"⚠️  {stats['errors']} errors")
 
             # Show CPU stats in compact mode (RDR-013 Phase 1)
             if cpu_monitor:
                 print(f"ℹ️  {cpu_monitor.get_summary()}")
 
-        if stats['ocr_pdf_count']:
-            stats['ocr_confidence'] = stats['ocr_confidence_sum'] / stats['ocr_pdf_count']
+        if stats["ocr_pdf_count"]:
+            stats["ocr_confidence"] = stats["ocr_confidence_sum"] / stats["ocr_pdf_count"]
         else:
-            stats['ocr_confidence'] = 0.0
-        del stats['ocr_confidence_sum']
-        del stats['ocr_pdf_count']
+            stats["ocr_confidence"] = 0.0
+        del stats["ocr_confidence_sum"]
+        del stats["ocr_pdf_count"]
 
         return stats
 
@@ -829,13 +954,13 @@ class PDFBatchUploader:
         """Accumulate per-file OCR stats for CLI JSON output."""
         if not ocr_stats:
             return
-        processed = ocr_stats.get('ocr_pages_processed', 0)
-        failed = ocr_stats.get('ocr_pages_failed', 0)
-        stats['ocr_pages_processed'] += processed
-        stats['ocr_pages_failed'] += failed
-        if ocr_stats.get('ocr_confidence') is not None:
-            stats['ocr_confidence_sum'] += ocr_stats['ocr_confidence']
-            stats['ocr_pdf_count'] += 1
+        processed = ocr_stats.get("ocr_pages_processed", 0)
+        failed = ocr_stats.get("ocr_pages_failed", 0)
+        stats["ocr_pages_processed"] += processed
+        stats["ocr_pages_failed"] += failed
+        if ocr_stats.get("ocr_confidence") is not None:
+            stats["ocr_confidence_sum"] += ocr_stats["ocr_confidence"]
+            stats["ocr_pdf_count"] += 1
 
     def _get_next_point_id(self, collection_name: str) -> int:
         """Get next available point ID for collection."""
@@ -847,9 +972,11 @@ class PDFBatchUploader:
 
     @retry(
         stop=stop_after_attempt(3),  # Reduced from 5 (arcaneum-6pvk: reduce retry overhead)
-        wait=wait_exponential(multiplier=1, min=1, max=5),  # Reduced: 1-5s instead of 2-10s (arcaneum-6pvk)
+        wait=wait_exponential(
+            multiplier=1, min=1, max=5
+        ),  # Reduced: 1-5s instead of 2-10s (arcaneum-6pvk)
         retry=retry_if_not_exception_type(KeyboardInterrupt),  # Don't retry on Ctrl+C
-        reraise=True
+        reraise=True,
     )
     def _upload_batch(self, collection_name: str, points: List[PointStruct]):
         """Upload batch with exponential backoff retry and verification."""
@@ -860,10 +987,12 @@ class PDFBatchUploader:
                 batch_size=self.batch_size,
                 parallel=self.parallel_workers,
                 max_retries=1,  # Reduced from 3 (arcaneum-6pvk: outer retry handles this)
-                wait=True
+                wait=True,
             )
 
-            logger.debug(f"Batch uploaded: {len(points)} points, status: {result.status if hasattr(result, 'status') else 'unknown'}")
+            logger.debug(
+                f"Batch uploaded: {len(points)} points, status: {result.status if hasattr(result, 'status') else 'unknown'}"
+            )
 
             # Verify upload using same query method as Pass 1 (filter by file_path)
             # This ensures chunks are actually indexed and queryable, not just uploaded
@@ -879,21 +1008,20 @@ class PDFBatchUploader:
                         collection_name=collection_name,
                         scroll_filter=Filter(
                             must=[
-                                FieldCondition(
-                                    key="file_path",
-                                    match=MatchValue(value=file_path)
-                                )
+                                FieldCondition(key="file_path", match=MatchValue(value=file_path))
                             ]
                         ),
                         limit=1,
                         with_payload=False,
-                        with_vectors=False
+                        with_vectors=False,
                     )
 
                     if not verification[0]:  # scroll returns (points, offset)
                         error_msg = f"Upload verification failed: chunks with file_path {file_path} not queryable after upload (batch size: {len(points)})"
                         logger.error(error_msg)
-                        logger.error(f"Point ID {points[0].id} was uploaded but not indexed for queries")
+                        logger.error(
+                            f"Point ID {points[0].id} was uploaded but not indexed for queries"
+                        )
                         raise RuntimeError(error_msg)
 
                     logger.debug(f"Upload verified: {file_path} is queryable")

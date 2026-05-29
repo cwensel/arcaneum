@@ -127,7 +127,6 @@ EMBEDDING_MODELS = {
         "max_seq_length": 8192,  # Limit attention memory: O(batch × seq_len²)
         "mps_max_batch": 1,  # MPS: 7B model needs single-item batches to avoid OOM
     },
-
     # General purpose models (SentenceTransformers)
     "stella": {
         "name": "dunzhang/stella_en_1.5B_v5",
@@ -144,7 +143,6 @@ EMBEDDING_MODELS = {
         "mps_max_batch": 2,  # MPS needs small batches to avoid system lockups on unified memory
         # Note: Model default max_seq_length=512, don't override
     },
-
     # Jina models (FastEmbed)
     "jina-v3": {
         "name": "jinaai/jina-embeddings-v3",
@@ -152,44 +150,43 @@ EMBEDDING_MODELS = {
         "backend": "fastembed",
         "description": "Jina v3 (1024D, multilingual ~100, 8K context, 2024)",
         "available": True,
-        "recommended_for": "multilingual"
+        "recommended_for": "multilingual",
     },
     "jina-base-en": {
         "name": "jinaai/jina-embeddings-v2-base-en",
         "dimensions": 768,
         "backend": "fastembed",
         "description": "Jina v2 Base English (768D, 8K context, English-only)",
-        "available": True
+        "available": True,
     },
-
     # BGE models (FastEmbed - fast ONNX inference)
     "bge-large": {
         "name": "BAAI/bge-large-en-v1.5",
         "dimensions": 1024,
         "backend": "fastembed",
         "description": "BGE Large (1024D, general purpose, fast)",
-        "available": True
+        "available": True,
     },
     "bge": {  # Alias
         "name": "BAAI/bge-large-en-v1.5",
         "dimensions": 1024,
         "backend": "fastembed",
         "description": "BGE Large (alias for bge-large)",
-        "available": True
+        "available": True,
     },
     "bge-base": {
         "name": "BAAI/bge-base-en-v1.5",
         "dimensions": 768,
         "backend": "fastembed",
         "description": "BGE Base (768D, balanced)",
-        "available": True
+        "available": True,
     },
     "bge-small": {
         "name": "BAAI/bge-small-en-v1.5",
         "dimensions": 384,
         "backend": "fastembed",
         "description": "BGE Small (384D, fastest)",
-        "available": True
+        "available": True,
     },
     "arctic-m": {
         "name": "snowflake/snowflake-arctic-embed-m",
@@ -207,7 +204,6 @@ EMBEDDING_MODELS = {
         "available": True,
         "recommended_for": "docs",
     },
-
     # Additional general purpose models
     "minilm": {
         "name": "sentence-transformers/all-MiniLM-L6-v2",
@@ -296,8 +292,7 @@ def _sentence_transformer_load_kwargs(
 def _unknown_model_error(model_name: str) -> ValueError:
     """Build the canonical ValueError for an unknown embedding model."""
     return ValueError(
-        f"Unknown model: {model_name}. "
-        f"Available models: {list(EMBEDDING_MODELS.keys())}"
+        f"Unknown model: {model_name}. Available models: {list(EMBEDDING_MODELS.keys())}"
     )
 
 
@@ -305,11 +300,7 @@ def model_key_for_name(model_name: str) -> Optional[str]:
     """Return the registry key for either a model key or provider model name."""
     if model_name in EMBEDDING_MODELS:
         return model_name
-    matches = [
-        key
-        for key, config in EMBEDDING_MODELS.items()
-        if config.get("name") == model_name
-    ]
+    matches = [key for key, config in EMBEDDING_MODELS.items() if config.get("name") == model_name]
     if len(matches) == 1:
         return matches[0]
     return None
@@ -317,9 +308,7 @@ def model_key_for_name(model_name: str) -> Optional[str]:
 
 def prompt_policy_model_key_for_name(model_name: str) -> Optional[str]:
     """Return the prompt-policy model key, including migration aliases."""
-    return model_key_for_name(model_name) or LEGACY_PROMPT_POLICY_MODEL_ALIASES.get(
-        model_name
-    )
+    return model_key_for_name(model_name) or LEGACY_PROMPT_POLICY_MODEL_ALIASES.get(model_name)
 
 
 def get_embedding_prompt_policy(model_name: str) -> Dict[str, Any]:
@@ -507,6 +496,7 @@ class EmbeddingClient:
 
         try:
             import onnxruntime as ort
+
             available_providers = ort.get_available_providers()
             if "CoreMLExecutionProvider" in available_providers:
                 return ["CoreMLExecutionProvider", "CPUExecutionProvider"]
@@ -519,7 +509,8 @@ class EmbeddingClient:
         """Return currently available system memory in GB, or None if unknown."""
         try:
             import psutil
-            return psutil.virtual_memory().available / (1024 ** 3)
+
+            return psutil.virtual_memory().available / (1024**3)
         except Exception:
             return None
 
@@ -560,6 +551,7 @@ class EmbeddingClient:
             self._models.pop(model_name, None)
             try:
                 import gc
+
                 gc.collect()
                 self._clear_gpu_cache()
             except Exception:
@@ -664,6 +656,7 @@ class EmbeddingClient:
         # for the rest of the session.
         try:
             import torch
+
             available_cores = os.cpu_count() or 4
             target_threads = max(1, available_cores - 2)
             if self._cpu_workers > 1:
@@ -716,13 +709,15 @@ class EmbeddingClient:
         chunks = []
         for start in range(0, len(texts), self._CPU_FALLBACK_OUTER_BATCH):
             end = min(start + self._CPU_FALLBACK_OUTER_BATCH, len(texts))
-            chunks.append(cpu_model.encode(
-                texts[start:end],
-                batch_size=self._CPU_FALLBACK_INNER_BATCH,
-                show_progress_bar=False,
-                convert_to_numpy=True,
-                **encode_kwargs,
-            ))
+            chunks.append(
+                cpu_model.encode(
+                    texts[start:end],
+                    batch_size=self._CPU_FALLBACK_INNER_BATCH,
+                    show_progress_bar=False,
+                    convert_to_numpy=True,
+                    **encode_kwargs,
+                )
+            )
         return np.concatenate(chunks, axis=0)
 
     def _try_deferred_gpu_cleanup(self) -> bool:
@@ -738,6 +733,7 @@ class EmbeddingClient:
             return False
 
         import gc
+
         cleaned = False
         finished = []
 
@@ -794,6 +790,7 @@ class EmbeddingClient:
         """
         try:
             import torch
+
             if torch.backends.mps.is_available():
                 return "mps"  # Apple Silicon GPU
             elif torch.cuda.is_available():
@@ -826,18 +823,20 @@ class EmbeddingClient:
         cpu_threads = str(omp_threads)
 
         # OMP_NUM_THREADS controls OpenMP parallelism used by PyTorch/ONNX
-        if 'OMP_NUM_THREADS' not in os.environ:
-            os.environ['OMP_NUM_THREADS'] = cpu_threads
-            logger.debug(f"Set OMP_NUM_THREADS={cpu_threads} for CPU parallelism (cores={available_cores}, workers={self._cpu_workers})")
+        if "OMP_NUM_THREADS" not in os.environ:
+            os.environ["OMP_NUM_THREADS"] = cpu_threads
+            logger.debug(
+                f"Set OMP_NUM_THREADS={cpu_threads} for CPU parallelism (cores={available_cores}, workers={self._cpu_workers})"
+            )
 
         # MKL_NUM_THREADS for Intel MKL (used by NumPy/PyTorch on Intel CPUs)
-        if 'MKL_NUM_THREADS' not in os.environ:
-            os.environ['MKL_NUM_THREADS'] = cpu_threads
+        if "MKL_NUM_THREADS" not in os.environ:
+            os.environ["MKL_NUM_THREADS"] = cpu_threads
 
         # Disable tokenizers parallelism by default - it adds another layer of threads
         # that can cause over-subscription. Only enable if explicitly set.
-        if 'TOKENIZERS_PARALLELISM' not in os.environ:
-            os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+        if "TOKENIZERS_PARALLELISM" not in os.environ:
+            os.environ["TOKENIZERS_PARALLELISM"] = "false"
             logger.debug("Disabled TOKENIZERS_PARALLELISM to prevent over-subscription")
 
     def get_device_info(self) -> Dict[str, str]:
@@ -849,7 +848,7 @@ class EmbeddingClient:
         return {
             "device": self._device,
             "gpu_enabled": self.use_gpu,
-            "gpu_available": self._device != "cpu"
+            "gpu_available": self._device != "cpu",
         }
 
     def _get_optimal_batch_size(self, model_name: str) -> int:
@@ -896,9 +895,9 @@ class EmbeddingClient:
         if dimensions <= 384:
             return 1024  # Small models (bge-small: 384D)
         elif dimensions <= 768:
-            return 768   # Medium models (jina-code: 768D, bge-base: 768D)
+            return 768  # Medium models (jina-code: 768D, bge-base: 768D)
         else:
-            return 512   # Large models (stella: 1024D, bge-large: 1024D)
+            return 512  # Large models (stella: 1024D, bge-large: 1024D)
 
     def get_model(self, model_name: str):
         """Get or initialize embedding model.
@@ -951,20 +950,22 @@ class EmbeddingClient:
                             model_name=config["name"],
                             cache_dir=self.cache_dir,
                             local_files_only=True,
-                            providers=providers  # GPU acceleration if available
+                            providers=providers,  # GPU acceleration if available
                         )
                     except Exception as e:
                         last_error = e
 
                 if model_obj is None:
                     if last_error is not None:
-                        print("   Downloading additional model files...", flush=True, file=sys.stderr)
+                        print(
+                            "   Downloading additional model files...", flush=True, file=sys.stderr
+                        )
                     try:
                         model_obj = TextEmbedding(
                             model_name=config["name"],
                             cache_dir=self.cache_dir,
                             local_files_only=False,
-                            providers=providers  # GPU acceleration if available
+                            providers=providers,  # GPU acceleration if available
                         )
                     except Exception as e:
                         last_error = e
@@ -981,7 +982,11 @@ class EmbeddingClient:
                             f"  export ARC_SSL_VERIFY=false\n\n"
                             f"Original error: {last_error}"
                         ) from last_error
-                    elif "connection" in error_msg or "network" in error_msg or "timeout" in error_msg:
+                    elif (
+                        "connection" in error_msg
+                        or "network" in error_msg
+                        or "timeout" in error_msg
+                    ):
                         raise RuntimeError(
                             f"Network connection failed while downloading model '{model_name}'.\n"
                             f"Please check your internet connection. If using a VPN, try disabling it.\n\n"
@@ -1011,7 +1016,8 @@ class EmbeddingClient:
                         f"   Warning: --gpu requested for {model_name} ({params_billions}B params) on MPS.\n"
                         f"     This may put heavy pressure on Apple unified memory.\n"
                         f"     For the stable default, omit --gpu or use --models arctic-m.",
-                        flush=True, file=sys.stderr
+                        flush=True,
+                        file=sys.stderr,
                     )
 
                 # Check if model is cached to avoid unnecessary network calls
@@ -1046,7 +1052,9 @@ class EmbeddingClient:
                         if "max_seq_length" in config:
                             original_max = model_obj.max_seq_length
                             model_obj.max_seq_length = config["max_seq_length"]
-                            logger.info(f"Set {model_name} max_seq_length: {original_max} → {config['max_seq_length']}")
+                            logger.info(
+                                f"Set {model_name} max_seq_length: {original_max} → {config['max_seq_length']}"
+                            )
                         self._models[model_name] = model_obj
                     except Exception as e:
                         # If local_files_only fails, cache may be incomplete (e.g., missing custom code)
@@ -1058,7 +1066,11 @@ class EmbeddingClient:
                     try:
                         # If we're retrying after local_files_only failure, show message
                         if last_error is not None:
-                            print("   Downloading additional model files...", flush=True, file=sys.stderr)
+                            print(
+                                "   Downloading additional model files...",
+                                flush=True,
+                                file=sys.stderr,
+                            )
 
                         model_obj = SentenceTransformer(
                             config["name"],
@@ -1075,7 +1087,9 @@ class EmbeddingClient:
                         if "max_seq_length" in config:
                             original_max = model_obj.max_seq_length
                             model_obj.max_seq_length = config["max_seq_length"]
-                            logger.info(f"Set {model_name} max_seq_length: {original_max} → {config['max_seq_length']}")
+                            logger.info(
+                                f"Set {model_name} max_seq_length: {original_max} → {config['max_seq_length']}"
+                            )
                         self._models[model_name] = model_obj
                     except Exception as e:
                         # Detect and report network/SSL errors with helpful messages
@@ -1087,7 +1101,11 @@ class EmbeddingClient:
                                 f"  export ARC_SSL_VERIFY=false\n\n"
                                 f"Original error: {e}"
                             ) from e
-                        elif "connection" in error_msg or "network" in error_msg or "timeout" in error_msg:
+                        elif (
+                            "connection" in error_msg
+                            or "network" in error_msg
+                            or "timeout" in error_msg
+                        ):
                             raise RuntimeError(
                                 f"Network connection failed while downloading model '{model_name}'.\n"
                                 f"Please check your internet connection. If using a VPN, try disabling it.\n\n"
@@ -1227,7 +1245,7 @@ class EmbeddingClient:
             )
 
         # Handle different backends
-        if hasattr(model, '_backend') and model._backend == "sentence-transformers":
+        if hasattr(model, "_backend") and model._backend == "sentence-transformers":
             # SentenceTransformers: use encode() with convert_to_numpy=True (arcaneum-ppa2)
             # This uses the model's optimized GPU→CPU transfer path.
             # Potential 10-20% speedup on embeddings by reducing tensor→list conversion overhead.
@@ -1246,7 +1264,7 @@ class EmbeddingClient:
                         available_gpu_bytes=available_bytes,
                         pipeline_overhead_gb=0.3,
                         safety_factor=0.6,
-                        device_type=self._device
+                        device_type=self._device,
                     )
                     logger.debug(
                         f"Dynamic internal_batch_size={internal_batch_size} for "
@@ -1256,11 +1274,15 @@ class EmbeddingClient:
                 else:
                     # Fallback if memory detection fails
                     internal_batch_size = 64
-                    logger.debug(f"Memory detection failed, using fallback internal_batch_size={internal_batch_size}")
+                    logger.debug(
+                        f"Memory detection failed, using fallback internal_batch_size={internal_batch_size}"
+                    )
 
                 # Apply max_internal_batch limit if specified (for OOM recovery)
                 if max_internal_batch is not None and max_internal_batch < internal_batch_size:
-                    logger.debug(f"Applying OOM recovery limit: {internal_batch_size} → {max_internal_batch}")
+                    logger.debug(
+                        f"Applying OOM recovery limit: {internal_batch_size} → {max_internal_batch}"
+                    )
                     internal_batch_size = max_internal_batch
             else:
                 # CPU: Use conservative batches
@@ -1284,7 +1306,10 @@ class EmbeddingClient:
             if len(sorted_texts) > MAX_OUTER_BATCH:
                 # Process in outer batches to avoid large buffer allocations
                 import gc
-                logger.debug(f"Large input ({len(sorted_texts)} texts), processing in {MAX_OUTER_BATCH}-text outer batches")
+
+                logger.debug(
+                    f"Large input ({len(sorted_texts)} texts), processing in {MAX_OUTER_BATCH}-text outer batches"
+                )
 
                 dim = self.get_dimensions(model_name)
                 sorted_embeddings = np.zeros((len(sorted_texts), dim), dtype=np.float32)
@@ -1302,7 +1327,7 @@ class EmbeddingClient:
                     batch_embeddings = self._encode_with_oom_recovery(
                         model, batch_texts, internal_batch_size, model_name, prompt_type
                     )
-                    sorted_embeddings[offset:offset + len(batch_texts)] = batch_embeddings
+                    sorted_embeddings[offset : offset + len(batch_texts)] = batch_embeddings
                     offset += len(batch_texts)
 
                     # Release batch references
@@ -1338,7 +1363,7 @@ class EmbeddingClient:
 
             # Pre-allocate result array to avoid incremental list extensions (arcaneum-knl6)
             # First batch determines embedding dimensions
-            first_batch = texts[:min(BATCH_SIZE, len(texts))]
+            first_batch = texts[: min(BATCH_SIZE, len(texts))]
             first_embeddings = list(model.embed(first_batch))
 
             if not first_embeddings:
@@ -1349,6 +1374,7 @@ class EmbeddingClient:
 
             # Pre-allocate numpy array with correct shape and dtype
             import numpy as np
+
             all_embeddings = np.zeros((len(texts), dim), dtype=np.float32)
 
             # Fill first batch
@@ -1358,10 +1384,10 @@ class EmbeddingClient:
             # Process remaining batches and fill array slices (arcaneum-knl6)
             offset = len(first_embeddings)
             for i in range(BATCH_SIZE, len(texts), BATCH_SIZE):
-                batch = texts[i:i + BATCH_SIZE]
+                batch = texts[i : i + BATCH_SIZE]
                 batch_embeddings = list(model.embed(batch))
                 batch_size = len(batch_embeddings)
-                all_embeddings[offset:offset + batch_size] = batch_embeddings
+                all_embeddings[offset : offset + batch_size] = batch_embeddings
                 offset += batch_size
                 # Release batch references to prevent memory accumulation in loop scope
                 del batch_embeddings
@@ -1442,7 +1468,7 @@ class EmbeddingClient:
             at the C++ level (where Python's try/except can't intervene).
             """
             # Use a container to pass result/exception back from thread
-            container = {'result': None, 'error': None}
+            container = {"result": None, "error": None}
 
             def _run_encode():
                 try:
@@ -1457,9 +1483,9 @@ class EmbeddingClient:
                     )
 
                     self._sync_gpu_if_needed()
-                    container['result'] = result
+                    container["result"] = result
                 except Exception as e:
-                    container['error'] = e
+                    container["error"] = e
 
             thread = threading.Thread(target=_run_encode, daemon=True)
             thread.start()
@@ -1481,9 +1507,11 @@ class EmbeddingClient:
                     f"GPU is now disabled for this session, falling back to CPU."
                 )
                 import sys
+
                 print(
                     "  GPU encode timed out — falling back to CPU for remaining work.",
-                    file=sys.stderr, flush=True
+                    file=sys.stderr,
+                    flush=True,
                 )
 
                 # Release GPU model from self._models to prevent OOM (RDR-020).
@@ -1504,8 +1532,8 @@ class EmbeddingClient:
                 return self._encode_on_cpu_fallback(cpu_model, texts, model_name, prompt_type)
 
             # Thread completed - check for exceptions
-            if container['error'] is not None:
-                e = container['error']
+            if container["error"] is not None:
+                e = container["error"]
                 error_msg = str(e).lower()
                 is_mps_oom = self._device == "mps" and any(p in error_msg for p in mps_oom_patterns)
                 if is_mps_oom:
@@ -1514,7 +1542,7 @@ class EmbeddingClient:
                 else:
                     raise e  # Non-OOM error, propagate
 
-            result = container['result']
+            result = container["result"]
 
             # Validate - Metal OOM can corrupt results without raising exceptions
             if not self._validate_embeddings(result, len(texts), model_name):
@@ -1529,8 +1557,14 @@ class EmbeddingClient:
             return result
 
         # OOM or corruption detected - clear cache and retry with batch_size=1
-        logger.debug(f"OOM/corruption at batch_size={internal_batch_size}, clearing cache and retrying with batch_size=1")
-        print(f"  (GPU memory pressure, reducing batch {internal_batch_size} → 1...)", file=sys.stderr, flush=True)
+        logger.debug(
+            f"OOM/corruption at batch_size={internal_batch_size}, clearing cache and retrying with batch_size=1"
+        )
+        print(
+            f"  (GPU memory pressure, reducing batch {internal_batch_size} → 1...)",
+            file=sys.stderr,
+            flush=True,
+        )
 
         gc.collect()
         self._clear_gpu_cache()
@@ -1565,7 +1599,7 @@ class EmbeddingClient:
         timeout: int = 300,
         progress_callback: callable = None,
         on_batch_complete: callable = None,
-        accumulate: bool = True
+        accumulate: bool = True,
     ) -> Optional[List[List[float]]]:
         """Generate embeddings with batched processing.
 
@@ -1632,7 +1666,9 @@ class EmbeddingClient:
             batch_size = self._get_optimal_batch_size(model_name)
 
         # Log batch configuration in debug mode
-        logger.debug(f"Embedding {len(texts)} texts with batch_size={batch_size}, use_gpu={self.use_gpu}, device={self._device}")
+        logger.debug(
+            f"Embedding {len(texts)} texts with batch_size={batch_size}, use_gpu={self.use_gpu}, device={self._device}"
+        )
 
         # Note: GPU memory warning moved to CLI level (index_pdfs.py, index_source.py)
         # where we have more context about user intent and can distinguish explicit vs auto-tuned batch sizes
@@ -1650,6 +1686,7 @@ class EmbeddingClient:
             import gc
 
             import numpy as np
+
             dim = self.get_dimensions(model_name)
             if accumulate:
                 all_embeddings = np.zeros((len(texts), dim), dtype=np.float32)
@@ -1687,7 +1724,9 @@ class EmbeddingClient:
                 clear_before_batch = False
                 model_size_category = "small"
 
-            logger.debug(f"Model {model_name} params={params_billions}B ({model_size_category}), cache_clear_interval={cache_clear_interval}, clear_before={clear_before_batch}")
+            logger.debug(
+                f"Model {model_name} params={params_billions}B ({model_size_category}), cache_clear_interval={cache_clear_interval}, clear_before={clear_before_batch}"
+            )
 
             # OOM recovery: track effective batch size across all batches
             # Start with requested batch_size, reduce on OOM until we reach minimum
@@ -1731,9 +1770,12 @@ class EmbeddingClient:
                         self._sync_gpu_if_needed()
 
                         result = self.embed(
-                            batch_texts, model_name,
+                            batch_texts,
+                            model_name,
                             batch_size=batch_size,
-                            max_internal_batch=current_max_internal if current_max_internal != batch_size else None
+                            max_internal_batch=current_max_internal
+                            if current_max_internal != batch_size
+                            else None,
                         )
 
                         # Synchronize again after embedding to catch any errors before considering batch done
@@ -1742,7 +1784,9 @@ class EmbeddingClient:
                         # Validate embeddings - Metal OOM can corrupt results without raising exceptions
                         # The errors are printed to stderr but embeddings may contain NaN/garbage
                         if not self._validate_embeddings(result, len(batch_texts), model_name):
-                            raise RuntimeError("GPU produced invalid embeddings (likely OOM corruption)")
+                            raise RuntimeError(
+                                "GPU produced invalid embeddings (likely OOM corruption)"
+                            )
 
                         batch_embeddings = result
 
@@ -1760,16 +1804,19 @@ class EmbeddingClient:
                         # - Generic: "command buffer exited with error status"
                         # - Our validation: "invalid embeddings"
                         error_str = str(e).lower()
-                        is_oom = any(pattern in error_str for pattern in [
-                            "out of memory",
-                            "insufficient memory",
-                            "kiogpucommandbuffercallbackerroroutofmemory",
-                            "command buffer exited with error status",
-                            "mps backend out of memory",
-                            "cuda error: out of memory",
-                            "invalid embeddings",  # Our validation error
-                            "oom corruption",
-                        ])
+                        is_oom = any(
+                            pattern in error_str
+                            for pattern in [
+                                "out of memory",
+                                "insufficient memory",
+                                "kiogpucommandbuffercallbackerroroutofmemory",
+                                "command buffer exited with error status",
+                                "mps backend out of memory",
+                                "cuda error: out of memory",
+                                "invalid embeddings",  # Our validation error
+                                "oom corruption",
+                            ]
+                        )
 
                         # Keep retrying with smaller batches until we hit minimum
                         if is_oom and current_max_internal > min_batch_size:
@@ -1779,9 +1826,11 @@ class EmbeddingClient:
 
                             # Brief message - Metal/CUDA already dumped verbose error
                             import sys
+
                             print(
                                 f"  (GPU memory pressure, reducing batch {current_max_internal} → {new_max}...)",
-                                file=sys.stderr, flush=True
+                                file=sys.stderr,
+                                flush=True,
                             )
                             logger.debug(
                                 f"OOM at batch {batch_idx + 1}, reducing internal batch size: "
@@ -1812,7 +1861,9 @@ class EmbeddingClient:
 
                 batch_elapsed = time.time() - batch_start_time
                 chunks_embedded += actual_batch_size
-                logger.debug(f"Batch {batch_idx + 1}/{total_batches}: {actual_batch_size} chunks embedded in {batch_elapsed:.2f}s ({actual_batch_size/batch_elapsed:.1f} chunks/s)")
+                logger.debug(
+                    f"Batch {batch_idx + 1}/{total_batches}: {actual_batch_size} chunks embedded in {batch_elapsed:.2f}s ({actual_batch_size / batch_elapsed:.1f} chunks/s)"
+                )
 
                 # Call batch complete callback if provided (for streaming upload)
                 if on_batch_complete:
@@ -1821,7 +1872,7 @@ class EmbeddingClient:
                 # Fill pre-allocated array in place (no list over-allocation)
                 # Only if accumulating results
                 if accumulate:
-                    all_embeddings[offset:offset + actual_batch_size] = batch_embeddings
+                    all_embeddings[offset : offset + actual_batch_size] = batch_embeddings
                 offset += actual_batch_size
 
                 batch_idx += 1
@@ -1829,9 +1880,16 @@ class EmbeddingClient:
                     # Pass extended progress info: batch_idx, total_batches, effective_batch_size, chunks_done, total_chunks
                     # Callback can accept 2 args (legacy) or 5 args (extended)
                     import inspect
+
                     sig = inspect.signature(progress_callback)
                     if len(sig.parameters) >= 5:
-                        progress_callback(batch_idx, total_batches, effective_batch_size, chunks_embedded, len(texts))
+                        progress_callback(
+                            batch_idx,
+                            total_batches,
+                            effective_batch_size,
+                            chunks_embedded,
+                            len(texts),
+                        )
                     else:
                         progress_callback(batch_idx, total_batches)
 
@@ -1958,6 +2016,7 @@ class EmbeddingClient:
             del future_to_batch
             del completed_by_batch
             import gc
+
             gc.collect()
 
             # Check for any failures (handle both list and numpy array cases)
@@ -1982,6 +2041,7 @@ class EmbeddingClient:
         """
         try:
             import torch
+
             if self._device == "cuda":
                 torch.cuda.synchronize()
                 torch.cuda.empty_cache()
@@ -2008,6 +2068,7 @@ class EmbeddingClient:
             return
 
         import torch
+
         if self._device == "cuda":
             torch.cuda.synchronize()
         elif self._device == "mps":
@@ -2036,7 +2097,7 @@ class EmbeddingClient:
                 return False
 
             # Convert to numpy if needed
-            if hasattr(embeddings, 'numpy'):
+            if hasattr(embeddings, "numpy"):
                 embeddings = embeddings.numpy()
             elif not isinstance(embeddings, np.ndarray):
                 embeddings = np.array(embeddings)
@@ -2048,11 +2109,15 @@ class EmbeddingClient:
                 return False
 
             if embeddings.shape[0] != expected_count:
-                logger.debug(f"Embeddings validation failed: count mismatch {embeddings.shape[0]} vs {expected_count}")
+                logger.debug(
+                    f"Embeddings validation failed: count mismatch {embeddings.shape[0]} vs {expected_count}"
+                )
                 return False
 
             if embeddings.shape[1] != expected_dims:
-                logger.debug(f"Embeddings validation failed: dims mismatch {embeddings.shape[1]} vs {expected_dims}")
+                logger.debug(
+                    f"Embeddings validation failed: dims mismatch {embeddings.shape[1]} vs {expected_dims}"
+                )
                 return False
 
             # Check for NaN or Inf values (common with GPU memory corruption)
@@ -2076,12 +2141,16 @@ class EmbeddingClient:
             norms = np.linalg.norm(embeddings, axis=1)
             if np.any(norms < 0.01):  # Suspiciously small (near-zero)
                 small_count = np.sum(norms < 0.01)
-                logger.debug(f"Embeddings validation failed: {small_count} vectors with tiny norm (<0.01)")
+                logger.debug(
+                    f"Embeddings validation failed: {small_count} vectors with tiny norm (<0.01)"
+                )
                 return False
 
             if np.any(norms > 1000):  # Suspiciously large
                 large_count = np.sum(norms > 1000)
-                logger.debug(f"Embeddings validation failed: {large_count} vectors with huge norm (>1000)")
+                logger.debug(
+                    f"Embeddings validation failed: {large_count} vectors with huge norm (>1000)"
+                )
                 return False
 
             # Check for duplicate embeddings (GPU may copy same buffer to multiple outputs on OOM)
@@ -2095,7 +2164,9 @@ class EmbeddingClient:
                 # Different texts should produce different embeddings
                 variance = np.var(embeddings, axis=0).mean()
                 if variance < 1e-10:
-                    logger.debug(f"Embeddings validation failed: suspiciously low variance ({variance:.2e})")
+                    logger.debug(
+                        f"Embeddings validation failed: suspiciously low variance ({variance:.2e})"
+                    )
                     return False
 
             return True
@@ -2161,13 +2232,13 @@ class EmbeddingClient:
             # Check two possible locations for transformers_modules:
             # 1. Inside cache_dir (e.g., ~/.arcaneum/models/modules/)
             # 2. Sibling to cache_dir (e.g., ~/.cache/huggingface/modules/)
-            transformers_modules_dir = os.path.join(self.cache_dir, "modules", "transformers_modules")
+            transformers_modules_dir = os.path.join(
+                self.cache_dir, "modules", "transformers_modules"
+            )
             if not os.path.exists(transformers_modules_dir):
                 # Try sibling directory
                 transformers_modules_dir = os.path.join(
-                    os.path.dirname(self.cache_dir),
-                    "modules",
-                    "transformers_modules"
+                    os.path.dirname(self.cache_dir), "modules", "transformers_modules"
                 )
 
             # If transformers_modules directory doesn't exist at all, model may need custom code
@@ -2204,9 +2275,18 @@ class EmbeddingClient:
                     if os.path.isdir(item_path) and item.startswith("models--"):
                         # Check if this directory contains the model name parts
                         item_lower = item.lower().replace("-", "_").replace(".", "_")
-                        model_parts = model_path.lower().replace("-", "_").replace(".", "_").replace("/", "_").split("_")
+                        model_parts = (
+                            model_path.lower()
+                            .replace("-", "_")
+                            .replace(".", "_")
+                            .replace("/", "_")
+                            .split("_")
+                        )
                         # If most of the model name parts are in the directory name, consider it a match
-                        if sum(1 for part in model_parts if len(part) > 2 and part in item_lower) >= len([p for p in model_parts if len(p) > 2]) * 0.6:
+                        if (
+                            sum(1 for part in model_parts if len(part) > 2 and part in item_lower)
+                            >= len([p for p in model_parts if len(p) > 2]) * 0.6
+                        ):
                             return True
 
             return False

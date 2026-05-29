@@ -3,6 +3,7 @@
 Profile PDF indexing pipeline with cProfile to identify CPU bottlenecks.
 Usage: python profile_indexing.py --pdfs NUM_PDFS [--pages PAGES_PER_PDF] [--output OUTFILE]
 """
+
 import argparse
 import cProfile
 import pstats
@@ -13,14 +14,13 @@ from io import StringIO
 import logging
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(levelname)s: %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def run_indexing_benchmark(num_pdfs: int, pages_per_pdf: int, collection_name: str = "profile_test"):
+def run_indexing_benchmark(
+    num_pdfs: int, pages_per_pdf: int, collection_name: str = "profile_test"
+):
     """Run PDF indexing for profiling."""
     import os
     import random
@@ -69,12 +69,13 @@ def run_indexing_benchmark(num_pdfs: int, pages_per_pdf: int, collection_name: s
             # Create collection
             try:
                 from qdrant_client.models import VectorParams, Distance
+
                 vector_size = 1024
                 qdrant_client.create_collection(
                     collection_name=collection_name,
                     vectors_config={
                         "default": VectorParams(size=vector_size, distance=Distance.COSINE)
-                    }
+                    },
                 )
             except Exception:
                 pass  # Collection might already exist
@@ -82,9 +83,7 @@ def run_indexing_benchmark(num_pdfs: int, pages_per_pdf: int, collection_name: s
             # Load model
             logger.info("Loading embedding model...")
             model = get_cached_model(
-                model_name="stella",
-                cache_dir=str(get_models_dir()),
-                use_gpu=True
+                model_name="stella", cache_dir=str(get_models_dir()), use_gpu=True
             )
 
             # Create uploader
@@ -92,7 +91,7 @@ def run_indexing_benchmark(num_pdfs: int, pages_per_pdf: int, collection_name: s
                 qdrant_client=qdrant_client,
                 embedding_client=model,
                 file_workers=1,
-                embedding_batch_size=256
+                embedding_batch_size=256,
             )
 
             # Index PDFs
@@ -102,7 +101,7 @@ def run_indexing_benchmark(num_pdfs: int, pages_per_pdf: int, collection_name: s
                 collection_name=collection_name,
                 model_name="stella",
                 force_reindex=True,
-                verbose=False
+                verbose=False,
             )
 
             logger.info(f"Indexing complete: {stats}")
@@ -129,6 +128,7 @@ def main():
     except Exception as e:
         logger.error(f"Profiling failed: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
     finally:
@@ -138,7 +138,7 @@ def main():
     if args.stats:
         ps = pstats.Stats(profiler, stream=sys.stdout)
         ps.strip_dirs()
-        ps.sort_stats('cumulative')
+        ps.sort_stats("cumulative")
         print("\n" + "=" * 60)
         print("TOP 30 FUNCTIONS BY CUMULATIVE TIME")
         print("=" * 60)
@@ -147,7 +147,7 @@ def main():
         print("\n" + "=" * 60)
         print("TOP 30 FUNCTIONS BY TOTAL TIME")
         print("=" * 60)
-        ps.sort_stats('time')
+        ps.sort_stats("time")
         ps.print_stats(30)
     else:
         # Save profile

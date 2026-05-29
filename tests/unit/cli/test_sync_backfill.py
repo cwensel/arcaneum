@@ -22,9 +22,7 @@ class MetadataQdrant:
 
     def get_collection(self, _name):
         return SimpleNamespace(
-            config=SimpleNamespace(
-                params=SimpleNamespace(vectors=SimpleNamespace(size=2))
-            )
+            config=SimpleNamespace(params=SimpleNamespace(vectors=SimpleNamespace(size=2)))
         )
 
     def retrieve(self, collection_name, ids, with_payload, with_vectors):

@@ -37,7 +37,7 @@ from typing import Callable, Optional
 import psutil
 
 
-_BYTES_PER_GB = 1024 ** 3
+_BYTES_PER_GB = 1024**3
 
 
 @dataclass
@@ -66,11 +66,13 @@ class MemorySnapshot:
             "threads": self.thread_count - prev.thread_count,
             "gc": self.gc_objects - prev.gc_objects,
             "mps_current": (
-                None if self.mps_current_bytes is None or prev.mps_current_bytes is None
+                None
+                if self.mps_current_bytes is None or prev.mps_current_bytes is None
                 else self.mps_current_bytes - prev.mps_current_bytes
             ),
             "mps_driver": (
-                None if self.mps_driver_bytes is None or prev.mps_driver_bytes is None
+                None
+                if self.mps_driver_bytes is None or prev.mps_driver_bytes is None
                 else self.mps_driver_bytes - prev.mps_driver_bytes
             ),
             "sys_used": sys_used_now - sys_used_prev,
@@ -85,6 +87,7 @@ def _mps_memory() -> tuple[Optional[int], Optional[int], Optional[int]]:
     """
     try:
         import torch
+
         if not torch.backends.mps.is_available():
             return (None, None, None)
         current = torch.mps.current_allocated_memory()
@@ -134,7 +137,7 @@ def _fmt_gb(b: Optional[int]) -> str:
 def _fmt_signed_mb(b: Optional[int]) -> str:
     if b is None:
         return "n/a"
-    mb = b / (1024 ** 2)
+    mb = b / (1024**2)
     return f"{mb:+.1f}MB"
 
 
@@ -225,6 +228,7 @@ def default_mem_probe_log_path() -> str:
     overwrite each other.
     """
     from pathlib import Path
+
     log_dir = Path.home() / ".arcaneum" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -254,8 +258,10 @@ def start_probe_thread(
         stop() callable that signals the thread to exit. Idempotent.
     """
     if interval <= 0:
+
         def _noop_stop():
             return None
+
         return _noop_stop
 
     stop_event = threading.Event()
@@ -332,7 +338,8 @@ def install_dump_handler(embedding_client=None) -> None:
                 f"mps_rec_max={snap.mps_recommended_max_bytes} "
                 f"sys_avail={snap.system_available_bytes} "
                 f"sys_total={snap.system_total_bytes}",
-                file=sys.stderr, flush=True,
+                file=sys.stderr,
+                flush=True,
             )
         except Exception as e:
             print(f"  snapshot failed: {e}", file=sys.stderr, flush=True)

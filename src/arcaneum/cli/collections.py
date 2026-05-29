@@ -56,7 +56,8 @@ def create_collection_command(
         collection_type: Type of collection ("pdf", "code", or "markdown")
     """
     with interaction_logger.track(
-        "collection", "create",
+        "collection",
+        "create",
         collection=name,
         collection_type=collection_type,
         model=model,
@@ -77,7 +78,7 @@ def create_collection_command(
                     raise InvalidArgumentError(f"Unknown collection type: {collection_type}")
 
             # Parse models (support comma-separated list) and build vectors config
-            model_list = [m.strip() for m in model.split(',')]
+            model_list = [m.strip() for m in model.split(",")]
             try:
                 vectors_config = build_vectors_config(model_list)
             except ValueError as e:
@@ -104,7 +105,7 @@ def create_collection_command(
                     client=client,
                     collection_name=name,
                     collection_type=collection_type,
-                    model=model
+                    model=model,
                 )
 
             # Output success
@@ -119,10 +120,16 @@ def create_collection_command(
 
             if output_json:
                 type_str = f" (type: {collection_type})" if collection_type else ""
-                print_json("success", f"Created collection '{name}'{type_str} with {len(model_list)} models", data)
+                print_json(
+                    "success",
+                    f"Created collection '{name}'{type_str} with {len(model_list)} models",
+                    data,
+                )
             else:
                 type_str = f" (type: {collection_type})" if collection_type else ""
-                console.print(f"[green]✅ Created collection '{name}'{type_str} with {len(model_list)} models[/green]")
+                console.print(
+                    f"[green]✅ Created collection '{name}'{type_str} with {len(model_list)} models[/green]"
+                )
                 for m in model_list:
                     dims = EMBEDDING_MODELS[m]["dimensions"]
                     console.print(f"  • {m}: {dims}D")
@@ -152,13 +159,15 @@ def list_collections_command(verbose: bool, output_json: bool):
                 for col in collections.collections:
                     col_info = client.get_collection(col.name)
                     metadata = get_collection_metadata(client, col.name)
-                    result.append({
-                        "name": col.name,
-                        "model": metadata.get("model"),
-                        "type": metadata.get("collection_type"),
-                        "points_count": col_info.points_count,
-                        "vectors": extract_vectors_info(col_info),
-                    })
+                    result.append(
+                        {
+                            "name": col.name,
+                            "model": metadata.get("model"),
+                            "type": metadata.get("collection_type"),
+                            "points_count": col_info.points_count,
+                            "vectors": extract_vectors_info(col_info),
+                        }
+                    )
                 print_json("success", f"Found {len(result)} collections", {"collections": result})
             else:
                 table = Table(title="Qdrant Collections")
@@ -180,8 +189,7 @@ def list_collections_command(verbose: bool, output_json: bool):
                         row.append(collection_type)
                         vectors_info = extract_vectors_info(col_info)
                         vectors_str = ", ".join(
-                            f"{vname}({vinfo['size']}D)"
-                            for vname, vinfo in vectors_info.items()
+                            f"{vname}({vinfo['size']}D)" for vname, vinfo in vectors_info.items()
                         )
                         row.append(vectors_str)
 
@@ -209,9 +217,12 @@ def delete_collection_command(name: str, confirm: bool, output_json: bool):
         try:
             if not confirm:
                 if output_json:
-                    raise InvalidArgumentError("--confirm flag required for non-interactive deletion")
+                    raise InvalidArgumentError(
+                        "--confirm flag required for non-interactive deletion"
+                    )
 
                 import click
+
                 if not click.confirm(f"Delete collection '{name}'? This cannot be undone."):
                     console.print("Cancelled.")
                     return
@@ -313,14 +324,33 @@ def items_collection_command(name: str, output_json: bool):
             while True:
                 # Determine which fields to fetch based on collection type
                 if collection_type == "pdf" or collection_type == "markdown":
-                    payload_fields = ["file_path", "file_hash", "file_size", "page_count", "filename"]
+                    payload_fields = [
+                        "file_path",
+                        "file_hash",
+                        "file_size",
+                        "page_count",
+                        "filename",
+                    ]
                 elif collection_type == "code":
-                    payload_fields = ["git_project_name", "git_project_identifier", "git_branch",
-                                    "git_commit_hash", "git_remote_url", "file_path"]
+                    payload_fields = [
+                        "git_project_name",
+                        "git_project_identifier",
+                        "git_branch",
+                        "git_commit_hash",
+                        "git_remote_url",
+                        "file_path",
+                    ]
                 else:
                     # Untyped collection - try to get both file and git fields
-                    payload_fields = ["file_path", "file_hash", "filename", "git_project_name",
-                                    "git_project_identifier", "git_branch", "git_commit_hash"]
+                    payload_fields = [
+                        "file_path",
+                        "file_hash",
+                        "filename",
+                        "git_project_name",
+                        "git_project_identifier",
+                        "git_branch",
+                        "git_commit_hash",
+                    ]
 
                 points, offset = client.scroll(
                     collection_name=name,
@@ -328,7 +358,7 @@ def items_collection_command(name: str, output_json: bool):
                     limit=1000,
                     offset=offset,
                     with_payload=payload_fields,
-                    with_vectors=False
+                    with_vectors=False,
                 )
 
                 if not points:
@@ -349,7 +379,7 @@ def items_collection_command(name: str, output_json: bool):
                                 "git_branch": point.payload.get("git_branch"),
                                 "git_commit_hash": point.payload.get("git_commit_hash"),
                                 "git_remote_url": point.payload.get("git_remote_url"),
-                                "chunk_count": 1
+                                "chunk_count": 1,
                             }
                         elif identifier:
                             items_by_id[identifier]["chunk_count"] += 1
@@ -363,7 +393,7 @@ def items_collection_command(name: str, output_json: bool):
                                 "file_size": point.payload.get("file_size"),
                                 "page_count": point.payload.get("page_count"),
                                 "filename": point.payload.get("filename"),
-                                "chunk_count": 1
+                                "chunk_count": 1,
                             }
                         elif file_path:
                             items_by_id[file_path]["chunk_count"] += 1
@@ -379,12 +409,16 @@ def items_collection_command(name: str, output_json: bool):
                     "collection": name,
                     "type": collection_type,
                     "item_count": len(items_list),
-                    "items": items_list
+                    "items": items_list,
                 }
                 print_json("success", f"Found {len(items_list)} items in collection '{name}'", data)
             else:
                 console.print(f"\n[bold cyan]Collection: {name}[/bold cyan]")
-                type_str = f"[bold]{collection_type}[/bold]" if collection_type else "[yellow]untyped[/yellow]"
+                type_str = (
+                    f"[bold]{collection_type}[/bold]"
+                    if collection_type
+                    else "[yellow]untyped[/yellow]"
+                )
                 console.print(f"Type: {type_str}")
                 console.print(f"Items: {len(items_list)}\n")
 
@@ -401,7 +435,7 @@ def items_collection_command(name: str, output_json: bool):
                             item["git_project_name"],
                             item["git_branch"],
                             item["git_commit_hash"][:12] if item["git_commit_hash"] else "N/A",
-                            str(item["chunk_count"])
+                            str(item["chunk_count"]),
                         )
                     console.print(table)
                 else:
@@ -418,11 +452,7 @@ def items_collection_command(name: str, output_json: bool):
                         # Show filename or full path
                         display_name = item.get("filename") or item["file_path"]
 
-                        table.add_row(
-                            display_name,
-                            size_str,
-                            str(item["chunk_count"])
-                        )
+                        table.add_row(display_name, size_str, str(item["chunk_count"]))
                     console.print(table)
 
             ctx["result_count"] = len(items_list)
@@ -447,9 +477,7 @@ def verify_collection_command(
         verbose: Show detailed file-level results
         output_json: Output as JSON
     """
-    with interaction_logger.track(
-        "collection", "verify", collection=name, project=project
-    ) as ctx:
+    with interaction_logger.track("collection", "verify", collection=name, project=project) as ctx:
         try:
             from arcaneum.indexing.verify import CollectionVerifier
 
@@ -530,7 +558,11 @@ def verify_collection_command(
             else:
                 # Human-readable output
                 console.print(f"\n[bold cyan]Collection: {name}[/bold cyan]")
-                type_str = f"[bold]{result.collection_type}[/bold]" if result.collection_type else "[yellow]untyped[/yellow]"
+                type_str = (
+                    f"[bold]{result.collection_type}[/bold]"
+                    if result.collection_type
+                    else "[yellow]untyped[/yellow]"
+                )
                 console.print(f"Type: {type_str}")
                 console.print(f"Total points: {result.total_points:,}")
                 console.print(f"Total items: {result.total_items}")
@@ -540,12 +572,18 @@ def verify_collection_command(
                         console.print(f"  [yellow]- {error}[/yellow]")
 
                 if result.is_healthy:
-                    console.print(f"\n[green]Collection is healthy - all {result.complete_items} items complete[/green]")
+                    console.print(
+                        f"\n[green]Collection is healthy - all {result.complete_items} items complete[/green]"
+                    )
                 elif result.errors and result.incomplete_items == 0:
                     console.print("\n[yellow]Collection has verification errors[/yellow]")
                 else:
-                    console.print(f"\n[yellow]Found {result.incomplete_items} incomplete items[/yellow]")
-                    console.print(f"Complete: {result.complete_items}, Incomplete: {result.incomplete_items}")
+                    console.print(
+                        f"\n[yellow]Found {result.incomplete_items} incomplete items[/yellow]"
+                    )
+                    console.print(
+                        f"Complete: {result.complete_items}, Incomplete: {result.incomplete_items}"
+                    )
 
                     # Show incomplete items
                     if result.collection_type == "code":
@@ -573,7 +611,9 @@ def verify_collection_command(
                                             f"(missing: {f.missing_indices[:5]}{'...' if len(f.missing_indices) > 5 else ''})[/dim]"
                                         )
                                     if len(proj.incomplete_files) > 5:
-                                        console.print(f"  [dim]... and {len(proj.incomplete_files) - 5} more files[/dim]")
+                                        console.print(
+                                            f"  [dim]... and {len(proj.incomplete_files) - 5} more files[/dim]"
+                                        )
 
                         console.print(table)
                     else:
@@ -642,7 +682,8 @@ def export_collection_command(
     )
 
     with interaction_logger.track(
-        "collection", "export",
+        "collection",
+        "export",
         collection=name,
         format=fmt,
         detach=detach,
@@ -675,7 +716,13 @@ def export_collection_command(
                 )
             else:
                 # Use Rich status for progress display
-                from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+                from rich.progress import (
+                    Progress,
+                    SpinnerColumn,
+                    TextColumn,
+                    BarColumn,
+                    TaskProgressColumn,
+                )
 
                 with Progress(
                     SpinnerColumn(),
@@ -701,7 +748,9 @@ def export_collection_command(
                     )
 
             if not output_json:
-                console.print(f"[green]Exported {result.exported_count} points to {result.output_path}[/green]")
+                console.print(
+                    f"[green]Exported {result.exported_count} points to {result.output_path}[/green]"
+                )
                 console.print(f"File size: {format_size(result.file_size_bytes)}")
                 if result.detached:
                     console.print(f"[dim]Root prefix stripped: {result.root_prefix}[/dim]")
@@ -737,7 +786,8 @@ def import_collection_command(
     from arcaneum.cli.export_import import BinaryImporter, JsonlImporter
 
     with interaction_logger.track(
-        "collection", "import",
+        "collection",
+        "import",
         source_file=file,
         target_name=target_name,
     ) as ctx:
@@ -775,7 +825,13 @@ def import_collection_command(
                 )
             else:
                 # Use Rich status for progress display
-                from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+                from rich.progress import (
+                    Progress,
+                    SpinnerColumn,
+                    TextColumn,
+                    BarColumn,
+                    TaskProgressColumn,
+                )
 
                 with Progress(
                     SpinnerColumn(),

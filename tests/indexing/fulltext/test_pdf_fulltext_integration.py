@@ -45,8 +45,8 @@ def meili_client():
     try:
         indexes = client.list_indexes()
         for idx in indexes:
-            if idx['uid'].startswith("test_pdf_"):
-                client.delete_index(idx['uid'])
+            if idx["uid"].startswith("test_pdf_"):
+                client.delete_index(idx["uid"])
     except Exception:
         pass
 
@@ -61,11 +61,7 @@ def test_index(meili_client):
         meili_client.delete_index(index_name)
 
     # Create with PDF settings
-    meili_client.create_index(
-        name=index_name,
-        primary_key='id',
-        settings=PDF_DOCS_SETTINGS
-    )
+    meili_client.create_index(name=index_name, primary_key="id", settings=PDF_DOCS_SETTINGS)
 
     yield index_name
 
@@ -88,8 +84,8 @@ class TestPDFFullTextIndexerIntegration:
 
         try:
             # Create indexer with mocked extraction
-            with patch('arcaneum.indexing.fulltext.pdf_indexer.PDFExtractor') as mock_extractor:
-                with patch('arcaneum.indexing.fulltext.pdf_indexer.OCREngine'):
+            with patch("arcaneum.indexing.fulltext.pdf_indexer.PDFExtractor") as mock_extractor:
+                with patch("arcaneum.indexing.fulltext.pdf_indexer.OCREngine"):
                     # Mock extraction to return test data
                     mock_extractor.return_value.extract.return_value = (
                         "This is test content from page 1.\fThis is test content from page 2.",
@@ -98,34 +94,30 @@ class TestPDFFullTextIndexerIntegration:
                             "is_image_pdf": False,
                             "page_count": 2,
                             "file_size": 100,
-                        }
+                        },
                     )
 
                     indexer = PDFFullTextIndexer(
                         meili_client=meili_client,
                         index_name=test_index,
                         ocr_enabled=False,
-                        batch_size=100
+                        batch_size=100,
                     )
 
                     # Index the PDF
                     result = indexer.index_pdf(pdf_path)
 
-            assert result['page_count'] == 2
-            assert 'task_uid' in result
+            assert result["page_count"] == 2
+            assert "task_uid" in result
 
             # Verify documents were indexed
             stats = meili_client.get_index_stats(test_index)
-            assert stats['numberOfDocuments'] == 2
+            assert stats["numberOfDocuments"] == 2
 
             # Search for indexed content
-            search_results = meili_client.search(
-                test_index,
-                "test content",
-                limit=10
-            )
+            search_results = meili_client.search(test_index, "test content", limit=10)
 
-            assert search_results['estimatedTotalHits'] >= 1
+            assert search_results["estimatedTotalHits"] >= 1
 
         finally:
             pdf_path.unlink()
@@ -140,46 +132,49 @@ class TestPDFFullTextIndexerIntegration:
             pdf2.write_bytes(b"%PDF-1.4 content 2")
 
             # Create indexer with mocked extraction
-            with patch('arcaneum.indexing.fulltext.pdf_indexer.PDFExtractor') as mock_extractor:
-                with patch('arcaneum.indexing.fulltext.pdf_indexer.OCREngine'):
+            with patch("arcaneum.indexing.fulltext.pdf_indexer.PDFExtractor") as mock_extractor:
+                with patch("arcaneum.indexing.fulltext.pdf_indexer.OCREngine"):
                     # Mock extraction for each file
                     mock_extractor.return_value.extract.side_effect = [
-                        ("Document one content about machine learning.", {
-                            "extraction_method": "pymupdf4llm_markdown",
-                            "is_image_pdf": False,
-                            "page_count": 1,
-                            "file_size": 100,
-                        }),
-                        ("Document two content about deep learning.", {
-                            "extraction_method": "pymupdf4llm_markdown",
-                            "is_image_pdf": False,
-                            "page_count": 1,
-                            "file_size": 100,
-                        }),
+                        (
+                            "Document one content about machine learning.",
+                            {
+                                "extraction_method": "pymupdf4llm_markdown",
+                                "is_image_pdf": False,
+                                "page_count": 1,
+                                "file_size": 100,
+                            },
+                        ),
+                        (
+                            "Document two content about deep learning.",
+                            {
+                                "extraction_method": "pymupdf4llm_markdown",
+                                "is_image_pdf": False,
+                                "page_count": 1,
+                                "file_size": 100,
+                            },
+                        ),
                     ]
 
                     indexer = PDFFullTextIndexer(
                         meili_client=meili_client,
                         index_name=test_index,
                         ocr_enabled=False,
-                        batch_size=100
+                        batch_size=100,
                     )
 
                     # Index directory
                     stats = indexer.index_directory(
-                        directory=Path(tmpdir),
-                        recursive=True,
-                        force_reindex=True,
-                        verbose=False
+                        directory=Path(tmpdir), recursive=True, force_reindex=True, verbose=False
                     )
 
-            assert stats['total_pdfs'] == 2
-            assert stats['indexed_pdfs'] == 2
-            assert stats['failed_pdfs'] == 0
+            assert stats["total_pdfs"] == 2
+            assert stats["indexed_pdfs"] == 2
+            assert stats["failed_pdfs"] == 0
 
             # Verify documents in index
             index_stats = meili_client.get_index_stats(test_index)
-            assert index_stats['numberOfDocuments'] == 2
+            assert index_stats["numberOfDocuments"] == 2
 
     def test_change_detection_skip_indexed(self, meili_client, test_index):
         """Test that already-indexed files are skipped."""
@@ -188,8 +183,8 @@ class TestPDFFullTextIndexerIntegration:
             pdf_path = Path(f.name)
 
         try:
-            with patch('arcaneum.indexing.fulltext.pdf_indexer.PDFExtractor') as mock_extractor:
-                with patch('arcaneum.indexing.fulltext.pdf_indexer.OCREngine'):
+            with patch("arcaneum.indexing.fulltext.pdf_indexer.PDFExtractor") as mock_extractor:
+                with patch("arcaneum.indexing.fulltext.pdf_indexer.OCREngine"):
                     mock_extractor.return_value.extract.return_value = (
                         "Test content",
                         {
@@ -197,18 +192,16 @@ class TestPDFFullTextIndexerIntegration:
                             "is_image_pdf": False,
                             "page_count": 1,
                             "file_size": 100,
-                        }
+                        },
                     )
 
                     indexer = PDFFullTextIndexer(
-                        meili_client=meili_client,
-                        index_name=test_index,
-                        ocr_enabled=False
+                        meili_client=meili_client, index_name=test_index, ocr_enabled=False
                     )
 
                     # First indexing
                     result1 = indexer.index_pdf(pdf_path)
-                    assert result1['page_count'] == 1
+                    assert result1["page_count"] == 1
 
                     # Second indexing should detect existing
                     is_indexed = indexer._is_already_indexed(pdf_path)
@@ -224,8 +217,8 @@ class TestPDFFullTextIndexerIntegration:
             pdf_path = Path(f.name)
 
         try:
-            with patch('arcaneum.indexing.fulltext.pdf_indexer.PDFExtractor') as mock_extractor:
-                with patch('arcaneum.indexing.fulltext.pdf_indexer.OCREngine'):
+            with patch("arcaneum.indexing.fulltext.pdf_indexer.PDFExtractor") as mock_extractor:
+                with patch("arcaneum.indexing.fulltext.pdf_indexer.OCREngine"):
                     mock_extractor.return_value.extract.return_value = (
                         "The quick brown fox jumps over the lazy dog.",
                         {
@@ -233,26 +226,20 @@ class TestPDFFullTextIndexerIntegration:
                             "is_image_pdf": False,
                             "page_count": 1,
                             "file_size": 100,
-                        }
+                        },
                     )
 
                     indexer = PDFFullTextIndexer(
-                        meili_client=meili_client,
-                        index_name=test_index,
-                        ocr_enabled=False
+                        meili_client=meili_client, index_name=test_index, ocr_enabled=False
                     )
 
                     indexer.index_pdf(pdf_path)
 
             # Search for exact phrase
-            results = meili_client.search(
-                test_index,
-                '"quick brown fox"',
-                limit=10
-            )
+            results = meili_client.search(test_index, '"quick brown fox"', limit=10)
 
-            assert results['estimatedTotalHits'] >= 1
-            assert "quick brown fox" in results['hits'][0]['content'].lower()
+            assert results["estimatedTotalHits"] >= 1
+            assert "quick brown fox" in results["hits"][0]["content"].lower()
 
         finally:
             pdf_path.unlink()
@@ -264,8 +251,8 @@ class TestPDFFullTextIndexerIntegration:
             pdf_path = Path(f.name)
 
         try:
-            with patch('arcaneum.indexing.fulltext.pdf_indexer.PDFExtractor') as mock_extractor:
-                with patch('arcaneum.indexing.fulltext.pdf_indexer.OCREngine'):
+            with patch("arcaneum.indexing.fulltext.pdf_indexer.PDFExtractor") as mock_extractor:
+                with patch("arcaneum.indexing.fulltext.pdf_indexer.OCREngine"):
                     mock_extractor.return_value.extract.return_value = (
                         "Page one content\fPage two content\fPage three content",
                         {
@@ -273,27 +260,20 @@ class TestPDFFullTextIndexerIntegration:
                             "is_image_pdf": False,
                             "page_count": 3,
                             "file_size": 100,
-                        }
+                        },
                     )
 
                     indexer = PDFFullTextIndexer(
-                        meili_client=meili_client,
-                        index_name=test_index,
-                        ocr_enabled=False
+                        meili_client=meili_client, index_name=test_index, ocr_enabled=False
                     )
 
                     indexer.index_pdf(pdf_path)
 
             # Search with page filter
-            results = meili_client.search(
-                test_index,
-                "content",
-                filter="page_number = 2",
-                limit=10
-            )
+            results = meili_client.search(test_index, "content", filter="page_number = 2", limit=10)
 
-            assert results['estimatedTotalHits'] >= 1
-            assert results['hits'][0]['page_number'] == 2
+            assert results["estimatedTotalHits"] >= 1
+            assert results["hits"][0]["page_number"] == 2
 
         finally:
             pdf_path.unlink()
@@ -305,8 +285,8 @@ class TestPDFFullTextIndexerIntegration:
             pdf_path = Path(f.name)
 
         try:
-            with patch('arcaneum.indexing.fulltext.pdf_indexer.PDFExtractor') as mock_extractor:
-                with patch('arcaneum.indexing.fulltext.pdf_indexer.OCREngine'):
+            with patch("arcaneum.indexing.fulltext.pdf_indexer.PDFExtractor") as mock_extractor:
+                with patch("arcaneum.indexing.fulltext.pdf_indexer.OCREngine"):
                     mock_extractor.return_value.extract.return_value = (
                         "Page 1\fPage 2",
                         {
@@ -314,13 +294,11 @@ class TestPDFFullTextIndexerIntegration:
                             "is_image_pdf": False,
                             "page_count": 2,
                             "file_size": 100,
-                        }
+                        },
                     )
 
                     indexer = PDFFullTextIndexer(
-                        meili_client=meili_client,
-                        index_name=test_index,
-                        ocr_enabled=False
+                        meili_client=meili_client, index_name=test_index, ocr_enabled=False
                     )
 
                     # Index PDF
@@ -328,7 +306,7 @@ class TestPDFFullTextIndexerIntegration:
 
                     # Verify indexed
                     stats = meili_client.get_index_stats(test_index)
-                    assert stats['numberOfDocuments'] == 2
+                    assert stats["numberOfDocuments"] == 2
 
                     # Delete documents
                     result = indexer.delete_pdf_documents(pdf_path)
@@ -336,7 +314,7 @@ class TestPDFFullTextIndexerIntegration:
 
                     # Verify deleted
                     stats = meili_client.get_index_stats(test_index)
-                    assert stats['numberOfDocuments'] == 0
+                    assert stats["numberOfDocuments"] == 0
 
         finally:
             pdf_path.unlink()

@@ -36,24 +36,24 @@ def slugify(text: str, max_length: int = 50) -> str:
     slug = text.lower()
 
     # Replace spaces and underscores with hyphens
-    slug = re.sub(r'[\s_]+', '-', slug)
+    slug = re.sub(r"[\s_]+", "-", slug)
 
     # Remove non-alphanumeric characters except hyphens
-    slug = re.sub(r'[^a-z0-9\-]', '', slug)
+    slug = re.sub(r"[^a-z0-9\-]", "", slug)
 
     # Remove leading/trailing hyphens
-    slug = slug.strip('-')
+    slug = slug.strip("-")
 
     # Collapse multiple hyphens
-    slug = re.sub(r'-+', '-', slug)
+    slug = re.sub(r"-+", "-", slug)
 
     # Truncate to max length
     if len(slug) > max_length:
-        slug = slug[:max_length].rstrip('-')
+        slug = slug[:max_length].rstrip("-")
 
     # Fallback if slug is empty
     if not slug:
-        slug = 'untitled'
+        slug = "untitled"
 
     return slug
 
@@ -69,17 +69,13 @@ def get_agent_memory_dir(collection: str) -> Path:
     """
     from arcaneum.paths import get_data_dir
 
-    memory_dir = get_data_dir() / 'agent-memory' / collection
+    memory_dir = get_data_dir() / "agent-memory" / collection
     memory_dir.mkdir(parents=True, exist_ok=True)
 
     return memory_dir
 
 
-def generate_filename(
-    title: Optional[str],
-    metadata: Dict,
-    agent: Optional[str] = None
-) -> str:
+def generate_filename(title: Optional[str], metadata: Dict, agent: Optional[str] = None) -> str:
     """Generate unique filename for injection.
 
     Format: {date}_{agent}_{slug}.md
@@ -94,20 +90,20 @@ def generate_filename(
     """
     # Extract date
     timestamp = datetime.utcnow()
-    date_str = timestamp.strftime('%Y%m%d')
+    date_str = timestamp.strftime("%Y%m%d")
 
     # Extract or default agent
     if agent is None:
-        agent = metadata.get('injected_by', 'claude')
+        agent = metadata.get("injected_by", "claude")
 
     # Extract title for slug
     if title:
         slug = slugify(title)
-    elif metadata.get('title'):
-        slug = slugify(metadata['title'])
+    elif metadata.get("title"):
+        slug = slugify(metadata["title"])
     else:
         # Fallback to timestamp
-        slug = timestamp.strftime('%H%M%S')
+        slug = timestamp.strftime("%H%M%S")
 
     # Format: YYYYMMDD_agent_slug.md
     filename = f"{date_str}_{agent}_{slug}.md"
@@ -159,46 +155,50 @@ def build_frontmatter(metadata: Dict, injection_id: str) -> str:
 
     # Required fields
     lines = [
-        '---',
-        f'injection_id: {injection_id}',
-        f'injected_at: {datetime.utcnow().isoformat()}Z',
-        f'injected_by: {metadata.get("injected_by", "claude")}',
+        "---",
+        f"injection_id: {injection_id}",
+        f"injected_at: {datetime.utcnow().isoformat()}Z",
+        f"injected_by: {metadata.get('injected_by', 'claude')}",
     ]
 
     # Optional fields
-    if 'title' in metadata:
-        lines.append(f'title: {metadata["title"]}')
+    if "title" in metadata:
+        lines.append(f"title: {metadata['title']}")
 
-    if 'category' in metadata:
-        lines.append(f'category: {metadata["category"]}')
+    if "category" in metadata:
+        lines.append(f"category: {metadata['category']}")
 
-    if 'tags' in metadata and metadata['tags']:
-        tags_str = ', '.join(metadata['tags'])
-        lines.append(f'tags: [{tags_str}]')
+    if "tags" in metadata and metadata["tags"]:
+        tags_str = ", ".join(metadata["tags"])
+        lines.append(f"tags: [{tags_str}]")
 
-    if 'collection' in metadata:
-        lines.append(f'collection: {metadata["collection"]}')
+    if "collection" in metadata:
+        lines.append(f"collection: {metadata['collection']}")
 
     # Add any custom metadata fields (exclude system fields)
     exclude_fields = {
-        'injection_id', 'injected_at', 'injected_by', 'title',
-        'category', 'tags', 'collection', 'store_type', 'injection_mode'
+        "injection_id",
+        "injected_at",
+        "injected_by",
+        "title",
+        "category",
+        "tags",
+        "collection",
+        "store_type",
+        "injection_mode",
     }
     for key, value in metadata.items():
         if key not in exclude_fields:
-            lines.append(f'{key}: {value}')
+            lines.append(f"{key}: {value}")
 
-    lines.append('---')
-    lines.append('')  # Blank line after frontmatter
+    lines.append("---")
+    lines.append("")  # Blank line after frontmatter
 
-    return '\n'.join(lines)
+    return "\n".join(lines)
 
 
 def persist_injection(
-    content: str,
-    collection: str,
-    metadata: Dict,
-    agent: Optional[str] = None
+    content: str, collection: str, metadata: Dict, agent: Optional[str] = None
 ) -> Dict:
     """Persist injected content to disk.
 
@@ -223,9 +223,9 @@ def persist_injection(
         # Add injection metadata
         full_metadata = {
             **metadata,
-            'injection_id': injection_id,
-            'injected_by': agent or metadata.get('injected_by', 'claude'),
-            'collection': collection,
+            "injection_id": injection_id,
+            "injected_by": agent or metadata.get("injected_by", "claude"),
+            "collection": collection,
         }
 
         # Get memory directory
@@ -233,9 +233,7 @@ def persist_injection(
 
         # Generate filename
         filename = generate_filename(
-            title=metadata.get('title'),
-            metadata=full_metadata,
-            agent=agent
+            title=metadata.get("title"), metadata=full_metadata, agent=agent
         )
 
         # Handle collisions
@@ -246,19 +244,19 @@ def persist_injection(
 
         # Write file
         full_content = frontmatter + content
-        file_path.write_text(full_content, encoding='utf-8')
+        file_path.write_text(full_content, encoding="utf-8")
 
         logger.info(f"Persisted injection to {file_path}")
 
         return {
-            'persisted': True,
-            'path': str(file_path),
-            'injection_id': injection_id,
+            "persisted": True,
+            "path": str(file_path),
+            "injection_id": injection_id,
         }
 
     except Exception as e:
         logger.error(f"Failed to persist injection: {e}")
         return {
-            'persisted': False,
-            'error': str(e),
+            "persisted": False,
+            "error": str(e),
         }

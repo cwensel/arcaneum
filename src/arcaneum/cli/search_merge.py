@@ -75,8 +75,6 @@ def fetch_from_corpora(
                 raise ResourceNotFoundError(f"Corpus '{corpus_name}' not found")
 
     if missing and len(missing) == len(corpora):
-        raise ResourceNotFoundError(
-            f"No matching corpora found: {', '.join(corpora)}"
-        )
+        raise ResourceNotFoundError(f"No matching corpora found: {', '.join(corpora)}")
 
     return results, missing

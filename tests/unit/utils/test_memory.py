@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch, MagicMock
 from arcaneum.utils.memory import (
     get_gpu_memory_info,
     get_available_memory_gb,
-    calculate_safe_workers
+    calculate_safe_workers,
 )
 
 
@@ -17,10 +17,13 @@ class TestGetGpuMemoryInfo:
         """Test CUDA GPU memory detection."""
         mock_torch = MagicMock()
         mock_torch.cuda.is_available.return_value = True
-        mock_torch.cuda.mem_get_info.return_value = (8 * 1024**3, 16 * 1024**3)  # 8GB free, 16GB total
+        mock_torch.cuda.mem_get_info.return_value = (
+            8 * 1024**3,
+            16 * 1024**3,
+        )  # 8GB free, 16GB total
         mock_torch.backends.mps.is_available.return_value = False
 
-        with patch.dict('sys.modules', {'torch': mock_torch}):
+        with patch.dict("sys.modules", {"torch": mock_torch}):
             available, total, device_type = get_gpu_memory_info()
 
         assert available == 8 * 1024**3
@@ -40,13 +43,13 @@ class TestGetGpuMemoryInfo:
         system_available = 15 * 1024**3  # 15GB system available
 
         # Mock psutil
-        with patch('arcaneum.utils.memory.psutil') as mock_psutil:
+        with patch("arcaneum.utils.memory.psutil") as mock_psutil:
             mock_memory = Mock()
             mock_memory.total = 32 * 1024**3  # 32GB RAM
             mock_memory.available = system_available
             mock_psutil.virtual_memory.return_value = mock_memory
 
-            with patch.dict('sys.modules', {'torch': mock_torch}):
+            with patch.dict("sys.modules", {"torch": mock_torch}):
                 available, total, device_type = get_gpu_memory_info()
 
         expected_total = int(32 * 1024**3 * 0.7)  # 70% of RAM
@@ -65,13 +68,13 @@ class TestGetGpuMemoryInfo:
         system_available = 5 * 1024**3  # 5GB system available (low)
 
         # Mock psutil
-        with patch('arcaneum.utils.memory.psutil') as mock_psutil:
+        with patch("arcaneum.utils.memory.psutil") as mock_psutil:
             mock_memory = Mock()
             mock_memory.total = 32 * 1024**3  # 32GB RAM
             mock_memory.available = system_available
             mock_psutil.virtual_memory.return_value = mock_memory
 
-            with patch.dict('sys.modules', {'torch': mock_torch}):
+            with patch.dict("sys.modules", {"torch": mock_torch}):
                 available, total, device_type = get_gpu_memory_info()
 
         expected_total = int(32 * 1024**3 * 0.7)  # 70% of RAM
@@ -86,7 +89,7 @@ class TestGetGpuMemoryInfo:
         mock_torch.cuda.is_available.return_value = False
         mock_torch.backends.mps.is_available.return_value = False
 
-        with patch.dict('sys.modules', {'torch': mock_torch}):
+        with patch.dict("sys.modules", {"torch": mock_torch}):
             available, total, device_type = get_gpu_memory_info()
 
         assert available is None
@@ -96,21 +99,28 @@ class TestGetGpuMemoryInfo:
     def test_torch_not_installed(self):
         """Test when torch is not installed."""
         import sys
+
         # Save current torch module if it exists
-        torch_backup = sys.modules.get('torch')
+        torch_backup = sys.modules.get("torch")
 
         # Remove torch from sys.modules to simulate not installed
-        if 'torch' in sys.modules:
-            del sys.modules['torch']
+        if "torch" in sys.modules:
+            del sys.modules["torch"]
 
         # Mock the import to raise ImportError
-        with patch('builtins.__import__', side_effect=lambda name, *args, **kwargs:
-                   (_ for _ in ()).throw(ImportError()) if name == 'torch' else __import__(name, *args, **kwargs)):
+        with patch(
+            "builtins.__import__",
+            side_effect=lambda name, *args, **kwargs: (
+                (_ for _ in ()).throw(ImportError())
+                if name == "torch"
+                else __import__(name, *args, **kwargs)
+            ),
+        ):
             available, total, device_type = get_gpu_memory_info()
 
         # Restore torch if it was there
         if torch_backup:
-            sys.modules['torch'] = torch_backup
+            sys.modules["torch"] = torch_backup
 
         assert available is None
         assert total is None
@@ -120,7 +130,7 @@ class TestGetGpuMemoryInfo:
 class TestGetAvailableMemoryGb:
     """Tests for get_available_memory_gb function."""
 
-    @patch('arcaneum.utils.memory.psutil')
+    @patch("arcaneum.utils.memory.psutil")
     def test_returns_available_memory(self, mock_psutil):
         """Test that available memory is returned in GB."""
         mock_memory = Mock()
@@ -190,9 +200,7 @@ class TestEstimateSafeBatchSizeV2:
         batch_conservative = estimate_safe_batch_size_v2(
             "stella", available_bytes, safety_factor=0.4
         )
-        batch_aggressive = estimate_safe_batch_size_v2(
-            "stella", available_bytes, safety_factor=0.8
-        )
+        batch_aggressive = estimate_safe_batch_size_v2("stella", available_bytes, safety_factor=0.8)
 
         # More aggressive safety factor should give larger batch
         assert batch_aggressive > batch_conservative
@@ -224,7 +232,7 @@ class TestEstimateSafeBatchSizeV2:
 class TestCalculateSafeWorkers:
     """Tests for calculate_safe_workers function."""
 
-    @patch('arcaneum.utils.memory.psutil')
+    @patch("arcaneum.utils.memory.psutil")
     def test_sufficient_memory(self, mock_psutil):
         """Test when there's sufficient memory for requested workers."""
         mock_memory = Mock()
@@ -235,14 +243,14 @@ class TestCalculateSafeWorkers:
 
         workers, warning = calculate_safe_workers(
             requested_workers=8,
-            estimated_memory_per_worker_mb=1024  # 1GB per worker
+            estimated_memory_per_worker_mb=1024,  # 1GB per worker
         )
 
         # Should be able to fit 8 workers (8GB needed, 16GB available * 0.8 = 12.8GB usable)
         assert workers == 8
         assert warning == ""
 
-    @patch('arcaneum.utils.memory.psutil')
+    @patch("arcaneum.utils.memory.psutil")
     def test_insufficient_memory(self, mock_psutil):
         """Test when there's insufficient memory for requested workers."""
         mock_memory = Mock()
@@ -253,7 +261,7 @@ class TestCalculateSafeWorkers:
 
         workers, warning = calculate_safe_workers(
             requested_workers=8,
-            estimated_memory_per_worker_mb=1024  # 1GB per worker
+            estimated_memory_per_worker_mb=1024,  # 1GB per worker
         )
 
         # Can only fit 3 workers (4GB * 0.8 = 3.2GB usable / 1GB per worker = 3)

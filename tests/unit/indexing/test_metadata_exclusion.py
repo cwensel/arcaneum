@@ -13,7 +13,8 @@ from arcaneum.search.searcher import search_collection
 
 def _metadata_must_not(filter_: Filter) -> bool:
     return any(
-        condition == FieldCondition(
+        condition
+        == FieldCondition(
             key="is_metadata",
             match=MatchValue(value=True),
         )

@@ -22,8 +22,15 @@ class FakeQdrant:
         self._points = list(points)
         self.deleted_selectors = []
 
-    def scroll(self, collection_name, scroll_filter=None, limit=10,
-               offset=None, with_payload=False, with_vectors=False):
+    def scroll(
+        self,
+        collection_name,
+        scroll_filter=None,
+        limit=10,
+        offset=None,
+        with_payload=False,
+        with_vectors=False,
+    ):
         matched = self._match(scroll_filter)
         return ([SimpleNamespace(id=p[0]) for p in matched[:limit]], None)
 
@@ -45,7 +52,7 @@ class FakeQdrant:
     @staticmethod
     def _point_matches(point, filt):
         _, file_path, file_hash = point
-        for cond in (filt.must or []):
+        for cond in filt.must or []:
             key = cond.key
             want = cond.match.value
             have = {"file_path": file_path, "file_hash": file_hash}.get(key)
@@ -63,11 +70,13 @@ def test_delete_chunks_by_file_path_removes_regardless_of_hash():
     """A changed-content file (new hash) must still have its old chunks removed
     when deleting by file_path."""
     path = "/abs/docs/changed.md"
-    qdrant = FakeQdrant([
-        (1, path, "OLD_HASH"),
-        (2, path, "OLD_HASH"),
-        (3, "/abs/docs/other.md", "OTHER_HASH"),
-    ])
+    qdrant = FakeQdrant(
+        [
+            (1, path, "OLD_HASH"),
+            (2, path, "OLD_HASH"),
+            (3, "/abs/docs/other.md", "OTHER_HASH"),
+        ]
+    )
     sync = MetadataBasedSync(qdrant)
 
     deleted = sync.delete_chunks_by_file_path("docs", path)

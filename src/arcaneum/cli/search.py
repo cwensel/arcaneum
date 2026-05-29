@@ -13,7 +13,7 @@ from ..search import (
     search_collection,
     format_text_results,
     format_json_results,
-    format_summary
+    format_summary,
 )
 from ..paths import get_models_dir
 from .concurrency import acquire_embedder_slot
@@ -44,7 +44,7 @@ def search_command(
     offset: int,
     score_threshold: float,
     output_json: bool,
-    verbose: bool
+    verbose: bool,
 ):
     """Search Qdrant collection(s) semantically.
 
@@ -61,16 +61,16 @@ def search_command(
     """
     # Setup logging based on verbose flag
     if verbose:
-        logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
-        logging.getLogger('httpx').setLevel(logging.WARNING)
-        logging.getLogger('httpcore').setLevel(logging.WARNING)
-        logging.getLogger('qdrant_client').setLevel(logging.INFO)
+        logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
+        logging.getLogger("qdrant_client").setLevel(logging.INFO)
     else:
         # Clean output mode - only warnings and errors
-        logging.basicConfig(level=logging.WARNING, format='[%(levelname)s] %(message)s')
-        logging.getLogger('arcaneum').setLevel(logging.WARNING)
-        logging.getLogger('httpx').setLevel(logging.ERROR)
-        logging.getLogger('qdrant_client').setLevel(logging.ERROR)
+        logging.basicConfig(level=logging.WARNING, format="[%(levelname)s] %(message)s")
+        logging.getLogger("arcaneum").setLevel(logging.WARNING)
+        logging.getLogger("httpx").setLevel(logging.ERROR)
+        logging.getLogger("qdrant_client").setLevel(logging.ERROR)
 
     try:
         # Initialize Qdrant client with proper timeout and retry configuration
@@ -96,7 +96,8 @@ def search_command(
         start_time = time.time()
 
         with interaction_logger.track(
-            "search", "semantic",
+            "search",
+            "semantic",
             corpora=corpora,
             query=query,
             limit=limit,
@@ -140,7 +141,7 @@ def search_command(
 
             # Sort merged results by score (descending) and apply pagination
             all_results.sort(key=lambda x: x.score, reverse=True)
-            results = all_results[offset:offset + limit]
+            results = all_results[offset : offset + limit]
 
             execution_time_ms = (time.time() - start_time) * 1000
 
@@ -164,7 +165,7 @@ def search_command(
                 results=results,
                 limit=limit,
                 offset=offset,
-                verbose=verbose
+                verbose=verbose,
             )
             # Use print() not console.print() for JSON to avoid Rich wrapping
             print(output)
@@ -177,17 +178,14 @@ def search_command(
                     collection=display_collection,
                     results=results,
                     filter_description=filter_description,
-                    execution_time_ms=execution_time_ms
+                    execution_time_ms=execution_time_ms,
                 )
                 console.print(summary)
                 console.print()  # Blank line
 
             # Show results
             output = format_text_results(
-                query=query,
-                results=results,
-                offset=offset,
-                verbose=verbose
+                query=query, results=results, offset=offset, verbose=verbose
             )
             console.print(output)
 
@@ -205,5 +203,6 @@ def search_command(
         console.print(f"[ERROR] Search failed: {e}", style="red")
         if verbose:
             import traceback
+
             traceback.print_exc()
         sys.exit(1)

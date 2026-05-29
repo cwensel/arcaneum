@@ -113,9 +113,16 @@ class FakeEmbeddingClient:
     def _clear_gpu_cache(self):  # pragma: no cover - not used (use_gpu False)
         pass
 
-    def embed_parallel(self, texts, model_name, max_workers=None, batch_size=None,
-                       progress_callback=None, on_batch_complete=None,
-                       accumulate=True):
+    def embed_parallel(
+        self,
+        texts,
+        model_name,
+        max_workers=None,
+        batch_size=None,
+        progress_callback=None,
+        on_batch_complete=None,
+        accumulate=True,
+    ):
         embeddings = [[0.1, 0.2] for _ in texts]
         if not accumulate and on_batch_complete is not None:
             # Stream every text in a single batch through the callback.
@@ -132,9 +139,7 @@ class FakeQdrant:
 
     def get_collection(self, _name):
         return SimpleNamespace(
-            config=SimpleNamespace(
-                params=SimpleNamespace(vectors=SimpleNamespace(size=2))
-            ),
+            config=SimpleNamespace(params=SimpleNamespace(vectors=SimpleNamespace(size=2))),
             points_count=0,
         )
 

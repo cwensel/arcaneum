@@ -400,9 +400,7 @@ def index_source_command(
             if issues:
                 source_root = source_dir.resolve()
                 outside_root = [
-                    p
-                    for p in pre_run_paths
-                    if not Path(p).resolve().is_relative_to(source_root)
+                    p for p in pre_run_paths if not Path(p).resolve().is_relative_to(source_root)
                 ]
                 if outside_root:
                     raise ValueError(

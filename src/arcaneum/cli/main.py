@@ -31,7 +31,7 @@ from arcaneum.cli.utils import validate_path_or_from_file
 
 
 @click.group()
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 @click.version_option(version=__version__)
 @click.pass_context
 def cli(ctx, output_json):
@@ -41,10 +41,11 @@ def cli(ctx, output_json):
 
     # Run migration from legacy ~/.arcaneum/ to XDG-compliant structure if needed
     # Only show verbose output if user passed --verbose or similar flags
-    verbose = ctx.parent and ctx.parent.params.get('verbose', False) if ctx.parent else False
+    verbose = ctx.parent and ctx.parent.params.get("verbose", False) if ctx.parent else False
 
     # Auto-migrate silently on first access (only logs errors)
     from arcaneum.migrations import run_migration_if_needed
+
     if output_json:
         with redirect_stdout(sys.stderr):
             run_migration_if_needed(verbose=verbose)
@@ -83,74 +84,91 @@ def _enable_global_json(command: click.Command):
 
 
 # Collection management commands (RDR-003)
-@cli.group(cls=HelpfulGroup, usage_examples=[
-    'arc collection list',
-    'arc collection create MyCollection --type code',
-    'arc collection info MyCollection',
-    'arc collection verify MyCollection',
-    'arc collection delete MyCollection --confirm',
-])
+@cli.group(
+    cls=HelpfulGroup,
+    usage_examples=[
+        "arc collection list",
+        "arc collection create MyCollection --type code",
+        "arc collection info MyCollection",
+        "arc collection verify MyCollection",
+        "arc collection delete MyCollection --confirm",
+    ],
+)
 def collection():
     """Manage Qdrant collections"""
     pass
 
 
-@collection.command('create')
-@click.argument('name')
-@click.option('--model', default=None, help='Embedding model (arctic-m, mxbai-large, bge, jina-code). If not specified, inferred from --type.')
-@click.option('--type', 'collection_type', type=click.Choice(['pdf', 'code', 'markdown']), help='Collection type (pdf, code, or markdown). Model will be inferred from type if not specified.')
-@click.option('--hnsw-m', type=int, default=16, help='HNSW index parameter m')
-@click.option('--hnsw-ef', type=int, default=100, help='HNSW index parameter ef_construct')
-@click.option('--on-disk', is_flag=True, help='Store vectors on disk')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@collection.command("create")
+@click.argument("name")
+@click.option(
+    "--model",
+    default=None,
+    help="Embedding model (arctic-m, mxbai-large, bge, jina-code). If not specified, inferred from --type.",
+)
+@click.option(
+    "--type",
+    "collection_type",
+    type=click.Choice(["pdf", "code", "markdown"]),
+    help="Collection type (pdf, code, or markdown). Model will be inferred from type if not specified.",
+)
+@click.option("--hnsw-m", type=int, default=16, help="HNSW index parameter m")
+@click.option("--hnsw-ef", type=int, default=100, help="HNSW index parameter ef_construct")
+@click.option("--on-disk", is_flag=True, help="Store vectors on disk")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def create_collection(name, model, collection_type, hnsw_m, hnsw_ef, on_disk, output_json):
     """Create a new collection"""
     from arcaneum.cli.collections import create_collection_command
+
     create_collection_command(name, model, hnsw_m, hnsw_ef, on_disk, output_json, collection_type)
 
 
-@collection.command('list')
-@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@collection.command("list")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def list_collections(verbose, output_json):
     """List all collections"""
     from arcaneum.cli.collections import list_collections_command
+
     list_collections_command(verbose, output_json)
 
 
-@collection.command('info')
-@click.argument('name')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@collection.command("info")
+@click.argument("name")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def collection_info(name, output_json):
     """Show collection details"""
     from arcaneum.cli.collections import info_collection_command
+
     info_collection_command(name, output_json)
 
 
-@collection.command('delete')
-@click.argument('name')
-@click.option('--confirm', is_flag=True, help='Skip confirmation prompt')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@collection.command("delete")
+@click.argument("name")
+@click.option("--confirm", is_flag=True, help="Skip confirmation prompt")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def delete_collection(name, confirm, output_json):
     """Delete a collection"""
     from arcaneum.cli.collections import delete_collection_command
+
     delete_collection_command(name, confirm, output_json)
 
 
-@collection.command('items')
-@click.argument('name')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@collection.command("items")
+@click.argument("name")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def collection_items(name, output_json):
     """List all indexed files/repos in collection"""
     from arcaneum.cli.collections import items_collection_command
+
     items_collection_command(name, output_json)
 
 
-@collection.command('verify')
-@click.argument('name')
-@click.option('--project', help='Verify specific project identifier only (code collections)')
-@click.option('--verbose', '-v', is_flag=True, help='Show detailed file-level results')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@collection.command("verify")
+@click.argument("name")
+@click.option("--project", help="Verify specific project identifier only (code collections)")
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed file-level results")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def collection_verify(name, project, verbose, output_json):
     """Verify collection integrity (fsck-like check).
 
@@ -166,24 +184,33 @@ def collection_verify(name, project, verbose, output_json):
       arc collection verify MyPDFs --verbose
     """
     from arcaneum.cli.collections import verify_collection_command
+
     verify_collection_command(name, project, verbose, output_json)
 
 
-@collection.command('export')
-@click.argument('name')
-@click.option('-o', '--output', required=True, type=click.Path(),
-              help='Output file path (.arcexp or .jsonl)')
-@click.option('--format', 'fmt', type=click.Choice(['binary', 'jsonl']),
-              default='binary', help='Export format (default: binary)')
-@click.option('--include', 'includes', multiple=True,
-              help='Include files matching glob pattern (file_path)')
-@click.option('--exclude', 'excludes', multiple=True,
-              help='Exclude files matching glob pattern (file_path)')
-@click.option('--repo', 'repos', multiple=True,
-              help='Filter by repo name or repo#branch (code collections)')
-@click.option('--detach', is_flag=True,
-              help='Strip root prefix, store relative paths (shareable)')
-@click.option('--json', 'output_json', is_flag=True, help='Output stats as JSON')
+@collection.command("export")
+@click.argument("name")
+@click.option(
+    "-o", "--output", required=True, type=click.Path(), help="Output file path (.arcexp or .jsonl)"
+)
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["binary", "jsonl"]),
+    default="binary",
+    help="Export format (default: binary)",
+)
+@click.option(
+    "--include", "includes", multiple=True, help="Include files matching glob pattern (file_path)"
+)
+@click.option(
+    "--exclude", "excludes", multiple=True, help="Exclude files matching glob pattern (file_path)"
+)
+@click.option(
+    "--repo", "repos", multiple=True, help="Filter by repo name or repo#branch (code collections)"
+)
+@click.option("--detach", is_flag=True, help="Strip root prefix, store relative paths (shareable)")
+@click.option("--json", "output_json", is_flag=True, help="Output stats as JSON")
 def collection_export(name, output, fmt, includes, excludes, repos, detach, output_json):
     """Export collection to portable format.
 
@@ -214,17 +241,23 @@ def collection_export(name, output, fmt, includes, excludes, repos, detach, outp
       arc collection export MyCode -o shareable.arcexp --detach
     """
     from arcaneum.cli.collections import export_collection_command
+
     export_collection_command(name, output, fmt, includes, excludes, repos, detach, output_json)
 
 
-@collection.command('import')
-@click.argument('file', type=click.Path(exists=True))
-@click.option('--into', 'target_name', help='Target collection name')
-@click.option('--attach', 'attach_root',
-              help='Attach root path to relative paths (for detached exports)')
-@click.option('--remap', 'remaps', multiple=True,
-              help='Path substitution: old:new prefix mapping (for non-detached exports)')
-@click.option('--json', 'output_json', is_flag=True, help='Output stats as JSON')
+@collection.command("import")
+@click.argument("file", type=click.Path(exists=True))
+@click.option("--into", "target_name", help="Target collection name")
+@click.option(
+    "--attach", "attach_root", help="Attach root path to relative paths (for detached exports)"
+)
+@click.option(
+    "--remap",
+    "remaps",
+    multiple=True,
+    help="Path substitution: old:new prefix mapping (for non-detached exports)",
+)
+@click.option("--json", "output_json", is_flag=True, help="Output stats as JSON")
 def collection_import(file, target_name, attach_root, remaps, output_json):
     """Import collection from export file.
 
@@ -247,157 +280,457 @@ def collection_import(file, target_name, attach_root, remaps, output_json):
       arc collection import backup.arcexp --remap /Users/alice/docs:/home/bob/docs
     """
     from arcaneum.cli.collections import import_collection_command
+
     import_collection_command(file, target_name, attach_root, remaps, output_json)
 
 
 # Models commands
-@cli.group(cls=HelpfulGroup, usage_examples=[
-    'arc models list',
-    'arc models list --json',
-])
+@cli.group(
+    cls=HelpfulGroup,
+    usage_examples=[
+        "arc models list",
+        "arc models list --json",
+    ],
+)
 def models():
     """Manage embedding models"""
     pass
 
 
-@models.command('list')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@models.command("list")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def list_models(output_json):
     """List available models"""
     from arcaneum.cli.models import list_models_command
+
     list_models_command(output_json)
 
 
 # Indexing commands (RDR-004, RDR-005, RDR-010)
-@cli.group(cls=HelpfulGroup, usage_examples=[
-    'arc index pdf /path/to/pdfs --collection MyPDFs',
-    'arc index code /path/to/repo --collection MyCode',
-    'arc index markdown /path/to/docs --collection MyDocs',
-    'arc index text pdf /path/to/pdfs --index MyIndex',
-])
+@cli.group(
+    cls=HelpfulGroup,
+    usage_examples=[
+        "arc index pdf /path/to/pdfs --collection MyPDFs",
+        "arc index code /path/to/repo --collection MyCode",
+        "arc index markdown /path/to/docs --collection MyDocs",
+        "arc index text pdf /path/to/pdfs --index MyIndex",
+    ],
+)
 def index():
     """Index content into collections"""
     pass
 
 
-@index.command('pdf')
-@click.argument('path', type=click.Path(exists=True), required=False)
-@click.option('--from-file', help='Read file paths from list (one per line, or "-" for stdin)')
-@click.option('--collection', required=True, help='Target collection name')
-@click.option('--model', default=None, help='(Deprecated: model is now set at collection creation time) Embedding model to use')
-@click.option('--embedding-batch-size', type=int, default=None, help='Batch size for embedding generation. Auto-tuned if not specified. Larger batches (300-500) improve GPU throughput 10-20%.')
-@click.option('--no-ocr', is_flag=True, help='Disable OCR (enabled by default for scanned PDFs)')
-@click.option('--ocr-language', default='eng', help='OCR language code')
-@click.option('--ocr-workers', type=int, default=None, help='Parallel OCR workers for page processing (default: cpu_count, effective for scanned PDFs only)')
-@click.option('--normalize-only', is_flag=True, help='Skip markdown conversion, only normalize whitespace (RDR-016: max 47%% token savings)')
-@click.option('--preserve-images', is_flag=True, help='Extract images for future multimodal search (RDR-016: slower processing)')
-@click.option('--process-priority', type=click.Choice(['low', 'normal', 'high']), default='normal', help='Process scheduling priority (default: normal). Use low for background indexing.')
-@click.option('--not-nice', is_flag=True, help='Disable process priority reduction for worker processes (use normal priority)')
-@click.option('--force', is_flag=True, help='Force reindex all files')
-@click.option('--prune', is_flag=True, help='Delete indexed entries whose source file no longer exists on disk')
-@click.option('--no-gpu/--gpu', default=True, help='Use CPU by default; pass --gpu to opt into accelerator embedding')
-@click.option('--offline', is_flag=True, help='Offline mode (use cached models only, no network)')
-@click.option('--randomize', is_flag=True, help='Randomize file processing order (useful for parallel indexing)')
-@click.option('--verify', is_flag=True, help='Verify collection integrity after indexing (fsck-like check)')
-@click.option('--no-streaming', is_flag=True, help='Disable streaming mode (accumulate all embeddings before upload, uses more memory)')
-@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-@click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_pdf(path, from_file, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, prune, no_gpu, offline, randomize, verify, no_streaming, verbose, debug, output_json):
+@index.command("pdf")
+@click.argument("path", type=click.Path(exists=True), required=False)
+@click.option("--from-file", help='Read file paths from list (one per line, or "-" for stdin)')
+@click.option("--collection", required=True, help="Target collection name")
+@click.option(
+    "--model",
+    default=None,
+    help="(Deprecated: model is now set at collection creation time) Embedding model to use",
+)
+@click.option(
+    "--embedding-batch-size",
+    type=int,
+    default=None,
+    help="Batch size for embedding generation. Auto-tuned if not specified. Larger batches (300-500) improve GPU throughput 10-20%.",
+)
+@click.option("--no-ocr", is_flag=True, help="Disable OCR (enabled by default for scanned PDFs)")
+@click.option("--ocr-language", default="eng", help="OCR language code")
+@click.option(
+    "--ocr-workers",
+    type=int,
+    default=None,
+    help="Parallel OCR workers for page processing (default: cpu_count, effective for scanned PDFs only)",
+)
+@click.option(
+    "--normalize-only",
+    is_flag=True,
+    help="Skip markdown conversion, only normalize whitespace (RDR-016: max 47%% token savings)",
+)
+@click.option(
+    "--preserve-images",
+    is_flag=True,
+    help="Extract images for future multimodal search (RDR-016: slower processing)",
+)
+@click.option(
+    "--process-priority",
+    type=click.Choice(["low", "normal", "high"]),
+    default="normal",
+    help="Process scheduling priority (default: normal). Use low for background indexing.",
+)
+@click.option(
+    "--not-nice",
+    is_flag=True,
+    help="Disable process priority reduction for worker processes (use normal priority)",
+)
+@click.option("--force", is_flag=True, help="Force reindex all files")
+@click.option(
+    "--prune",
+    is_flag=True,
+    help="Delete indexed entries whose source file no longer exists on disk",
+)
+@click.option(
+    "--no-gpu/--gpu",
+    default=True,
+    help="Use CPU by default; pass --gpu to opt into accelerator embedding",
+)
+@click.option("--offline", is_flag=True, help="Offline mode (use cached models only, no network)")
+@click.option(
+    "--randomize",
+    is_flag=True,
+    help="Randomize file processing order (useful for parallel indexing)",
+)
+@click.option(
+    "--verify", is_flag=True, help="Verify collection integrity after indexing (fsck-like check)"
+)
+@click.option(
+    "--no-streaming",
+    is_flag=True,
+    help="Disable streaming mode (accumulate all embeddings before upload, uses more memory)",
+)
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.option("--debug", is_flag=True, help="Debug mode (show all library warnings)")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
+def index_pdf(
+    path,
+    from_file,
+    collection,
+    model,
+    embedding_batch_size,
+    no_ocr,
+    ocr_language,
+    ocr_workers,
+    normalize_only,
+    preserve_images,
+    process_priority,
+    not_nice,
+    force,
+    prune,
+    no_gpu,
+    offline,
+    randomize,
+    verify,
+    no_streaming,
+    verbose,
+    debug,
+    output_json,
+):
     """Index PDF files"""
     # Validate that exactly one of path or from_file is provided
     validate_path_or_from_file(path, from_file)
 
     from arcaneum.cli.index_pdfs import index_pdfs_command
+
     streaming = not no_streaming  # Default is streaming=True (--no-streaming disables it)
-    index_pdfs_command(path, from_file, collection, model, embedding_batch_size, no_ocr, ocr_language, ocr_workers, normalize_only, preserve_images, process_priority, not_nice, force, prune, no_gpu, offline, randomize, verify, streaming, verbose, debug, output_json)
+    index_pdfs_command(
+        path,
+        from_file,
+        collection,
+        model,
+        embedding_batch_size,
+        no_ocr,
+        ocr_language,
+        ocr_workers,
+        normalize_only,
+        preserve_images,
+        process_priority,
+        not_nice,
+        force,
+        prune,
+        no_gpu,
+        offline,
+        randomize,
+        verify,
+        streaming,
+        verbose,
+        debug,
+        output_json,
+    )
 
 
-@index.command('code')
-@click.argument('path', type=click.Path(exists=True), required=False)
-@click.option('--from-file', help='Read file paths from list (one per line, or "-" for stdin)')
-@click.option('--collection', required=True, help='Target collection name')
-@click.option('--model', default=None, help='(Deprecated: model is now set at collection creation time) Embedding model to use')
-@click.option('--embedding-batch-size', type=int, default=None, help='Batch size for embedding generation. Auto-tuned if not specified. Larger batches (300-500) improve GPU throughput 10-20%.')
-@click.option('--chunk-size', type=int, help='Target chunk size in tokens (default: 400)')
-@click.option('--chunk-overlap', type=int, help='Overlap between chunks in tokens (default: 20)')
-@click.option('--depth', type=int, help='Git discovery depth')
-@click.option('--process-priority', type=click.Choice(['low', 'normal', 'high']), default='normal', help='Process scheduling priority (default: normal). Use low for background indexing.')
-@click.option('--not-nice', is_flag=True, help='Disable process priority reduction for worker processes (use normal priority)')
-@click.option('--force', is_flag=True, help='Force reindex all projects')
-@click.option('--prune', is_flag=True, help='Delete indexed entries whose source file no longer exists on disk')
-@click.option('--no-gpu/--gpu', default=True, help='Use CPU by default; pass --gpu to opt into accelerator embedding')
-@click.option('--verify', is_flag=True, help='Verify and repair incomplete items after indexing (fsck-like check)')
-@click.option('--no-streaming', is_flag=True, help='Disable streaming mode (accumulate all embeddings before upload, uses more memory)')
-@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-@click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
-@click.option('--profile', is_flag=True, help='Show pipeline performance profiling (stage breakdown, throughput)')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_code(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, depth, process_priority, not_nice, force, prune, no_gpu, verify, no_streaming, verbose, debug, profile, output_json):
+@index.command("code")
+@click.argument("path", type=click.Path(exists=True), required=False)
+@click.option("--from-file", help='Read file paths from list (one per line, or "-" for stdin)')
+@click.option("--collection", required=True, help="Target collection name")
+@click.option(
+    "--model",
+    default=None,
+    help="(Deprecated: model is now set at collection creation time) Embedding model to use",
+)
+@click.option(
+    "--embedding-batch-size",
+    type=int,
+    default=None,
+    help="Batch size for embedding generation. Auto-tuned if not specified. Larger batches (300-500) improve GPU throughput 10-20%.",
+)
+@click.option("--chunk-size", type=int, help="Target chunk size in tokens (default: 400)")
+@click.option("--chunk-overlap", type=int, help="Overlap between chunks in tokens (default: 20)")
+@click.option("--depth", type=int, help="Git discovery depth")
+@click.option(
+    "--process-priority",
+    type=click.Choice(["low", "normal", "high"]),
+    default="normal",
+    help="Process scheduling priority (default: normal). Use low for background indexing.",
+)
+@click.option(
+    "--not-nice",
+    is_flag=True,
+    help="Disable process priority reduction for worker processes (use normal priority)",
+)
+@click.option("--force", is_flag=True, help="Force reindex all projects")
+@click.option(
+    "--prune",
+    is_flag=True,
+    help="Delete indexed entries whose source file no longer exists on disk",
+)
+@click.option(
+    "--no-gpu/--gpu",
+    default=True,
+    help="Use CPU by default; pass --gpu to opt into accelerator embedding",
+)
+@click.option(
+    "--verify",
+    is_flag=True,
+    help="Verify and repair incomplete items after indexing (fsck-like check)",
+)
+@click.option(
+    "--no-streaming",
+    is_flag=True,
+    help="Disable streaming mode (accumulate all embeddings before upload, uses more memory)",
+)
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.option("--debug", is_flag=True, help="Debug mode (show all library warnings)")
+@click.option(
+    "--profile",
+    is_flag=True,
+    help="Show pipeline performance profiling (stage breakdown, throughput)",
+)
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
+def index_code(
+    path,
+    from_file,
+    collection,
+    model,
+    embedding_batch_size,
+    chunk_size,
+    chunk_overlap,
+    depth,
+    process_priority,
+    not_nice,
+    force,
+    prune,
+    no_gpu,
+    verify,
+    no_streaming,
+    verbose,
+    debug,
+    profile,
+    output_json,
+):
     """Index source code"""
     # Validate that exactly one of path or from_file is provided
     validate_path_or_from_file(path, from_file)
 
     from arcaneum.cli.index_source import index_source_command
+
     streaming = not no_streaming  # Default is streaming=True (--no-streaming disables it)
-    index_source_command(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, depth, process_priority, not_nice, force, prune, no_gpu, verify, streaming, verbose, debug, profile, output_json)
+    index_source_command(
+        path,
+        from_file,
+        collection,
+        model,
+        embedding_batch_size,
+        chunk_size,
+        chunk_overlap,
+        depth,
+        process_priority,
+        not_nice,
+        force,
+        prune,
+        no_gpu,
+        verify,
+        streaming,
+        verbose,
+        debug,
+        profile,
+        output_json,
+    )
 
 
-@index.command('markdown')
-@click.argument('path', type=click.Path(exists=True), required=False)
-@click.option('--from-file', help='Read file paths from list (one per line, or "-" for stdin)')
-@click.option('--collection', required=True, help='Target collection name')
-@click.option('--model', default=None, help='(Deprecated: model is now set at collection creation time) Embedding model to use')
-@click.option('--embedding-batch-size', type=int, default=None, help='Batch size for embedding generation. Auto-tuned if not specified. Larger batches (300-500) improve GPU throughput 10-20%.')
-@click.option('--chunk-size', type=int, help='Target chunk size in tokens')
-@click.option('--chunk-overlap', type=int, help='Overlap between chunks in tokens')
-@click.option('--recursive/--no-recursive', default=True, help='Search subdirectories recursively')
-@click.option('--exclude', multiple=True, help='Patterns to exclude (e.g., node_modules, .obsidian)')
-@click.option('--qdrant-url', default=None, help='Qdrant server URL')
-@click.option('--process-priority', type=click.Choice(['low', 'normal', 'high']), default='normal', help='Process scheduling priority (default: normal). Use low for background indexing.')
-@click.option('--not-nice', is_flag=True, help='Disable process priority reduction for worker processes (use normal priority)')
-@click.option('--force', is_flag=True, help='Force reindex all files')
-@click.option('--prune', is_flag=True, help='Delete indexed entries whose source file no longer exists on disk')
-@click.option('--no-gpu/--gpu', default=True, help='Use CPU by default; pass --gpu to opt into accelerator embedding')
-@click.option('--offline', is_flag=True, help='Offline mode (use cached models only, no network)')
-@click.option('--randomize', is_flag=True, help='Randomize file processing order (useful for parallel indexing)')
-@click.option('--verify', is_flag=True, help='Verify collection integrity after indexing (fsck-like check)')
-@click.option('--no-streaming', is_flag=True, help='Disable streaming mode (accumulate all embeddings before upload, uses more memory)')
-@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-@click.option('--debug', is_flag=True, help='Debug mode (show all library warnings)')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_markdown(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, prune, no_gpu, offline, randomize, verify, no_streaming, verbose, debug, output_json):
+@index.command("markdown")
+@click.argument("path", type=click.Path(exists=True), required=False)
+@click.option("--from-file", help='Read file paths from list (one per line, or "-" for stdin)')
+@click.option("--collection", required=True, help="Target collection name")
+@click.option(
+    "--model",
+    default=None,
+    help="(Deprecated: model is now set at collection creation time) Embedding model to use",
+)
+@click.option(
+    "--embedding-batch-size",
+    type=int,
+    default=None,
+    help="Batch size for embedding generation. Auto-tuned if not specified. Larger batches (300-500) improve GPU throughput 10-20%.",
+)
+@click.option("--chunk-size", type=int, help="Target chunk size in tokens")
+@click.option("--chunk-overlap", type=int, help="Overlap between chunks in tokens")
+@click.option("--recursive/--no-recursive", default=True, help="Search subdirectories recursively")
+@click.option(
+    "--exclude", multiple=True, help="Patterns to exclude (e.g., node_modules, .obsidian)"
+)
+@click.option("--qdrant-url", default=None, help="Qdrant server URL")
+@click.option(
+    "--process-priority",
+    type=click.Choice(["low", "normal", "high"]),
+    default="normal",
+    help="Process scheduling priority (default: normal). Use low for background indexing.",
+)
+@click.option(
+    "--not-nice",
+    is_flag=True,
+    help="Disable process priority reduction for worker processes (use normal priority)",
+)
+@click.option("--force", is_flag=True, help="Force reindex all files")
+@click.option(
+    "--prune",
+    is_flag=True,
+    help="Delete indexed entries whose source file no longer exists on disk",
+)
+@click.option(
+    "--no-gpu/--gpu",
+    default=True,
+    help="Use CPU by default; pass --gpu to opt into accelerator embedding",
+)
+@click.option("--offline", is_flag=True, help="Offline mode (use cached models only, no network)")
+@click.option(
+    "--randomize",
+    is_flag=True,
+    help="Randomize file processing order (useful for parallel indexing)",
+)
+@click.option(
+    "--verify", is_flag=True, help="Verify collection integrity after indexing (fsck-like check)"
+)
+@click.option(
+    "--no-streaming",
+    is_flag=True,
+    help="Disable streaming mode (accumulate all embeddings before upload, uses more memory)",
+)
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.option("--debug", is_flag=True, help="Debug mode (show all library warnings)")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
+def index_markdown(
+    path,
+    from_file,
+    collection,
+    model,
+    embedding_batch_size,
+    chunk_size,
+    chunk_overlap,
+    recursive,
+    exclude,
+    qdrant_url,
+    process_priority,
+    not_nice,
+    force,
+    prune,
+    no_gpu,
+    offline,
+    randomize,
+    verify,
+    no_streaming,
+    verbose,
+    debug,
+    output_json,
+):
     """Index markdown files"""
     # Validate that exactly one of path or from_file is provided
     validate_path_or_from_file(path, from_file)
 
     from arcaneum.cli.index_markdown import index_markdown_command
+
     streaming = not no_streaming  # Default is streaming=True (--no-streaming disables it)
-    index_markdown_command(path, from_file, collection, model, embedding_batch_size, chunk_size, chunk_overlap, recursive, exclude, qdrant_url, process_priority, not_nice, force, prune, no_gpu, offline, randomize, verify, streaming, verbose, debug, output_json)
+    index_markdown_command(
+        path,
+        from_file,
+        collection,
+        model,
+        embedding_batch_size,
+        chunk_size,
+        chunk_overlap,
+        recursive,
+        exclude,
+        qdrant_url,
+        process_priority,
+        not_nice,
+        force,
+        prune,
+        no_gpu,
+        offline,
+        randomize,
+        verify,
+        streaming,
+        verbose,
+        debug,
+        output_json,
+    )
 
 
 # Full-text indexing subgroup (RDR-010: arc index text ...)
-@index.group('text', cls=HelpfulGroup, usage_examples=[
-    'arc index text pdf /path/to/pdfs --index MyPDFs',
-])
+@index.group(
+    "text",
+    cls=HelpfulGroup,
+    usage_examples=[
+        "arc index text pdf /path/to/pdfs --index MyPDFs",
+    ],
+)
 def index_text():
     """Index content to MeiliSearch for full-text search (RDR-010)"""
     pass
 
 
-@index_text.command('code')
-@click.argument('path', type=click.Path(exists=True), required=False)
-@click.option('--from-file', help='Read file paths from list (one per line, or "-" for stdin)')
-@click.option('--index', 'index_name', required=True, help='MeiliSearch index name')
-@click.option('--recursive/--no-recursive', default=True, help='Search subdirectories recursively (simple mode only)')
-@click.option('--depth', type=int, help='Git discovery depth (git-aware mode only)')
-@click.option('--batch-size', type=int, default=1000, help='Documents per batch upload (default: 1000)')
-@click.option('--workers', type=int, default=None, help='Parallel workers for AST extraction (default: auto=cpu/2, 0=sequential)')
-@click.option('--force', is_flag=True, help='Force reindex all files/projects')
-@click.option('--no-git', 'no_git', is_flag=True, help='Disable git-aware mode (use simple file-based indexing)')
-@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_text_code(path, from_file, index_name, recursive, depth, batch_size, workers, force, no_git, verbose, output_json):
+@index_text.command("code")
+@click.argument("path", type=click.Path(exists=True), required=False)
+@click.option("--from-file", help='Read file paths from list (one per line, or "-" for stdin)')
+@click.option("--index", "index_name", required=True, help="MeiliSearch index name")
+@click.option(
+    "--recursive/--no-recursive",
+    default=True,
+    help="Search subdirectories recursively (simple mode only)",
+)
+@click.option("--depth", type=int, help="Git discovery depth (git-aware mode only)")
+@click.option(
+    "--batch-size", type=int, default=1000, help="Documents per batch upload (default: 1000)"
+)
+@click.option(
+    "--workers",
+    type=int,
+    default=None,
+    help="Parallel workers for AST extraction (default: auto=cpu/2, 0=sequential)",
+)
+@click.option("--force", is_flag=True, help="Force reindex all files/projects")
+@click.option(
+    "--no-git",
+    "no_git",
+    is_flag=True,
+    help="Disable git-aware mode (use simple file-based indexing)",
+)
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
+def index_text_code(
+    path,
+    from_file,
+    index_name,
+    recursive,
+    depth,
+    batch_size,
+    workers,
+    force,
+    no_git,
+    verbose,
+    output_json,
+):
     """Index source code to MeiliSearch for full-text search (RDR-011).
 
     By default uses git-aware mode: discovers git repositories, extracts
@@ -416,23 +749,40 @@ def index_text_code(path, from_file, index_name, recursive, depth, batch_size, w
         arc index text code ./repos --index code-index --workers 8
     """
     from arcaneum.cli.index_text import index_text_code_command
+
     # Validate that exactly one of path or from_file is provided
     validate_path_or_from_file(path, from_file)
 
     git_aware = not no_git
-    index_text_code_command(path, from_file, index_name, recursive, batch_size, workers, force, verbose, output_json, depth, git_aware)
+    index_text_code_command(
+        path,
+        from_file,
+        index_name,
+        recursive,
+        batch_size,
+        workers,
+        force,
+        verbose,
+        output_json,
+        depth,
+        git_aware,
+    )
 
 
-@index_text.command('markdown')
-@click.argument('path', type=click.Path(exists=True), required=False)
-@click.option('--from-file', help='Read file paths from list (one per line, or "-" for stdin)')
-@click.option('--index', 'index_name', required=True, help='MeiliSearch index name')
-@click.option('--recursive/--no-recursive', default=True, help='Search subdirectories recursively')
-@click.option('--batch-size', type=int, default=1000, help='Documents per batch upload (default: 1000)')
-@click.option('--force', is_flag=True, help='Force reindex all files')
-@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_text_markdown(path, from_file, index_name, recursive, batch_size, force, verbose, output_json):
+@index_text.command("markdown")
+@click.argument("path", type=click.Path(exists=True), required=False)
+@click.option("--from-file", help='Read file paths from list (one per line, or "-" for stdin)')
+@click.option("--index", "index_name", required=True, help="MeiliSearch index name")
+@click.option("--recursive/--no-recursive", default=True, help="Search subdirectories recursively")
+@click.option(
+    "--batch-size", type=int, default=1000, help="Documents per batch upload (default: 1000)"
+)
+@click.option("--force", is_flag=True, help="Force reindex all files")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
+def index_text_markdown(
+    path, from_file, index_name, recursive, batch_size, force, verbose, output_json
+):
     """Index markdown files to MeiliSearch for full-text search.
 
     Indexes markdown files for exact keyword and phrase search.
@@ -445,28 +795,57 @@ def index_text_markdown(path, from_file, index_name, recursive, batch_size, forc
         arc index text markdown ./wiki --index wiki-index --force
     """
     from arcaneum.cli.index_text import index_text_markdown_command
+
     # Validate that exactly one of path or from_file is provided
     validate_path_or_from_file(path, from_file)
 
-    index_text_markdown_command(path, from_file, index_name, recursive, batch_size, force, verbose, output_json)
+    index_text_markdown_command(
+        path, from_file, index_name, recursive, batch_size, force, verbose, output_json
+    )
 
 
-@index_text.command('pdf')
-@click.argument('path', type=click.Path(exists=True), required=False)
-@click.option('--from-file', help='Read file paths from list (one per line, or "-" for stdin)')
-@click.option('--index', 'index_name', required=True, help='MeiliSearch index name')
-@click.option('--recursive/--no-recursive', default=True, help='Search subdirectories recursively')
-@click.option('--no-ocr', is_flag=True, help='Disable OCR (enabled by default for scanned PDFs)')
-@click.option('--ocr-language', default='eng', help='OCR language code')
-@click.option('--ocr-workers', type=int, default=None, help='Parallel OCR workers (default: cpu_count)')
-@click.option('--normalize-only', is_flag=True, help='Skip markdown conversion, only normalize whitespace')
-@click.option('--batch-size', type=int, default=1000, help='Documents per batch upload (default: 1000)')
-@click.option('--force', is_flag=True, help='Force reindex all files')
-@click.option('--process-priority', type=click.Choice(['low', 'normal', 'high']), default='normal', help='Process scheduling priority')
-@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-@click.option('--debug', is_flag=True, help='Debug mode')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def index_text_pdf(path, from_file, index_name, recursive, no_ocr, ocr_language, ocr_workers, normalize_only, batch_size, force, process_priority, verbose, debug, output_json):
+@index_text.command("pdf")
+@click.argument("path", type=click.Path(exists=True), required=False)
+@click.option("--from-file", help='Read file paths from list (one per line, or "-" for stdin)')
+@click.option("--index", "index_name", required=True, help="MeiliSearch index name")
+@click.option("--recursive/--no-recursive", default=True, help="Search subdirectories recursively")
+@click.option("--no-ocr", is_flag=True, help="Disable OCR (enabled by default for scanned PDFs)")
+@click.option("--ocr-language", default="eng", help="OCR language code")
+@click.option(
+    "--ocr-workers", type=int, default=None, help="Parallel OCR workers (default: cpu_count)"
+)
+@click.option(
+    "--normalize-only", is_flag=True, help="Skip markdown conversion, only normalize whitespace"
+)
+@click.option(
+    "--batch-size", type=int, default=1000, help="Documents per batch upload (default: 1000)"
+)
+@click.option("--force", is_flag=True, help="Force reindex all files")
+@click.option(
+    "--process-priority",
+    type=click.Choice(["low", "normal", "high"]),
+    default="normal",
+    help="Process scheduling priority",
+)
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.option("--debug", is_flag=True, help="Debug mode")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
+def index_text_pdf(
+    path,
+    from_file,
+    index_name,
+    recursive,
+    no_ocr,
+    ocr_language,
+    ocr_workers,
+    normalize_only,
+    batch_size,
+    force,
+    process_priority,
+    verbose,
+    debug,
+    output_json,
+):
     """Index PDFs to MeiliSearch for full-text search.
 
     Extracts text from PDFs and indexes to MeiliSearch for exact phrase
@@ -482,23 +861,53 @@ def index_text_pdf(path, from_file, index_name, recursive, no_ocr, ocr_language,
     validate_path_or_from_file(path, from_file)
 
     from arcaneum.cli.index_text import index_text_pdf_command
+
     ocr_enabled = not no_ocr
-    index_text_pdf_command(path, from_file, index_name, recursive, ocr_enabled, ocr_language, ocr_workers, normalize_only, batch_size, force, process_priority, verbose, debug, output_json)
+    index_text_pdf_command(
+        path,
+        from_file,
+        index_name,
+        recursive,
+        ocr_enabled,
+        ocr_language,
+        ocr_workers,
+        normalize_only,
+        batch_size,
+        force,
+        process_priority,
+        verbose,
+        debug,
+        output_json,
+    )
 
 
-@cli.command('store')
-@click.argument('file', type=click.Path())
-@click.option('--collection', required=True, help='Target collection name')
-@click.option('--model', default='arctic-m', help='Embedding model (default: arctic-m for documents)')
-@click.option('--title', help='Document title')
-@click.option('--category', help='Document category')
-@click.option('--tags', help='Comma-separated tags')
-@click.option('--metadata', help='Additional metadata as JSON')
-@click.option('--chunk-size', type=int, help='Target chunk size in tokens')
-@click.option('--chunk-overlap', type=int, help='Overlap between chunks in tokens')
-@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def store(file, collection, model, title, category, tags, metadata, chunk_size, chunk_overlap, verbose, output_json):
+@cli.command("store")
+@click.argument("file", type=click.Path())
+@click.option("--collection", required=True, help="Target collection name")
+@click.option(
+    "--model", default="arctic-m", help="Embedding model (default: arctic-m for documents)"
+)
+@click.option("--title", help="Document title")
+@click.option("--category", help="Document category")
+@click.option("--tags", help="Comma-separated tags")
+@click.option("--metadata", help="Additional metadata as JSON")
+@click.option("--chunk-size", type=int, help="Target chunk size in tokens")
+@click.option("--chunk-overlap", type=int, help="Overlap between chunks in tokens")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
+def store(
+    file,
+    collection,
+    model,
+    title,
+    category,
+    tags,
+    metadata,
+    chunk_size,
+    chunk_overlap,
+    verbose,
+    output_json,
+):
     """Store agent-generated content for long-term memory.
 
     Designed for AI agents (Claude skills) to store research, analysis, and
@@ -521,150 +930,285 @@ def store(file, collection, model, title, category, tags, metadata, chunk_size, 
     For indexing existing markdown directories, use 'arc index markdown' instead.
     """
     from arcaneum.cli.index_markdown import store_command
-    store_command(file, collection, model, title, category, tags, metadata, chunk_size, chunk_overlap, verbose, output_json)
+
+    store_command(
+        file,
+        collection,
+        model,
+        title,
+        category,
+        tags,
+        metadata,
+        chunk_size,
+        chunk_overlap,
+        verbose,
+        output_json,
+    )
 
 
 # Search commands (RDR-007, RDR-012)
-@cli.group(cls=HelpfulGroup, usage_examples=[
-    'arc search semantic "your query" --corpus CorpusName',
-    'arc search semantic "your query" --corpus Corp1 --corpus Corp2',
-    'arc search text "your query" --corpus CorpusName',
-])
+@cli.group(
+    cls=HelpfulGroup,
+    usage_examples=[
+        'arc search semantic "your query" --corpus CorpusName',
+        'arc search semantic "your query" --corpus Corp1 --corpus Corp2',
+        'arc search text "your query" --corpus CorpusName',
+    ],
+)
 def search():
     """Search collections"""
     pass
 
 
-@search.command('semantic')
-@click.argument('query')
-@click.option('--corpus', 'corpora', multiple=True, help='Corpus to search (can specify multiple)')
-@click.option('--collection', 'legacy_collection', default=None, hidden=True, help='(Deprecated) Collection to search')
-@click.option('--vector-name', help='Vector name to use (auto-detects if not specified)')
-@click.option('--filter', 'filter_arg', help='Metadata filter (key=value or JSON)')
-@click.option('--limit', type=int, default=10, help='Number of results')
-@click.option('--offset', type=int, default=0, help='Number of results to skip (for pagination)')
-@click.option('--score-threshold', type=float, help='Minimum score threshold')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-def search_semantic(query, corpora, legacy_collection, vector_name, filter_arg, limit, offset, score_threshold, output_json, verbose):
+@search.command("semantic")
+@click.argument("query")
+@click.option("--corpus", "corpora", multiple=True, help="Corpus to search (can specify multiple)")
+@click.option(
+    "--collection",
+    "legacy_collection",
+    default=None,
+    hidden=True,
+    help="(Deprecated) Collection to search",
+)
+@click.option("--vector-name", help="Vector name to use (auto-detects if not specified)")
+@click.option("--filter", "filter_arg", help="Metadata filter (key=value or JSON)")
+@click.option("--limit", type=int, default=10, help="Number of results")
+@click.option("--offset", type=int, default=0, help="Number of results to skip (for pagination)")
+@click.option("--score-threshold", type=float, help="Minimum score threshold")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+def search_semantic(
+    query,
+    corpora,
+    legacy_collection,
+    vector_name,
+    filter_arg,
+    limit,
+    offset,
+    score_threshold,
+    output_json,
+    verbose,
+):
     """Vector-based semantic search"""
     from arcaneum.cli.search import search_command
     from arcaneum.cli.utils import resolve_corpora
-    resolved_corpora = resolve_corpora(corpora, legacy_collection, 'collection')
-    search_command(query, resolved_corpora, vector_name, filter_arg, limit, offset, score_threshold, output_json, verbose)
+
+    resolved_corpora = resolve_corpora(corpora, legacy_collection, "collection")
+    search_command(
+        query,
+        resolved_corpora,
+        vector_name,
+        filter_arg,
+        limit,
+        offset,
+        score_threshold,
+        output_json,
+        verbose,
+    )
 
 
-@search.command('text')
-@click.argument('query')
-@click.option('--corpus', 'corpora', multiple=True, help='Corpus to search (can specify multiple)')
-@click.option('--index', 'legacy_index', default=None, hidden=True, help='(Deprecated) MeiliSearch index to search')
-@click.option('--filter', 'filter_arg', help='Metadata filter (key=value or JSON)')
-@click.option('--limit', type=int, default=10, help='Number of results')
-@click.option('--offset', type=int, default=0, help='Number of results to skip (for pagination)')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
+@search.command("text")
+@click.argument("query")
+@click.option("--corpus", "corpora", multiple=True, help="Corpus to search (can specify multiple)")
+@click.option(
+    "--index",
+    "legacy_index",
+    default=None,
+    hidden=True,
+    help="(Deprecated) MeiliSearch index to search",
+)
+@click.option("--filter", "filter_arg", help="Metadata filter (key=value or JSON)")
+@click.option("--limit", type=int, default=10, help="Number of results")
+@click.option("--offset", type=int, default=0, help="Number of results to skip (for pagination)")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 def search_text(query, corpora, legacy_index, filter_arg, limit, offset, output_json, verbose):
     """Keyword-based full-text search"""
     from arcaneum.cli.fulltext import search_text_command
     from arcaneum.cli.utils import resolve_corpora
-    resolved_corpora = resolve_corpora(corpora, legacy_index, 'index')
+
+    resolved_corpora = resolve_corpora(corpora, legacy_index, "index")
     search_text_command(query, resolved_corpora, filter_arg, limit, offset, output_json, verbose)
 
 
 # Dual indexing commands (RDR-009)
-@cli.group(cls=HelpfulGroup, usage_examples=[
-    'arc corpus create MyCorpus --type code',
-    'arc corpus sync MyCorpus /path/to/files',
-    'arc corpus sync MyCorpus /path/one /path/two',
-    'arc corpus items MyCorpus',
-])
+@cli.group(
+    cls=HelpfulGroup,
+    usage_examples=[
+        "arc corpus create MyCorpus --type code",
+        "arc corpus sync MyCorpus /path/to/files",
+        "arc corpus sync MyCorpus /path/one /path/two",
+        "arc corpus items MyCorpus",
+    ],
+)
 def corpus():
     """Manage dual-index corpora (Qdrant + MeiliSearch)"""
     pass
 
 
-@corpus.command('list')
-@click.option('--details', is_flag=True, help='Show extended listing columns, including exact item counts')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@corpus.command("list")
+@click.option(
+    "--details", is_flag=True, help="Show extended listing columns, including exact item counts"
+)
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def list_corpora(details, output_json):
     """List all corpora with parity status."""
     from arcaneum.cli.corpus import list_corpora_command
+
     list_corpora_command(details, output_json)
 
 
-@corpus.command('create')
-@click.argument('name')
-@click.option('--type', 'corpus_type', type=click.Choice(['pdf', 'code', 'markdown']), required=True, help='Corpus type')
-@click.option('--models', default=None, help='Embedding models (comma-separated; default inferred from --type)')
-@click.option('--description', default=None, help='Human-readable corpus description')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@corpus.command("create")
+@click.argument("name")
+@click.option(
+    "--type",
+    "corpus_type",
+    type=click.Choice(["pdf", "code", "markdown"]),
+    required=True,
+    help="Corpus type",
+)
+@click.option(
+    "--models",
+    default=None,
+    help="Embedding models (comma-separated; default inferred from --type)",
+)
+@click.option("--description", default=None, help="Human-readable corpus description")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def create_corpus(name, corpus_type, models, description, output_json):
     """Create both collection and index"""
     from arcaneum.cli.corpus import create_corpus_command
+
     create_corpus_command(name, corpus_type, models, description, output_json)
 
 
-@corpus.command('update')
-@click.argument('name')
-@click.option('--description', default=None, help='Set human-readable corpus description')
-@click.option('--clear-description', is_flag=True, help='Remove the corpus description')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@corpus.command("update")
+@click.argument("name")
+@click.option("--description", default=None, help="Set human-readable corpus description")
+@click.option("--clear-description", is_flag=True, help="Remove the corpus description")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def update_corpus(name, description, clear_description, output_json):
     """Update corpus metadata without reindexing."""
     from arcaneum.cli.corpus import update_corpus_command
+
     update_corpus_command(name, description, clear_description, output_json)
 
 
-@corpus.command('delete')
-@click.argument('name')
-@click.option('--confirm', is_flag=True, help='Skip confirmation prompt')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@corpus.command("delete")
+@click.argument("name")
+@click.option("--confirm", is_flag=True, help="Skip confirmation prompt")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def delete_corpus(name, confirm, output_json):
     """Delete both collection and index for a corpus."""
     from arcaneum.cli.corpus import delete_corpus_command
+
     delete_corpus_command(name, confirm, output_json)
 
 
-@corpus.command('sync')
-@click.argument('corpus')
-@click.argument('paths', nargs=-1, type=click.Path(exists=True), required=False)
-@click.option('--from-file', help='Read paths from file (one per line, or "-" for stdin)')
-@click.option('--models', default=None, help='Embedding models (comma-separated; default uses corpus metadata)')
-@click.option('--file-types', help='File extensions to index (e.g., .py,.md)')
-@click.option('--force', is_flag=True, help='Force reindex all files (bypass change detection)')
-@click.option('--dry-run', is_flag=True, help='Show what would be synced without making changes')
-@click.option('--verify', is_flag=True, help='Verify collection integrity after indexing')
-@click.option('--text-workers', type=int, default=None,
-              help='Parallel workers for code AST chunking (default: auto=cpu/2, 0=sequential)')
-@click.option('--max-embedding-batch', type=int, default=None,
-              help='Cap embedding batch size (default: auto-tuned; use 8-16 for OOM recovery)')
-@click.option('--no-gpu/--gpu', default=True, help='Use CPU by default; pass --gpu to opt into accelerator embedding')
-@click.option('--cpu-workers', type=int, default=None,
-              help='Batch parallelization workers for CPU embedding (default: 1, conservative to prevent system crashes)')
-@click.option('--verbose', '-v', is_flag=True, help='Show detailed progress (files, chunks, indexing)')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-@click.option('--git-update', is_flag=True,
-              help='Skip repos with unchanged commit hash (git-aware fast path)')
-@click.option('--git-version', is_flag=True,
-              help='Keep multiple versions indexed (different commits coexist)')
-@click.option('--skip-dir-prefix', multiple=True, default=('_',),
-              help='Skip directories starting with PREFIX (default: _). Repeatable.')
-@click.option('--no-skip-dir-prefix', is_flag=True,
-              help='Disable all directory prefix skipping')
-@click.option('--parity', is_flag=True,
-              help='Also detect renames, remove indexed files no longer on disk, and check cross-system parity (slower than default; default already re-indexes edited files via mtime+size)')
-@click.option('--timeout', type=int, default=None,
-              help='Qdrant timeout in seconds (default: 120, increase for very large files)')
-@click.option('--mem-probe-interval', type=float, default=None,
-              help='Seconds between memory snapshots written as JSONL (default: 0=off; '
-                   'env: ARC_MEM_PROBE_INTERVAL). Survives encode hangs — use to diagnose '
-                   'runs where the per-file probe never prints.')
-@click.option('--mem-probe-log', type=click.Path(), default=None,
-              help='Path for JSONL memory snapshots (default: '
-                   '~/.arcaneum/logs/arc-mem-<utc>-<pid>.jsonl; pass "-" for stderr; '
-                   'env: ARC_MEM_PROBE_LOG). Line-buffered so partial output '
-                   'survives a SIGKILL.')
-def sync_directory(corpus, paths, from_file, models, file_types, force, dry_run, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, skip_dir_prefix, no_skip_dir_prefix, parity, timeout, mem_probe_interval, mem_probe_log):
+@corpus.command("sync")
+@click.argument("corpus")
+@click.argument("paths", nargs=-1, type=click.Path(exists=True), required=False)
+@click.option("--from-file", help='Read paths from file (one per line, or "-" for stdin)')
+@click.option(
+    "--models",
+    default=None,
+    help="Embedding models (comma-separated; default uses corpus metadata)",
+)
+@click.option("--file-types", help="File extensions to index (e.g., .py,.md)")
+@click.option("--force", is_flag=True, help="Force reindex all files (bypass change detection)")
+@click.option("--dry-run", is_flag=True, help="Show what would be synced without making changes")
+@click.option("--verify", is_flag=True, help="Verify collection integrity after indexing")
+@click.option(
+    "--text-workers",
+    type=int,
+    default=None,
+    help="Parallel workers for code AST chunking (default: auto=cpu/2, 0=sequential)",
+)
+@click.option(
+    "--max-embedding-batch",
+    type=int,
+    default=None,
+    help="Cap embedding batch size (default: auto-tuned; use 8-16 for OOM recovery)",
+)
+@click.option(
+    "--no-gpu/--gpu",
+    default=True,
+    help="Use CPU by default; pass --gpu to opt into accelerator embedding",
+)
+@click.option(
+    "--cpu-workers",
+    type=int,
+    default=None,
+    help="Batch parallelization workers for CPU embedding (default: 1, conservative to prevent system crashes)",
+)
+@click.option(
+    "--verbose", "-v", is_flag=True, help="Show detailed progress (files, chunks, indexing)"
+)
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
+@click.option(
+    "--git-update", is_flag=True, help="Skip repos with unchanged commit hash (git-aware fast path)"
+)
+@click.option(
+    "--git-version", is_flag=True, help="Keep multiple versions indexed (different commits coexist)"
+)
+@click.option(
+    "--skip-dir-prefix",
+    multiple=True,
+    default=("_",),
+    help="Skip directories starting with PREFIX (default: _). Repeatable.",
+)
+@click.option("--no-skip-dir-prefix", is_flag=True, help="Disable all directory prefix skipping")
+@click.option(
+    "--parity",
+    is_flag=True,
+    help="Also detect renames, remove indexed files no longer on disk, and check cross-system parity (slower than default; default already re-indexes edited files via mtime+size)",
+)
+@click.option(
+    "--timeout",
+    type=int,
+    default=None,
+    help="Qdrant timeout in seconds (default: 120, increase for very large files)",
+)
+@click.option(
+    "--mem-probe-interval",
+    type=float,
+    default=None,
+    help="Seconds between memory snapshots written as JSONL (default: 0=off; "
+    "env: ARC_MEM_PROBE_INTERVAL). Survives encode hangs — use to diagnose "
+    "runs where the per-file probe never prints.",
+)
+@click.option(
+    "--mem-probe-log",
+    type=click.Path(),
+    default=None,
+    help="Path for JSONL memory snapshots (default: "
+    '~/.arcaneum/logs/arc-mem-<utc>-<pid>.jsonl; pass "-" for stderr; '
+    "env: ARC_MEM_PROBE_LOG). Line-buffered so partial output "
+    "survives a SIGKILL.",
+)
+def sync_directory(
+    corpus,
+    paths,
+    from_file,
+    models,
+    file_types,
+    force,
+    dry_run,
+    verify,
+    text_workers,
+    max_embedding_batch,
+    no_gpu,
+    cpu_workers,
+    verbose,
+    output_json,
+    git_update,
+    git_version,
+    skip_dir_prefix,
+    no_skip_dir_prefix,
+    parity,
+    timeout,
+    mem_probe_interval,
+    mem_probe_log,
+):
     """Index to both vector and full-text.
 
     Examples:
@@ -706,20 +1250,57 @@ def sync_directory(corpus, paths, from_file, models, file_types, force, dry_run,
         mem_probe_log = os.environ.get("ARC_MEM_PROBE_LOG")
 
     from arcaneum.cli.sync import sync_directory_command
-    sync_directory_command(corpus, paths, from_file, models, file_types, force, verify, text_workers, max_embedding_batch, no_gpu, cpu_workers, verbose, output_json, git_update, git_version, effective_prefixes, dry_run=dry_run, parity=parity, qdrant_timeout=timeout, mem_probe_interval=mem_probe_interval, mem_probe_log=mem_probe_log)
+
+    sync_directory_command(
+        corpus,
+        paths,
+        from_file,
+        models,
+        file_types,
+        force,
+        verify,
+        text_workers,
+        max_embedding_batch,
+        no_gpu,
+        cpu_workers,
+        verbose,
+        output_json,
+        git_update,
+        git_version,
+        effective_prefixes,
+        dry_run=dry_run,
+        parity=parity,
+        qdrant_timeout=timeout,
+        mem_probe_interval=mem_probe_interval,
+        mem_probe_log=mem_probe_log,
+    )
 
 
-@corpus.command('repair')
-@click.argument('corpus')
-@click.option('--quality-threshold', type=float, default=0.9,
-              help='Text quality threshold (0.0-1.0, default: 0.9). Files scoring below are re-extracted.')
-@click.option('--dry-run', is_flag=True, help='Show what would be repaired without making changes')
-@click.option('--no-gpu/--gpu', default=True, help='Use CPU by default; pass --gpu to opt into accelerator embedding')
-@click.option('--max-embedding-batch', type=int, default=None,
-              help='Cap embedding batch size (default: auto-tuned)')
-@click.option('--verbose', '-v', is_flag=True, help='Show per-file quality scores and details')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def corpus_repair(corpus, quality_threshold, dry_run, no_gpu, max_embedding_batch, verbose, output_json):
+@corpus.command("repair")
+@click.argument("corpus")
+@click.option(
+    "--quality-threshold",
+    type=float,
+    default=0.9,
+    help="Text quality threshold (0.0-1.0, default: 0.9). Files scoring below are re-extracted.",
+)
+@click.option("--dry-run", is_flag=True, help="Show what would be repaired without making changes")
+@click.option(
+    "--no-gpu/--gpu",
+    default=True,
+    help="Use CPU by default; pass --gpu to opt into accelerator embedding",
+)
+@click.option(
+    "--max-embedding-batch",
+    type=int,
+    default=None,
+    help="Cap embedding batch size (default: auto-tuned)",
+)
+@click.option("--verbose", "-v", is_flag=True, help="Show per-file quality scores and details")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
+def corpus_repair(
+    corpus, quality_threshold, dry_run, no_gpu, max_embedding_batch, verbose, output_json
+):
     """Re-index incomplete or garbled files in a corpus.
 
     Scans all indexed chunks for text quality issues (garbled text from
@@ -745,40 +1326,90 @@ def corpus_repair(corpus, quality_threshold, dry_run, no_gpu, max_embedding_batc
     try:
         qdrant = create_qdrant_client()
         corpus_metadata = get_collection_metadata(qdrant, corpus)
-        configured_models = corpus_metadata.get('model') if corpus_metadata else None
+        configured_models = corpus_metadata.get("model") if corpus_metadata else None
     except Exception:
         configured_models = None
 
     sync_directory_command(
-        corpus, paths=(), from_file=None,
-        models=configured_models or 'arctic-m',
-        file_types=None, force=False, verify=False,
-        text_workers=None, max_embedding_batch=max_embedding_batch,
-        no_gpu=no_gpu, cpu_workers=None,
-        verbose=verbose, output_json=output_json,
-        git_update=False, git_version=False,
-        skip_dir_prefixes=('_',),
-        dry_run=dry_run, parity=False,
-        repair=True, quality_threshold=quality_threshold,
+        corpus,
+        paths=(),
+        from_file=None,
+        models=configured_models or "arctic-m",
+        file_types=None,
+        force=False,
+        verify=False,
+        text_workers=None,
+        max_embedding_batch=max_embedding_batch,
+        no_gpu=no_gpu,
+        cpu_workers=None,
+        verbose=verbose,
+        output_json=output_json,
+        git_update=False,
+        git_version=False,
+        skip_dir_prefixes=("_",),
+        dry_run=dry_run,
+        parity=False,
+        repair=True,
+        quality_threshold=quality_threshold,
     )
 
 
-@corpus.command('parity')
-@click.argument('name', required=False)
-@click.option('--dry-run', is_flag=True, help='Show what would be backfilled without making changes')
-@click.option('--verify', is_flag=True, help='Verify chunk counts match between systems (detects partial uploads)')
-@click.option('--repair-metadata', is_flag=True, help='Update MeiliSearch docs with missing git metadata from Qdrant')
-@click.option('--text-workers', type=int, default=None,
-              help='Parallel workers for fetching/chunking (default: auto=cpu/2, 0=sequential)')
-@click.option('--max-embedding-batch', type=int, default=None,
-              help='Cap embedding batch size for Qdrant backfill (use 8-16 for OOM recovery)')
-@click.option('--timeout', type=int, default=120,
-              help='Qdrant timeout in seconds for fetch operations (default: 120)')
-@click.option('--create-missing', is_flag=True, help='Create missing MeiliSearch indexes for qdrant_only corpora')
-@click.option('--confirm', is_flag=True, help='Skip confirmation prompt when processing all corpora')
-@click.option('--verbose', '-v', is_flag=True, help='Show detailed progress for each file')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
-def corpus_parity(name, dry_run, verify, repair_metadata, text_workers, max_embedding_batch, timeout, create_missing, confirm, verbose, output_json):
+@corpus.command("parity")
+@click.argument("name", required=False)
+@click.option(
+    "--dry-run", is_flag=True, help="Show what would be backfilled without making changes"
+)
+@click.option(
+    "--verify",
+    is_flag=True,
+    help="Verify chunk counts match between systems (detects partial uploads)",
+)
+@click.option(
+    "--repair-metadata",
+    is_flag=True,
+    help="Update MeiliSearch docs with missing git metadata from Qdrant",
+)
+@click.option(
+    "--text-workers",
+    type=int,
+    default=None,
+    help="Parallel workers for fetching/chunking (default: auto=cpu/2, 0=sequential)",
+)
+@click.option(
+    "--max-embedding-batch",
+    type=int,
+    default=None,
+    help="Cap embedding batch size for Qdrant backfill (use 8-16 for OOM recovery)",
+)
+@click.option(
+    "--timeout",
+    type=int,
+    default=120,
+    help="Qdrant timeout in seconds for fetch operations (default: 120)",
+)
+@click.option(
+    "--create-missing",
+    is_flag=True,
+    help="Create missing MeiliSearch indexes for qdrant_only corpora",
+)
+@click.option(
+    "--confirm", is_flag=True, help="Skip confirmation prompt when processing all corpora"
+)
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed progress for each file")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
+def corpus_parity(
+    name,
+    dry_run,
+    verify,
+    repair_metadata,
+    text_workers,
+    max_embedding_batch,
+    timeout,
+    create_missing,
+    confirm,
+    verbose,
+    output_json,
+):
     """Check and restore parity between Qdrant and MeiliSearch.
 
     When NAME is provided, operates on a single corpus. When NAME is omitted,
@@ -809,21 +1440,35 @@ def corpus_parity(name, dry_run, verify, repair_metadata, text_workers, max_embe
     exist in Qdrant. This promotes single-sided collections into full corpora.
     """
     from arcaneum.cli.sync import parity_command
-    parity_command(name, dry_run, verify, repair_metadata, text_workers, max_embedding_batch, timeout, create_missing, confirm, verbose, output_json)
+
+    parity_command(
+        name,
+        dry_run,
+        verify,
+        repair_metadata,
+        text_workers,
+        max_embedding_batch,
+        timeout,
+        create_missing,
+        confirm,
+        verbose,
+        output_json,
+    )
 
 
-@corpus.command('info')
-@click.argument('name')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@corpus.command("info")
+@click.argument("name")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def corpus_info(name, output_json):
     """Show combined corpus information (collection + index)."""
     from arcaneum.cli.corpus import corpus_info_command
+
     corpus_info_command(name, output_json)
 
 
-@corpus.command('items')
-@click.argument('name')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@corpus.command("items")
+@click.argument("name")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def corpus_items(name, output_json):
     """List all indexed items with parity status.
 
@@ -837,14 +1482,15 @@ def corpus_items(name, output_json):
         arc corpus items MyCorpus --json
     """
     from arcaneum.cli.corpus import corpus_items_command
+
     corpus_items_command(name, output_json)
 
 
-@corpus.command('verify')
-@click.argument('name')
-@click.option('--project', help='Filter by project identifier (code corpora only)')
-@click.option('--verbose', '-v', is_flag=True, help='Show detailed file-level results')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@corpus.command("verify")
+@click.argument("name")
+@click.option("--project", help="Filter by project identifier (code corpora only)")
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed file-level results")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def corpus_verify(name, project, verbose, output_json):
     """Verify corpus health across both Qdrant and MeiliSearch.
 
@@ -859,31 +1505,36 @@ def corpus_verify(name, project, verbose, output_json):
         arc corpus verify MyCorpus --json
     """
     from arcaneum.cli.corpus import corpus_verify_command
+
     corpus_verify_command(name, project, verbose, output_json)
 
 
 # Diagnostics command (RDR-006 enhancement)
-@cli.command('doctor')
-@click.option('--verbose', '-v', is_flag=True, help='Show detailed diagnostic information')
-@click.option('--json', 'output_json', is_flag=True, help='Output JSON format')
+@cli.command("doctor")
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed diagnostic information")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def doctor(verbose, output_json):
     """Verify Arcaneum setup and prerequisites (from RDR-006 enhancement)"""
     from arcaneum.cli.doctor import doctor_command
+
     return doctor_command(verbose, output_json)
 
 
 # Configuration and cache management commands
 from arcaneum.cli.config import config_group
-cli.add_command(config_group, name='config')
+
+cli.add_command(config_group, name="config")
 
 # Container management commands
 from arcaneum.cli.docker import container_group
-cli.add_command(container_group, name='container')
+
+cli.add_command(container_group, name="container")
 
 # MeiliSearch index management commands (RDR-008, RDR-010)
 # Named 'indexes' to mirror 'collection' for Qdrant
 from arcaneum.cli.fulltext import fulltext as indexes_group
-cli.add_command(indexes_group, name='indexes')
+
+cli.add_command(indexes_group, name="indexes")
 
 _enable_global_json(cli)
 
@@ -894,7 +1545,7 @@ def main():
     # later in the CLI flow pick up the settings, while library consumers that
     # import arcaneum.cli.main without invoking main() are not affected.
     configure_ssl_from_env()
-    json_mode = '--json' in sys.argv[1:]
+    json_mode = "--json" in sys.argv[1:]
     try:
         cli(standalone_mode=False)
         return EXIT_SUCCESS
@@ -904,6 +1555,7 @@ def main():
         # Click handles its own exceptions (usage errors, etc.)
         if json_mode:
             from arcaneum.cli.output import print_json
+
             print_json("error", str(e), errors=[str(e)])
         else:
             e.show()
@@ -911,6 +1563,7 @@ def main():
     except (InvalidArgumentError, click.BadParameter) as e:
         if json_mode:
             from arcaneum.cli.output import print_json
+
             print_json("error", str(e), errors=[str(e)])
         else:
             print(f"[ERROR] {e}", file=sys.stderr)
@@ -918,6 +1571,7 @@ def main():
     except ResourceNotFoundError as e:
         if json_mode:
             from arcaneum.cli.output import print_json
+
             print_json("error", str(e), errors=[str(e)])
         else:
             print(f"[ERROR] {e}", file=sys.stderr)
@@ -925,6 +1579,7 @@ def main():
     except click.Abort:
         if json_mode:
             from arcaneum.cli.output import print_json
+
             print_json("error", "Operation aborted", errors=["Operation aborted"])
         else:
             print("Aborted!", file=sys.stderr)
@@ -932,13 +1587,17 @@ def main():
     except KeyboardInterrupt:
         if json_mode:
             from arcaneum.cli.output import print_json
-            print_json("error", "Operation cancelled by user", errors=["Operation cancelled by user"])
+
+            print_json(
+                "error", "Operation cancelled by user", errors=["Operation cancelled by user"]
+            )
         else:
             print("\n[INFO] Operation cancelled by user", file=sys.stderr)
         return EXIT_ERROR
     except ArcaneumError as e:
         if json_mode:
             from arcaneum.cli.output import print_json
+
             print_json("error", str(e), errors=[str(e)])
         else:
             print(f"[ERROR] {e}", file=sys.stderr)
@@ -946,11 +1605,13 @@ def main():
     except Exception as e:
         if json_mode:
             from arcaneum.cli.output import print_json
+
             print_json("error", f"Unexpected error: {e}", errors=[str(e)])
         else:
             print(f"[ERROR] Unexpected error: {e}", file=sys.stderr)
-        if '--verbose' in sys.argv or '-v' in sys.argv:
+        if "--verbose" in sys.argv or "-v" in sys.argv:
             import traceback
+
             traceback.print_exc()
         return EXIT_ERROR
 

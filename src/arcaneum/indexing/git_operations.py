@@ -54,11 +54,7 @@ class GitProjectDiscovery:
 
     DEFAULT_TIMEOUT = 5.0  # seconds
 
-    def find_git_projects(
-        self,
-        input_path: str,
-        depth: Optional[int] = None
-    ) -> List[str]:
+    def find_git_projects(self, input_path: str, depth: Optional[int] = None) -> List[str]:
         """Find all .git directories with optional depth control.
 
         Args:
@@ -95,7 +91,7 @@ class GitProjectDiscovery:
                 find_cmd,
                 capture_output=True,
                 text=True,
-                timeout=self.DEFAULT_TIMEOUT * 10  # Generous timeout for find
+                timeout=self.DEFAULT_TIMEOUT * 10,  # Generous timeout for find
             )
 
             if result.returncode != 0:
@@ -103,7 +99,7 @@ class GitProjectDiscovery:
                 return []
 
             # Extract project roots (parent directories of .git)
-            git_dirs = result.stdout.strip().split('\n')
+            git_dirs = result.stdout.strip().split("\n")
             project_roots = []
 
             for git_dir in git_dirs:
@@ -164,7 +160,7 @@ class GitProjectDiscovery:
                 commit_hash=commit_hash,
                 branch=branch,
                 project_name=project_name,
-                remote_url=remote_url
+                remote_url=remote_url,
             )
 
         except InvalidGitRepositoryError:
@@ -188,7 +184,7 @@ class GitProjectDiscovery:
         except TypeError:
             # Detached HEAD - try to find tag
             try:
-                tag = repo.git.describe('--tags', '--exact-match')
+                tag = repo.git.describe("--tags", "--exact-match")
                 return f"(tag){tag}"
             except GitCommandError:
                 # No exact tag match - use commit SHA
@@ -211,11 +207,11 @@ class GitProjectDiscovery:
         try:
             # Try origin first
             try:
-                remote_url = repo.remote('origin').url
+                remote_url = repo.remote("origin").url
             except ValueError:
                 # Try upstream
                 try:
-                    remote_url = repo.remote('upstream').url
+                    remote_url = repo.remote("upstream").url
                 except ValueError:
                     # Use first available remote
                     if repo.remotes:
@@ -247,18 +243,20 @@ class GitProjectDiscovery:
             return url
 
         # Handle HTTPS URLs with credentials
-        if url.startswith('https://') or url.startswith('http://'):
+        if url.startswith("https://") or url.startswith("http://"):
             try:
                 parsed = urlparse(url)
                 # Remove username and password
-                sanitized = urlunparse((
-                    parsed.scheme,
-                    parsed.hostname + (f":{parsed.port}" if parsed.port else ""),
-                    parsed.path,
-                    parsed.params,
-                    parsed.query,
-                    parsed.fragment
-                ))
+                sanitized = urlunparse(
+                    (
+                        parsed.scheme,
+                        parsed.hostname + (f":{parsed.port}" if parsed.port else ""),
+                        parsed.path,
+                        parsed.params,
+                        parsed.query,
+                        parsed.fragment,
+                    )
+                )
                 return sanitized
             except Exception:
                 return url
@@ -287,18 +285,18 @@ class GitProjectDiscovery:
             # - git@github.com:user/my-project.git -> my-project
 
             # Remove .git suffix
-            url_no_git = remote_url.removesuffix('.git')
+            url_no_git = remote_url.removesuffix(".git")
 
             # Extract last path component
-            if '/' in url_no_git:
-                project_name = url_no_git.rsplit('/', 1)[-1]
-            elif ':' in url_no_git:  # SSH format git@host:path
-                project_name = url_no_git.rsplit(':', 1)[-1]
+            if "/" in url_no_git:
+                project_name = url_no_git.rsplit("/", 1)[-1]
+            elif ":" in url_no_git:  # SSH format git@host:path
+                project_name = url_no_git.rsplit(":", 1)[-1]
             else:
                 project_name = os.path.basename(project_root)
 
             # Clean up
-            project_name = project_name.rstrip('/')
+            project_name = project_name.rstrip("/")
             if project_name:
                 return project_name
 
@@ -314,13 +312,11 @@ class GitProjectDiscovery:
         Returns:
             True if shallow clone, False otherwise
         """
-        shallow_file = os.path.join(repo.git_dir, 'shallow')
+        shallow_file = os.path.join(repo.git_dir, "shallow")
         return os.path.exists(shallow_file)
 
     def get_tracked_files(
-        self,
-        project_root: str,
-        extensions: Optional[List[str]] = None
+        self, project_root: str, extensions: Optional[List[str]] = None
     ) -> List[str]:
         """Get list of git-tracked files respecting .gitignore.
 
@@ -355,20 +351,18 @@ class GitProjectDiscovery:
                 tracked_files = []
                 for pattern in patterns:
                     try:
-                        files = repo.git.ls_files(pattern).split('\n')
+                        files = repo.git.ls_files(pattern).split("\n")
                         tracked_files.extend([f for f in files if f])
                     except GitCommandError:
                         continue
             else:
                 # Get all tracked files
-                tracked_files = repo.git.ls_files().split('\n')
+                tracked_files = repo.git.ls_files().split("\n")
                 tracked_files = [f for f in tracked_files if f]
 
             # Convert relative paths to absolute
             absolute_paths = [
-                os.path.join(project_root, rel_path)
-                for rel_path in tracked_files
-                if rel_path
+                os.path.join(project_root, rel_path) for rel_path in tracked_files if rel_path
             ]
 
             return absolute_paths

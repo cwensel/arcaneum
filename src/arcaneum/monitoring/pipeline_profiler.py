@@ -138,14 +138,11 @@ class PipelineProfiler:
                     name=name,
                     start_time=0.0,
                     end_time=existing.duration + duration,
-                    items_processed=existing.items_processed + item_count
+                    items_processed=existing.items_processed + item_count,
                 )
             else:
                 metrics = StageMetrics(
-                    name=name,
-                    start_time=0.0,
-                    end_time=duration,
-                    items_processed=item_count
+                    name=name, start_time=0.0, end_time=duration, items_processed=item_count
                 )
             self.stages[name] = metrics
 
@@ -167,10 +164,7 @@ class PipelineProfiler:
         total = self.total_duration
 
         # Sort stages by start time if available, otherwise by name
-        sorted_stages = sorted(
-            self.stages.values(),
-            key=lambda s: (s.start_time, s.name)
-        )
+        sorted_stages = sorted(self.stages.values(), key=lambda s: (s.start_time, s.name))
 
         for metrics in sorted_stages:
             pct = (metrics.duration / total * 100) if total > 0 else 0

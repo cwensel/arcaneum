@@ -18,9 +18,15 @@ def check_python_version() -> Tuple[bool, str]:
     current = sys.version_info[:2]
 
     if current >= min_version:
-        return True, f"Python {current[0]}.{current[1]} (>= {min_version[0]}.{min_version[1]} required)"
+        return (
+            True,
+            f"Python {current[0]}.{current[1]} (>= {min_version[0]}.{min_version[1]} required)",
+        )
     else:
-        return False, f"Python {current[0]}.{current[1]} (need >= {min_version[0]}.{min_version[1]})"
+        return (
+            False,
+            f"Python {current[0]}.{current[1]} (need >= {min_version[0]}.{min_version[1]})",
+        )
 
 
 def check_dependency(package_name: str, import_name: str = None) -> Tuple[bool, str]:
@@ -32,7 +38,7 @@ def check_dependency(package_name: str, import_name: str = None) -> Tuple[bool, 
     if spec is not None:
         try:
             module = importlib.import_module(import_name)
-            version = getattr(module, '__version__', 'unknown')
+            version = getattr(module, "__version__", "unknown")
             return True, f"{package_name} {version}"
         except Exception:
             return True, f"{package_name} (version unknown)"
@@ -40,7 +46,9 @@ def check_dependency(package_name: str, import_name: str = None) -> Tuple[bool, 
         return False, f"{package_name} not installed"
 
 
-def check_optional_dependency(package_name: str, import_name: str = None) -> Tuple[bool | None, str]:
+def check_optional_dependency(
+    package_name: str, import_name: str = None
+) -> Tuple[bool | None, str]:
     """Check an optional Python dependency without failing diagnostics."""
     success, message = check_dependency(package_name, import_name)
     if success:
@@ -86,7 +94,7 @@ def check_meilisearch_connection(verbose: bool = False) -> Tuple[bool, str]:
 
         # Try to get health to verify connectivity
         health = client.health()
-        if health.get('status') == 'available':
+        if health.get("status") == "available":
             indexes = client.get_indexes()
             return True, f"MeiliSearch connected ({len(indexes['results'])} indexes)"
         else:
@@ -104,8 +112,9 @@ def check_embedding_models(verbose: bool = False) -> Tuple[bool, str]:
         from arcaneum.embeddings.client import EMBEDDING_MODELS
 
         # Get available models from the configuration
-        available = [alias for alias, config in EMBEDDING_MODELS.items()
-                    if config.get("available", True)]
+        available = [
+            alias for alias, config in EMBEDDING_MODELS.items() if config.get("available", True)
+        ]
 
         if len(available) > 0:
             return True, f"Embedding models available: {len(available)} configured"
@@ -126,10 +135,10 @@ def check_temp_dir_writable() -> Tuple[bool, str]:
 
     try:
         temp_dir = tempfile.gettempdir()
-        test_file = os.path.join(temp_dir, '.arcaneum_test')
+        test_file = os.path.join(temp_dir, ".arcaneum_test")
 
-        with open(test_file, 'w') as f:
-            f.write('test')
+        with open(test_file, "w") as f:
+            f.write("test")
 
         os.remove(test_file)
         return True, f"Temp directory writable: {temp_dir}"
@@ -140,12 +149,12 @@ def check_temp_dir_writable() -> Tuple[bool, str]:
 def check_environment_vars(verbose: bool = False) -> Tuple[bool, str]:
     """Check important environment variables."""
     important_vars = [
-        'QDRANT_URL',
-        'ARC_QDRANT_URL',
-        'QDRANT_API_KEY',
-        'ARC_QDRANT_API_KEY',
-        'MEILISEARCH_URL',
-        'MEILISEARCH_API_KEY',
+        "QDRANT_URL",
+        "ARC_QDRANT_URL",
+        "QDRANT_API_KEY",
+        "ARC_QDRANT_API_KEY",
+        "MEILISEARCH_URL",
+        "MEILISEARCH_API_KEY",
     ]
 
     set_vars = []
@@ -199,11 +208,15 @@ def doctor_command(verbose: bool = False, output_json: bool = False):
         # JSON output
         results = []
         for name, (status, message) in checks.items():
-            results.append({
-                "check": name,
-                "status": "pass" if status is True else ("fail" if status is False else "optional"),
-                "message": message
-            })
+            results.append(
+                {
+                    "check": name,
+                    "status": "pass"
+                    if status is True
+                    else ("fail" if status is False else "optional"),
+                    "message": message,
+                }
+            )
 
         overall_status = "success" if failed == 0 else "error"
         print_json(
@@ -215,9 +228,9 @@ def doctor_command(verbose: bool = False, output_json: bool = False):
                     "total": len(checks),
                     "passed": passed,
                     "failed": failed,
-                    "optional": optional
-                }
-            }
+                    "optional": optional,
+                },
+            },
         )
     else:
         # Text output with table
@@ -239,11 +252,7 @@ def doctor_command(verbose: bool = False, output_json: bool = False):
                 status_icon = "⚠️"
                 status_style = "yellow"
 
-            table.add_row(
-                name,
-                f"[{status_style}]{status_icon}[/{status_style}]",
-                message
-            )
+            table.add_row(name, f"[{status_style}]{status_icon}[/{status_style}]", message)
 
         console.print(table)
         print()

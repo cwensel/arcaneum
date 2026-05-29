@@ -116,20 +116,19 @@ def _extract_vectors_config(collection_info):
             for name, vector_params in vectors.items()
         ]
     if vectors is not None:
-        return [{
-            "vector_name": None,
-            "dimensions": getattr(vectors, "size", None),
-            "distance": str(getattr(vectors, "distance", UNKNOWN_LEGACY)),
-        }]
+        return [
+            {
+                "vector_name": None,
+                "dimensions": getattr(vectors, "size", None),
+                "distance": str(getattr(vectors, "distance", UNKNOWN_LEGACY)),
+            }
+        ]
     return []
 
 
 def _extract_policy_metadata(metadata):
     """Expose prompt/schema policy metadata when collections recorded it."""
-    policy = {
-        key: metadata.get(key, UNKNOWN_LEGACY)
-        for key in ("prompt_policy", "schema_policy")
-    }
+    policy = {key: metadata.get(key, UNKNOWN_LEGACY) for key in ("prompt_policy", "schema_policy")}
     for optional_key in ("prompt_schema_policy", "context_enrichment"):
         if optional_key in metadata:
             policy[optional_key] = metadata[optional_key]
@@ -145,21 +144,20 @@ def _build_corpus_model_info(metadata, collection_info):
         for vector in vector_configs
         if vector.get("vector_name") is not None
     }
-    positional_vectors = [
-        vector for vector in vector_configs
-        if vector.get("vector_name") is None
-    ]
+    positional_vectors = [vector for vector in vector_configs if vector.get("vector_name") is None]
 
     if not model_names and not vector_configs:
-        return [{
-            "alias": UNKNOWN_LEGACY,
-            "name": UNKNOWN_LEGACY,
-            "backend": UNKNOWN_LEGACY,
-            "vector_name": UNKNOWN_LEGACY,
-            "dimensions": None,
-            "distance": UNKNOWN_LEGACY,
-            "policy": _extract_policy_metadata(metadata),
-        }]
+        return [
+            {
+                "alias": UNKNOWN_LEGACY,
+                "name": UNKNOWN_LEGACY,
+                "backend": UNKNOWN_LEGACY,
+                "vector_name": UNKNOWN_LEGACY,
+                "dimensions": None,
+                "distance": UNKNOWN_LEGACY,
+                "policy": _extract_policy_metadata(metadata),
+            }
+        ]
 
     models = []
     for index, model_name in enumerate(model_names):
@@ -176,15 +174,17 @@ def _build_corpus_model_info(metadata, collection_info):
         )
         vector_name = vector.get("vector_name")
 
-        models.append({
-            "alias": alias,
-            "name": canonical_name,
-            "backend": config.get("backend", UNKNOWN_LEGACY),
-            "vector_name": vector_name or UNKNOWN_LEGACY,
-            "dimensions": vector.get("dimensions", config.get("dimensions")),
-            "distance": vector.get("distance", UNKNOWN_LEGACY),
-            "policy": _extract_policy_metadata(metadata),
-        })
+        models.append(
+            {
+                "alias": alias,
+                "name": canonical_name,
+                "backend": config.get("backend", UNKNOWN_LEGACY),
+                "vector_name": vector_name or UNKNOWN_LEGACY,
+                "dimensions": vector.get("dimensions", config.get("dimensions")),
+                "distance": vector.get("distance", UNKNOWN_LEGACY),
+                "policy": _extract_policy_metadata(metadata),
+            }
+        )
 
     if model_names:
         unmatched_vectors = named_vectors.values()
@@ -204,18 +204,20 @@ def _build_corpus_model_info(metadata, collection_info):
             canonical_name = UNKNOWN_LEGACY
             backend = UNKNOWN_LEGACY
 
-        models.append({
-            "alias": alias,
-            "name": canonical_name,
-            "backend": backend,
-            "vector_name": vector_name or UNKNOWN_LEGACY,
-            "dimensions": vector.get(
-                "dimensions",
-                config.get("dimensions") if lookup_name else None,
-            ),
-            "distance": vector.get("distance", UNKNOWN_LEGACY),
-            "policy": _extract_policy_metadata(metadata),
-        })
+        models.append(
+            {
+                "alias": alias,
+                "name": canonical_name,
+                "backend": backend,
+                "vector_name": vector_name or UNKNOWN_LEGACY,
+                "dimensions": vector.get(
+                    "dimensions",
+                    config.get("dimensions") if lookup_name else None,
+                ),
+                "distance": vector.get("distance", UNKNOWN_LEGACY),
+                "policy": _extract_policy_metadata(metadata),
+            }
+        )
     return models
 
 
@@ -356,9 +358,7 @@ def list_corpora_command(details: bool, output_json: bool):
                 collection_type = metadata.get("collection_type")
                 last_sync, last_sync_status = _last_sync_state(metadata, chunk_count)
                 if details:
-                    item_counts = _get_qdrant_list_item_count(
-                        qdrant, col.name, collection_type
-                    )
+                    item_counts = _get_qdrant_list_item_count(qdrant, col.name, collection_type)
                     item_count_status = "exact"
                 else:
                     item_counts = {
@@ -391,11 +391,11 @@ def list_corpora_command(details: bool, output_json: bool):
             if meili.health_check():
                 indexes = meili.list_indexes()
                 for idx in indexes:
-                    name = idx['uid']
+                    name = idx["uid"]
                     try:
                         stats = meili.get_index_stats(name)
                         meili_indexes[name] = {
-                            "chunks": stats.get('numberOfDocuments', 0),
+                            "chunks": stats.get("numberOfDocuments", 0),
                         }
                     except Exception:
                         meili_indexes[name] = {"chunks": 0}
@@ -424,18 +424,24 @@ def list_corpora_command(details: bool, output_json: bool):
             corpus_type = q_info.get("type") if q_info else None
             model = q_info.get("model") if q_info else None
             description = q_info.get("description") if q_info else None
-            models = q_info.get("models") if q_info else [{
-                "alias": UNKNOWN_LEGACY,
-                "name": UNKNOWN_LEGACY,
-                "backend": UNKNOWN_LEGACY,
-                "vector_name": UNKNOWN_LEGACY,
-                "dimensions": None,
-                "distance": UNKNOWN_LEGACY,
-                "policy": {
-                    "prompt_policy": UNKNOWN_LEGACY,
-                    "schema_policy": UNKNOWN_LEGACY,
-                },
-            }]
+            models = (
+                q_info.get("models")
+                if q_info
+                else [
+                    {
+                        "alias": UNKNOWN_LEGACY,
+                        "name": UNKNOWN_LEGACY,
+                        "backend": UNKNOWN_LEGACY,
+                        "vector_name": UNKNOWN_LEGACY,
+                        "dimensions": None,
+                        "distance": UNKNOWN_LEGACY,
+                        "policy": {
+                            "prompt_policy": UNKNOWN_LEGACY,
+                            "schema_policy": UNKNOWN_LEGACY,
+                        },
+                    }
+                ]
+            )
             model_summary = q_info.get("model_summary") if q_info else UNKNOWN_LEGACY
             last_sync = q_info.get("last_sync") if q_info else None
             last_sync_status = q_info.get("last_sync_status") if q_info else "unknown"
@@ -443,28 +449,28 @@ def list_corpora_command(details: bool, output_json: bool):
             item_unit = q_info.get("item_unit") if q_info else UNKNOWN_LEGACY
             file_count = q_info.get("file_count") if q_info else None
             file_unit = q_info.get("file_unit") if q_info else None
-            item_count_status = (
-                q_info.get("item_count_status") if q_info else "unavailable"
-            )
+            item_count_status = q_info.get("item_count_status") if q_info else "unavailable"
 
-            corpora.append({
-                "name": name,
-                "type": corpus_type,
-                "model": model,
-                "description": description,
-                "models": models,
-                "model_summary": model_summary,
-                "status": status,
-                "qdrant_chunks": q_chunks,
-                "meili_chunks": m_chunks,
-                "last_sync": last_sync,
-                "last_sync_status": last_sync_status,
-                "item_count": item_count,
-                "item_unit": item_unit,
-                "file_count": file_count,
-                "file_unit": file_unit,
-                "item_count_status": item_count_status,
-            })
+            corpora.append(
+                {
+                    "name": name,
+                    "type": corpus_type,
+                    "model": model,
+                    "description": description,
+                    "models": models,
+                    "model_summary": model_summary,
+                    "status": status,
+                    "qdrant_chunks": q_chunks,
+                    "meili_chunks": m_chunks,
+                    "last_sync": last_sync,
+                    "last_sync_status": last_sync_status,
+                    "item_count": item_count,
+                    "item_unit": item_unit,
+                    "file_count": file_count,
+                    "file_unit": file_unit,
+                    "item_count_status": item_count_status,
+                }
+            )
 
         # Output
         if output_json:
@@ -501,7 +507,8 @@ def list_corpora_command(details: bool, output_json: bool):
                         c["type"] or "—",
                         c["model_summary"],
                         status_str,
-                        c["last_sync"] or (
+                        c["last_sync"]
+                        or (
                             "never synced"
                             if c["last_sync_status"] == "never_synced"
                             else UNKNOWN_LEGACY
@@ -572,7 +579,9 @@ def delete_corpus_command(name: str, confirm: bool, output_json: bool):
             if meili_exists:
                 parts.append("MeiliSearch index")
 
-            if not click.confirm(f"Delete {' and '.join(parts)} for corpus '{name}'? This cannot be undone."):
+            if not click.confirm(
+                f"Delete {' and '.join(parts)} for corpus '{name}'? This cannot be undone."
+            ):
                 print_info("Cancelled.")
                 return
 
@@ -636,11 +645,7 @@ def delete_corpus_command(name: str, confirm: bool, output_json: bool):
 
 
 def create_corpus_command(
-    name: str,
-    corpus_type: str,
-    models: str | None,
-    description: str | None,
-    output_json: bool
+    name: str, corpus_type: str, models: str | None, description: str | None, output_json: bool
 ):
     """Create both Qdrant collection and MeiliSearch index.
 
@@ -660,7 +665,8 @@ def create_corpus_command(
 
     # Start interaction logging (RDR-018)
     interaction_logger.start(
-        "corpus", "create",
+        "corpus",
+        "create",
         corpus=name,
         corpus_type=corpus_type,
         models=models,
@@ -673,7 +679,7 @@ def create_corpus_command(
             print_info(f"Type: {corpus_type}, Models: {models}")
 
         # Parse and validate models, build vectors config
-        model_list = [m.strip() for m in models.split(',')]
+        model_list = [m.strip() for m in models.split(",")]
         try:
             vectors_config = build_vectors_config(model_list)
         except ValueError as e:
@@ -734,7 +740,7 @@ def create_corpus_command(
             settings = get_index_settings(canonical_type)
 
             # Create index with settings
-            meili.create_index(name, primary_key='id', settings=settings)
+            meili.create_index(name, primary_key="id", settings=settings)
 
             if not output_json:
                 console.print(f"[green]✅ MeiliSearch index '{name}' created[/green]")
@@ -748,7 +754,9 @@ def create_corpus_command(
             if not output_json:
                 print_error(f"MeiliSearch index creation failed: {e}")
                 print_info(f"Note: Qdrant collection '{name}' was created successfully")
-                print_info("You may need to create the MeiliSearch index manually or delete the Qdrant collection")
+                print_info(
+                    "You may need to create the MeiliSearch index manually or delete the Qdrant collection"
+                )
             raise
 
         # Success output
@@ -764,9 +772,7 @@ def create_corpus_command(
 
         if output_json:
             print_json(
-                "success",
-                f"Corpus '{name}' created with {len(model_list)} models",
-                data=data
+                "success", f"Corpus '{name}' created with {len(model_list)} models", data=data
             )
         else:
             console.print(f"\n[green]✅ Corpus '{name}' ready for indexing![/green]")
@@ -864,9 +870,7 @@ def _get_qdrant_item_count(client, collection_name: str, collection_type: str) -
     unique_items = set()
     offset = None
     payload_fields = (
-        ["git_project_identifier"]
-        if collection_type == "code"
-        else ["file_path", "file_paths"]
+        ["git_project_identifier"] if collection_type == "code" else ["file_path", "file_paths"]
     )
 
     while True:
@@ -876,7 +880,7 @@ def _get_qdrant_item_count(client, collection_name: str, collection_type: str) -
             limit=1000,
             offset=offset,
             with_payload=payload_fields,
-            with_vectors=False
+            with_vectors=False,
         )
 
         if not points:
@@ -919,11 +923,13 @@ def _get_meili_item_count(client, index_name: str, collection_type: str) -> int:
     limit = 1000
 
     while True:
-        result = index.get_documents({
-            "offset": offset,
-            "limit": limit,
-            "fields": ["git_project_identifier"],
-        })
+        result = index.get_documents(
+            {
+                "offset": offset,
+                "limit": limit,
+                "fields": ["git_project_identifier"],
+            }
+        )
 
         if hasattr(result, "results"):
             docs = result.results
@@ -980,7 +986,9 @@ def corpus_info_command(name: str, output_json: bool):
 
             # Build vectors dict
             vectors = {}
-            if hasattr(col_info.config.params, 'vectors') and isinstance(col_info.config.params.vectors, dict):
+            if hasattr(col_info.config.params, "vectors") and isinstance(
+                col_info.config.params.vectors, dict
+            ):
                 for vector_name, vector_params in col_info.config.params.vectors.items():
                     vectors[vector_name] = {
                         "size": vector_params.size,
@@ -1022,13 +1030,13 @@ def corpus_info_command(name: str, output_json: bool):
 
                 # Get unique item count
                 item_count = _get_meili_item_count(meili, name, collection_type)
-                chunk_count = stats.get('numberOfDocuments', 0)
+                chunk_count = stats.get("numberOfDocuments", 0)
 
                 meili_info = {
                     "name": name,
                     "item_count": item_count,
                     "chunk_count": chunk_count,
-                    "is_indexing": stats.get('isIndexing', False),
+                    "is_indexing": stats.get("isIndexing", False),
                 }
         except Exception as e:
             if "not available" not in str(e).lower():
@@ -1049,9 +1057,18 @@ def corpus_info_command(name: str, output_json: bool):
             diff = abs(qdrant_items - meili_items)
 
             if diff == 0:
-                parity = {"status": "synced", "qdrant_items": qdrant_items, "meili_items": meili_items}
+                parity = {
+                    "status": "synced",
+                    "qdrant_items": qdrant_items,
+                    "meili_items": meili_items,
+                }
             else:
-                parity = {"status": "out_of_sync", "qdrant_items": qdrant_items, "meili_items": meili_items, "difference": diff}
+                parity = {
+                    "status": "out_of_sync",
+                    "qdrant_items": qdrant_items,
+                    "meili_items": meili_items,
+                    "difference": diff,
+                }
         elif qdrant_info:
             parity = {"status": "qdrant_only", "qdrant_items": qdrant_info["item_count"]}
         elif meili_info:
@@ -1066,9 +1083,7 @@ def corpus_info_command(name: str, output_json: bool):
             data = {
                 "corpus": name,
                 "type": collection_type,
-                "description": (
-                    qdrant_info.get("description") if qdrant_info else None
-                ),
+                "description": (qdrant_info.get("description") if qdrant_info else None),
                 "item_label": item_label,
                 "parity": parity,
                 "qdrant": qdrant_info,
@@ -1085,13 +1100,21 @@ def corpus_info_command(name: str, output_json: bool):
 
             # Parity status
             if parity["status"] == "synced":
-                console.print(f"Status: [green]synced[/green] ({parity['qdrant_items']:,} {item_label})")
+                console.print(
+                    f"Status: [green]synced[/green] ({parity['qdrant_items']:,} {item_label})"
+                )
             elif parity["status"] == "out_of_sync":
-                console.print(f"Status: [red]out of sync[/red] (Qdrant: {parity['qdrant_items']:,}, MeiliSearch: {parity['meili_items']:,} {item_label})")
+                console.print(
+                    f"Status: [red]out of sync[/red] (Qdrant: {parity['qdrant_items']:,}, MeiliSearch: {parity['meili_items']:,} {item_label})"
+                )
             elif parity["status"] == "qdrant_only":
-                console.print(f"Status: [yellow]Qdrant only[/yellow] ({parity['qdrant_items']:,} {item_label})")
+                console.print(
+                    f"Status: [yellow]Qdrant only[/yellow] ({parity['qdrant_items']:,} {item_label})"
+                )
             elif parity["status"] == "meili_only":
-                console.print(f"Status: [yellow]MeiliSearch only[/yellow] ({parity['meili_items']:,} {item_label})")
+                console.print(
+                    f"Status: [yellow]MeiliSearch only[/yellow] ({parity['meili_items']:,} {item_label})"
+                )
 
             # Qdrant section
             if qdrant_info:
@@ -1102,7 +1125,9 @@ def corpus_info_command(name: str, output_json: bool):
                 if qdrant_info["vectors"]:
                     console.print(f"  Models:")
                     for model_name, vec_info in qdrant_info["vectors"].items():
-                        console.print(f"    - {model_name}: {vec_info['size']}D ({vec_info['distance']})")
+                        console.print(
+                            f"    - {model_name}: {vec_info['size']}D ({vec_info['distance']})"
+                        )
             else:
                 console.print(f"\n[yellow]Qdrant Collection: not found[/yellow]")
 
@@ -1111,7 +1136,7 @@ def corpus_info_command(name: str, output_json: bool):
                 console.print(f"\n[bold]MeiliSearch Index:[/bold]")
                 console.print(f"  {item_label.capitalize()}: {meili_info['item_count']:,}")
                 console.print(f"  Chunks: {meili_info['chunk_count']:,}")
-                if meili_info['is_indexing']:
+                if meili_info["is_indexing"]:
                     console.print(f"  Status: [yellow]indexing[/yellow]")
             else:
                 console.print(f"\n[yellow]MeiliSearch Index: not found[/yellow]")
@@ -1122,8 +1147,8 @@ def corpus_info_command(name: str, output_json: bool):
 
             # Usage hint
             console.print(f"\n[dim]Search with:[/dim]")
-            console.print(f"[dim]  arc search semantic \"query\" --corpus {name}[/dim]")
-            console.print(f"[dim]  arc search text \"query\" --corpus {name}[/dim]")
+            console.print(f'[dim]  arc search semantic "query" --corpus {name}[/dim]')
+            console.print(f'[dim]  arc search text "query" --corpus {name}[/dim]')
 
         # Log successful operation (RDR-018)
         interaction_logger.finish()
@@ -1168,8 +1193,13 @@ def corpus_items_command(name: str, output_json: bool):
             # Determine which field to use based on collection type
             if collection_type == "code":
                 id_field = "git_project_identifier"
-                payload_fields = ["git_project_name", "git_project_identifier", "git_branch",
-                                  "git_commit_hash", "git_remote_url"]
+                payload_fields = [
+                    "git_project_name",
+                    "git_project_identifier",
+                    "git_branch",
+                    "git_commit_hash",
+                    "git_remote_url",
+                ]
             else:
                 id_field = "file_path"
                 payload_fields = ["file_path", "file_hash", "file_size", "filename"]
@@ -1183,7 +1213,7 @@ def corpus_items_command(name: str, output_json: bool):
                     limit=1000,
                     offset=offset,
                     with_payload=payload_fields,
-                    with_vectors=False
+                    with_vectors=False,
                 )
 
                 if not points:
@@ -1197,7 +1227,7 @@ def corpus_items_command(name: str, output_json: bool):
                     if item_id and item_id not in qdrant_items:
                         qdrant_items[item_id] = {
                             **{k: point.payload.get(k) for k in payload_fields},
-                            "qdrant_chunks": 1
+                            "qdrant_chunks": 1,
                         }
                     elif item_id:
                         qdrant_items[item_id]["qdrant_chunks"] += 1
@@ -1223,23 +1253,32 @@ def corpus_items_command(name: str, output_json: bool):
 
                 # Determine fields to fetch based on collection type
                 if collection_type == "code":
-                    doc_fields = ['file_path', 'filename', 'language', 'programming_language',
-                                  'git_project_identifier', 'git_project_name', 'git_branch']
+                    doc_fields = [
+                        "file_path",
+                        "filename",
+                        "language",
+                        "programming_language",
+                        "git_project_identifier",
+                        "git_project_name",
+                        "git_branch",
+                    ]
                 else:
-                    doc_fields = ['file_path', 'filename', 'language', 'programming_language']
+                    doc_fields = ["file_path", "filename", "language", "programming_language"]
 
                 while True:
-                    result = index.get_documents({
-                        'offset': batch_offset,
-                        'limit': batch_size,
-                        'fields': doc_fields,
-                    })
+                    result = index.get_documents(
+                        {
+                            "offset": batch_offset,
+                            "limit": batch_size,
+                            "fields": doc_fields,
+                        }
+                    )
 
                     # Handle both dict and object results
-                    if hasattr(result, 'results'):
+                    if hasattr(result, "results"):
                         docs = result.results
                     else:
-                        docs = result.get('results', [])
+                        docs = result.get("results", [])
 
                     if not docs:
                         break
@@ -1254,22 +1293,22 @@ def corpus_items_command(name: str, output_json: bool):
                         # For code collections, group by git_project_identifier
                         # For other types, group by file_path
                         if collection_type == "code":
-                            item_id = _get('git_project_identifier')
+                            item_id = _get("git_project_identifier")
                         else:
-                            item_id = _get('file_path') or _get('filename')
+                            item_id = _get("file_path") or _get("filename")
 
                         if item_id and item_id not in meili_items:
                             meili_items[item_id] = {
-                                'file_path': _get('file_path'),
-                                'filename': _get('filename'),
-                                'language': _get('language') or _get('programming_language'),
-                                'git_project_identifier': _get('git_project_identifier'),
-                                'git_project_name': _get('git_project_name'),
-                                'git_branch': _get('git_branch'),
-                                'meili_chunks': 1,
+                                "file_path": _get("file_path"),
+                                "filename": _get("filename"),
+                                "language": _get("language") or _get("programming_language"),
+                                "git_project_identifier": _get("git_project_identifier"),
+                                "git_project_name": _get("git_project_name"),
+                                "git_branch": _get("git_branch"),
+                                "meili_chunks": 1,
                             }
                         elif item_id:
-                            meili_items[item_id]['meili_chunks'] += 1
+                            meili_items[item_id]["meili_chunks"] += 1
 
                     batch_offset += len(docs)
                     if len(docs) < batch_size:
@@ -1296,7 +1335,7 @@ def corpus_items_command(name: str, output_json: bool):
                     meili = create_meili_client()
                     if meili.index_exists(name):
                         stats = meili.get_index_stats(name)
-                        if stats.get('numberOfDocuments', 0) > 0:
+                        if stats.get("numberOfDocuments", 0) > 0:
                             corpus_exists = True
                 except Exception:
                     pass
@@ -1342,7 +1381,9 @@ def corpus_items_command(name: str, output_json: bool):
 
             # Add type-specific fields (prefer Qdrant, fall back to MeiliSearch)
             if collection_type == "code":
-                merged["git_project_name"] = q_item.get("git_project_name") or m_item.get("git_project_name")
+                merged["git_project_name"] = q_item.get("git_project_name") or m_item.get(
+                    "git_project_name"
+                )
                 merged["git_branch"] = q_item.get("git_branch") or m_item.get("git_branch")
                 merged["git_commit_hash"] = q_item.get("git_commit_hash")
             else:
@@ -1382,7 +1423,9 @@ def corpus_items_command(name: str, output_json: bool):
         else:
             # Header
             console.print(f"\n[bold cyan]Corpus: {name}[/bold cyan]")
-            type_str = f"[bold]{collection_type}[/bold]" if collection_type else "[yellow]unknown[/yellow]"
+            type_str = (
+                f"[bold]{collection_type}[/bold]" if collection_type else "[yellow]unknown[/yellow]"
+            )
             console.print(f"Type: {type_str}")
             console.print(f"Items: {len(merged_items)}")
 
@@ -1522,7 +1565,9 @@ def corpus_verify_command(
         try:
             qdrant = create_qdrant_client()
             verifier = CollectionVerifier(qdrant)
-            qdrant_result = verifier.verify_collection(name, project_filter=project, verbose=verbose)
+            qdrant_result = verifier.verify_collection(
+                name, project_filter=project, verbose=verbose
+            )
         except Exception as e:
             errors.append(f"Qdrant: {e}")
 
@@ -1545,18 +1590,18 @@ def corpus_verify_command(
                 meili_issues = []
                 meili_warnings = []
 
-                doc_count = stats.get('numberOfDocuments', 0)
-                is_indexing = stats.get('isIndexing', False)
+                doc_count = stats.get("numberOfDocuments", 0)
+                is_indexing = stats.get("isIndexing", False)
 
                 if is_indexing:
                     meili_warnings.append("Index is currently processing documents")
 
                 # Check searchable/filterable attributes
-                searchable = settings.get('searchableAttributes', [])
-                if not searchable or searchable == ['*']:
+                searchable = settings.get("searchableAttributes", [])
+                if not searchable or searchable == ["*"]:
                     meili_warnings.append("Searchable attributes not explicitly defined")
 
-                filterable = settings.get('filterableAttributes', [])
+                filterable = settings.get("filterableAttributes", [])
                 if not filterable:
                     meili_warnings.append("No filterable attributes defined")
 
@@ -1564,7 +1609,7 @@ def corpus_verify_command(
                 sample_accessible = False
                 try:
                     sample_results = meili.search(name, "", limit=1)
-                    if sample_results.get('hits'):
+                    if sample_results.get("hits"):
                         sample_accessible = True
                 except Exception as e:
                     meili_issues.append(f"Failed to retrieve sample document: {e}")
@@ -1645,9 +1690,7 @@ def corpus_verify_command(
 
             status = "success" if overall_healthy else "warning"
             msg = (
-                f"Corpus '{name}' is healthy"
-                if overall_healthy
-                else f"Corpus '{name}' has issues"
+                f"Corpus '{name}' is healthy" if overall_healthy else f"Corpus '{name}' has issues"
             )
             print_json(status, msg, data)
         else:
@@ -1669,25 +1712,39 @@ def corpus_verify_command(
                         console.print(f"    [yellow]- {error}[/yellow]")
                 if qdrant_result.is_healthy:
                     console.print(f"  [green]Status: Healthy[/green]")
-                    console.print(f"  Items: {qdrant_result.total_items} ({qdrant_result.complete_items} complete)")
+                    console.print(
+                        f"  Items: {qdrant_result.total_items} ({qdrant_result.complete_items} complete)"
+                    )
                 elif qdrant_result.errors and qdrant_result.incomplete_items == 0:
                     console.print("  [yellow]Status: Verification errors[/yellow]")
-                    console.print(f"  Items: {qdrant_result.total_items} ({qdrant_result.complete_items} complete)")
+                    console.print(
+                        f"  Items: {qdrant_result.total_items} ({qdrant_result.complete_items} complete)"
+                    )
                 else:
-                    console.print(f"  [yellow]Status: {qdrant_result.incomplete_items} incomplete items[/yellow]")
-                    console.print(f"  Items: {qdrant_result.total_items} ({qdrant_result.complete_items} complete, {qdrant_result.incomplete_items} incomplete)")
+                    console.print(
+                        f"  [yellow]Status: {qdrant_result.incomplete_items} incomplete items[/yellow]"
+                    )
+                    console.print(
+                        f"  Items: {qdrant_result.total_items} ({qdrant_result.complete_items} complete, {qdrant_result.incomplete_items} incomplete)"
+                    )
 
                     # Show incomplete items summary
                     if verbose and qdrant_result.collection_type == "code":
                         for proj in qdrant_result.projects:
                             if not proj.is_complete:
-                                console.print(f"  [dim]• {proj.project_name}: {proj.completion_percentage:.1f}% complete[/dim]")
+                                console.print(
+                                    f"  [dim]• {proj.project_name}: {proj.completion_percentage:.1f}% complete[/dim]"
+                                )
                     elif verbose:
                         for file in qdrant_result.files[:5]:
                             if not file.is_complete:
-                                console.print(f"  [dim]• {file.file_path}: {file.completion_percentage:.1f}% complete[/dim]")
+                                console.print(
+                                    f"  [dim]• {file.file_path}: {file.completion_percentage:.1f}% complete[/dim]"
+                                )
                         if qdrant_result.incomplete_items > 5:
-                            console.print(f"  [dim]... and {qdrant_result.incomplete_items - 5} more[/dim]")
+                            console.print(
+                                f"  [dim]... and {qdrant_result.incomplete_items - 5} more[/dim]"
+                            )
             else:
                 console.print(f"  [yellow]Not found or not accessible[/yellow]")
 

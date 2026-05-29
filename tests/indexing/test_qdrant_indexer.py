@@ -38,13 +38,13 @@ def create_test_chunk(identifier="project#main", commit="a" * 40):
         git_project_root="/repo",
         git_project_name=identifier.split("#")[0],
         git_branch=identifier.split("#")[1],
-        git_commit_hash=commit
+        git_commit_hash=commit,
     )
 
     chunk = CodeChunk(
         content="def test(): pass",
         metadata=metadata,
-        embedding=[0.1] * 768  # Mock 768D embedding
+        embedding=[0.1] * 768,  # Mock 768D embedding
     )
 
     return chunk
@@ -149,11 +149,7 @@ class TestQdrantIndexer:
 
     def test_create_collection_custom_distance(self, indexer, mock_qdrant):
         """Test creating collection with custom distance metric."""
-        indexer.create_collection(
-            "test-collection",
-            vector_size=1536,
-            distance=Distance.DOT
-        )
+        indexer.create_collection("test-collection", vector_size=1536, distance=Distance.DOT)
 
         call_args = mock_qdrant.create_collection.call_args
         assert call_args.kwargs["vectors_config"].distance == Distance.DOT
@@ -232,7 +228,7 @@ class TestQdrantIndexer:
         mock_qdrant.upsert.side_effect = [
             Exception("Network error"),
             Exception("Network error"),
-            None  # Success on third try
+            None,  # Success on third try
         ]
 
         result = indexer.upload_chunks_batch("test-collection", [chunk])

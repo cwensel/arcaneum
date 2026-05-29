@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Chunk:
     """Represents a text chunk with metadata."""
+
     text: str
     chunk_index: int
     token_count: int
@@ -25,7 +26,7 @@ class PDFChunker:
         overlap_percent: float = 0.15,
         late_chunking_enabled: bool = True,
         min_doc_tokens: int = 2000,
-        max_doc_tokens: int = 8000
+        max_doc_tokens: int = 8000,
     ):
         """Initialize PDF chunker.
 
@@ -42,7 +43,7 @@ class PDFChunker:
         self.min_doc_tokens = min_doc_tokens
         self.max_doc_tokens = max_doc_tokens
 
-        self.chunk_size = model_config['chunk_size']
+        self.chunk_size = model_config["chunk_size"]
         self.chunk_overlap = int(self.chunk_size * overlap_percent)
 
     def chunk(self, text: str, metadata: Dict) -> List[Chunk]:
@@ -60,14 +61,15 @@ class PDFChunker:
             List of Chunk objects
         """
         # Estimate token count (rough approximation)
-        char_to_token = self.model_config.get('char_to_token_ratio', 3.3)
+        char_to_token = self.model_config.get("char_to_token_ratio", 3.3)
         estimated_tokens = len(text) / char_to_token
 
         # Select chunking strategy
-        if (self.late_chunking_enabled and
-            self.model_config.get('late_chunking', False) and
-            self.min_doc_tokens < estimated_tokens < self.max_doc_tokens):
-
+        if (
+            self.late_chunking_enabled
+            and self.model_config.get("late_chunking", False)
+            and self.min_doc_tokens < estimated_tokens < self.max_doc_tokens
+        ):
             logger.info(f"Using late chunking (doc tokens: {estimated_tokens:.0f})")
             return self._late_chunking(text, metadata)
 
@@ -92,14 +94,14 @@ class PDFChunker:
 
         # Mark chunks for late chunking processing
         for chunk in chunks:
-            chunk.metadata['late_chunking'] = True
+            chunk.metadata["late_chunking"] = True
 
         return chunks
 
     def _traditional_chunking(self, text: str, metadata: Dict) -> List[Chunk]:
         """Traditional token-aware chunking with overlap."""
         chunks = []
-        char_to_token = self.model_config.get('char_to_token_ratio', 3.3)
+        char_to_token = self.model_config.get("char_to_token_ratio", 3.3)
 
         # Calculate character limits
         chunk_chars = int(self.chunk_size * char_to_token)
@@ -115,7 +117,7 @@ class PDFChunker:
             if end < len(text):
                 # Look for sentence boundary in last 20% of chunk
                 search_start = end - int(chunk_chars * 0.2)
-                sentence_end = text.rfind('. ', search_start, end)
+                sentence_end = text.rfind(". ", search_start, end)
 
                 if sentence_end != -1:
                     end = sentence_end + 1  # Include the period
@@ -127,25 +129,25 @@ class PDFChunker:
                 token_count = int(len(chunk_text) / char_to_token)
 
                 # Calculate page number if page boundaries available
-                page_number = self._calculate_page_number(start, metadata.get('page_boundaries'))
+                page_number = self._calculate_page_number(start, metadata.get("page_boundaries"))
 
                 chunk_metadata = {
                     **metadata,
-                    'chunk_index': chunk_index,
-                    'chunk_start_char': start,
-                    'chunk_end_char': end,
-                    'late_chunking': False,
+                    "chunk_index": chunk_index,
+                    "chunk_start_char": start,
+                    "chunk_end_char": end,
+                    "late_chunking": False,
                 }
 
                 # Add page_number if calculated
                 if page_number is not None:
-                    chunk_metadata['page_number'] = page_number
+                    chunk_metadata["page_number"] = page_number
 
                 chunk = Chunk(
                     text=chunk_text,
                     chunk_index=chunk_index,
                     token_count=token_count,
-                    metadata=chunk_metadata
+                    metadata=chunk_metadata,
                 )
 
                 chunks.append(chunk)
@@ -156,12 +158,14 @@ class PDFChunker:
 
         chunk_count = len(chunks)
         for chunk in chunks:
-            chunk.metadata['chunk_count'] = chunk_count
+            chunk.metadata["chunk_count"] = chunk_count
 
         logger.info(f"Created {chunk_count} chunks")
         return chunks
 
-    def _calculate_page_number(self, chunk_start_char: int, page_boundaries: List[Dict]) -> Optional[int]:
+    def _calculate_page_number(
+        self, chunk_start_char: int, page_boundaries: List[Dict]
+    ) -> Optional[int]:
         """Calculate which page a chunk belongs to based on its character position.
 
         Args:
@@ -176,15 +180,15 @@ class PDFChunker:
 
         # Find the page this chunk starts in
         for page in page_boundaries:
-            page_start = page['start_char']
-            page_end = page_start + page['page_text_length']
+            page_start = page["start_char"]
+            page_end = page_start + page["page_text_length"]
 
             if page_start <= chunk_start_char < page_end:
-                return page['page_number']
+                return page["page_number"]
 
         # If not found (edge case), return last page
         # This handles chunks at exact page boundaries
         if page_boundaries:
-            return page_boundaries[-1]['page_number']
+            return page_boundaries[-1]["page_number"]
 
         return None

@@ -1,0 +1,7 @@
+# Revisions to ignore in `git blame` — bulk mechanical reformats only.
+# Configure locally with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# GitHub honors this file automatically.
+
+# style: format entire codebase with ruff, drop format ratchet to 0
+befc7d28f31a6ef23ad40800f170d4c80a9ffe05

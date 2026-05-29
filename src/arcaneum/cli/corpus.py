@@ -5,6 +5,7 @@ collection and a MeiliSearch index in a single operation.
 """
 
 import sys
+from datetime import datetime, timezone
 from typing import Any
 
 from qdrant_client.models import HnswConfigDiff
@@ -280,6 +281,54 @@ def _bounded_qdrant_facet_count(client, collection_name: str, key: str) -> tuple
     return count, "facet"
 
 
+def _scroll_qdrant_list_item_count(client, collection_name: str, collection_type: str):
+    """Exact legacy count path used once to populate missing list counters."""
+    unique_items = set()
+    unique_files = set()
+    offset = None
+    payload_fields = (
+        ["git_project_identifier", "file_path", "file_paths"]
+        if collection_type == "code"
+        else ["file_path", "file_paths"]
+    )
+
+    while True:
+        points, offset = client.scroll(
+            collection_name=collection_name,
+            scroll_filter=metadata_exclusion_filter(),
+            limit=1000,
+            offset=offset,
+            with_payload=payload_fields,
+            with_vectors=False,
+        )
+
+        if not points:
+            break
+
+        for point in points:
+            if point.payload:
+                if collection_type == "code":
+                    item_id = point.payload.get("git_project_identifier")
+                    if item_id:
+                        unique_items.add(item_id)
+                    for file_path in _payload_file_paths(point.payload):
+                        unique_files.add(file_path)
+                else:
+                    for item_id in _payload_file_paths(point.payload):
+                        unique_items.add(item_id)
+
+        if offset is None:
+            break
+
+    return {
+        "item_count": len(unique_items),
+        "item_unit": _item_unit_for_corpus_type(collection_type),
+        "file_count": len(unique_files) if collection_type == "code" else None,
+        "file_unit": "source files" if collection_type == "code" else None,
+        "item_count_status": "scroll",
+    }
+
+
 def _get_qdrant_list_item_count(
     client, collection_name: str, collection_type: str, metadata: dict[str, Any] | None = None
 ):
@@ -323,6 +372,13 @@ def _get_qdrant_list_item_count(
         file_count = None
         item_status = "unavailable"
 
+    if item_status == "unavailable":
+        try:
+            return _scroll_qdrant_list_item_count(client, collection_name, collection_type)
+        except Exception:
+            item_count = None
+            file_count = None
+
     return {
         "item_count": item_count,
         "item_unit": _item_unit_for_corpus_type(collection_type),
@@ -330,6 +386,29 @@ def _get_qdrant_list_item_count(
         "file_unit": "source files" if collection_type == "code" else None,
         "item_count_status": item_status,
     }
+
+
+def _persist_list_item_count_metadata(
+    client, collection_name: str, collection_type: str, item_counts: dict[str, Any]
+) -> None:
+    """Cache exact list counters discovered during details listing."""
+    if item_counts.get("item_count_status") not in {"facet", "scroll"}:
+        return
+    if item_counts.get("item_count") is None:
+        return
+
+    updates = {
+        "item_count": item_counts["item_count"],
+        "item_unit": item_counts["item_unit"],
+        "file_count": item_counts.get("file_count") if collection_type == "code" else None,
+        "file_unit": item_counts.get("file_unit") if collection_type == "code" else None,
+        "count_source": item_counts["item_count_status"],
+        "counts_updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        update_collection_metadata(client, collection_name, **updates)
+    except Exception:
+        pass
 
 
 def _format_list_item_count(corpus):
@@ -398,6 +477,9 @@ def list_corpora_command(details: bool, output_json: bool):
                 if details:
                     item_counts = _get_qdrant_list_item_count(
                         qdrant, col.name, collection_type, metadata
+                    )
+                    _persist_list_item_count_metadata(
+                        qdrant, col.name, collection_type, item_counts
                     )
                 else:
                     item_counts = {

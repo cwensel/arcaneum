@@ -25,6 +25,7 @@ def _mock_corpus_list_clients(
     qdrant_scroll_calls=None,
     qdrant_facets_by_name=None,
     qdrant_facet_calls=None,
+    qdrant_metadata_updates=None,
     global_meili_stats=None,
 ):
     from arcaneum.cli import corpus
@@ -83,6 +84,15 @@ def _mock_corpus_list_clients(
         corpus,
         "get_collection_metadata",
         lambda _client, name: metadata_by_name.get(name, {}),
+    )
+    monkeypatch.setattr(
+        corpus,
+        "update_collection_metadata",
+        lambda _client, name, **updates: (
+            qdrant_metadata_updates.append((name, updates))
+            if qdrant_metadata_updates is not None
+            else {**metadata_by_name.get(name, {}), **updates}
+        ),
     )
 
 
@@ -488,6 +498,7 @@ class TestCorpusListModelInfo:
         from arcaneum.cli.corpus import UNKNOWN_LEGACY, list_corpora_command
 
         facet_calls = []
+        metadata_updates = []
         scroll_calls = {}
         _mock_corpus_list_clients(
             monkeypatch,
@@ -520,6 +531,7 @@ class TestCorpusListModelInfo:
             },
             qdrant_scroll_calls=scroll_calls,
             qdrant_facet_calls=facet_calls,
+            qdrant_metadata_updates=metadata_updates,
         )
 
         list_corpora_command(details=True, output_json=True)
@@ -544,6 +556,7 @@ class TestCorpusListModelInfo:
         assert corpora["legacy"]["item_unit"] == UNKNOWN_LEGACY
         assert scroll_calls == {}
         assert facet_calls == []
+        assert metadata_updates == []
 
     def test_json_details_uses_bounded_qdrant_facets_for_legacy_counts(
         self, monkeypatch, capsys
@@ -552,6 +565,7 @@ class TestCorpusListModelInfo:
 
         scroll_calls = {}
         facet_calls = []
+        metadata_updates = []
         _mock_corpus_list_clients(
             monkeypatch,
             metadata_by_name={
@@ -573,6 +587,7 @@ class TestCorpusListModelInfo:
             },
             qdrant_scroll_calls=scroll_calls,
             qdrant_facet_calls=facet_calls,
+            qdrant_metadata_updates=metadata_updates,
         )
 
         list_corpora_command(details=True, output_json=True)
@@ -591,10 +606,22 @@ class TestCorpusListModelInfo:
             ("code", "file_path"),
             ("docs", "file_path"),
         ]
+        assert [(name, update["item_count"]) for name, update in metadata_updates] == [
+            ("code", 2),
+            ("docs", 2),
+        ]
+        assert metadata_updates[0][1]["file_count"] == 3
+        assert metadata_updates[0][1]["count_source"] == "facet"
+        assert metadata_updates[1][1]["file_count"] is None
+        assert metadata_updates[1][1]["count_source"] == "facet"
 
-    def test_json_details_marks_capped_facets_unavailable(self, monkeypatch, capsys):
+    def test_json_details_lazily_scrolls_and_persists_capped_facets(
+        self, monkeypatch, capsys
+    ):
         from arcaneum.cli.corpus import list_corpora_command
 
+        scroll_calls = {}
+        metadata_updates = []
         _mock_corpus_list_clients(
             monkeypatch,
             metadata_by_name={
@@ -606,13 +633,27 @@ class TestCorpusListModelInfo:
                     "file_path": [(f"/docs/{i}.pdf", 1) for i in range(10_000)],
                 },
             },
+            qdrant_payloads_by_name={
+                "docs": [
+                    {"file_path": "/docs/guide.pdf"},
+                    {"file_path": "/docs/guide.pdf"},
+                    {"file_path": "/docs/spec.pdf"},
+                ],
+            },
+            qdrant_scroll_calls=scroll_calls,
+            qdrant_metadata_updates=metadata_updates,
         )
 
         list_corpora_command(details=True, output_json=True)
 
         corpus = json.loads(capsys.readouterr().out)["data"]["corpora"][0]
-        assert corpus["item_count"] is None
-        assert corpus["item_count_status"] == "unavailable"
+        assert corpus["item_count"] == 2
+        assert corpus["item_count_status"] == "scroll"
+        assert scroll_calls == {"docs": 1}
+        assert len(metadata_updates) == 1
+        assert metadata_updates[0][0] == "docs"
+        assert metadata_updates[0][1]["item_count"] == 2
+        assert metadata_updates[0][1]["count_source"] == "scroll"
 
     def test_qdrant_item_count_uses_repositories_for_code(self):
         from arcaneum.cli.corpus import _get_qdrant_item_count

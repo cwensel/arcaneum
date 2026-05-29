@@ -15,14 +15,19 @@ The service compatibility window for 1.0 is:
 
 | Service | Supported range | Gate |
 | ------- | --------------- | ---- |
-| Qdrant | 1.16.x | `arc doctor`, corpus create/sync/search, backup, and restore pass against `qdrant/qdrant:v1.16.2` |
-| MeiliSearch | 1.12.x | corpus create/sync/search, parity, backup, and restore pass against `getmeili/meilisearch:v1.12` |
+| Qdrant | 1.18.x | `arc doctor`, corpus create/sync/search, backup, and restore pass against `qdrant/qdrant:v1.18.0`, matching the `qdrant-client>=1.18.0` package floor |
+| MeiliSearch | 1.12.x | corpus create/sync/search, parity, backup, and restore pass against `getmeili/meilisearch:v1.12`, which remains within the `meilisearch>=0.41.0` SDK compatibility window |
 
 Changing either range before 1.0 requires a release note and an upgrade test
 from the previous supported image. After 1.0, widening a range is
 backward-compatible; dropping a previously supported minor version is breaking
 unless the old service is already unsupported upstream or has a published data
 loss/security issue.
+
+Image upgrades must preserve the Docker named volume identifiers in
+`deploy/docker-compose.yml`. Do not use `docker compose down --volumes` as part
+of an image-only upgrade; use `arc container stop` or plain `docker compose down`
+so the existing Qdrant and MeiliSearch volumes are retained.
 
 ## Embedding Backend Support
 

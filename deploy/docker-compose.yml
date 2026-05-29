@@ -1,7 +1,8 @@
 services:
   # Qdrant vector database (RDR-002)
   qdrant:
-    image: qdrant/qdrant:v1.16.2
+    # Keep the named volume identifiers below stable across image upgrades.
+    image: qdrant/qdrant:v1.18.0
     container_name: qdrant-arcaneum
     restart: unless-stopped
 
@@ -83,12 +84,12 @@ services:
       start_period: 30s
 
 volumes:
-  # Qdrant volumes
+  # Qdrant volumes. Do not rename these without an explicit data migration.
   qdrant-arcaneum-storage:
     driver: local
   qdrant-arcaneum-snapshots:
     driver: local
-  # MeiliSearch volumes
+  # MeiliSearch volumes. Do not rename these without an explicit data migration.
   meilisearch-arcaneum-data:
     driver: local
   meilisearch-arcaneum-dumps:

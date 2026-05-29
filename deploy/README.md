@@ -41,28 +41,44 @@ docker compose up -d
 ## Configuration
 
 - **Qdrant**: Port 6333 (REST), 6334 (gRPC)
-- **Storage**: `~/.arcaneum/data/qdrant` (host path)
-- **Snapshots**: `~/.arcaneum/data/qdrant_snapshots` (host path)
+- **Qdrant image**: `qdrant/qdrant:v1.18.0`
+- **MeiliSearch image**: `getmeili/meilisearch:v1.12`
+- **Storage**: Docker named volumes managed by the `arcaneum` compose project
+- **Snapshots**: Docker named volumes managed by the `arcaneum` compose project
 
 **Note:** Embedding models are stored in `~/.arcaneum/models` on the host machine. Qdrant doesn't need access to these models since it only stores/searches vectors, not generates them.
 
 ## Data Location
 
-All persistent data is stored in `~/.arcaneum/`:
+Embedding model caches are stored in `~/.arcaneum/`:
 
 ```
 ~/.arcaneum/
 ├── models/              # Embedding model cache
-├── data/
-│   ├── qdrant/         # Qdrant vector database
-│   └── qdrant_snapshots/  # Backup snapshots
+```
+
+When started with `arc container`, Qdrant and MeiliSearch data are stored in
+Docker named volumes:
+
+```
+arcaneum_qdrant-arcaneum-storage
+arcaneum_qdrant-arcaneum-snapshots
+arcaneum_meilisearch-arcaneum-data
+arcaneum_meilisearch-arcaneum-dumps
+arcaneum_meilisearch-arcaneum-snapshots
 ```
 
 **Benefits:**
-- Predictable, user-accessible location
-- Easy backup/restore (just backup ~/.arcaneum/)
-- Survives docker-compose down
-- No hidden Docker volumes
+- Managed by Docker and isolated from source checkouts
+- Easy inspection with `arc container status`
+- Survives `arc container stop` and plain `docker compose down`
+- Stable volume names across image-only upgrades
+
+Do not run `docker compose down --volumes` unless you intentionally want to
+delete indexed data. Image upgrades should keep the volume names in
+`docker-compose.yml` unchanged. Prefer `arc container` over direct
+`docker compose` commands so the compose project name, and therefore the
+Docker volume names, stay stable.
 
 ## Migration from Old Setup
 

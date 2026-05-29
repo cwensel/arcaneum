@@ -85,12 +85,35 @@ class TestContainerStop:
                 mock_result.returncode = 0
                 mock_run.return_value = mock_result
 
-                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
+                with patch(
+                    'arcaneum.cli.docker.get_compose_file',
+                    return_value='/path/to/docker-compose.yml',
+                ):
                     stop_command.callback()
 
                 calls = mock_run.call_args_list
                 compose_calls = [c for c in calls if 'compose' in str(c)]
                 assert any('down' in str(c) for c in compose_calls)
+
+    def test_stop_preserves_named_volumes(self):
+        """Test that stop does not delete Docker named volumes."""
+        from arcaneum.cli.docker import stop_command
+
+        with patch('shutil.which', return_value='/usr/bin/docker'):
+            with patch('subprocess.run') as mock_run:
+                mock_result = MagicMock()
+                mock_result.returncode = 0
+                mock_run.return_value = mock_result
+
+                with patch('arcaneum.cli.docker.get_compose_file', return_value='/path/to/docker-compose.yml'):
+                    stop_command.callback()
+
+                compose_args = [
+                    c.args[0] for c in mock_run.call_args_list if 'compose' in str(c)
+                ]
+                assert any('down' in args for args in compose_args)
+                assert all('--volumes' not in args for args in compose_args)
+                assert all('-v' not in args for args in compose_args)
 
     def test_already_stopped_handling(self, capsys):
         """Test graceful handling when services are already stopped."""

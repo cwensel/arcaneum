@@ -23,6 +23,8 @@
   - [RDR-003](rdr/RDR-003-qdrant-collection-creation-cli.md) - Collection management
   - [RDR-004](rdr/RDR-004-pdf-bulk-indexing.md) - PDF indexing (this implementation)
   - See [rdr/README.md](rdr/README.md) for complete list
+- **[Arcaneum 1.0 Release and Compatibility Policy](reference/release-compatibility-policy.md)** -
+  release-readiness gates and the post-1.0 compatibility contract
 
 ## Directory Structure
 
@@ -40,6 +42,8 @@ docs/
 │   ├── testing.md
 │   ├── corporate-proxy.md
 │   └── offline-mode.md
+├── reference/             # Technical reference
+│   └── release-compatibility-policy.md
 └── rdr/                   # Technical specifications
     ├── README.md
     ├── TEMPLATE.md

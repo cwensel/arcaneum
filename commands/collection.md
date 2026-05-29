@@ -1,6 +1,6 @@
 ---
 description: Manage Qdrant collections (semantic search only)
-argument-hint: <create|list|info|delete|items> [name] [options]
+argument-hint: <create|list|info|delete|items|verify|export|import> [name] [options]
 ---
 
 Manage Qdrant vector collections for storing embeddings.
@@ -8,7 +8,7 @@ Manage Qdrant vector collections for storing embeddings.
 **Note:** For most users, `/arc:corpus` is recommended as it provides both semantic and full-text
 search. Use `/arc:collection` when you only need semantic search.
 
-**IMPORTANT:** You must specify a subcommand (`create`, `list`, `info`, `delete`, or `items`).
+**IMPORTANT:** You must specify a subcommand (`create`, `list`, `info`, `delete`, `items`, `verify`, `export`, or `import`).
 
 **Subcommands (required):**
 
@@ -17,6 +17,9 @@ search. Use `/arc:collection` when you only need semantic search.
 - `info`: Show detailed information about a collection
 - `delete`: Delete a collection permanently
 - `items`: List indexed files/repos in a collection
+- `verify`: Verify collection integrity (fsck-like check)
+- `export`: Export collection to a portable format
+- `import`: Import collection from an export file
 
 **Common Options:**
 

@@ -1,6 +1,6 @@
 ---
 description: Search across collections
-argument-hint: semantic "query" --corpus NAME
+argument-hint: <semantic|text> "query" --corpus NAME
 ---
 
 Search your indexed content using semantic search (most common) or full-text search.

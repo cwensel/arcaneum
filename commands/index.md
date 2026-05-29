@@ -1,6 +1,6 @@
 ---
 description: Index content into collections (semantic search only)
-argument-hint: <pdf|code|markdown> <path> --collection NAME
+argument-hint: <pdf|code|markdown|text> <path> --collection NAME
 ---
 
 Index PDFs, markdown, or source code into Qdrant collections for semantic search.
@@ -8,13 +8,16 @@ Index PDFs, markdown, or source code into Qdrant collections for semantic search
 **Note:** For most users, `/arc:corpus sync` is recommended as it indexes to both semantic and
 full-text search. Use `/arc:index` when you only need semantic search in a single collection.
 
-**IMPORTANT:** You must specify a subcommand (`pdf`, `code`, or `markdown`) before the path.
+**IMPORTANT:** You must specify a subcommand (`pdf`, `code`, `markdown`, or `text`) before the path.
 
 **Subcommands (required):**
 
-- `pdf`: Index PDF documents (with OCR support)
-- `markdown`: Index markdown files (with frontmatter extraction)
-- `code`: Index source code repositories (git-aware)
+- `pdf`: Index PDF documents into Qdrant (with OCR support)
+- `markdown`: Index markdown files into Qdrant (with frontmatter extraction)
+- `code`: Index source code repositories into Qdrant (git-aware)
+- `text`: Index content to MeiliSearch for full-text search (has its own
+  `pdf`/`code`/`markdown` subcommands; advanced — prefer `/arc:corpus sync`
+  or `/arc:indexes` for full-text)
 
 **Common Options:**
 
@@ -180,7 +183,8 @@ available with `--gpu`:
 
 Use --offline for corporate proxies or SSL issues:
 
-- Requires models pre-downloaded: `arc models download`
+- Requires the embedding model already cached. Models download automatically
+  on first use, so run any index/sync once while online to populate the cache
 - No network calls during indexing
 - Fails if model not cached
 

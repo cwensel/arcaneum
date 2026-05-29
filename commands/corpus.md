@@ -1,6 +1,6 @@
 ---
 description: Manage dual-index corpora (recommended)
-argument-hint: <create|delete|sync|repair|info|items|parity> <name> [paths...] [options]
+argument-hint: <create|list|update|delete|sync|repair|info|items|parity|verify> <name> [paths...] [options]
 ---
 
 **Recommended for most users.** Manage corpora that combine both vector search (Qdrant) and
@@ -11,12 +11,15 @@ full-text search (MeiliSearch) for the same content.
 **Subcommands:**
 
 - `create`: Create both Qdrant collection and MeiliSearch index
+- `list`: List all corpora with parity status
+- `update`: Update corpus metadata without reindexing
 - `delete`: Delete both Qdrant collection and MeiliSearch index
 - `sync`: Index directory to both systems simultaneously
 - `repair`: Re-index incomplete or garbled files (text quality detection)
 - `info`: Show corpus details (both systems)
 - `items`: List indexed items with parity status
 - `parity`: Check and restore parity between systems
+- `verify`: Verify corpus health across both Qdrant and MeiliSearch
 
 **Common Options:**
 

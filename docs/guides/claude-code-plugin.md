@@ -207,9 +207,9 @@ Before each test session, verify:
 
 - [ ] Valid JSON syntax (no trailing commas, proper quotes)
 - [ ] Required fields present: `name`, `version`, `description`
-- [ ] All command paths use `./` prefix
-- [ ] Commands array lists all 8 slash commands
-- [ ] Version follows semantic versioning (e.g., `0.1.0`)
+- [ ] Any custom component paths use `./` prefix
+- [ ] All 10 commands auto-discovered from `commands/`; 5 skills under `.claude-plugin/skills`
+- [ ] Version follows semantic versioning (e.g., `0.6.0`)
 
 **Validation Command:**
 
@@ -292,7 +292,7 @@ python -m arcaneum.cli.main --version && echo "✓ Version command works"
 
 **Expected Result:**
 
-- All 8 slash commands appear
+- All 10 slash commands appear
 - Commands execute without errors
 - Help text is clear and accurate
 

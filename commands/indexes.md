@@ -1,6 +1,6 @@
 ---
 description: Manage MeiliSearch full-text indexes (full-text search only)
-argument-hint: <create|list|info|delete|items|verify|export|import> [name] [options]
+argument-hint: <create|list|info|delete|items|verify|export|import|update-settings|list-projects|delete-project> [name] [options]
 ---
 
 Manage MeiliSearch full-text indexes (mirrors `arc collection` for Qdrant).

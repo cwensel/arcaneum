@@ -2,9 +2,9 @@
 
 This document verifies Arcaneum's compliance with Claude Code plugin marketplace best practices as documented at https://docs.claude.com/en/docs/claude-code/.
 
-**Last Updated:** 2025-10-28
-**Plugin Version:** 0.1.0
-**Validation Status:** ✅ COMPLIANT
+**Last Updated:** 2026-05-29
+**Plugin Version:** 0.6.0
+**Validation Status:** ✅ COMPLIANT (`claude plugin validate . --strict` passes)
 
 ## Plugin Structure Compliance
 
@@ -16,7 +16,9 @@ arcaneum/
 │   ├── plugin.json          ✅ Required manifest present
 │   └── marketplace.json     ✅ Marketplace catalog present
 ├── commands/                ✅ At root level (not nested in .claude-plugin/)
-│   └── *.md (8 files)       ✅ All slash commands present
+│   └── *.md (10 files)      ✅ All slash commands present
+├── .claude-plugin/skills/   ✅ Skill directories (<name>/SKILL.md)
+│   └── arc-*/ (5 skills)    ✅ Model-invocable skills present
 ├── src/arcaneum/            ✅ Python implementation
 ├── docs/                    ✅ Documentation
 ├── README.md                ✅ Present
@@ -31,21 +33,22 @@ arcaneum/
 ### Plugin Manifest (plugin.json) ✅
 
 **Required Fields:**
-- ✅ `name`: "arcaneum" (kebab-case format)
-- ✅ `version`: "0.1.0" (semantic versioning)
+- ✅ `name`: "arc" (kebab-case format; used for namespacing components)
+- ✅ `version`: "0.6.0" (semantic versioning)
 - ✅ `description`: Comprehensive description provided
 
 **Optional Fields (Present):**
+- ✅ `displayName`: "Arcaneum" (friendly name in the `/plugin` picker)
 - ✅ `author`: Name and URL provided
-- ✅ `repository`: GitHub URL (placeholder, ready for production)
+- ✅ `repository`: GitHub URL
 - ✅ `license`: "MIT"
 - ✅ `homepage`: GitHub URL
-- ✅ `keywords`: 11 relevant keywords for discoverability
+- ✅ `keywords`: 15 relevant keywords for discoverability
 
-**Commands Array:**
-- ✅ 8 commands listed
-- ✅ All paths use `./` prefix (e.g., `"./commands/search.md"`)
-- ✅ All referenced files exist
+**Components:**
+- ✅ 10 commands auto-discovered from `commands/` (default location)
+- ✅ 5 skills referenced via `"skills": "./.claude-plugin/skills"`
+- ✅ All custom paths use `./` prefix
 
 **Validation Result:** ✅ Fully compliant
 
@@ -57,10 +60,11 @@ arcaneum/
 - ✅ `plugins`: Array with 1 plugin entry
 
 **Plugin Entry:**
-- ✅ `name`: "arcaneum"
+- ✅ `name`: "arc"
+- ✅ `displayName`: "Arcaneum"
 - ✅ `source`: "./" (relative path, current directory)
 - ✅ `description`: Clear and concise
-- ✅ `version`: Matches plugin.json ("0.1.0")
+- ✅ `version`: Matches plugin.json ("0.6.0")
 
 **Validation Result:** ✅ Fully compliant
 
@@ -68,27 +72,30 @@ arcaneum/
 
 ### Frontmatter Requirements ✅
 
-All 8 commands have proper YAML frontmatter:
+All 10 commands have proper YAML frontmatter (`description` + `argument-hint`):
 
 | Command | description | argument-hint | Status |
 |---------|------------|---------------|---------|
-| create-collection.md | ✅ | ✅ | ✅ |
-| list-collections.md | ✅ | ✅ | ✅ |
-| index-pdfs.md | ✅ | ✅ | ✅ |
-| index-source.md | ✅ | ✅ | ✅ |
+| collection.md | ✅ | ✅ | ✅ |
+| config.md | ✅ | ✅ | ✅ |
+| container.md | ✅ | ✅ | ✅ |
+| corpus.md | ✅ | ✅ | ✅ |
+| doctor.md | ✅ | ✅ | ✅ |
+| index.md | ✅ | ✅ | ✅ |
+| indexes.md | ✅ | ✅ | ✅ |
+| models.md | ✅ | ✅ | ✅ |
 | search.md | ✅ | ✅ | ✅ |
-| search-text.md | ✅ | ✅ | ✅ |
-| create-corpus.md | ✅ | ✅ | ✅ |
-| sync-directory.md | ✅ | ✅ | ✅ |
+| store.md | ✅ | ✅ | ✅ |
 
-### Environment Variable Usage ✅
+### Argument Expansion ✅
 
-All commands correctly use Claude Code environment variables:
+Each command delegates to the `arc` CLI via `$ARGUMENTS`:
 
-- ✅ `${CLAUDE_PLUGIN_ROOT}`: Used in all 8 commands for plugin path
-- ✅ `$ARGUMENTS`: Used in all 8 commands for parameter passing
+- ✅ `$ARGUMENTS`: Used in all 10 commands (`arc <group> $ARGUMENTS`)
 - ✅ No absolute paths hardcoded
-- ✅ No assumptions about installation location
+- ✅ Commands wrap the installed `arc` binary (no bundled scripts), so
+  `${CLAUDE_PLUGIN_ROOT}` is not needed; the plugin requires `Bash(arc:*)`
+  permission instead
 
 **Validation Result:** ✅ Fully compliant
 
@@ -141,15 +148,15 @@ Following Beads best practices (RDR-006):
 
 ### From Official Documentation ✅
 
-1. ✅ **Semantic Versioning**: Using 0.1.0 format
-2. ✅ **Relative Paths**: All paths use `./` prefix
-3. ✅ **Component Location**: Commands at root, not nested
-4. ✅ **Environment Variables**: Proper use of CLAUDE_PLUGIN_ROOT
+1. ✅ **Semantic Versioning**: Using MAJOR.MINOR.PATCH format (currently 0.6.0)
+2. ✅ **Relative Paths**: All custom component paths use `./` prefix
+3. ✅ **Component Location**: Commands at root, skills under `.claude-plugin/skills`
+4. ✅ **Scoped Permissions**: Commands and skills declare `Bash(arc:*)`
 5. ✅ **Manifest Completeness**: All required and recommended fields present
 
 ### From Beads Analysis (RDR-006) ✅
 
-1. ✅ **Portable Paths**: `${CLAUDE_PLUGIN_ROOT}` in all commands
+1. ✅ **Portable Invocation**: Commands call the installed `arc` binary, not bundled paths
 2. ✅ **JSON Output**: `--json` flag support across commands
 3. ✅ **Structured Errors**: `[ERROR]` prefix and exit codes
 4. ✅ **Clear Frontmatter**: Description and argument hints
@@ -178,7 +185,7 @@ Following Beads best practices (RDR-006):
 
 **Script:** `scripts/test-plugin-commands.sh`
 
-- ✅ All 11 commands have `--help` flag
+- ✅ All command groups expose a `--help` flag
 - ✅ JSON output works for relevant commands
 - ✅ Error handling returns correct exit codes
 - ✅ Error messages use `[ERROR]` prefix
@@ -194,7 +201,7 @@ Following Beads best practices (RDR-006):
 **Recommended Test Flow:**
 1. Add local marketplace: `/plugin marketplace add $(pwd)`
 2. Install plugin: `/plugin install arc@arcaneum-marketplace`
-3. Test all 8 slash commands
+3. Test the 10 slash commands and 5 skills
 4. Verify progress tracking during indexing
 5. Test JSON output modes
 6. Test error scenarios
@@ -207,11 +214,12 @@ Following Beads best practices (RDR-006):
 | **Structure** | Marketplace manifest present | ✅ | `.claude-plugin/marketplace.json` |
 | **Structure** | Commands at root level | ✅ | `commands/` directory |
 | **Manifest** | Required fields (name, version, description) | ✅ | All present |
-| **Manifest** | Semantic versioning | ✅ | 0.1.0 format |
-| **Manifest** | Relative paths with ./ | ✅ | All 8 commands |
-| **Commands** | YAML frontmatter | ✅ | All 8 commands |
-| **Commands** | ${CLAUDE_PLUGIN_ROOT} usage | ✅ | 8/8 commands |
-| **Commands** | $ARGUMENTS expansion | ✅ | 8/8 commands |
+| **Manifest** | Semantic versioning | ✅ | 0.6.0 format |
+| **Manifest** | Relative paths with ./ | ✅ | All custom paths |
+| **Commands** | YAML frontmatter | ✅ | All 10 commands |
+| **Commands** | Scoped permissions (`Bash(arc:*)`) | ✅ | Commands + skills |
+| **Commands** | $ARGUMENTS expansion | ✅ | 10/10 commands |
+| **Skills** | Model-invocable SKILL.md | ✅ | 5 skills |
 | **Commands** | Clear examples | ✅ | Multiple per command |
 | **CLI** | Exit codes (0,1,2,3) | ✅ | RDR-006 spec |
 | **CLI** | JSON output mode | ✅ | --json flag |
@@ -223,25 +231,24 @@ Following Beads best practices (RDR-006):
 | **Docs** | LICENSE present | ✅ | MIT license |
 | **Docs** | Testing guide | ✅ | This document + plugin-marketplace-testing.md |
 
-**Overall Compliance:** ✅ **18/18 requirements met (100%)**
+**Overall Compliance:** ✅ **19/19 requirements met (100%)**
 
 ## Recommendations for Production
 
-### Before GitHub Release
+### Before Each Release
 
-1. **Update URLs in manifests:**
-   - Replace `https://github.com/yourorg/arcaneum` with actual repository URL
-   - Update author URLs to actual profiles
+1. **Bump the version:**
+   - Run `./scripts/bump-version.sh <version>` (updates all five tracked files)
 
 2. **Create GitHub Release:**
-   - Tag version: `git tag v0.1.0`
-   - Create GitHub release with changelog
-   - Include installation instructions in release notes
+   - Tag version: `git tag v<version>`
+   - Pushing the tag triggers `.github/workflows/release.yml`, which builds
+     the wheel/sdist and publishes a GitHub Release with artifacts
 
 3. **Test from GitHub:**
-   - After pushing to GitHub, test installation:
+   - After pushing, test installation:
    ```
-   /plugin marketplace add yourorg/arcaneum
+   /plugin marketplace add cwensel/arcaneum
    /plugin install arc@arcaneum-marketplace
    ```
 
@@ -253,7 +260,10 @@ Following Beads best practices (RDR-006):
 ### Ongoing Maintenance
 
 1. **Version Bumping:**
-   - Update version in 3 places: `plugin.json`, `marketplace.json`, `src/arcaneum/__init__.py`
+   - Use `./scripts/bump-version.sh <version>`, which bumps the `version`
+     string in `pyproject.toml`, `src/arcaneum/__init__.py`,
+     `.claude-plugin/plugin.json`, and `.claude-plugin/marketplace.json`, and
+     rewrites the release-asset download URLs in `README.md`
    - Follow semantic versioning (breaking.feature.fix)
 
 2. **Testing Before Each Release:**

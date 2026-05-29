@@ -838,12 +838,12 @@ arc collection delete test-* --confirm 2>/dev/null || true
 
 ### 4. Document Bugs Immediately
 
-Use beads to track issues found during testing:
+Use `kata` to track issues found during testing:
 
 ```bash
-bd create "Search filter syntax unclear in help text" \
-  --type bug \
+kata create "Search filter syntax unclear in help text" \
   --priority 1 \
+  --label type:bug \
   --json
 ```
 
@@ -856,8 +856,6 @@ bd create "Search filter syntax unclear in help text" \
 - **RDR-006**: `docs/rdr/RDR-006-claude-code-integration.md`
 - **Output Format**: `docs/reference/cli-output-format.md`
 - **Compliance Report**: `docs/reference/plugin-compliance.md`
-- **Beads Plugin**: <https://github.com/steveyegge/beads> (reference implementation)
-
 ## Quick Reference
 
 ### Essential Commands

@@ -74,7 +74,7 @@ Arcaneum requires a robust source code indexing pipeline adapted from the proven
 
 ### Investigation Process
 
-**Research tracks completed** to inform this RDR (tracked via Beads issues):
+**Research tracks completed** to inform this RDR (tracked via kata issues):
 
 1. **Git Handling Patterns** (arcaneum-24): Deep analysis of chroma-embedded git discovery, metadata extraction, change detection, and .gitignore integration
 2. **AST Chunking Libraries** (arcaneum-25): Comprehensive research on ASTChunk limitations and tree-sitter-language-pack alternatives
@@ -1187,7 +1187,7 @@ client.delete(
 
 ## References
 
-- [Beads Issues arcaneum-24 to arcaneum-30, arcaneum-32 to arcaneum-42](../../.beads/arcaneum.db) - Detailed research findings
+- Issue records arcaneum-24 to arcaneum-30, arcaneum-32 to arcaneum-42 - Detailed research findings
 - [chroma-embedded/upload.sh](../../../research/chroma-embedded/upload.sh) - Reference implementation patterns
 - [RDR-002: Qdrant Server Setup](RDR-002-qdrant-server-setup.md) - Server configuration
 - [RDR-003: Collection Creation](RDR-003-collection-creation.md) - Collection management

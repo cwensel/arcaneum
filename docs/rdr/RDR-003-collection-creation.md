@@ -62,7 +62,7 @@ Key requirements:
 
 ### Investigation Process
 
-Six parallel research tracks were conducted (tracked in Beads issues arcaneum-8 through arcaneum-13):
+Six parallel research tracks were conducted (tracked in kata issues arcaneum-8 through arcaneum-13):
 
 1. **Embedding Model Libraries** - Compared FastEmbed vs sentence-transformers
 2. **Model Token Constraints** - Analyzed training parameters for 4 target models

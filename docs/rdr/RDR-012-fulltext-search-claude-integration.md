@@ -868,9 +868,9 @@ Already satisfied:
 - [RDR-011: Source Code Full-Text Indexing](
   RDR-011-source-code-fulltext-indexing.md) - Provides indexed code content
 
-### Beads Issues
+### Issue Records
 
-- [arcaneum-71](../../.beads/arcaneum.db) - Original RDR request
+- arcaneum-71 - Original RDR request
 
 ### Official Documentation
 

@@ -49,35 +49,35 @@ pytest tests/
 
 ## Development Workflow
 
-### Using Beads for Task Tracking
+### Using Kata for Task Tracking
 
-This project uses [beads](https://github.com/steveyegge/beads) for issue tracking.
+This project uses `kata` for issue tracking.
 
 **Check for ready work:**
 
 ```bash
-bd ready
+kata ready
 ```
 
 **Create a new task:**
 
 ```bash
-bd create "Add feature X" --type feature --priority 2
+kata create "Add feature X" --priority 2 --label type:feature
 ```
 
 **Claim a task:**
 
 ```bash
-bd update arcaneum-123 --status in_progress --assignee YourName
+kata assign arcaneum-123 YourName
 ```
 
 **Complete a task:**
 
 ```bash
-bd close arcaneum-123 --reason "Completed"
+kata close arcaneum-123 --reason done
 ```
 
-See **[AGENTS.md](AGENTS.md)** for complete beads workflow and AI agent guidelines.
+See **[AGENTS.md](AGENTS.md)** for agent guidelines.
 
 ### Using Recommendation Data Records (RDRs)
 
@@ -240,7 +240,7 @@ grep -r "arc docker\|python -m arcaneum.cli.main" docs/ commands/
 
 ### Before Submitting
 
-1. **Create beads issue** for your work (if not already exists)
+1. **Create issue record** for your work (if not already exists)
 2. **Write/update tests** for your changes
 3. **Update documentation** as needed
 4. **Run tests** and verify they pass
@@ -256,7 +256,7 @@ grep -r "arc docker\|python -m arcaneum.cli.main" docs/ commands/
 
 **Description:** Include:
 
-- Link to beads issue: "Resolves arcaneum-123"
+- Link to issue record: "Resolves arcaneum-123"
 - Brief summary of changes
 - Testing performed
 - Documentation updated (if applicable)
@@ -264,7 +264,7 @@ grep -r "arc docker\|python -m arcaneum.cli.main" docs/ commands/
 **Commits:**
 
 - Write clear commit messages
-- Reference beads issues: "Implement cache commands (arcaneum-162)"
+- Reference issue records: "Implement cache commands (arcaneum-162)"
 - Keep commits focused (one logical change per commit)
 
 ### Review Process
@@ -288,10 +288,10 @@ Use descriptive branch names:
 
 ### Adding a New CLI Command
 
-1. **Create beads issue:**
+1. **Create issue record:**
 
 ```bash
-bd create "Add arc foo command" --type feature --priority 2
+kata create "Add arc foo command" --priority 2 --label type:feature
 ```
 
 2. **Create RDR** (if complex)
@@ -341,10 +341,10 @@ def test_foo_command():
     assert foo() == expected
 ```
 
-8. **Close beads issue:**
+8. **Close issue record:**
 
 ```bash
-bd close arcaneum-XXX --reason "Completed"
+kata close arcaneum-XXX --reason done
 ```
 
 ### Updating Documentation
@@ -357,25 +357,25 @@ bd close arcaneum-XXX --reason "Completed"
 
 ### Reporting Issues
 
-Use beads for issue tracking:
+Use `kata` for issue tracking:
 
 ```bash
 # Report a bug
-bd create "Bug: arc search fails with filter" --type bug --priority 1
+kata create "Bug: arc search fails with filter" --priority 1 --label type:bug
 
 # Suggest a feature
-bd create "Feature: add arc backup command" --type feature --priority 3
+kata create "Feature: add arc backup command" --priority 3 --label type:feature
 
 # Document a task
-bd create "Update RDR-005 with branch support" --type task --priority 2
+kata create "Update RDR-005 with branch support" --priority 2 --label type:task
 ```
 
-Or use GitHub issues if you prefer (maintainers will create beads issues).
+Or use GitHub issues if you prefer (maintainers will create issue records).
 
 ## Questions?
 
 - **Setup issues?** Run `arc doctor` for diagnostics
-- **Beads questions?** See [AGENTS.md](AGENTS.md)
+- **Kata questions?** See [AGENTS.md](AGENTS.md)
 - **RDR questions?** See [docs/rdr/README.md](docs/rdr/README.md)
 - **Documentation questions?** See [docs/CONTRIBUTING-DOCS.md](docs/CONTRIBUTING-DOCS.md)
 - **Still stuck?** Open a GitHub issue or discussion

@@ -452,7 +452,7 @@ the plugin files (`.claude-plugin/`, `commands/`, `skills/`).
 - Two repositories to maintain
 - Version coordination across repos is error-prone
 - Plugin updates require syncing between repos
-- Beads keeps plugin in main repo, not separate
+- The reference implementation keeps plugin in main repo, not separate
 
 **Reason for rejection**: Added maintenance overhead outweighs benefits. Plugin stays in main
 repo. Users install CLI globally first, then plugin references it.

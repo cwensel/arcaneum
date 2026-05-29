@@ -95,7 +95,7 @@ arcaneum-h6bo. This RDR uses the updated naming.
 
 ### Investigation Process
 
-**Research tracks completed via Beads issues** (arcaneum-86 through arcaneum-92):
+**Research tracks completed via kata issues** (arcaneum-86 through arcaneum-92):
 
 1. **Indexing Granularity** (arcaneum-86): Analyzed whole-file vs line-based vs function/class-level
 2. **Metadata Schema** (arcaneum-87): Designed MeiliSearch document structure aligned with RDR-005
@@ -1444,18 +1444,18 @@ We use tree-sitter directly via `get_parser()`.
   - Pattern reference for `arc index text code`
   - CLI renamed: `arc fulltext` → `arc indexes` (arcaneum-h6bo)
 
-### Beads Issues
+### Issue Records
 
 **Original Research**:
 
-- [arcaneum-70](../../.beads/arcaneum.db) - Original RDR request
-- [arcaneum-86](../../.beads/arcaneum.db) - Indexing granularity research
-- [arcaneum-87](../../.beads/arcaneum.db) - Metadata schema design
-- [arcaneum-88](../../.beads/arcaneum.db) - Git change detection strategy
-- [arcaneum-89](../../.beads/arcaneum.db) - Function/class extraction
-- [arcaneum-90](../../.beads/arcaneum.db) - Dual indexing workflow
-- [arcaneum-91](../../.beads/arcaneum.db) - Batch upload optimization
-- [arcaneum-92](../../.beads/arcaneum.db) - CLI command structure
+- arcaneum-70 - Original RDR request
+- arcaneum-86 - Indexing granularity research
+- arcaneum-87 - Metadata schema design
+- arcaneum-88 - Git change detection strategy
+- arcaneum-89 - Function/class extraction
+- arcaneum-90 - Dual indexing workflow
+- arcaneum-91 - Batch upload optimization
+- arcaneum-92 - CLI command structure
 
 **2026-01-15 Review Issues**:
 

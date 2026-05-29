@@ -1,7 +1,7 @@
 """Output formatting utilities for CLI commands (RDR-006).
 
 This module provides consistent JSON and text output formatting for all CLI commands
-following Beads best practices.
+following reference implementation practices.
 """
 
 import json

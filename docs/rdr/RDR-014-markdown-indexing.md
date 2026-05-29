@@ -325,7 +325,7 @@ Research findings on GPU acceleration...
 - `collection`: Target collection name
 - `source`: Source type (e.g., "research", "conversation", "analysis")
 - `context`: Brief description of why/when created
-- `related_to`: Links to beads issues or related documents
+- `related_to`: Links to issue records or related documents
 
 **Optional Metadata**:
 
@@ -1795,9 +1795,9 @@ pygments = ">=2.19.0"
 - [RDR-005: Source Code Indexing](RDR-005-source-code-indexing.md) - AST chunking inspiration
 - [RDR-009: Dual Indexing Strategy](RDR-009-dual-indexing-strategy.md) - Corpus architecture
 
-### Beads Issues
+### Issue Records
 
-- [arcaneum-199](../../.beads/issues.jsonl) - RDR creation request
+- arcaneum-199 - RDR creation request
 
 ### External Resources
 

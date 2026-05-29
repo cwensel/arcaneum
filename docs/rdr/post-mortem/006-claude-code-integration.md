@@ -44,7 +44,7 @@ entry point.
   `src/arcaneum/cli/errors.py` with custom exception classes
   (`ArcaneumError`, `InvalidArgumentError`, `ResourceNotFoundError`).
 - **`[ERROR]`/`[INFO]` prefix conventions**: All progress and error output
-  follows the Beads-inspired format documented in the RDR.
+  follows the reference-inspired format documented in the RDR.
 - **Python version checking**: `MIN_PYTHON = (3, 12)` guard at top of
   `src/arcaneum/cli/main.py`, exactly as specified.
 - **Doctor command**: `arc doctor` exists with checks for Python version,
@@ -194,7 +194,7 @@ entry point.
 | **Under-specified architecture** | 1 | CLI command namespace organization (flat vs nested groups) was not analyzed despite being the primary interface contract |
 | **Scope underestimation** | 3 | MeiliSearch dual-indexing expanded from zero to a major feature; slash commands grew from 5 to 10; additional content types (markdown, agent memory) added substantial surface area |
 | **Internal contradiction** | 0 | |
-| **Missing cross-cutting concern** | 1 | Skills / auto-activating agent integration was a distinct Claude Code feature not captured in the plugin research despite analyzing Beads |
+| **Missing cross-cutting concern** | 1 | Skills / auto-activating agent integration was a distinct Claude Code feature not captured in the plugin research |
 
 ### Drift Category Definitions
 
@@ -227,14 +227,14 @@ entry point.
 
 - **CLI-first over MCP decision**: The core architectural decision to use
   direct CLI execution instead of an MCP server was correct. No MCP server
-  was ever needed. The analysis of Beads' MCP-first approach and the
+  was ever needed. The analysis of the reference implementation's MCP-first approach and the
   explicit comparison table provided strong justification that held up
   through implementation.
 
-- **Beads best practices adoption**: The JSON output format
+- **reference implementation practices adoption**: The JSON output format
   (`{status, message, data, errors}`), exit code conventions (0/1/2/3),
   `[ERROR]`/`[INFO]` prefix patterns, and version compatibility checking
-  were all adopted directly from the Beads analysis and implemented as
+  were all adopted directly from the reference analysis and implemented as
   specified. These patterns proved genuinely useful.
 
 - **Doctor command**: The setup verification command was a valuable addition
@@ -249,7 +249,7 @@ entry point.
 
 - **Trade-off documentation**: The detailed comparison tables (CLI-first vs
   MCP-first, 14 dimensions scored) and the explicit "what we adopted vs
-  didn't adopt from Beads" sections provided clear decision rationale that
+  didn't adopt from the reference implementation" sections provided clear decision rationale that
   remained useful during implementation.
 
 ### What the RDR Missed
@@ -261,7 +261,7 @@ entry point.
   architectural decision should have been analyzed in the RDR since it
   affects every slash command and all user-facing documentation.
 
-- **Skills / auto-activating behaviors**: The RDR analyzed Beads' agent
+- **Skills / auto-activating behaviors**: The RDR analyzed the reference implementation's agent
   definitions and dismissed them as "future consideration," but skills
   (auto-activating SKILL.md files) are a distinct and simpler Claude Code
   feature that was missed in the research. Skills turned out to be important
@@ -307,7 +307,7 @@ entry point.
   explicitly deferred to future work. This code was never used and added
   significant length to the document.
 
-- **Beads comparison depth**: While the Beads analysis was valuable for
+- **reference comparison depth**: While the reference analysis was valuable for
   adopting best practices, the repeated comparison tables (three separate
   CLI-vs-MCP tables with overlapping content) and the extended
   "why we didn't adopt" analysis occupied substantial document space for

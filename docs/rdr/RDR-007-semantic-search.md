@@ -63,7 +63,7 @@ Arcaneum provides bulk indexing tools via:
 
 ### Investigation Process
 
-Research conducted via Beads issues arcaneum-52 through arcaneum-56:
+Research conducted via kata issues arcaneum-52 through arcaneum-56:
 
 1. **arcaneum-52**: Qdrant client search patterns - Analyzed qdrant-client codebase via Chroma collection
 2. **arcaneum-53**: Query embedding strategy - Model detection, caching, named vectors
@@ -1137,12 +1137,12 @@ Save search results:
 
 ## References
 
-- [Beads Issue arcaneum-7](../.beads/arcaneum.db) - Original RDR request
-- [Beads Issue arcaneum-52](../.beads/arcaneum.db) - Qdrant client research
-- [Beads Issue arcaneum-53](../.beads/arcaneum.db) - Embedding strategy design
-- [Beads Issue arcaneum-54](../.beads/arcaneum.db) - Filter DSL design
-- [Beads Issue arcaneum-55](../.beads/arcaneum.db) - Collection iteration patterns (reference for collection-relevance feature)
-- [Beads Issue arcaneum-56](../.beads/arcaneum.db) - Result formatting design
+- Issue record arcaneum-7 - Original RDR request
+- Issue record arcaneum-52 - Qdrant client research
+- Issue record arcaneum-53 - Embedding strategy design
+- Issue record arcaneum-54 - Filter DSL design
+- Issue record arcaneum-55 - Collection iteration patterns (reference for collection-relevance feature)
+- Issue record arcaneum-56 - Result formatting design
 - [RDR-001: Project Structure](RDR-001-project-structure.md) - Foundation
 - [RDR-002: Qdrant Server Setup](RDR-002-qdrant-server-setup.md) - Server config
 - [RDR-003: Collection Creation](RDR-003-collection-creation.md) - Metadata schema

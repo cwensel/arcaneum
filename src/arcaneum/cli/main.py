@@ -17,7 +17,7 @@ from arcaneum.cli.errors import (
     HelpfulGroup,
 )
 
-# Version check (RDR-006: Best practice from Beads)
+# Version check (RDR-006: Best practice from reference implementation)
 MIN_PYTHON = (3, 12)
 if sys.version_info < MIN_PYTHON:
     print(f"[ERROR] Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+ required")

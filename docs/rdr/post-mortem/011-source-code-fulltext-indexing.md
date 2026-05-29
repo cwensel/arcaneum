@@ -257,7 +257,7 @@ integration, and multi-branch tests were created.
   was implemented as-is and proved appropriate.
 
 - **Research issue decomposition**: Breaking the investigation into seven focused
-  beads issues (arcaneum-86 through arcaneum-92) produced thorough coverage of
+  issue records (arcaneum-86 through arcaneum-92) produced thorough coverage of
   each concern.
 
 ### What the RDR Missed

@@ -546,6 +546,6 @@ For now, the CLI-first approach with JSON support provides the foundation for th
 ## References
 
 - **RDR-006**: Claude Code Integration spec (lines 1140-1186)
-- **Beads Plugin**: Reference implementation for best practices
+- **Reference Plugin**: Reference implementation for best practices
 - **Error Classes**: `src/arcaneum/cli/errors.py`
 - **Output Utilities**: `src/arcaneum/cli/output.py`

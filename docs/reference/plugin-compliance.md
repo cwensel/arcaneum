@@ -114,7 +114,7 @@ Each command includes:
 
 ### Exit Code Standards ✅
 
-Following Beads best practices (RDR-006):
+Following reference implementation practices (RDR-006):
 
 - ✅ 0: Success (tested and working)
 - ✅ 1: General errors (tested and working)
@@ -125,7 +125,7 @@ Following Beads best practices (RDR-006):
 
 ### Structured Output ✅
 
-Following Beads best practices (RDR-006):
+Following reference implementation practices (RDR-006):
 
 **JSON Mode:**
 - ✅ Standard format: `{status, message, data, errors}`
@@ -154,7 +154,7 @@ Following Beads best practices (RDR-006):
 4. ✅ **Scoped Permissions**: Commands and skills declare `Bash(arc:*)`
 5. ✅ **Manifest Completeness**: All required and recommended fields present
 
-### From Beads Analysis (RDR-006) ✅
+### From Reference Plugin Analysis (RDR-006) ✅
 
 1. ✅ **Portable Invocation**: Commands call the installed `arc` binary, not bundled paths
 2. ✅ **JSON Output**: `--json` flag support across commands
@@ -290,7 +290,7 @@ Following Beads best practices (RDR-006):
 
 The Arcaneum plugin marketplace implementation **fully complies** with Claude Code best practices and is ready for local testing and eventual GitHub publication.
 
-All automated validations pass, and the structure follows both official Claude Code guidelines and best practices learned from the Beads plugin analysis (RDR-006).
+All automated validations pass, and the structure follows both official Claude Code guidelines and best practices learned from the reference plugin analysis (RDR-006).
 
 **Next Steps:**
 1. Run `./scripts/validate-plugin.sh` to verify compliance

@@ -60,8 +60,8 @@ Arcaneum will provide tools for semantic search with this architecture:
    - URL: https://docs.claude.com/en/docs/claude-code/plugins
    - Focus: Plugin structure, marketplace, slash commands
 
-2. **Beads Plugin Analysis**
-   - URL: https://github.com/steveyegge/beads
+2. **Reference Plugin Analysis**
+   - URL: reference implementation
    - Focus: Real-world example of `.claude-plugin/` structure
 
 3. **Python Packaging Standards (2025)**
@@ -84,15 +84,15 @@ Arcaneum will provide tools for semantic search with this architecture:
 5. Claude Code registers slash commands from `commands/*.md` files
 
 **Slash Commands Call CLI Tools**:
-From beads example:
+From the reference plugin example:
 ```markdown
 ---
-description: Initialize beads in the current project
+description: Initialize issue tracking in the current project
 argument-hint: [prefix]
 ---
 
-Initialize beads issue tracking in the current directory.
-Use the beads MCP `init` tool...
+Initialize issue record tracking in the current directory.
+Use the reference plugin MCP `init` tool...
 ```
 
 For arcaneum, slash commands will execute CLI tools instead:
@@ -925,7 +925,7 @@ Manual testing for initial structure.
   - Creating slash commands
   - Plugin installation and discovery
 
-- **Beads Plugin Example**: https://github.com/steveyegge/beads
+- **Reference Plugin Example**: Production Claude Code plugin structure
   - Real-world `.claude-plugin/` structure
   - Slash command patterns (markdown with YAML frontmatter)
   - CLI tool integration

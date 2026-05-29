@@ -1215,9 +1215,9 @@ Already satisfied by RDR-004 and RDR-008:
 - [RDR-008: Full-Text Search Server Setup](RDR-008-fulltext-search-server-setup.md) - MeiliSearch deployment
 - [RDR-009: Dual Indexing Strategy](RDR-009-dual-indexing-strategy.md) - Shared metadata patterns
 
-### Beads Issues
+### Issue Records
 
-- [arcaneum-69](../.beads/arcaneum.db) - Original RDR request
+- arcaneum-69 - Original RDR request
 
 ### Official Documentation
 

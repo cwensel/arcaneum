@@ -1,7 +1,7 @@
 """Custom exception classes for CLI error handling (RDR-006).
 
 This module defines exception classes that map to specific exit codes following
-Beads best practices for structured error handling.
+reference implementation practices for structured error handling.
 
 Exit Codes:
 - 0: Success

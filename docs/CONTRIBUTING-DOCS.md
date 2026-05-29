@@ -187,7 +187,7 @@ Located in:
 Located in:
 
 - `CLAUDE.md` - AI agent instructions
-- `AGENTS.md` - AI workflow with beads
+- `AGENTS.md` - AI workflow guidance
 - `CONTRIBUTING.md` - Human contributor guide
 - `docs/rdr/` - Technical design documents
 - `docs/reference/` - Technical reference
@@ -224,7 +224,7 @@ Located in:
 
 **Bug fix:**
 
-1. Create beads issue
+1. Create issue record
 2. Fix bug
 3. Update troubleshooting section if relevant
 

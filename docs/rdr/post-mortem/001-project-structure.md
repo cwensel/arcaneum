@@ -281,7 +281,7 @@ exceeding the "minimal structure" scope of RDR-001.
 - **Click framework selection**: Click's group/command pattern enabled the hierarchical
   CLI that emerged, even though the RDR only showed flat usage.
 
-- **Research on `.claude-plugin/` conventions**: The investigation of beads plugin structure
+- **Research on `.claude-plugin/` conventions**: The investigation of reference plugin structure
   and Claude Code plugin documentation provided a valid foundation, even though specific
   details (skills vs agents, command discovery) evolved.
 

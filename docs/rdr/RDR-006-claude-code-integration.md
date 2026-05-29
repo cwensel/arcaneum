@@ -95,7 +95,7 @@ Arcaneum provides bulk indexing tools via:
 
 ### Investigation Process
 
-**Six parallel research tracks** completed via Beads issues (arcaneum-46 to arcaneum-51):
+**Six parallel research tracks** completed via kata issues (arcaneum-46 to arcaneum-51):
 
 1. **Claude Code CLI Integration** (arcaneum-46): Direct Bash tool execution patterns
 2. **MCP Server Architecture** (arcaneum-47): When MCP is needed vs direct CLI
@@ -206,7 +206,7 @@ python -m arcaneum.indexing.pdf $ARGUMENTS
 
 **Architectural Decision Table**:
 
-| Dimension | CLI-First (Arcaneum) | MCP-First (Beads) | Winner for Arcaneum |
+| Dimension | CLI-First (Arcaneum) | MCP-first reference | Winner for Arcaneum |
 |-----------|---------------------|-------------------|---------------------|
 | **Implementation Complexity** | Low - Just markdown files | High - Server code + lifecycle | ✅ CLI-First |
 | **Maintenance Burden** | Low - No server to maintain | High - Server updates needed | ✅ CLI-First |
@@ -236,19 +236,19 @@ python -m arcaneum.indexing.pdf $ARGUMENTS
 3. Clear migration path to add MCP later
 4. Lower complexity and maintenance burden
 
-#### 3b. Beads Analysis: MCP-First Architecture Deep Dive
+#### 3b. Reference Plugin Analysis: MCP-First Architecture Deep Dive
 
-**Research Finding**: Analyzed Beads (<https://github.com/steveyegge/beads>), a production-quality Claude Code plugin, to understand professional integration patterns.
+**Research Finding**: Analyzed a production-quality Claude Code plugin to understand professional integration patterns.
 
-**Beads' Architecture (MCP-First)**:
+**Reference implementation architecture (MCP-First)**:
 
-- **MCP server wraps CLI**: FastMCP server (`beads-mcp`) wraps the Go CLI (`bd`)
-- **Slash commands call MCP tools**: Commands like `/bd-ready` invoke MCP tools, not direct CLI
-- **Structured JSON everywhere**: CLI outputs JSON (`bd ready --json`), MCP parses it
+- **MCP server wraps CLI**: FastMCP server wraps the underlying CLI
+- **Slash commands call MCP tools**: Slash commands invoke MCP tools, not direct CLI
+- **Structured JSON everywhere**: CLI outputs JSON, MCP parses it
 - **Tool discovery in UI**: MCP tools appear in Claude's tool list with type hints
 - **Daemon architecture**: Optional daemon for performance with CLI fallback
 
-**Example from Beads**:
+**Example from the reference implementation**:
 
 ```markdown
 <!-- commands/ready.md -->
@@ -257,7 +257,7 @@ Use the MCP `ready` tool to find tasks with no blockers.
 
 **Why Arcaneum Chooses CLI-First Instead**:
 
-| Factor | MCP-First (Beads) | CLI-First (Arcaneum) | Decision |
+| Factor | MCP-first reference | CLI-First (Arcaneum) | Decision |
 |--------|-------------------|----------------------|----------|
 | **Complexity** | High - MCP server code, lifecycle mgmt | Low - Just markdown files | ✅ Keep simple |
 | **Performance** | Overhead - MCP layer adds latency | Fast - Direct execution | ✅ Avoid overhead |
@@ -274,7 +274,7 @@ Use the MCP `ready` tool to find tasks with no blockers.
 - `/help` discovery is **sufficient** for initial version
 - Can add MCP wrapper later **without breaking** slash commands
 
-**Best Practices Adopted from Beads**:
+**Best Practices Adopted from the reference implementation**:
 
 - ✅ **`${CLAUDE_PLUGIN_ROOT}` usage** - For portable plugin paths
 - ✅ **Clear slash command frontmatter** - `description` and `argument-hint`
@@ -288,12 +288,12 @@ Use the MCP `ready` tool to find tasks with no blockers.
 - **MCP server** - Complexity/performance concerns (deferred to future)
 - **Daemon mode** - Not needed for batch indexing workloads
 - **Agent definitions** - Future consideration
-- **Resource URIs** (like `beads://quickstart`) - Simpler markdown docs sufficient for now
+- **Resource URIs** - Simpler markdown docs sufficient for now
 
 **Future Migration Path** (if MCP becomes needed):
 
 1. ✅ Phase 1: CLI-first with `--json` support (this RDR)
-2. ⏱️ Phase 2: Implement FastMCP wrapper around CLI (like Beads)
+2. ⏱️ Phase 2: Implement FastMCP wrapper around CLI (like reference implementation)
 3. ⏱️ Phase 3: Update slash commands to call MCP tools
 4. ⏱️ Phase 4: Deprecate direct CLI execution in slash commands
 
@@ -324,7 +324,7 @@ python -m arcaneum.cli.main search "authentication patterns" --collection MyCode
 - Accepts CLI arguments (parsed by Click framework from RDR-001)
 - Outputs progress to stdout (for Claude monitoring)
 - Returns exit codes (0=success, non-zero=error)
-- **JSON output mode**: `--json` flag for structured responses (best practice from Beads)
+- **JSON output mode**: `--json` flag for structured responses (best practice from reference implementation)
   - Machine-readable format for future MCP integration
   - Example: `{"status": "complete", "files_processed": 47, "chunks_created": 1247}`
   - Human-readable text mode remains default for Claude readability
@@ -889,50 +889,50 @@ async def index_pdf_files(
 
 ### Positive Consequences
 
-1. **Simple Architecture**: Slash commands → Bash → CLI is straightforward (vs Beads' MCP layer)
+1. **Simple Architecture**: Slash commands → Bash → CLI is straightforward (vs the reference implementation's MCP layer)
 2. **No MCP Overhead**: Per user preference, avoid MCP complexity and startup latency
-3. **Discoverability**: Commands show in `/help`, sufficient for v1 (vs Beads' UI tool list)
+3. **Discoverability**: Commands show in `/help`, sufficient for v1 (vs the reference implementation's UI tool list)
 4. **Direct Execution**: No intermediate layers, CLI runs directly
 5. **Maintainability**: Markdown files easier to maintain than MCP server code
-6. **Progress Monitoring**: Claude monitors stdout in real-time (same as Beads' daemon mode)
+6. **Progress Monitoring**: Claude monitors stdout in real-time (same as the reference implementation's daemon mode)
 7. **Reusability**: CLI tools work both in and out of Claude Code
 8. **Familiar Patterns**: Standard CLI argument patterns users already know
 9. **Performance**: Zero MCP layer overhead for long-running indexing operations
-10. **Migration Path**: Easy to add MCP later without breaking existing workflows (learned from Beads)
+10. **Migration Path**: Easy to add MCP later without breaking existing workflows (learned from reference implementation)
 
 ### Negative Consequences
 
 1. **No Type Hints**: Parameters not validated by Claude (relies on CLI parser)
    - *Mitigation*: Add `--json` flag for structured validation in future MCP wrapper
-2. **No UI Tool List**: Tools don't appear in Claude's tool dropdown (like Beads does)
+2. **No UI Tool List**: Tools don't appear in Claude's tool dropdown (like the reference implementation does)
    - *Mitigation*: `/help` discovery adequate for v1, MCP adds this later
-3. **Text Parsing**: Claude parses text output (not structured responses like Beads)
+3. **Text Parsing**: Claude parses text output (not structured responses like reference implementation)
    - *Mitigation*: Add `--json` flag for future structured output
 4. **Error Handling**: Less structured than MCP error protocol
-   - *Mitigation*: Consistent `[ERROR]` format, exit codes (adopted from Beads)
+   - *Mitigation*: Consistent `[ERROR]` format, exit codes (adopted from reference implementation)
 5. **Discovery Limitation**: Requires `/help` command (not automatic UI)
    - *Mitigation*: Clear documentation, onboarding message
 
-### Lessons from Beads
+### Lessons from the reference implementation
 
-**What We Learned from Beads' MCP-First Approach**:
+**What We Learned from the reference implementation's MCP-First Approach**:
 
-1. **JSON Output Mode is Essential**: Beads' `--json` flag enables both human and machine readability
+1. **JSON Output Mode is Essential**: A `--json` flag enables both human and machine readability
    - ✅ **Adopted**: Adding `--json` flag to all CLI commands for future MCP wrapper
 
-2. **Structured Error Messages**: Beads uses consistent error format throughout
+2. **Structured Error Messages**: Consistent error formats make automation easier
    - ✅ **Adopted**: Implement `[ERROR]` prefix and exit codes
 
-3. **Version Compatibility Checking**: Beads validates CLI/server version compatibility
+3. **Version Compatibility Checking**: CLI/server compatibility checks prevent confusing failures
    - ✅ **Adopted**: Add version checking to plugin setup
 
-4. **Clear Migration Path**: Beads shows MCP can coexist with CLI
+4. **Clear Migration Path**: MCP can coexist with CLI workflows
    - ✅ **Adopted**: Design allows adding MCP wrapper without breaking slash commands
 
-5. **Comprehensive Documentation**: Beads includes resource URIs (like `beads://quickstart`)
+5. **Comprehensive Documentation**: Embedded docs and resource references improve discoverability
    - ⚠️ **Deferred**: Simpler markdown docs sufficient for v1, consider for v2
 
-6. **MCP Overhead is Real**: Beads added daemon mode to mitigate MCP startup cost
+6. **MCP Overhead is Real**: Daemon mode can mitigate MCP startup cost
    - ✅ **Validated**: CLI-first avoids this complexity for batch workloads
 
 **What We Intentionally Didn't Adopt**:
@@ -966,13 +966,13 @@ async def index_pdf_files(
 **Risk**: Plugin installation fails (missing dependencies)
 **Mitigation**: Include `requirements.txt`, document Python version requirement
 
-## Best Practices Adopted from Beads
+## Best Practices Adopted from the reference implementation
 
-After analyzing Beads (<https://github.com/steveyegge/beads>), a production-quality Claude Code plugin, we've identified and adopted several best practices for CLI-first plugin architecture:
+After analyzing a production-quality Claude Code plugin, we've identified and adopted several best practices for CLI-first plugin architecture:
 
 ### 1. Portable Plugin Paths with `${CLAUDE_PLUGIN_ROOT}`
 
-**Beads Pattern**: All slash commands use `cd ${CLAUDE_PLUGIN_ROOT}` before executing CLI
+**Reference pattern**: All slash commands use `cd ${CLAUDE_PLUGIN_ROOT}` before executing CLI
 **Why**: Ensures commands work regardless of user's current directory
 **Arcaneum Implementation**: All slash commands include:
 
@@ -983,8 +983,8 @@ python -m arcaneum.cli.main <command> $ARGUMENTS
 
 ### 2. JSON Output Mode for Future Compatibility
 
-**Beads Pattern**: CLI supports `--json` flag for structured output
-**Example**: `bd ready --json` returns machine-parseable JSON
+**Reference pattern**: CLI supports `--json` flag for structured output
+**Example**: `arc --json corpus list` returns machine-parseable JSON
 **Why**: Enables future MCP wrapper without changing CLI implementation
 **Arcaneum Implementation**: Add `--json` flag to all CLI commands:
 
@@ -999,7 +999,7 @@ def index_pdfs(..., output_json):
 
 ### 3. Structured Error Messages
 
-**Beads Pattern**: Consistent error prefixes and exit codes
+**Reference pattern**: Consistent error prefixes and exit codes
 **Why**: Makes errors easy to parse and display to users
 **Arcaneum Implementation**:
 
@@ -1009,7 +1009,7 @@ def index_pdfs(..., output_json):
 
 ### 4. Clear Slash Command Frontmatter
 
-**Beads Pattern**: Comprehensive YAML frontmatter in slash commands
+**Reference pattern**: Comprehensive YAML frontmatter in slash commands
 **Why**: Claude uses this to generate help text and argument hints
 **Arcaneum Implementation**:
 
@@ -1022,7 +1022,7 @@ argument-hint: <path> --collection <name> [options]
 
 ### 5. Version Compatibility Checking
 
-**Beads Pattern**: CLI validates version compatibility on startup
+**Reference pattern**: CLI validates version compatibility on startup
 **Why**: Prevents subtle bugs from version mismatches
 **Arcaneum Implementation**: Add version check to CLI:
 
@@ -1038,7 +1038,7 @@ if sys.version_info < MIN_PYTHON:
 
 ### 6. Comprehensive Command Documentation
 
-**Beads Pattern**: Each slash command includes detailed examples and explanations
+**Reference pattern**: Each slash command includes detailed examples and explanations
 **Why**: Users can understand usage without leaving Claude Code
 **Arcaneum Implementation**: Every slash command markdown includes:
 
@@ -1049,7 +1049,7 @@ if sys.version_info < MIN_PYTHON:
 
 ### 7. Argument Expansion with `$ARGUMENTS`
 
-**Beads Pattern**: Use `$ARGUMENTS` for flexible parameter passing
+**Reference pattern**: Use `$ARGUMENTS` for flexible parameter passing
 **Why**: Allows users to pass arbitrary CLI flags without updating slash commands
 **Arcaneum Implementation**: All commands use `$ARGUMENTS`:
 
@@ -1060,31 +1060,31 @@ python -m arcaneum.cli.main index-pdfs $ARGUMENTS
 
 ### Practices Intentionally NOT Adopted
 
-These Beads patterns were considered but not adopted for v1:
+These reference implementation patterns were considered but not adopted for v1:
 
 1. **MCP Server Layer**
-   - **Beads**: FastMCP server wraps CLI
+   - **Reference implementation**: FastMCP server wraps CLI
    - **Arcaneum**: Direct CLI execution for simplicity
    - **Future**: Can add MCP in v2 without breaking v1
 
 2. **Daemon Mode**
-   - **Beads**: Optional daemon for performance
+   - **Reference implementation**: Optional daemon for performance
    - **Arcaneum**: Not needed for batch indexing workloads
    - **Rationale**: Long operations make startup overhead negligible
 
-3. **Resource URIs** (like `beads://quickstart`)
-   - **Beads**: Custom resource protocol for docs
+3. **Resource URIs**
+   - **Reference implementation**: Custom resource protocol for docs
    - **Arcaneum**: Standard markdown documentation
    - **Rationale**: Simpler approach sufficient for v1
 
 4. **Agent Definitions**
-   - **Beads**: Defines custom agents for workflows
+   - **Reference implementation**: Defines custom agents for workflows
    - **Arcaneum**: Standard slash commands sufficient
    - **Future**: Consider for complex multi-step workflows
 
 ### Implementation Checklist
 
-Based on Beads best practices, ensure:
+Based on reference implementation practices, ensure:
 
 - [x] All slash commands use `${CLAUDE_PLUGIN_ROOT}`
 - [ ] Add `--json` flag to all CLI commands
@@ -1153,7 +1153,7 @@ Verify existing CLI commands work as expected:
 
 #### Step 4: Add JSON Output Mode and Error Formatting
 
-Implement best practices from Beads analysis:
+Implement best practices from reference analysis:
 
 **4a. JSON Output Mode**:
 
@@ -1350,9 +1350,9 @@ No new dependencies beyond RDR-004 and RDR-005 requirements.
 - If structured responses are required for programmatic use
 - If user requests MCP integration for better Claude UI integration
 
-**Implementation Pattern (Based on Beads)**:
+**Implementation Pattern (Based on reference implementation)**:
 
-Following the production pattern from Beads, implement a **FastMCP wrapper** that calls the CLI:
+Following the production pattern from the reference implementation, implement a **FastMCP wrapper** that calls the CLI:
 
 ```python
 # src/arcaneum/mcp/server.py
@@ -1539,7 +1539,7 @@ python -m arcaneum.cli.main index-pdfs $ARGUMENTS
 
 ## References
 
-- [Beads Issues arcaneum-6, arcaneum-46 to arcaneum-51](../../.beads/arcaneum.db) - Research findings
+- Issue records arcaneum-6, arcaneum-46 to arcaneum-51 - Research findings
 - [RDR-001: Project Structure](RDR-001-project-structure.md) - Plugin structure foundation
 - [RDR-002: Qdrant Server Setup](RDR-002-qdrant-server-setup.md) - Docker setup
 - [RDR-003: Collection Creation](RDR-003-collection-creation.md) - Collection management
@@ -1547,22 +1547,22 @@ python -m arcaneum.cli.main index-pdfs $ARGUMENTS
 - [RDR-005: Source Code Indexing](RDR-005-source-code-indexing.md) - Source code pipeline
 - [Claude Code Plugin Documentation](https://docs.claude.com/en/docs/claude-code/plugins) - Official plugin guide
 - [Claude Code Slash Commands](https://docs.claude.com/en/docs/claude-code/slash-commands) - Slash command reference
-- [Beads Plugin Example](https://github.com/steveyegge/beads) - Real-world plugin reference
+- Reference Plugin Example - Real-world plugin reference
 
 ## Notes
 
 **Key Design Decisions**:
-1. **CLI-First over MCP-First**: Per user preference, use direct CLI execution (vs Beads' MCP-first)
+1. **CLI-First over MCP-First**: Per user preference, use direct CLI execution (vs the reference implementation's MCP-first)
    - *Rationale*: Simplicity and performance for batch operations
    - *Trade-off*: Defer type hints and UI tool discovery to future MCP wrapper
 2. **Discoverability via `/help`**: Slash commands show in help, sufficient for v1
    - *Future*: MCP adds UI tool list when needed
 3. **Centralized CLI Dispatcher**: All commands route through `arcaneum.cli.main` (from RDR-001)
    - *Consistency*: Single entry point for all operations
-4. **JSON Output Mode**: Add `--json` flag (best practice from Beads)
+4. **JSON Output Mode**: Add `--json` flag (best practice from reference implementation)
    - *Purpose*: Enables future MCP wrapper without changing CLI implementation
    - *Dual Mode*: Human-readable default, JSON for machines
-5. **Structured Error Messages**: Consistent `[ERROR]` prefix and exit codes (adopted from Beads)
+5. **Structured Error Messages**: Consistent `[ERROR]` prefix and exit codes (adopted from reference implementation)
    - *Format*: `[ERROR] <message>` with meaningful exit codes
 6. **MCP Deferred**: Can add FastMCP wrapper later without breaking slash commands
    - *Migration Path*: Phase 1 (CLI-first) → Phase 2 (Add MCP) → Phase 3 (Hybrid) → Phase 4 (Optional deprecation)
@@ -1586,7 +1586,7 @@ python -m arcaneum.cli.main index-pdfs $ARGUMENTS
 - Total estimated effort: 14 days (increased from 13 days for JSON output and error formatting)
 - Critical path: Config → Commands → JSON/Error formatting → Testing
 - Parallel work possible: Documentation can start early
-- Beads best practices: Add 1 day for implementing JSON output, version checking, error formatting
+- reference implementation practices: Add 1 day for implementing JSON output, version checking, error formatting
 
 **User Experience Goals**:
 - One-command plugin installation

@@ -63,7 +63,7 @@ Reference: arcaneum-7 mentioned MeiliSearch as potential solution
 
 ### Investigation Process
 
-Six parallel research tracks completed via Beads issues (arcaneum-72 through arcaneum-77):
+Six parallel research tracks completed via kata issues (arcaneum-72 through arcaneum-77):
 
 1. **MeiliSearch Docker Deployment** (arcaneum-72): Official image analysis, configuration options
 2. **Elasticsearch Comparison** (arcaneum-73): Alternative evaluation, resource comparison
@@ -1288,7 +1288,7 @@ operations. Use `task.task_uid` (attribute access) not `task['taskUid']` (dict a
 - **MeiliSearch Releases**: https://github.com/meilisearch/meilisearch/releases
 - **Issue #4686**: Docker memory limit detection problem
 - **Issue #1060**: Phrase search implementation
-- **Beads Issues**: arcaneum-72 through arcaneum-77 (research findings)
+- **Issue Records**: arcaneum-72 through arcaneum-77 (research findings)
 - **RDR-002**: Qdrant Server Setup (Docker pattern reference)
 - **RDR-003**: Collection Creation (CLI pattern reference)
 - **RDR-006**: Claude Code Integration (slash command reference)

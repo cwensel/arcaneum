@@ -473,7 +473,7 @@ Create `tests/cli/test_interaction_logger.py`:
 
 - Auto-cleanup of logs older than N days
 - Analytics dashboard for interaction patterns
-- Integration with beads for correlation with issues
+- Integration with kata for correlation with issues
 - Export/import for cross-machine analysis
 - CLI command to view/analyze interaction logs
 

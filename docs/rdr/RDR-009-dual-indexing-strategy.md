@@ -878,11 +878,11 @@ Already satisfied by RDR-003 and RDR-008 (see pyproject.toml):
 - [RDR-008: Full-Text Search Server Setup](
   RDR-008-fulltext-search-server-setup.md) - MeiliSearch deployment
 
-### Beads Issues
+### Issue Records
 
-- [arcaneum-68](../.beads/arcaneum.db) - Original RDR request
-- [arcaneum-78 through arcaneum-82](../.beads/arcaneum.db) - Research tasks
-- [arcaneum-85](../.beads/arcaneum.db) - User goal clarification and
+- arcaneum-68 - Original RDR request
+- arcaneum-78 through arcaneum-82 - Research tasks
+- arcaneum-85 - User goal clarification and
   reassessment
 
 ### Official Documentation

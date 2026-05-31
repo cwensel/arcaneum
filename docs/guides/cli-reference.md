@@ -41,8 +41,8 @@ providing both semantic and full-text search capabilities.
 
 ```bash
 arc corpus create <name> --type <type>        # Create both collection and index
-arc corpus list                               # List all corpora
-arc corpus list --details                     # Include extended columns and exact item counts
+arc corpus list                               # List corpora with cached item counts and descriptions
+arc corpus list --details                     # Add model, last sync, chunk counts, and exact item counts
 arc corpus update <name>                      # Update description metadata
 arc corpus sync <name> <path> [<path>...]     # Index to both systems
 arc corpus repair <name>                      # Re-index incomplete/garbled files

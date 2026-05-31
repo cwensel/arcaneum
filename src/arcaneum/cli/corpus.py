@@ -85,6 +85,27 @@ def _last_sync_state(metadata, chunk_count: int = 0):
     return last_sync, "synced"
 
 
+def _format_last_sync_for_table(last_sync, last_sync_status: str) -> str:
+    """Return a compact, human-readable sync timestamp for table output."""
+    if not last_sync:
+        return "never synced" if last_sync_status == "never_synced" else UNKNOWN_LEGACY
+
+    if not isinstance(last_sync, str):
+        return str(last_sync)
+
+    try:
+        parsed = datetime.fromisoformat(last_sync.replace("Z", "+00:00"))
+    except ValueError:
+        return last_sync
+
+    timestamp = parsed.replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+    if parsed.tzinfo is None:
+        return timestamp
+    if parsed.utcoffset() == timezone.utc.utcoffset(parsed):
+        return f"{timestamp}Z"
+    return f"{timestamp}{parsed.strftime('%z')}"
+
+
 def _split_metadata_models(model_metadata):
     """Normalize stored model metadata into an ordered list of model names."""
     if not model_metadata:
@@ -388,6 +409,35 @@ def _get_qdrant_list_item_count(
     }
 
 
+def _cached_qdrant_list_item_count(collection_type: str, metadata: dict[str, Any] | None = None):
+    """Return persisted corpus-list item counts without querying indexed points."""
+    if collection_type not in {"code", "markdown", "pdf"}:
+        return {
+            "item_count": None,
+            "item_unit": UNKNOWN_LEGACY,
+            "file_count": None,
+            "file_unit": None,
+            "item_count_status": "unavailable",
+        }
+
+    metadata = metadata or {}
+    item_count = _metadata_int(metadata, "item_count")
+    file_count = _metadata_int(metadata, "file_count") if collection_type == "code" else None
+    count_status = (
+        metadata.get("count_source") or "metadata"
+        if item_count is not None or file_count is not None
+        else "not_requested"
+    )
+
+    return {
+        "item_count": item_count,
+        "item_unit": _item_unit_for_corpus_type(collection_type),
+        "file_count": file_count,
+        "file_unit": "source files" if collection_type == "code" else None,
+        "item_count_status": count_status,
+    }
+
+
 def _persist_list_item_count_metadata(
     client, collection_name: str, collection_type: str, item_counts: dict[str, Any]
 ) -> None:
@@ -414,8 +464,11 @@ def _persist_list_item_count_metadata(
 def _format_list_item_count(corpus):
     """Format detailed corpus-list item counts."""
     if corpus["item_count"] is None:
-        return UNKNOWN_LEGACY
-    parts = [f"{corpus['item_count']} {corpus['item_unit']}"]
+        if corpus.get("file_count") is None:
+            return UNKNOWN_LEGACY
+        parts = []
+    else:
+        parts = [f"{corpus['item_count']} {corpus['item_unit']}"]
     if corpus.get("file_count") is not None:
         parts.append(f"{corpus['file_count']} {corpus['file_unit']}")
     return ", ".join(parts)
@@ -482,13 +535,7 @@ def list_corpora_command(details: bool, output_json: bool):
                         qdrant, col.name, collection_type, item_counts
                     )
                 else:
-                    item_counts = {
-                        "item_count": None,
-                        "item_unit": _item_unit_for_corpus_type(collection_type),
-                        "file_count": None,
-                        "file_unit": None,
-                        "item_count_status": "not_requested",
-                    }
+                    item_counts = _cached_qdrant_list_item_count(collection_type, metadata)
                 qdrant_collections[col.name] = {
                     "type": collection_type,
                     "model": metadata.get("model"),
@@ -607,15 +654,18 @@ def list_corpora_command(details: bool, output_json: bool):
                 print_info("No corpora found")
                 print_info("Create one with: arc corpus create <name> --type <pdf|code|markdown>")
             else:
-                table = Table(title="Corpora")
-                table.add_column("Name", style="cyan")
-                table.add_column("Type", style="blue")
-                table.add_column("Model", style="magenta")
-                table.add_column("Status", style="green")
-                table.add_column("Last Sync", style="yellow")
-                table.add_column("Chunks", style="yellow")
+                table = Table(title="Corpora", expand=True)
+                table.add_column("Name", style="cyan", no_wrap=True)
+                table.add_column("Type", style="blue", no_wrap=True)
                 if details:
-                    table.add_column("Items", style="yellow")
+                    table.add_column("Model", style="magenta", no_wrap=True)
+                table.add_column("Status", style="green", no_wrap=True)
+                if details:
+                    table.add_column("Last Sync", style="yellow", no_wrap=True)
+                table.add_column("Items", style="yellow", justify="right", no_wrap=True)
+                if details:
+                    table.add_column("Chunks", style="yellow", justify="right", no_wrap=True)
+                table.add_column("Description", style="dim", ratio=1)
 
                 for c in corpora:
                     # Format status with color
@@ -632,18 +682,18 @@ def list_corpora_command(details: bool, output_json: bool):
                     row = [
                         c["name"],
                         c["type"] or "—",
-                        c["model_summary"],
-                        status_str,
-                        c["last_sync"]
-                        or (
-                            "never synced"
-                            if c["last_sync_status"] == "never_synced"
-                            else UNKNOWN_LEGACY
-                        ),
-                        _format_chunk_summary(c),
                     ]
                     if details:
-                        row.append(_format_list_item_count(c))
+                        row.append(c["model_summary"])
+                    row.append(status_str)
+                    if details:
+                        row.append(
+                            _format_last_sync_for_table(c["last_sync"], c["last_sync_status"])
+                        )
+                    row.append(_format_list_item_count(c))
+                    if details:
+                        row.append(_format_chunk_summary(c))
+                    row.append(c["description"] or "—")
                     table.add_row(*row)
 
                 console.print(table)

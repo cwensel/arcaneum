@@ -361,7 +361,7 @@ class TestCorpusListModelInfo:
         assert corpus["models"][0]["alias"] == "jina-code"
         assert corpus["models"][0]["vector_name"] == "jina-code"
 
-    def test_table_view_shows_concise_model_info_without_verbose(self, monkeypatch, capsys):
+    def test_table_view_keeps_default_columns_selection_oriented(self, monkeypatch, capsys):
         from arcaneum.cli.corpus import list_corpora_command
 
         _mock_corpus_list_clients(
@@ -373,10 +373,48 @@ class TestCorpusListModelInfo:
         list_corpora_command(details=False, output_json=False)
 
         output = capsys.readouterr().out
-        assert "arctic-m" in output
-        assert "fastembed" in output
+        assert "Name" in output
+        assert "Type" in output
+        assert "Status" in output
+        assert "Items" in output
+        assert "Description" in output
+        assert "Model" not in output
+        assert "Last Sync" not in output
+        assert "Chunks" not in output
 
-    def test_json_default_skips_exact_item_counts(self, monkeypatch, capsys):
+    def test_table_details_shows_operational_columns(self, monkeypatch, capsys):
+        from arcaneum.cli.corpus import list_corpora_command
+
+        _mock_corpus_list_clients(
+            monkeypatch,
+            metadata_by_name={
+                "docs": {
+                    "collection_type": "pdf",
+                    "model": "arctic-m",
+                    "last_sync": "2026-05-28T22:03:04+00:00",
+                }
+            },
+            collection_info_by_name={"docs": _collection_info()},
+        )
+
+        list_corpora_command(details=True, output_json=False)
+
+        output = capsys.readouterr().out
+        assert "Model" in output
+        assert "Last Sync" in output
+        assert "Items" in output
+        assert "Chunks" in output
+        assert "arctic-m" in output
+
+    def test_table_last_sync_timestamp_is_compact(self):
+        from arcaneum.cli.corpus import _format_last_sync_for_table
+
+        assert (
+            _format_last_sync_for_table("2026-05-28T22:03:04.123456+00:00", "synced")
+            == "2026-05-28 22:03:04Z"
+        )
+
+    def test_json_default_uses_cached_item_counts_without_scanning(self, monkeypatch, capsys):
         from arcaneum.cli.corpus import UNKNOWN_LEGACY, list_corpora_command
 
         scroll_calls = {}
@@ -387,16 +425,23 @@ class TestCorpusListModelInfo:
                     "collection_type": "code",
                     "model": "jina-code",
                     "last_sync": "2026-05-28T22:01:02+00:00",
+                    "item_count": 2,
+                    "file_count": 3,
+                    "count_source": "sync",
                 },
                 "docs": {
                     "collection_type": "pdf",
                     "model": "arctic-m",
                     "last_sync": "2026-05-28T22:03:04+00:00",
+                    "item_count": 2,
+                    "count_source": "sync",
                 },
                 "legacy": {},
                 "markdown": {
                     "collection_type": "markdown",
                     "model": "arctic-m",
+                    "item_count": 2,
+                    "count_source": "sync",
                 },
             },
             collection_info_by_name={
@@ -430,16 +475,16 @@ class TestCorpusListModelInfo:
             item["name"]: item for item in json.loads(capsys.readouterr().out)["data"]["corpora"]
         }
         assert corpora["code"]["last_sync"] == "2026-05-28T22:01:02+00:00"
-        assert corpora["code"]["item_count"] is None
+        assert corpora["code"]["item_count"] == 2
         assert corpora["code"]["item_unit"] == "repositories"
-        assert corpora["code"]["file_count"] is None
-        assert corpora["code"]["file_unit"] is None
-        assert corpora["code"]["item_count_status"] == "not_requested"
-        assert corpora["docs"]["item_count"] is None
+        assert corpora["code"]["file_count"] == 3
+        assert corpora["code"]["file_unit"] == "source files"
+        assert corpora["code"]["item_count_status"] == "sync"
+        assert corpora["docs"]["item_count"] == 2
         assert corpora["docs"]["item_unit"] == "documents"
         assert corpora["markdown"]["last_sync"] is None
         assert corpora["markdown"]["last_sync_status"] == "unknown"
-        assert corpora["markdown"]["item_count"] is None
+        assert corpora["markdown"]["item_count"] == 2
         assert corpora["markdown"]["item_unit"] == "files"
         assert corpora["legacy"]["last_sync_status"] == "unknown"
         assert corpora["legacy"]["item_count"] is None
@@ -742,6 +787,29 @@ class TestCorpusDescriptions:
 
         corpus = json.loads(capsys.readouterr().out)["data"]["corpora"][0]
         assert corpus["description"] == "Design notes and decision records"
+
+    def test_list_table_includes_description(self, monkeypatch, capsys):
+        from arcaneum.cli.corpus import list_corpora_command
+
+        _mock_corpus_list_clients(
+            monkeypatch,
+            metadata_by_name={
+                "docs": {
+                    "collection_type": "markdown",
+                    "model": "arctic-m",
+                    "description": "Design docs",
+                    "item_count": 2,
+                    "count_source": "sync",
+                }
+            },
+            collection_info_by_name={"docs": _collection_info()},
+        )
+
+        list_corpora_command(details=False, output_json=False)
+
+        output = capsys.readouterr().out
+        assert "Design docs" in output
+        assert "2 files" in output
 
     def test_update_description_outputs_new_metadata(self, monkeypatch, capsys):
         from arcaneum.cli.corpus import update_corpus_command

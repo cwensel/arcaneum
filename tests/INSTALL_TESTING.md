@@ -225,11 +225,18 @@ The macOS test creates a temporary directory (`test-install-tmp/`) with a fresh 
 - **Ubuntu**: Prompts to remove Docker images after tests
 - **macOS**: Automatically removes test directory on success, keeps on failure for debugging
 
-## CI/CD Integration (Future)
+## CI/CD Integration
 
-These tests are designed for one-time manual validation but could be integrated into CI/CD:
+Ubuntu installation smoke tests run in GitHub Actions via
+`.github/workflows/install-smoke.yml` on pushes and pull requests to `main`, and
+can also be started manually with `workflow_dispatch`.
+
+macOS installation tests remain manual because GitHub-hosted macOS runners do
+not provide Docker Desktop.
 
 ### GitHub Actions Example
+
+The active Ubuntu workflow uses the same runner script:
 
 ```yaml
 name: Installation Tests
@@ -240,16 +247,9 @@ jobs:
   test-ubuntu:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v6
       - name: Run Ubuntu tests
         run: ./test-install-ubuntu.sh
-
-  test-macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v3
-      - name: Run macOS tests
-        run: ./test-install-mac.sh
 ```
 
 ## Maintenance

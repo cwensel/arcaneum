@@ -161,12 +161,19 @@ echo "Docker images created:"
 echo "  - ${IMAGE_PREFIX}:ubuntu22.04"
 echo "  - ${IMAGE_PREFIX}:ubuntu24.04"
 echo ""
-read -p "Remove test images? [y/N] " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
+
+if [ "${CI:-}" = "true" ]; then
     docker rmi "${IMAGE_PREFIX}:ubuntu22.04" 2>/dev/null || true
     docker rmi "${IMAGE_PREFIX}:ubuntu24.04" 2>/dev/null || true
     success "Test images removed"
+else
+    read -p "Remove test images? [y/N] " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        docker rmi "${IMAGE_PREFIX}:ubuntu22.04" 2>/dev/null || true
+        docker rmi "${IMAGE_PREFIX}:ubuntu24.04" 2>/dev/null || true
+        success "Test images removed"
+    fi
 fi
 
 # Exit with appropriate code

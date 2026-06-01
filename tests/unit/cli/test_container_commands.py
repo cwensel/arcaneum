@@ -7,7 +7,7 @@ Uses mocked subprocess and requests to avoid actual Docker operations.
 import json
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -79,11 +79,13 @@ class TestContainerStart:
         from arcaneum.cli.docker import start_command
 
         with patch("shutil.which", return_value=None):
-            start_command.callback()
+            with pytest.raises(SystemExit) as exc_info:
+                start_command.callback()
 
         captured = capsys.readouterr()
         # Error messages go to stderr
         output = captured.out + captured.err
+        assert exc_info.value.code == 1
         assert "Docker" in output
         assert "not installed" in output.lower()
 
@@ -692,11 +694,13 @@ class TestContainerReset:
         """Test that --confirm flag is required."""
         from arcaneum.cli.docker import reset_command
 
-        reset_command.callback(confirm=False)
+        with pytest.raises(SystemExit) as exc_info:
+            reset_command.callback(confirm=False)
 
         captured = capsys.readouterr()
         # Error messages go to stderr
         output = captured.out + captured.err
+        assert exc_info.value.code == 2
         assert "--confirm" in output or "confirm" in output.lower()
 
     def test_data_deletion_with_confirm(self, temp_dir, capsys):
@@ -882,8 +886,9 @@ class TestHealthChecks:
 
     def test_qdrant_health_check_failure(self):
         """Test Qdrant health check when unhealthy."""
-        from arcaneum.cli.docker import check_qdrant_health
         import requests
+
+        from arcaneum.cli.docker import check_qdrant_health
 
         with patch("requests.get") as mock_get:
             mock_get.side_effect = requests.RequestException("Connection refused")
@@ -908,8 +913,9 @@ class TestHealthChecks:
 
     def test_meilisearch_health_check_failure(self):
         """Test MeiliSearch health check when unhealthy."""
-        from arcaneum.cli.docker import check_meilisearch_health
         import requests
+
+        from arcaneum.cli.docker import check_meilisearch_health
 
         with patch("requests.get") as mock_get:
             mock_get.side_effect = requests.RequestException("Connection refused")
@@ -955,3 +961,4 @@ class TestGetComposeFile:
         # Should return None and print error
         # Note: Due to path resolution complexity, we check the general behavior
         # The function iterates through paths, and if none exist, returns None
+        assert result is None

@@ -14,6 +14,7 @@ NC='\033[0m' # No Color
 # Configuration
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IMAGE_PREFIX="arcaneum-install-test"
+DOCKER_SOCKET="/var/run/docker.sock"
 
 # Track results
 UBUNTU22_PASSED=false
@@ -81,6 +82,14 @@ if [ ! -f "$REPO_ROOT/tests/docker/test-installation.sh" ]; then
 fi
 success "All required test files found"
 
+docker_socket_gid() {
+    if stat -c '%g' "$DOCKER_SOCKET" >/dev/null 2>&1; then
+        stat -c '%g' "$DOCKER_SOCKET"
+    else
+        stat -f '%g' "$DOCKER_SOCKET"
+    fi
+}
+
 # Function to run test for a specific Ubuntu version
 run_ubuntu_test() {
     local VERSION=$1
@@ -107,8 +116,10 @@ run_ubuntu_test() {
 
     if docker run \
         --rm \
-        -v /var/run/docker.sock:/var/run/docker.sock \
-        -e DOCKER_HOST=unix:///var/run/docker.sock \
+        --network host \
+        --group-add "$(docker_socket_gid)" \
+        -v "$DOCKER_SOCKET:$DOCKER_SOCKET" \
+        -e "DOCKER_HOST=unix://$DOCKER_SOCKET" \
         "$IMAGE_NAME"; then
         success "Ubuntu ${VERSION} tests PASSED"
         return 0

@@ -11,8 +11,6 @@ on:
         description: Python version to test
         default: "3.12"
         required: true
-  schedule:
-    - cron: "23 9 * * *"
 
 concurrency:
   group: gpu-smoke-${{ github.workflow }}-${{ github.ref }}

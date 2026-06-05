@@ -152,7 +152,7 @@ class TestHandleRenamesMeili:
 
         renames = [("/old/dir/doc.pdf", "/new/dir/doc.pdf")]
 
-        updated = _handle_renames_meili(
+        updated, confirmed_renames = _handle_renames_meili(
             renames,
             mock_qdrant,
             mock_meili,
@@ -160,21 +160,52 @@ class TestHandleRenamesMeili:
         )
 
         assert updated == 2
+        assert confirmed_renames == renames
         mock_index.update_documents.assert_called_once()
         update_call_docs = mock_index.update_documents.call_args[0][0]
         assert len(update_call_docs) == 2
         assert update_call_docs[0]["file_path"] == "/new/dir/doc.pdf"
         assert update_call_docs[0]["filename"] == "doc.pdf"
         assert update_call_docs[1]["id"] == "point-2"
+        mock_meili.client.wait_for_task.assert_called_once_with(42, timeout_in_ms=300000)
+
+    def test_handle_renames_meili_returns_no_confirmed_renames_on_timeout(self):
+        """Timed-out MeiliSearch tasks should not advance Qdrant rename metadata."""
+        mock_qdrant = Mock()
+        mock_meili = Mock()
+        mock_index = Mock()
+        mock_meili.get_index.return_value = mock_index
+
+        mock_task = Mock()
+        mock_task.task_uid = 42
+        mock_index.update_documents.return_value = mock_task
+        mock_meili.client.wait_for_task.side_effect = TimeoutError("timed out")
+
+        mock_point = Mock()
+        mock_point.id = "point-1"
+        mock_qdrant.scroll.return_value = ([mock_point], None)
+
+        updated, confirmed_renames = _handle_renames_meili(
+            [("/old/dir/doc.pdf", "/new/dir/doc.pdf")],
+            mock_qdrant,
+            mock_meili,
+            "test-corpus",
+        )
+
+        assert updated == 0
+        assert confirmed_renames == []
 
     def test_handle_renames_meili_empty_renames(self):
         """No renames = no work done."""
         mock_qdrant = Mock()
         mock_meili = Mock()
 
-        updated = _handle_renames_meili([], mock_qdrant, mock_meili, "test-corpus")
+        updated, confirmed_renames = _handle_renames_meili(
+            [], mock_qdrant, mock_meili, "test-corpus"
+        )
 
         assert updated == 0
+        assert confirmed_renames == []
         mock_meili.get_index.assert_not_called()
 
 

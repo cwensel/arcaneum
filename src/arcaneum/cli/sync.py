@@ -114,6 +114,7 @@ from .corpus_defaults import DEFAULT_MODELS_BY_CORPUS_TYPE
 
 console = Console()
 logger = logging.getLogger(__name__)
+MEILI_RENAME_UPDATE_TIMEOUT_MS = 300000
 
 
 def _stamp_last_sync_metadata(qdrant, corpus: str) -> None:
@@ -933,7 +934,7 @@ def _handle_renames_meili(
     qdrant,
     meili: FullTextClient,
     corpus: str,
-) -> int:
+) -> Tuple[int, List[Tuple[str, str]]]:
     """Update file_path and filename in MeiliSearch documents for renames.
 
     Must run BEFORE Qdrant handle_renames() since it uses the old file_path
@@ -946,14 +947,14 @@ def _handle_renames_meili(
         corpus: Corpus/index name
 
     Returns:
-        Number of MeiliSearch documents updated
+        Tuple of (number of MeiliSearch documents updated, confirmed renames)
     """
     from qdrant_client.models import FieldCondition, Filter, MatchValue
 
     if not renames:
-        return 0
+        return 0, []
 
-    total_updated = 0
+    docs_by_rename: Dict[Tuple[str, str], List[Dict[str, str]]] = {}
     index = meili.get_index(corpus)
 
     for old_path, new_path in renames:
@@ -988,18 +989,27 @@ def _handle_renames_meili(
             if offset is None:
                 break
 
-        # Batch update MeiliSearch
         if update_docs:
-            try:
-                task = index.update_documents(update_docs)
-                meili.client.wait_for_task(task.task_uid)
-                total_updated += len(update_docs)
-            except Exception as e:
-                logger.error(
-                    f"Failed to update MeiliSearch for rename {old_path} -> {new_path}: {e}"
-                )
+            docs_by_rename[(old_path, new_path)] = update_docs
 
-    return total_updated
+    if not docs_by_rename:
+        return 0, []
+
+    update_docs = [doc for docs in docs_by_rename.values() for doc in docs]
+    try:
+        task = index.update_documents(update_docs)
+        meili.client.wait_for_task(
+            task.task_uid,
+            timeout_in_ms=MEILI_RENAME_UPDATE_TIMEOUT_MS,
+        )
+    except Exception as e:
+        logger.error(
+            f"Failed to update MeiliSearch for {len(docs_by_rename)} renames "
+            f"({len(update_docs)} chunks): {e}"
+        )
+        return 0, []
+
+    return len(update_docs), list(docs_by_rename.keys())
 
 
 def _rename_tuples_with_metadata(renames: List[Tuple[str, str]]) -> List[Tuple[str, str, Dict]]:
@@ -1899,7 +1909,7 @@ def sync_directory_command(
 
                 if not dry_run:
                     # Update MeiliSearch FIRST (needs old file_path to find docs via Qdrant)
-                    meili_updated = _handle_renames_meili(
+                    meili_updated, confirmed_renames = _handle_renames_meili(
                         detected_renames,
                         qdrant,
                         meili,
@@ -1908,9 +1918,9 @@ def sync_directory_command(
 
                     # Update Qdrant metadata
                     sync_manager.handle_renames(
-                        corpus, _rename_tuples_with_metadata(detected_renames)
+                        corpus, _rename_tuples_with_metadata(confirmed_renames)
                     )
-                    files_renamed = len(detected_renames)
+                    files_renamed = len(confirmed_renames)
 
                     if not output_json:
                         print_info(
@@ -2027,16 +2037,16 @@ def sync_directory_command(
                             print_info(f"  {Path(new).name}")
 
                 if not dry_run:
-                    meili_updated = _handle_renames_meili(
+                    meili_updated, confirmed_renames = _handle_renames_meili(
                         detected_renames,
                         qdrant,
                         meili,
                         corpus,
                     )
                     sync_manager.handle_renames(
-                        corpus, _rename_tuples_with_metadata(detected_renames)
+                        corpus, _rename_tuples_with_metadata(confirmed_renames)
                     )
-                    files_renamed = len(detected_renames)
+                    files_renamed = len(confirmed_renames)
 
                     if not output_json:
                         print_info(

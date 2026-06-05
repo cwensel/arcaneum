@@ -1,5 +1,8 @@
 """Unit tests for page-preserving OCR metadata."""
 
+import builtins
+import importlib
+import sys
 from io import BytesIO
 from unittest.mock import MagicMock
 
@@ -12,6 +15,37 @@ from arcaneum.indexing.pdf.ocr import (
     merge_extracted_text_with_ocr,
 )
 from arcaneum.indexing.uploader import PDFBatchUploader
+
+
+def test_ocr_module_import_does_not_import_cv2(monkeypatch):
+    """Normal PDF extraction can import OCR helpers without loading OpenCV."""
+    import arcaneum.indexing.pdf as pdf_package
+
+    original_import = builtins.__import__
+    original_module = sys.modules.pop("arcaneum.indexing.pdf.ocr", None)
+    original_package_attr = getattr(pdf_package, "ocr", None)
+    original_cv2 = sys.modules.pop("cv2", None)
+
+    def guarded_import(name, *args, **kwargs):
+        if name == "cv2":
+            raise AssertionError("cv2 should not be imported at module import time")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    try:
+        importlib.import_module("arcaneum.indexing.pdf.ocr")
+    finally:
+        sys.modules.pop("arcaneum.indexing.pdf.ocr", None)
+        if original_module is not None:
+            sys.modules["arcaneum.indexing.pdf.ocr"] = original_module
+            pdf_package.ocr = original_module
+        elif hasattr(pdf_package, "ocr"):
+            delattr(pdf_package, "ocr")
+        if original_package_attr is not None:
+            pdf_package.ocr = original_package_attr
+        if original_cv2 is not None:
+            sys.modules["cv2"] = original_cv2
 
 
 def _png_bytes() -> bytes:

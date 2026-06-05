@@ -1,23 +1,36 @@
 """OCR engine using Tesseract (RDR-004)."""
 
+import gc
+import io
+import logging
+import os
+import tempfile
+from multiprocessing import cpu_count
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
 import pytesseract
 from pdf2image import convert_from_path, pdfinfo_from_path
 from PIL import Image
-import cv2
-import numpy as np
-from pathlib import Path
-from typing import Tuple, Optional, Dict, Any, List
-from multiprocessing import cpu_count
-import os
-import io
-import logging
-import tempfile
-import gc
 
 from ...utils.memory import calculate_safe_workers
 from ..common.multiprocessing import get_mp_context, worker_init
 
 logger = logging.getLogger(__name__)
+
+
+def _load_cv2():
+    """Import OpenCV only when OCR preprocessing actually needs it.
+
+    On macOS, importing OpenCV alongside packages that load PyAV can emit
+    Objective-C duplicate class warnings from bundled FFmpeg libraries. Normal
+    text-PDF extraction does not need OpenCV, so keep it out of the import path
+    until OCR is running.
+    """
+    import cv2
+
+    return cv2
 
 
 def _safe_confidence(confidence: Any) -> Optional[float]:
@@ -72,6 +85,8 @@ def _ocr_single_page_worker(
     denoised = None
 
     try:
+        cv2 = _load_cv2()
+
         # Disable OpenCV threading to prevent fork-related crashes on macOS (segfault in cv2.resize)
         # See: https://github.com/opencv/opencv/issues/5150
         cv2.setNumThreads(0)
@@ -315,7 +330,8 @@ class OCREngine:
 
         if verbose:
             print(
-                f"  → OCR: Processing {total_pages} pages in batches of {self.page_batch_size} (parallel, {self.ocr_workers} workers)...",
+                f"  → OCR: Processing {total_pages} pages in batches of "
+                f"{self.page_batch_size} (parallel, {self.ocr_workers} workers)...",
                 flush=True,
             )
 
@@ -470,7 +486,8 @@ class OCREngine:
                         # Show per-page progress
                         if verbose and page_text.strip():
                             print(
-                                f"  → OCR: Page {result_page_num}/{total_pages} ({len(page_text)} chars, conf: {page_conf:.0f}%)",
+                                f"  → OCR: Page {result_page_num}/{total_pages} "
+                                f"({len(page_text)} chars, conf: {page_conf:.0f}%)",
                                 flush=True,
                             )
 

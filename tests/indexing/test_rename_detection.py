@@ -1,14 +1,17 @@
 """Unit tests for rename/move detection in dual-index corpus sync."""
 
+from unittest.mock import Mock, patch
+
 import pytest
-from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch, call
 
 from arcaneum.cli.sync import (
     _detect_renames,
-    _handle_renames_meili,
     _detect_stale_paths,
+    _filter_rename_candidate_paths,
+    _handle_renames_meili,
+    _rename_tuples_with_metadata,
 )
+from arcaneum.indexing.common.sync import MetadataBasedSync
 
 
 class TestDetectRenames:
@@ -106,6 +109,21 @@ class TestDetectRenames:
 
         assert len(renames) == 0
 
+    def test_filter_rename_candidates_excludes_existing_paths(self, mock_sync_manager):
+        """Same-path quick-hash misses are modified files, not rename candidates."""
+        mock_sync_manager._get_indexed_file_paths_set.return_value = {
+            "/repo/edited.md",
+            "/repo/unchanged.md",
+        }
+
+        candidates = _filter_rename_candidate_paths(
+            {"/repo/edited.md", "/repo/new-location.md"},
+            mock_sync_manager,
+            "test-corpus",
+        )
+
+        assert candidates == {"/repo/new-location.md"}
+
 
 class TestHandleRenamesMeili:
     """Tests for _handle_renames_meili function."""
@@ -158,6 +176,56 @@ class TestHandleRenamesMeili:
 
         assert updated == 0
         mock_meili.get_index.assert_not_called()
+
+
+class TestHandleRenamesQdrant:
+    """Tests for MetadataBasedSync.handle_renames metadata updates."""
+
+    def test_handle_renames_updates_fast_path_metadata(self):
+        """Renames update file_paths and file_quick_hashes so fast sync can skip later."""
+        qdrant = Mock()
+        point = Mock()
+        point.payload = {
+            "file_paths": ["/old/doc.pdf"],
+            "file_quick_hashes": {"/old/doc.pdf": "oldquick"},
+            "quick_hash": "oldquick",
+        }
+        qdrant.scroll.return_value = ([point], None)
+
+        sync = MetadataBasedSync(qdrant)
+        renamed = sync.handle_renames(
+            "test-corpus",
+            [("/old/doc.pdf", "/new/doc.pdf", {"filename": "doc.pdf", "quick_hash": "newquick"})],
+        )
+
+        assert renamed == 1
+        payload = qdrant.set_payload.call_args.kwargs["payload"]
+        assert payload["file_path"] == "/new/doc.pdf"
+        assert payload["filename"] == "doc.pdf"
+        assert payload["quick_hash"] == "newquick"
+        assert payload["file_paths"] == ["/new/doc.pdf"]
+        assert payload["file_quick_hashes"] == {"/new/doc.pdf": "newquick"}
+
+
+class TestRenameTuplesWithMetadata:
+    """Tests for building Qdrant rename metadata."""
+
+    def test_rename_tuples_include_new_path_quick_hash(self, tmp_path):
+        new_file = tmp_path / "new.pdf"
+        new_file.write_text("content")
+
+        with patch("arcaneum.cli.sync.compute_quick_hash", return_value="quick123"):
+            tuples = _rename_tuples_with_metadata(
+                [("/old/doc.pdf", str(new_file.absolute()))]
+            )
+
+        assert tuples == [
+            (
+                "/old/doc.pdf",
+                str(new_file.absolute()),
+                {"filename": "new.pdf", "quick_hash": "quick123"},
+            )
+        ]
 
 
 class TestDetectStalePaths:

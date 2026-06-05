@@ -916,6 +916,18 @@ def _detect_renames(
     return renames
 
 
+def _filter_rename_candidate_paths(
+    paths: Set[str],
+    sync_manager: MetadataBasedSync,
+    corpus: str,
+) -> Set[str]:
+    """Keep only paths that are not already indexed at the same location."""
+    indexed_paths = sync_manager._get_indexed_file_paths_set(corpus)
+    if not indexed_paths:
+        return paths
+    return paths - indexed_paths
+
+
 def _handle_renames_meili(
     renames: List[Tuple[str, str]],
     qdrant,
@@ -988,6 +1000,18 @@ def _handle_renames_meili(
                 )
 
     return total_updated
+
+
+def _rename_tuples_with_metadata(renames: List[Tuple[str, str]]) -> List[Tuple[str, str, Dict]]:
+    """Build Qdrant rename payloads with path metadata used by the fast sync gate."""
+    rename_tuples = []
+    for old_path, new_path in renames:
+        metadata = {"filename": Path(new_path).name}
+        new_file = Path(new_path)
+        if new_file.exists():
+            metadata["quick_hash"] = compute_quick_hash(new_file)
+        rename_tuples.append((old_path, new_path, metadata))
+    return rename_tuples
 
 
 def _detect_stale_paths(
@@ -1883,10 +1907,9 @@ def sync_directory_command(
                     )
 
                     # Update Qdrant metadata
-                    rename_tuples = [
-                        (old, new, {"filename": Path(new).name}) for old, new in detected_renames
-                    ]
-                    sync_manager.handle_renames(corpus, rename_tuples)
+                    sync_manager.handle_renames(
+                        corpus, _rename_tuples_with_metadata(detected_renames)
+                    )
                     files_renamed = len(detected_renames)
 
                     if not output_json:
@@ -1980,11 +2003,49 @@ def sync_directory_command(
             files = files_to_process
         else:
             # Fast metadata-based change detection (mtime+size check against Qdrant)
-            # For full parity checks, rename detection, and stale cleanup, use --parity or 'arc corpus parity'
+            # For full parity checks and stale cleanup, use --parity or 'arc corpus parity'.
+            # Rename detection still runs on Pass 1 misses so moved files avoid
+            # expensive re-extraction and re-embedding.
             sync_manager = MetadataBasedSync(qdrant)
             files_to_process, already_indexed_files = sync_manager.get_unindexed_files(
                 corpus, files
             )
+
+            candidate_new_paths = _filter_rename_candidate_paths(
+                {str(f.absolute()) for f in files_to_process},
+                sync_manager,
+                corpus,
+            )
+            detected_renames = _detect_renames(candidate_new_paths, sync_manager, corpus)
+            if detected_renames:
+                renamed_new_paths = {new for old, new in detected_renames}
+
+                if not output_json:
+                    print_info(f"Detected {len(detected_renames)} renamed/moved files")
+                    if verbose:
+                        for old, new in detected_renames:
+                            print_info(f"  {Path(new).name}")
+
+                if not dry_run:
+                    meili_updated = _handle_renames_meili(
+                        detected_renames,
+                        qdrant,
+                        meili,
+                        corpus,
+                    )
+                    sync_manager.handle_renames(
+                        corpus, _rename_tuples_with_metadata(detected_renames)
+                    )
+                    files_renamed = len(detected_renames)
+
+                    if not output_json:
+                        print_info(
+                            f"Renamed {files_renamed} files ({meili_updated} chunks updated in both indexes)"
+                        )
+
+                files_to_process = [
+                    f for f in files_to_process if str(f.absolute()) not in renamed_new_paths
+                ]
 
             already_indexed_count = len(already_indexed_files)
             total_corpus_files = already_indexed_count + len(files_to_process)

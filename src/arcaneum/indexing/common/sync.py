@@ -1,13 +1,14 @@
 """Metadata-based sync for incremental indexing (RDR-004)."""
 
+import logging
 import multiprocessing as mp
 import os
 from pathlib import Path
-from typing import List, Callable, Tuple, Dict
-from qdrant_client import QdrantClient
-from qdrant_client.models import Filter, FieldCondition, MatchValue, FilterSelector
-import logging
+from typing import Callable, Dict, List, Tuple
+
 import xxhash
+from qdrant_client import QdrantClient
+from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchValue
 
 from .multiprocessing import get_mp_context, worker_init
 
@@ -184,6 +185,17 @@ def _compute_hashes_parallel(
     return file_hashes
 
 
+def _compute_quick_hashes(file_list: List[Path]) -> dict:
+    """Compute metadata-only hashes without multiprocessing startup overhead."""
+    file_hashes = {}
+    for file_path in file_list:
+        try:
+            file_hashes[str(file_path.absolute())] = compute_quick_hash(file_path)
+        except Exception as e:
+            logger.warning(f"Failed to stat {file_path}: {e}")
+    return file_hashes
+
+
 class MetadataBasedSync:
     """Check indexing status using Qdrant metadata queries.
 
@@ -255,7 +267,8 @@ class MetadataBasedSync:
                     break
 
             logger.debug(
-                f"Pass 1: Loaded {len(indexed_pairs)} unique (path, quick_hash) pairs from {total_chunks} chunks ({chunks_with_dict} with dict)"
+                f"Pass 1: Loaded {len(indexed_pairs)} unique (path, quick_hash) pairs "
+                f"from {total_chunks} chunks ({chunks_with_dict} with dict)"
             )
 
             return indexed_pairs
@@ -383,13 +396,10 @@ class MetadataBasedSync:
 
             start_time = time.time()
 
-            # Brief delay to ensure Qdrant consistency (in case previous run just finished)
-            # This prevents race conditions where chunks are uploaded but not yet queryable
-            time.sleep(1.0)
-
-            # Pass 1: Metadata gate (mtime+size) - ultra fast
+            # Pass 1: Metadata gate (mtime+size) - ultra fast. This is a stat()
+            # pass only, so avoid process-pool startup overhead.
             pass1_start = time.time()
-            quick_hashes = _compute_hashes_parallel(file_list, compute_quick_hash)
+            quick_hashes = _compute_quick_hashes(file_list)
             quick_hash_time = time.time() - pass1_start
 
             pass1_qdrant_start = time.time()
@@ -425,7 +435,8 @@ class MetadataBasedSync:
             logger.info(
                 f"Pass 1 (metadata gate): {len(file_list)} files "
                 f"→ {len(already_indexed)} hits, {len(needs_processing)} need processing "
-                f"(hash: {quick_hash_time:.3f}s, qdrant: {pass1_qdrant_time:.3f}s, check: {pass1_check_time:.3f}s, total: {pass1_total:.3f}s)"
+                f"(hash: {quick_hash_time:.3f}s, qdrant: {pass1_qdrant_time:.3f}s, "
+                f"check: {pass1_check_time:.3f}s, total: {pass1_total:.3f}s)"
             )
 
             total_time = time.time() - start_time
@@ -685,7 +696,9 @@ class MetadataBasedSync:
                     logger.warning(f"Invalid rename tuple length: {len(rename_info)}")
                     continue
 
-                # Build payload with all path-dependent metadata
+                # Build payload with all path-dependent metadata. Keep the
+                # multi-path quick-hash metadata in sync so a renamed file can
+                # still hit the fast metadata gate on later runs.
                 payload = {"file_path": new_path}
 
                 # Add optional metadata fields if provided
@@ -695,6 +708,34 @@ class MetadataBasedSync:
                     payload["quick_hash"] = new_metadata["quick_hash"]
                 # Note: file_hash stays same (it's the key for finding renames)
                 # Note: file_size stays same
+
+                points, _ = self.qdrant.scroll(
+                    collection_name=collection_name,
+                    scroll_filter=Filter(
+                        must=[FieldCondition(key="file_path", match=MatchValue(value=old_path))]
+                    ),
+                    limit=1,
+                    with_payload=["file_paths", "file_quick_hashes", "quick_hash"],
+                    with_vectors=False,
+                )
+                if points and points[0].payload:
+                    current_payload = points[0].payload
+                    file_paths = current_payload.get("file_paths")
+                    if isinstance(file_paths, list):
+                        payload["file_paths"] = [
+                            new_path if path == old_path else path for path in file_paths
+                        ]
+
+                    file_quick_hashes = current_payload.get("file_quick_hashes")
+                    if isinstance(file_quick_hashes, dict):
+                        updated_quick_hashes = dict(file_quick_hashes)
+                        existing_quick_hash = updated_quick_hashes.pop(
+                            old_path, current_payload.get("quick_hash")
+                        )
+                        new_quick_hash = new_metadata.get("quick_hash", existing_quick_hash)
+                        if new_quick_hash:
+                            updated_quick_hashes[new_path] = new_quick_hash
+                        payload["file_quick_hashes"] = updated_quick_hashes
 
                 # Update all chunks with old_path
                 self.qdrant.set_payload(
@@ -824,7 +865,8 @@ class MetadataBasedSync:
             )
 
             logger.debug(
-                f"Added alternate path {new_path} to {len(file_paths)} total paths for hash {file_hash[:8]}"
+                f"Added alternate path {new_path} to {len(file_paths)} total paths "
+                f"for hash {file_hash[:8]}"
             )
             return len(file_paths)
 

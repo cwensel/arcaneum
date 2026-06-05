@@ -215,9 +215,7 @@ class TestRenameTuplesWithMetadata:
         new_file.write_text("content")
 
         with patch("arcaneum.cli.sync.compute_quick_hash", return_value="quick123"):
-            tuples = _rename_tuples_with_metadata(
-                [("/old/doc.pdf", str(new_file.absolute()))]
-            )
+            tuples = _rename_tuples_with_metadata([("/old/doc.pdf", str(new_file.absolute()))])
 
         assert tuples == [
             (

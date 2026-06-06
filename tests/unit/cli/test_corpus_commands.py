@@ -491,6 +491,40 @@ class TestCorpusListModelInfo:
         assert corpora["legacy"]["item_unit"] == UNKNOWN_LEGACY
         assert scroll_calls == {}
 
+    def test_json_default_counts_pdf_corpus_without_cached_metadata(self, monkeypatch, capsys):
+        from arcaneum.cli.corpus import list_corpora_command
+
+        facet_calls = []
+        metadata_updates = []
+        _mock_corpus_list_clients(
+            monkeypatch,
+            metadata_by_name={
+                "LLM": {
+                    "collection_type": "pdf",
+                    "model": "arctic-m",
+                }
+            },
+            collection_info_by_name={"LLM": _collection_info(points_count=8)},
+            qdrant_facets_by_name={
+                "LLM": {
+                    "file_path": [("/llm/a.pdf", 4), ("/llm/b.pdf", 3)],
+                },
+            },
+            qdrant_facet_calls=facet_calls,
+            qdrant_metadata_updates=metadata_updates,
+        )
+
+        list_corpora_command(details=False, output_json=True)
+
+        corpus = json.loads(capsys.readouterr().out)["data"]["corpora"][0]
+        assert corpus["type"] == "pdf"
+        assert corpus["item_count"] == 2
+        assert corpus["item_unit"] == "documents"
+        assert corpus["item_count_status"] == "facet"
+        assert facet_calls == [("LLM", "file_path")]
+        assert metadata_updates[0][0] == "LLM"
+        assert metadata_updates[0][1]["item_count"] == 2
+
     def test_json_marks_chunk_mismatches(self, monkeypatch, capsys):
         from arcaneum.cli.corpus import list_corpora_command
 
@@ -657,6 +691,38 @@ class TestCorpusListModelInfo:
         assert metadata_updates[0][1]["count_source"] == "facet"
         assert metadata_updates[1][1]["file_count"] is None
         assert metadata_updates[1][1]["count_source"] == "facet"
+
+    def test_json_details_counts_pdf_corpus_named_llm_with_facets(self, monkeypatch, capsys):
+        from arcaneum.cli.corpus import list_corpora_command
+
+        facet_calls = []
+        metadata_updates = []
+        _mock_corpus_list_clients(
+            monkeypatch,
+            metadata_by_name={
+                "LLM": {"collection_type": "pdf", "model": "arctic-m"},
+            },
+            collection_info_by_name={"LLM": _collection_info(points_count=4)},
+            qdrant_facets_by_name={
+                "LLM": {
+                    "file_path": [("/llm/a.pdf", 2), ("/llm/b.pdf", 1)],
+                },
+            },
+            qdrant_facet_calls=facet_calls,
+            qdrant_metadata_updates=metadata_updates,
+        )
+
+        list_corpora_command(details=True, output_json=True)
+
+        corpus = json.loads(capsys.readouterr().out)["data"]["corpora"][0]
+        assert corpus["type"] == "pdf"
+        assert corpus["item_count"] == 2
+        assert corpus["item_unit"] == "documents"
+        assert corpus["item_count_status"] == "facet"
+        assert facet_calls == [("LLM", "file_path")]
+        assert metadata_updates[0][0] == "LLM"
+        assert metadata_updates[0][1]["item_count"] == 2
+        assert metadata_updates[0][1]["item_unit"] == "documents"
 
     def test_json_details_lazily_scrolls_and_persists_capped_facets(self, monkeypatch, capsys):
         from arcaneum.cli.corpus import list_corpora_command

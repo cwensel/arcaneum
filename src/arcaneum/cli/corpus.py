@@ -60,6 +60,7 @@ def map_corpus_type_to_canonical(corpus_type: str) -> str:
 
 UNKNOWN_LEGACY = "unknown/legacy"
 LIST_COUNT_FACET_LIMIT = 10_000
+COUNTABLE_CORPUS_TYPES = {"code", "markdown", "pdf"}
 
 
 def _item_unit_for_corpus_type(collection_type):
@@ -354,7 +355,7 @@ def _get_qdrant_list_item_count(
     client, collection_name: str, collection_type: str, metadata: dict[str, Any] | None = None
 ):
     """Count corpus-list items using persisted metadata or bounded facets."""
-    if collection_type not in {"code", "markdown", "pdf"}:
+    if collection_type not in COUNTABLE_CORPUS_TYPES:
         return {
             "item_count": None,
             "item_unit": UNKNOWN_LEGACY,
@@ -409,9 +410,51 @@ def _get_qdrant_list_item_count(
     }
 
 
+def _get_bounded_qdrant_list_item_count(
+    client, collection_name: str, collection_type: str, metadata: dict[str, Any] | None = None
+):
+    """Count list items without unbounded point scrolling.
+
+    Used by the default list view to fill missing count metadata for newer
+    corpora synced from file lists or individual files.
+    """
+    metadata = metadata or {}
+    cached = _cached_qdrant_list_item_count(collection_type, metadata)
+    if cached["item_count"] is not None:
+        return cached
+    if collection_type not in COUNTABLE_CORPUS_TYPES:
+        return cached
+
+    item_key = "git_project_identifier" if collection_type == "code" else "file_path"
+    try:
+        item_count, item_status = _bounded_qdrant_facet_count(client, collection_name, item_key)
+        if collection_type == "code" and item_status != "unavailable":
+            file_count, file_status = _bounded_qdrant_facet_count(
+                client, collection_name, "file_path"
+            )
+            if file_status == "unavailable":
+                item_count = None
+                file_count = None
+                item_status = "unavailable"
+        else:
+            file_count = None
+    except Exception:
+        item_count = None
+        file_count = None
+        item_status = "unavailable"
+
+    return {
+        "item_count": item_count,
+        "item_unit": _item_unit_for_corpus_type(collection_type),
+        "file_count": file_count if collection_type == "code" else None,
+        "file_unit": "source files" if collection_type == "code" else None,
+        "item_count_status": item_status,
+    }
+
+
 def _cached_qdrant_list_item_count(collection_type: str, metadata: dict[str, Any] | None = None):
     """Return persisted corpus-list item counts without querying indexed points."""
-    if collection_type not in {"code", "markdown", "pdf"}:
+    if collection_type not in COUNTABLE_CORPUS_TYPES:
         return {
             "item_count": None,
             "item_unit": UNKNOWN_LEGACY,
@@ -535,7 +578,12 @@ def list_corpora_command(details: bool, output_json: bool):
                         qdrant, col.name, collection_type, item_counts
                     )
                 else:
-                    item_counts = _cached_qdrant_list_item_count(collection_type, metadata)
+                    item_counts = _get_bounded_qdrant_list_item_count(
+                        qdrant, col.name, collection_type, metadata
+                    )
+                    _persist_list_item_count_metadata(
+                        qdrant, col.name, collection_type, item_counts
+                    )
                 qdrant_collections[col.name] = {
                     "type": collection_type,
                     "model": metadata.get("model"),

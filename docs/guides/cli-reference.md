@@ -60,6 +60,13 @@ arc search semantic <query> --corpus <n1> --corpus <n2>     # Multi-corpus searc
 arc search text <query> --corpus <name>                     # Full-text search (MeiliSearch)
 ```
 
+### Log Commands
+
+```bash
+arc log tail               # Tail the current interaction log
+arc log tail --lines 50    # Print recent log lines, then follow new entries
+```
+
 ### Collection Management (Qdrant Only)
 
 Use collections when you only need semantic search:

@@ -1520,6 +1520,35 @@ def doctor(verbose, output_json):
     return doctor_command(verbose, output_json)
 
 
+@cli.group("log")
+def log_group():
+    """Inspect Arcaneum interaction logs."""
+    pass
+
+
+@log_group.command("tail")
+@click.option(
+    "-n",
+    "--lines",
+    type=click.IntRange(min=0),
+    default=0,
+    show_default=True,
+    help="Show the last N existing lines before following.",
+)
+@click.option(
+    "--poll-interval",
+    type=click.FloatRange(min=0.1),
+    default=1.0,
+    show_default=True,
+    hidden=True,
+)
+def log_tail(lines, poll_interval):
+    """Tail the current interaction log, following UTC date cutovers."""
+    from arcaneum.cli.logs import tail_current_log
+
+    tail_current_log(lines=lines, poll_interval=poll_interval)
+
+
 # Configuration and cache management commands
 from arcaneum.cli.config import config_group
 

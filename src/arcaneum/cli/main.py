@@ -1245,7 +1245,16 @@ def sync_directory(
     # Memory probe: CLI flag takes precedence, then env var, then off.
     if mem_probe_interval is None:
         env_interval = os.environ.get("ARC_MEM_PROBE_INTERVAL")
-        mem_probe_interval = float(env_interval) if env_interval else 0.0
+        if env_interval:
+            try:
+                mem_probe_interval = float(env_interval)
+            except (TypeError, ValueError) as exc:
+                raise click.BadOptionUsage(
+                    "mem-probe-interval",
+                    f"ARC_MEM_PROBE_INTERVAL={env_interval!r} is not a valid number",
+                ) from exc
+        else:
+            mem_probe_interval = 0.0
     if mem_probe_log is None:
         mem_probe_log = os.environ.get("ARC_MEM_PROBE_LOG")
 

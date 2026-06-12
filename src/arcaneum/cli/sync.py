@@ -335,7 +335,7 @@ def _find_git_root(path: Path) -> Optional[str]:
 
         repo = git.Repo(search_path, search_parent_directories=True)
         return repo.working_tree_dir
-    except Exception:
+    except (git.InvalidGitRepositoryError, git.NoSuchPathError):
         return None
 
 
@@ -1921,6 +1921,7 @@ def sync_directory_command(
                         corpus, _rename_tuples_with_metadata(confirmed_renames)
                     )
                     files_renamed = len(confirmed_renames)
+                    renamed_new_paths = {new for old, new in confirmed_renames}
 
                     if not output_json:
                         print_info(
@@ -2047,6 +2048,7 @@ def sync_directory_command(
                         corpus, _rename_tuples_with_metadata(confirmed_renames)
                     )
                     files_renamed = len(confirmed_renames)
+                    renamed_new_paths = {new for old, new in confirmed_renames}
 
                     if not output_json:
                         print_info(
@@ -2310,438 +2312,442 @@ def sync_directory_command(
             if verbose and not output_json:
                 console.print(f"[dim]  mem-baseline: {_fmt_snap(_mem_prev)}[/dim]")
 
-            with AdaptiveProgress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TaskProgressColumn(),
-                TimeRemainingColumn(),
-                console=console,
-                disable=output_json,
-            ) as progress:
-                task = progress.add_task(
-                    "Indexing...", total=total_corpus_files, completed=already_indexed_count
-                )
+            try:
+                with AdaptiveProgress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    TaskProgressColumn(),
+                    TimeRemainingColumn(),
+                    console=console,
+                    disable=output_json,
+                ) as progress:
+                    task = progress.add_task(
+                        "Indexing...", total=total_corpus_files, completed=already_indexed_count
+                    )
 
-                # Track repair results for quality comparison reporting
-                repair_results = []  # (filename, old_score, new_score, action)
+                    # Track repair results for quality comparison reporting
+                    repair_results = []  # (filename, old_score, new_score, action)
 
-                for file_path in files:
-                    progress.update(task, description=f"Processing {file_path.name}...")
-                    _set_phase(f"file:{file_path.name}")
+                    for file_path in files:
+                        progress.update(task, description=f"Processing {file_path.name}...")
+                        _set_phase(f"file:{file_path.name}")
 
-                    try:
-                        # In repair mode, extract BEFORE deleting so we can compare quality.
-                        # In normal force mode, delete first to avoid duplicates during indexing.
-                        if force and not repair:
-                            file_path_str = str(file_path.absolute())
-                            if verbose and not output_json:
-                                progress.console.print(
-                                    f"[dim]Deleting existing chunks for {file_path.name}...[/dim]"
-                                )
-                            # Delete from Qdrant
-                            dual_indexer.delete_by_file_path(file_path_str)
-                            # Delete from MeiliSearch
-                            meili.delete_documents_by_file_paths(corpus, [file_path_str])
-
-                        # Chunk file based on corpus type
-                        if verbose and not output_json:
-                            progress.console.print(
-                                f"[dim]Extracting text from {file_path.name}...[/dim]"
-                            )
-
-                        # Skip oversized code files before chunking — they are almost
-                        # certainly generated/vendored and waste GPU time or cause OOM.
-                        if corpus_type == "code":
-                            file_size = file_path.stat().st_size
-                            if file_size > _MAX_CODE_FILE_SIZE:
-                                logger.warning(
-                                    f"Skipping {file_path.name}: {format_size(file_size)} exceeds "
-                                    f"{format_size(_MAX_CODE_FILE_SIZE)} limit (likely generated/data file)"
-                                )
-                                if not output_json:
+                        try:
+                            # In repair mode, extract BEFORE deleting so we can compare quality.
+                            # In normal force mode, delete first to avoid duplicates during indexing.
+                            if force and not repair:
+                                file_path_str = str(file_path.absolute())
+                                if verbose and not output_json:
                                     progress.console.print(
-                                        f"[yellow]  Skipping {file_path.name} — {format_size(file_size)} "
-                                        f"exceeds {format_size(_MAX_CODE_FILE_SIZE)} limit "
-                                        f"(likely generated/data file)[/yellow]"
+                                        f"[dim]Deleting existing chunks for {file_path.name}...[/dim]"
                                     )
-                                progress.advance(task)
-                                continue
+                                # Delete from Qdrant
+                                dual_indexer.delete_by_file_path(file_path_str)
+                                # Delete from MeiliSearch
+                                meili.delete_documents_by_file_paths(corpus, [file_path_str])
 
-                        if corpus_type == "pdf":
-                            # chunk_pdf_file handles OCR internally via needs_ocr() check:
-                            # extracts without OCR first, then re-extracts with OCR only
-                            # if garbled text (U+FFFD, encoding garbage) is detected.
-                            # In repair mode, force OCR for files whose prior quality score
-                            # is below the threshold so borderline garbled cases that slip
-                            # past needs_ocr() still get re-extracted.
-                            prior_score = old_quality_scores.get(str(file_path.absolute()))
-                            force_ocr = bool(
-                                repair
-                                and prior_score is not None
-                                and prior_score < quality_threshold
-                            )
-                            chunks = chunk_pdf_file(file_path, model_config, use_ocr=force_ocr)
-                        elif corpus_type == "markdown":
-                            chunks = chunk_markdown_file(
-                                file_path,
-                                model_config.get("chunk_size", 512),
-                                model_config.get("chunk_overlap", 50),
-                                hard_max_chars=hard_max_chars,
-                            )
-                        elif corpus_type == "code":
-                            # Use pre-chunked data if available. Pop (not get)
-                            # so the dict shrinks as the run progresses — on
-                            # large corpora this dict can hold GBs of chunk
-                            # text and we never need a chunk twice.
-                            file_path_str = str(file_path)
-                            chunks = pre_chunked_code_files.pop(file_path_str, None)
-                            if chunks is None:
-                                chunks = chunk_code_file(
-                                    file_path,
-                                    model_config.get("chunk_size", 400),
-                                    model_config.get("chunk_overlap", 20),
-                                    hard_max_chars=hard_max_chars,
-                                )
-                        else:
-                            logger.warning(
-                                f"Unknown corpus type: {corpus_type}, skipping {file_path}"
-                            )
-                            continue
-
-                        if not chunks:
+                            # Chunk file based on corpus type
                             if verbose and not output_json:
                                 progress.console.print(
-                                    f"[yellow]  No text extracted from {file_path.name}[/yellow]"
+                                    f"[dim]Extracting text from {file_path.name}...[/dim]"
                                 )
-                            if repair:
-                                repair_results.append((file_path.name, None, None, "no_text"))
-                            progress.advance(task)
-                            continue
 
-                        # Repair mode: score new chunks, compare to old, then delete old data
-                        if repair:
-                            file_path_str = str(file_path.absolute())
-                            old_score = old_quality_scores.get(file_path_str)
-
-                            if old_score is not None:
-                                from ..indexing.pdf.quality import score_chunks
-
-                                new_score = score_chunks(chunks)
-
-                                if new_score > old_score:
-                                    action = "improved"
+                            # Skip oversized code files before chunking — they are almost
+                            # certainly generated/vendored and waste GPU time or cause OOM.
+                            if corpus_type == "code":
+                                file_size = file_path.stat().st_size
+                                if file_size > _MAX_CODE_FILE_SIZE:
+                                    logger.warning(
+                                        f"Skipping {file_path.name}: {format_size(file_size)} exceeds "
+                                        f"{format_size(_MAX_CODE_FILE_SIZE)} limit (likely generated/data file)"
+                                    )
                                     if not output_json:
                                         progress.console.print(
-                                            f"[green]  {file_path.name}: {old_score:.2f} → {new_score:.2f} (improved)[/green]"
+                                            f"[yellow]  Skipping {file_path.name} — {format_size(file_size)} "
+                                            f"exceeds {format_size(_MAX_CODE_FILE_SIZE)} limit "
+                                            f"(likely generated/data file)[/yellow]"
                                         )
-                                else:
-                                    action = "skipped"
-                                    if verbose and not output_json:
-                                        progress.console.print(
-                                            f"[yellow]  {file_path.name}: {old_score:.2f} → {new_score:.2f} (skipped, no improvement)[/yellow]"
-                                        )
-                                    repair_results.append(
-                                        (file_path.name, old_score, new_score, action)
-                                    )
                                     progress.advance(task)
                                     continue
 
-                                repair_results.append(
-                                    (file_path.name, old_score, new_score, action)
-                                )
-                            else:
-                                # Incomplete file (not garbled) — always re-index
-                                repair_results.append((file_path.name, None, None, "incomplete"))
-
-                            # Now safe to delete old chunks before indexing
-                            if verbose and not output_json:
-                                progress.console.print(
-                                    f"[dim]  Deleting old chunks for {file_path.name}...[/dim]"
-                                )
-                            dual_indexer.delete_by_file_path(file_path_str)
-                            meili.delete_documents_by_file_paths(corpus, [file_path_str])
-
-                        if verbose and not output_json:
-                            progress.console.print(
-                                f"[dim]  Created {len(chunks)} chunks, generating embeddings...[/dim]"
-                            )
-
-                        # Build dual index documents
-                        documents = []
-                        file_hash = compute_file_hash(file_path)
-                        quick_hash = compute_quick_hash(file_path)
-                        chunking_version = (
-                            "code-ast:v1" if corpus_type == "code" else f"{corpus_type}:v1"
-                        )
-
-                        # Batch embedding: collect all chunk texts and embed together
-                        # This is much more efficient than embedding one chunk at a time,
-                        # especially for CPU mode where batching reduces Python overhead
-                        chunk_texts = [chunk["text"] for chunk in chunks]
-
-                        # Log large chunks for OOM debugging (only in verbose mode)
-                        chunk_sizes = [len(t) for t in chunk_texts]
-                        max_chunk_size = max(chunk_sizes) if chunk_sizes else 0
-                        if max_chunk_size > 10000 and verbose and not output_json:
-                            if hard_max_chars and max_chunk_size <= hard_max_chars:
-                                progress.console.print(
-                                    f"[dim]  Large chunks bounded: max={max_chunk_size} chars, "
-                                    f"limit={hard_max_chars}; windowing/hard-limit checks preserved full text[/dim]"
-                                )
-                            else:
-                                limit_text = (
-                                    str(hard_max_chars) if hard_max_chars else "unconfigured"
-                                )
-                                progress.console.print(
-                                    f"[yellow]  Oversized chunks remain: max={max_chunk_size} chars, "
-                                    f"limit={limit_text}; embedding safety may clip text if upstream chunking did not split it[/yellow]"
-                                )
-
-                        # Generate embeddings for all chunks at once, per model
-                        model_embeddings = {}
-                        for model in model_list:
-                            _set_phase(f"encoding:{file_path.name}:{model}")
-                            all_embeddings = embedding_client.embed(
-                                chunk_texts, model, max_internal_batch=max_embedding_batch
-                            )
-                            model_embeddings[model] = all_embeddings
-
-                        # Now create documents with pre-computed embeddings
-                        for i, chunk in enumerate(chunks):
-                            # Get pre-computed embeddings for this chunk
-                            vectors = {}
-                            for model in model_list:
-                                embedding = model_embeddings[model][i]
-                                # Handle both list and numpy array returns
-                                if hasattr(embedding, "tolist"):
-                                    vectors[model] = embedding.tolist()
-                                else:
-                                    vectors[model] = list(embedding)
-
-                            # Create document with shared metadata
-                            doc = DualIndexDocument(
-                                id=str(uuid4()),
-                                content=chunk["text"],
-                                file_path=str(
-                                    file_path.absolute()
-                                ),  # Use absolute path for change detection
-                                filename=file_path.name,
-                                file_extension=file_path.suffix,
-                                chunk_index=i,
-                                chunk_count=len(chunks),
-                                file_hash=file_hash,
-                                source_hash=file_hash,
-                                chunking_version=chunking_version,
-                                file_size=file_path.stat().st_size,
-                                quick_hash=quick_hash,
-                                vectors=vectors,
-                            )
-
-                            # Add type-specific metadata
-                            chunk_meta = chunk.get("metadata", {})
-                            quality_manifest = chunk_meta.get("quality_manifest")
-
                             if corpus_type == "pdf":
-                                doc.page_number = chunk_meta.get("page_number")
-                                doc.page_count = chunk_meta.get("page_count")
-                                if chunk_meta.get("extraction_floor"):
-                                    doc.extraction_floor = True
-                                doc.ocr_confidence = chunk_meta.get("ocr_confidence")
-                                doc.ocr_language = chunk_meta.get("ocr_language")
-                                doc.ocr_pages_processed = chunk_meta.get("ocr_pages_processed")
-                                doc.ocr_pages_failed = chunk_meta.get("ocr_pages_failed")
-                                doc.ocr_low_confidence_word_count = chunk_meta.get(
-                                    "ocr_low_confidence_word_count"
+                                # chunk_pdf_file handles OCR internally via needs_ocr() check:
+                                # extracts without OCR first, then re-extracts with OCR only
+                                # if garbled text (U+FFFD, encoding garbage) is detected.
+                                # In repair mode, force OCR for files whose prior quality score
+                                # is below the threshold so borderline garbled cases that slip
+                                # past needs_ocr() still get re-extracted.
+                                prior_score = old_quality_scores.get(str(file_path.absolute()))
+                                force_ocr = bool(
+                                    repair
+                                    and prior_score is not None
+                                    and prior_score < quality_threshold
                                 )
-                                doc.ocr_merge_strategy = chunk_meta.get("ocr_merge_strategy")
-                                doc.ocr_triggered_by = chunk_meta.get("ocr_triggered_by")
-                                doc.document_type = "pdf"
-
+                                chunks = chunk_pdf_file(file_path, model_config, use_ocr=force_ocr)
                             elif corpus_type == "markdown":
-                                doc.language = "markdown"
-                                doc.section = chunk_meta.get("header_path")
-                                if chunk_meta.get("has_code_blocks"):
-                                    doc.tags = ["has-code"]
-
+                                chunks = chunk_markdown_file(
+                                    file_path,
+                                    model_config.get("chunk_size", 512),
+                                    model_config.get("chunk_overlap", 50),
+                                    hard_max_chars=hard_max_chars,
+                                )
                             elif corpus_type == "code":
-                                doc.language = chunk_meta.get("language", "unknown")
-                                doc.line_number = chunk_meta.get("line_number")
-                                quality_manifest = _build_quality_manifest(
-                                    file_path=file_path,
-                                    corpus_type="code",
-                                    source_hash=file_hash,
-                                    chunk_count=len(chunks),
-                                    metadata=chunk_meta,
-                                    extraction_method=chunk_meta.get("method"),
-                                )
-
-                                # Extract git metadata for code files
-                                if git_discovery:
-                                    # Find git root for this file
-                                    git_root = None
-                                    for parent in [file_path.absolute()] + list(
-                                        file_path.absolute().parents
-                                    ):
-                                        if (parent / ".git").exists():
-                                            git_root = str(parent)
-                                            break
-
-                                    if git_root:
-                                        # Get cached metadata or extract it
-                                        if git_root not in git_metadata_cache:
-                                            git_meta = git_discovery.extract_metadata(git_root)
-                                            git_metadata_cache[git_root] = git_meta
-                                            if verbose and not output_json and git_meta:
-                                                progress.console.print(
-                                                    f"[blue]Indexing repo: {git_meta.identifier} ({git_root})[/blue]"
-                                                )
-                                        else:
-                                            git_meta = git_metadata_cache[git_root]
-
-                                        if git_meta:
-                                            # Include version_identifier for --git-version mode
-                                            include_version = (
-                                                git_version and git_root in version_identifiers
-                                            )
-                                            apply_git_metadata(
-                                                doc, git_meta, include_version_id=include_version
-                                            )
-
-                            doc.quality_manifest = quality_manifest
-                            documents.append(doc)
-
-                        # Index to both systems
-                        if documents:
-                            if verbose and not output_json:
-                                progress.console.print(
-                                    f"[dim]  Indexing {len(documents)} chunks to Qdrant + MeiliSearch...[/dim]"
-                                )
-
-                            _set_phase(f"indexing:{file_path.name}")
-                            qdrant_count, meili_count = dual_indexer.index_batch(documents)
-                            total_chunks += len(documents)
-                            total_qdrant += qdrant_count
-                            total_meili += meili_count
-
-                            if verbose and not output_json:
-                                embedded_size = sum(len(c["text"].encode("utf-8")) for c in chunks)
-                                progress.console.print(
-                                    f"[green]  ✓ {file_path.name} — {len(chunks)} chunks, {format_size(embedded_size)} embedded[/green]"
-                                )
-
-                        total_indexed += 1
-
-                        # Periodic memory hygiene: the diagnostic showed RSS
-                        # grows in bursts on files with long dense chunks —
-                        # PyTorch's allocator holds pages between calls and
-                        # libc's malloc doesn't return them to the OS. A
-                        # gc.collect + GPU cache flush every N files gives
-                        # PyTorch a chance to trim its internal pools
-                        # without fighting the per-batch caching strategy.
-                        if total_indexed % 50 == 0:
-                            try:
-                                import gc as _gc
-
-                                _gc.collect()
-                                embedding_client._clear_gpu_cache()
-                            except Exception:
-                                logger.debug("periodic gc/flush failed", exc_info=True)
-
-                        # Per-file memory probe — opt-in via verbose. Also always
-                        # warn on suspicious single-file growth so leaks on
-                        # unattended runs surface before jetsam kicks in.
-                        # On Apple Silicon, MPS driver allocations are wired
-                        # memory not reflected in RSS — we must watch Δdrv
-                        # separately or the leak is invisible until SIGKILL.
-                        try:
-                            _mem_now = _mem_snapshot(embedding_client)
-                            _rss_delta = _mem_now.rss_bytes - _mem_prev.rss_bytes
-                            _drv_delta = (
-                                _mem_now.mps_driver_bytes - _mem_prev.mps_driver_bytes
-                                if _mem_now.mps_driver_bytes is not None
-                                and _mem_prev.mps_driver_bytes is not None
-                                else 0
-                            )
-                            if verbose and not output_json:
-                                progress.console.print(
-                                    f"[dim]    mem: {_fmt_snap(_mem_now)} "
-                                    f"({_fmt_snap_delta(_mem_now, _mem_prev)})[/dim]"
-                                )
-                            # Skip warn on first file: model load + PyTorch/MPS
-                            # context init always spikes memory, not a leak signal.
-                            if total_indexed > 1 and not output_json:
-                                if _rss_delta > 500 * 1024 * 1024:
-                                    progress.console.print(
-                                        f"[yellow]    mem-warn: RSS grew by "
-                                        f"{_rss_delta / (1024**2):.0f}MB on this file "
-                                        f"(now {_mem_now.rss_bytes / (1024**3):.2f}GB). "
-                                        f"Possible leak — kill -USR1 {os.getpid()} for "
-                                        f"detailed dump.[/yellow]"
+                                # Use pre-chunked data if available. Pop (not get)
+                                # so the dict shrinks as the run progresses — on
+                                # large corpora this dict can hold GBs of chunk
+                                # text and we never need a chunk twice.
+                                file_path_str = str(file_path)
+                                chunks = pre_chunked_code_files.pop(file_path_str, None)
+                                if chunks is None:
+                                    chunks = chunk_code_file(
+                                        file_path,
+                                        model_config.get("chunk_size", 400),
+                                        model_config.get("chunk_overlap", 20),
+                                        hard_max_chars=hard_max_chars,
                                     )
-                                # Δdrv warn disabled now that
-                                # PYTORCH_MPS_HIGH_WATERMARK_RATIO bounds the
-                                # MPS allocator — single-file Δdrv spikes are
-                                # normal allocator cycles (allocate, peak,
-                                # release), not leaks. Re-enable if the
-                                # watermark stops doing its job:
-                                # if _drv_delta > 100 * 1024 * 1024:
-                                #     progress.console.print(
-                                #         f"[yellow]    mem-warn: MPS driver grew by "
-                                #         f"{_drv_delta / (1024**2):.0f}MB on this file "
-                                #         f"(now {_mem_now.mps_driver_bytes / (1024**3):.2f}GB). "
-                                #         f"Unified memory leak — kill -USR1 {os.getpid()} for "
-                                #         f"detailed dump.[/yellow]"
-                                #     )
-                            # Reactive cache flush: any time the driver grew
-                            # by >500MB on a single file, force an immediate
-                            # gc + empty_cache rather than waiting for the
-                            # every-50-files periodic flush. The flush won't
-                            # shrink the high-water mark but it lets Metal
-                            # reorganize cached pages before the next file's
-                            # encode demands a new buffer.
-                            if _drv_delta > 500 * 1024 * 1024:
-                                try:
-                                    import gc as _gc
+                            else:
+                                logger.warning(
+                                    f"Unknown corpus type: {corpus_type}, skipping {file_path}"
+                                )
+                                continue
 
-                                    _gc.collect()
+                            if not chunks:
+                                if verbose and not output_json:
+                                    progress.console.print(
+                                        f"[yellow]  No text extracted from {file_path.name}[/yellow]"
+                                    )
+                                if repair:
+                                    repair_results.append((file_path.name, None, None, "no_text"))
+                                progress.advance(task)
+                                continue
+
+                            # Repair mode: score new chunks, compare to old, then delete old data
+                            if repair:
+                                file_path_str = str(file_path.absolute())
+                                old_score = old_quality_scores.get(file_path_str)
+
+                                if old_score is not None:
+                                    from ..indexing.pdf.quality import score_chunks
+
+                                    new_score = score_chunks(chunks)
+
+                                    if new_score > old_score:
+                                        action = "improved"
+                                        if not output_json:
+                                            progress.console.print(
+                                                f"[green]  {file_path.name}: {old_score:.2f} → {new_score:.2f} (improved)[/green]"
+                                            )
+                                    else:
+                                        action = "skipped"
+                                        if verbose and not output_json:
+                                            progress.console.print(
+                                                f"[yellow]  {file_path.name}: {old_score:.2f} → {new_score:.2f} (skipped, no improvement)[/yellow]"
+                                            )
+                                        repair_results.append(
+                                            (file_path.name, old_score, new_score, action)
+                                        )
+                                        progress.advance(task)
+                                        continue
+
+                                    repair_results.append(
+                                        (file_path.name, old_score, new_score, action)
+                                    )
+                                else:
+                                    # Incomplete file (not garbled) — always re-index
+                                    repair_results.append(
+                                        (file_path.name, None, None, "incomplete")
+                                    )
+
+                                # Now safe to delete old chunks before indexing
+                                if verbose and not output_json:
+                                    progress.console.print(
+                                        f"[dim]  Deleting old chunks for {file_path.name}...[/dim]"
+                                    )
+                                dual_indexer.delete_by_file_path(file_path_str)
+                                meili.delete_documents_by_file_paths(corpus, [file_path_str])
+
+                            if verbose and not output_json:
+                                progress.console.print(
+                                    f"[dim]  Created {len(chunks)} chunks, generating embeddings...[/dim]"
+                                )
+
+                            # Build dual index documents
+                            documents = []
+                            file_hash = compute_file_hash(file_path)
+                            quick_hash = compute_quick_hash(file_path)
+                            chunking_version = (
+                                "code-ast:v1" if corpus_type == "code" else f"{corpus_type}:v1"
+                            )
+
+                            # Batch embedding: collect all chunk texts and embed together
+                            # This is much more efficient than embedding one chunk at a time,
+                            # especially for CPU mode where batching reduces Python overhead
+                            chunk_texts = [chunk["text"] for chunk in chunks]
+
+                            # Log large chunks for OOM debugging (only in verbose mode)
+                            chunk_sizes = [len(t) for t in chunk_texts]
+                            max_chunk_size = max(chunk_sizes) if chunk_sizes else 0
+                            if max_chunk_size > 10000 and verbose and not output_json:
+                                if hard_max_chars and max_chunk_size <= hard_max_chars:
+                                    progress.console.print(
+                                        f"[dim]  Large chunks bounded: max={max_chunk_size} chars, "
+                                        f"limit={hard_max_chars}; windowing/hard-limit checks preserved full text[/dim]"
+                                    )
+                                else:
+                                    limit_text = (
+                                        str(hard_max_chars) if hard_max_chars else "unconfigured"
+                                    )
+                                    progress.console.print(
+                                        f"[yellow]  Oversized chunks remain: max={max_chunk_size} chars, "
+                                        f"limit={limit_text}; embedding safety may clip text if upstream chunking did not split it[/yellow]"
+                                    )
+
+                            # Generate embeddings for all chunks at once, per model
+                            model_embeddings = {}
+                            for model in model_list:
+                                _set_phase(f"encoding:{file_path.name}:{model}")
+                                all_embeddings = embedding_client.embed(
+                                    chunk_texts, model, max_internal_batch=max_embedding_batch
+                                )
+                                model_embeddings[model] = all_embeddings
+
+                            # Now create documents with pre-computed embeddings
+                            for i, chunk in enumerate(chunks):
+                                # Get pre-computed embeddings for this chunk
+                                vectors = {}
+                                for model in model_list:
+                                    embedding = model_embeddings[model][i]
+                                    # Handle both list and numpy array returns
+                                    if hasattr(embedding, "tolist"):
+                                        vectors[model] = embedding.tolist()
+                                    else:
+                                        vectors[model] = list(embedding)
+
+                                # Create document with shared metadata
+                                doc = DualIndexDocument(
+                                    id=str(uuid4()),
+                                    content=chunk["text"],
+                                    file_path=str(
+                                        file_path.absolute()
+                                    ),  # Use absolute path for change detection
+                                    filename=file_path.name,
+                                    file_extension=file_path.suffix,
+                                    chunk_index=i,
+                                    chunk_count=len(chunks),
+                                    file_hash=file_hash,
+                                    source_hash=file_hash,
+                                    chunking_version=chunking_version,
+                                    file_size=file_path.stat().st_size,
+                                    quick_hash=quick_hash,
+                                    vectors=vectors,
+                                )
+
+                                # Add type-specific metadata
+                                chunk_meta = chunk.get("metadata", {})
+                                quality_manifest = chunk_meta.get("quality_manifest")
+
+                                if corpus_type == "pdf":
+                                    doc.page_number = chunk_meta.get("page_number")
+                                    doc.page_count = chunk_meta.get("page_count")
+                                    if chunk_meta.get("extraction_floor"):
+                                        doc.extraction_floor = True
+                                    doc.ocr_confidence = chunk_meta.get("ocr_confidence")
+                                    doc.ocr_language = chunk_meta.get("ocr_language")
+                                    doc.ocr_pages_processed = chunk_meta.get("ocr_pages_processed")
+                                    doc.ocr_pages_failed = chunk_meta.get("ocr_pages_failed")
+                                    doc.ocr_low_confidence_word_count = chunk_meta.get(
+                                        "ocr_low_confidence_word_count"
+                                    )
+                                    doc.ocr_merge_strategy = chunk_meta.get("ocr_merge_strategy")
+                                    doc.ocr_triggered_by = chunk_meta.get("ocr_triggered_by")
+                                    doc.document_type = "pdf"
+
+                                elif corpus_type == "markdown":
+                                    doc.language = "markdown"
+                                    doc.section = chunk_meta.get("header_path")
+                                    if chunk_meta.get("has_code_blocks"):
+                                        doc.tags = ["has-code"]
+
+                                elif corpus_type == "code":
+                                    doc.language = chunk_meta.get("language", "unknown")
+                                    doc.line_number = chunk_meta.get("line_number")
+                                    quality_manifest = _build_quality_manifest(
+                                        file_path=file_path,
+                                        corpus_type="code",
+                                        source_hash=file_hash,
+                                        chunk_count=len(chunks),
+                                        metadata=chunk_meta,
+                                        extraction_method=chunk_meta.get("method"),
+                                    )
+
+                                    # Extract git metadata for code files
+                                    if git_discovery:
+                                        # Find git root for this file
+                                        git_root = None
+                                        for parent in [file_path.absolute()] + list(
+                                            file_path.absolute().parents
+                                        ):
+                                            if (parent / ".git").exists():
+                                                git_root = str(parent)
+                                                break
+
+                                        if git_root:
+                                            # Get cached metadata or extract it
+                                            if git_root not in git_metadata_cache:
+                                                git_meta = git_discovery.extract_metadata(git_root)
+                                                git_metadata_cache[git_root] = git_meta
+                                                if verbose and not output_json and git_meta:
+                                                    progress.console.print(
+                                                        f"[blue]Indexing repo: {git_meta.identifier} ({git_root})[/blue]"
+                                                    )
+                                            else:
+                                                git_meta = git_metadata_cache[git_root]
+
+                                            if git_meta:
+                                                # Include version_identifier for --git-version mode
+                                                include_version = (
+                                                    git_version and git_root in version_identifiers
+                                                )
+                                                apply_git_metadata(
+                                                    doc,
+                                                    git_meta,
+                                                    include_version_id=include_version,
+                                                )
+
+                                doc.quality_manifest = quality_manifest
+                                documents.append(doc)
+
+                            # Index to both systems
+                            if documents:
+                                if verbose and not output_json:
+                                    progress.console.print(
+                                        f"[dim]  Indexing {len(documents)} chunks to Qdrant + MeiliSearch...[/dim]"
+                                    )
+
+                                _set_phase(f"indexing:{file_path.name}")
+                                qdrant_count, meili_count = dual_indexer.index_batch(documents)
+                                total_chunks += len(documents)
+                                total_qdrant += qdrant_count
+                                total_meili += meili_count
+
+                                if verbose and not output_json:
+                                    embedded_size = sum(
+                                        len(c["text"].encode("utf-8")) for c in chunks
+                                    )
+                                    progress.console.print(
+                                        f"[green]  ✓ {file_path.name} — {len(chunks)} chunks, {format_size(embedded_size)} embedded[/green]"
+                                    )
+
+                            total_indexed += 1
+
+                            # Periodic memory hygiene: the diagnostic showed RSS
+                            # grows in bursts on files with long dense chunks —
+                            # PyTorch's allocator holds pages between calls and
+                            # libc's malloc doesn't return them to the OS. A
+                            # gc.collect + GPU cache flush every N files gives
+                            # PyTorch a chance to trim its internal pools
+                            # without fighting the per-batch caching strategy.
+                            if total_indexed % 50 == 0:
+                                try:
+                                    gc.collect()
                                     embedding_client._clear_gpu_cache()
                                 except Exception:
-                                    logger.debug("reactive flush failed", exc_info=True)
-                            _mem_prev = _mem_now
-                        except Exception:
-                            logger.debug("memory probe failed", exc_info=True)
+                                    logger.debug("periodic gc/flush failed", exc_info=True)
 
-                    except Exception as e:
-                        files_failed += 1
-                        logger.error(f"Failed to process {file_path}: {e}")
-                        if not output_json:
-                            progress.console.print(
-                                f"[yellow]Warning: Failed to process {file_path.name}: {e}[/yellow]"
-                            )
-
-                            # Check if this is a GPU OOM error and provide helpful re-index command
-                            error_str = str(e).lower()
-                            gpu_oom_patterns = [
-                                "gpu produced invalid embeddings",
-                                "mps gpu memory exhausted",
-                                "oom corruption",
-                                "out of memory",
-                                "invalid buffer size",
-                            ]
-                            if any(pattern in error_str for pattern in gpu_oom_patterns):
-                                abs_path = file_path.absolute()
-                                reindex_cmd = (
-                                    f'arc corpus sync {corpus} "{abs_path}" --force --no-gpu'
+                            # Per-file memory probe — opt-in via verbose. Also always
+                            # warn on suspicious single-file growth so leaks on
+                            # unattended runs surface before jetsam kicks in.
+                            # On Apple Silicon, MPS driver allocations are wired
+                            # memory not reflected in RSS — we must watch Δdrv
+                            # separately or the leak is invisible until SIGKILL.
+                            try:
+                                _mem_now = _mem_snapshot(embedding_client)
+                                _rss_delta = _mem_now.rss_bytes - _mem_prev.rss_bytes
+                                _drv_delta = (
+                                    _mem_now.mps_driver_bytes - _mem_prev.mps_driver_bytes
+                                    if _mem_now.mps_driver_bytes is not None
+                                    and _mem_prev.mps_driver_bytes is not None
+                                    else 0
                                 )
+                                if verbose and not output_json:
+                                    progress.console.print(
+                                        f"[dim]    mem: {_fmt_snap(_mem_now)} "
+                                        f"({_fmt_snap_delta(_mem_now, _mem_prev)})[/dim]"
+                                    )
+                                # Skip warn on first file: model load + PyTorch/MPS
+                                # context init always spikes memory, not a leak signal.
+                                if total_indexed > 1 and not output_json:
+                                    if _rss_delta > 500 * 1024 * 1024:
+                                        progress.console.print(
+                                            f"[yellow]    mem-warn: RSS grew by "
+                                            f"{_rss_delta / (1024**2):.0f}MB on this file "
+                                            f"(now {_mem_now.rss_bytes / (1024**3):.2f}GB). "
+                                            f"Possible leak — kill -USR1 {os.getpid()} for "
+                                            f"detailed dump.[/yellow]"
+                                        )
+                                    # Δdrv warn disabled now that
+                                    # PYTORCH_MPS_HIGH_WATERMARK_RATIO bounds the
+                                    # MPS allocator — single-file Δdrv spikes are
+                                    # normal allocator cycles (allocate, peak,
+                                    # release), not leaks. Re-enable if the
+                                    # watermark stops doing its job:
+                                    # if _drv_delta > 100 * 1024 * 1024:
+                                    #     progress.console.print(
+                                    #         f"[yellow]    mem-warn: MPS driver grew by "
+                                    #         f"{_drv_delta / (1024**2):.0f}MB on this file "
+                                    #         f"(now {_mem_now.mps_driver_bytes / (1024**3):.2f}GB). "
+                                    #         f"Unified memory leak — kill -USR1 {os.getpid()} for "
+                                    #         f"detailed dump.[/yellow]"
+                                    #     )
+                                # Reactive cache flush: any time the driver grew
+                                # by >500MB on a single file, force an immediate
+                                # gc + empty_cache rather than waiting for the
+                                # every-50-files periodic flush. The flush won't
+                                # shrink the high-water mark but it lets Metal
+                                # reorganize cached pages before the next file's
+                                # encode demands a new buffer.
+                                if _drv_delta > 500 * 1024 * 1024:
+                                    try:
+                                        gc.collect()
+                                        embedding_client._clear_gpu_cache()
+                                    except Exception:
+                                        logger.debug("reactive flush failed", exc_info=True)
+                                _mem_prev = _mem_now
+                            except Exception:
+                                logger.debug("memory probe failed", exc_info=True)
+
+                        except Exception as e:
+                            files_failed += 1
+                            logger.error(f"Failed to process {file_path}: {e}")
+                            if not output_json:
                                 progress.console.print(
-                                    f"[dim]  To re-index with CPU: {reindex_cmd}[/dim]"
+                                    f"[yellow]Warning: Failed to process {file_path.name}: {e}[/yellow]"
                                 )
 
-                    progress.advance(task)
-                    _set_phase("idle")
+                                # Check if this is a GPU OOM error and provide helpful re-index command
+                                error_str = str(e).lower()
+                                gpu_oom_patterns = [
+                                    "gpu produced invalid embeddings",
+                                    "mps gpu memory exhausted",
+                                    "oom corruption",
+                                    "out of memory",
+                                    "invalid buffer size",
+                                ]
+                                if any(pattern in error_str for pattern in gpu_oom_patterns):
+                                    abs_path = file_path.absolute()
+                                    reindex_cmd = (
+                                        f'arc corpus sync {corpus} "{abs_path}" --force --no-gpu'
+                                    )
+                                    progress.console.print(
+                                        f"[dim]  To re-index with CPU: {reindex_cmd}[/dim]"
+                                    )
 
-        _stop_mem_probe()
+                        progress.advance(task)
+                        _set_phase("idle")
+
+            finally:
+                _stop_mem_probe()
 
         # Print repair summary if in repair mode
         if repair and repair_results and not output_json:

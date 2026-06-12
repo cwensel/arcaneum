@@ -18,7 +18,7 @@ from arcaneum.utils.formatting import format_size
 _TASK_UID_UNSET = object()
 
 
-def _exit_on_error(output_json: bool, code: int = 1):
+def _exit_on_error(code: int = 1):
     raise SystemExit(code)
 
 
@@ -155,8 +155,7 @@ def check_meilisearch_health():
 def start_command(output_json=False):
     """Start container services"""
     if not check_docker_available(output_json):
-        _exit_on_error(output_json)
-        return
+        _exit_on_error()
 
     # Get container environment (auto-generates MeiliSearch key if needed)
     container_env = get_container_env()
@@ -170,8 +169,7 @@ def start_command(output_json=False):
     )
 
     if result is None:
-        _exit_on_error(output_json)
-        return
+        _exit_on_error()
 
     # Wait for services to start
     time.sleep(3)
@@ -224,8 +222,7 @@ def start_command(output_json=False):
 def stop_command(output_json=False):
     """Stop container services"""
     if not check_docker_available(output_json):
-        _exit_on_error(output_json)
-        return
+        _exit_on_error()
 
     print_info("Stopping container services...", output_json)
     result = run_compose_command(["down"], capture_output=output_json, output_json=output_json)
@@ -233,7 +230,7 @@ def stop_command(output_json=False):
     if result is not None:
         print_success("Container services stopped", json_output=output_json, data={"stopped": True})
     else:
-        _exit_on_error(output_json)
+        _exit_on_error()
 
 
 @container_group.command("restart")
@@ -241,15 +238,13 @@ def stop_command(output_json=False):
 def restart_command(output_json=False):
     """Restart container services"""
     if not check_docker_available(output_json):
-        _exit_on_error(output_json)
-        return
+        _exit_on_error()
 
     print_info("Restarting container services...", output_json)
     result = run_compose_command(["restart"], capture_output=output_json, output_json=output_json)
 
     if result is None:
-        _exit_on_error(output_json)
-        return
+        _exit_on_error()
 
     time.sleep(2)
 
@@ -278,16 +273,14 @@ def restart_command(output_json=False):
 def status_command(output_json=False):
     """Show container services status"""
     if not check_docker_available(output_json):
-        _exit_on_error(output_json)
-        return
+        _exit_on_error()
 
     print_info("Container Services Status:", output_json)
     if not output_json:
         print()
     ps_result = run_compose_command(["ps"], capture_output=output_json, output_json=output_json)
     if ps_result is None:
-        _exit_on_error(output_json)
-        return
+        _exit_on_error()
 
     qdrant_healthy = check_qdrant_health()
     meili_healthy = check_meilisearch_health()
@@ -407,8 +400,7 @@ def logs_command(follow, tail, output_json=False):
         raise SystemExit(2)
 
     if not check_docker_available(output_json):
-        _exit_on_error(output_json)
-        return
+        _exit_on_error()
 
     args = ["logs", f"--tail={tail}"]
     if follow:
@@ -416,8 +408,7 @@ def logs_command(follow, tail, output_json=False):
 
     result = run_compose_command(args, capture_output=output_json, output_json=output_json)
     if result is None:
-        _exit_on_error(output_json)
-        return
+        _exit_on_error()
 
     if output_json and result is not None:
         print_json(
@@ -850,8 +841,7 @@ def backup_command(
 ):
     """Back up Qdrant snapshots and MeiliSearch indexes."""
     if not check_docker_available(output_json):
-        _exit_on_error(output_json)
-        return
+        _exit_on_error()
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup_path = Path(output).expanduser() if output else get_data_dir() / "backups" / timestamp
@@ -938,8 +928,7 @@ def restore_command(
 ):
     """Restore Qdrant snapshots and MeiliSearch indexes from a backup."""
     if not check_docker_available(output_json):
-        _exit_on_error(output_json)
-        return
+        _exit_on_error()
 
     backup_path = Path(backup_directory).expanduser()
     manifest_path = backup_path / "manifest.json"
@@ -978,19 +967,16 @@ def reset_command(confirm, output_json=False):
     """Reset all container data (WARNING: deletes all collections)"""
     if not confirm:
         print_error("Use --confirm to delete ALL data including collections", output_json)
-        _exit_on_error(output_json, code=2)
-        return
+        _exit_on_error(code=2)
 
     if not check_docker_available(output_json):
-        _exit_on_error(output_json)
-        return
+        _exit_on_error()
 
     # Stop services first
     print_warning("Stopping services...", output_json)
     result = run_compose_command(["down"], capture_output=output_json, output_json=output_json)
     if result is None:
-        _exit_on_error(output_json)
-        return
+        _exit_on_error()
 
     # Delete data directories
     data_dir = get_data_dir()
@@ -1028,7 +1014,7 @@ def reset_command(confirm, output_json=False):
 
     except Exception as e:
         print_error(f"Failed to reset data: {e}", output_json)
-        _exit_on_error(output_json)
+        _exit_on_error()
 
 
 def get_dir_size(path: Path) -> int:

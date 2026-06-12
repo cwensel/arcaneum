@@ -4,6 +4,7 @@ This module implements the 'corpus create' command that creates both a Qdrant
 collection and a MeiliSearch index in a single operation.
 """
 
+import logging
 import sys
 from datetime import datetime, timezone
 from typing import Any
@@ -31,6 +32,7 @@ from ..indexing.collection_metadata import (
 )
 
 console = Console()
+logger = logging.getLogger(__name__)
 
 
 def default_models_for_type(corpus_type: str) -> str:
@@ -102,7 +104,7 @@ def _format_last_sync_for_table(last_sync, last_sync_status: str) -> str:
     timestamp = parsed.replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
     if parsed.tzinfo is None:
         return timestamp
-    if parsed.utcoffset() == timezone.utc.utcoffset(parsed):
+    if parsed.utcoffset() == timezone.utc.utcoffset(None):
         return f"{timestamp}Z"
     return f"{timestamp}{parsed.strftime('%z')}"
 
@@ -351,6 +353,35 @@ def _scroll_qdrant_list_item_count(client, collection_name: str, collection_type
     }
 
 
+def _facet_based_list_item_count(client, collection_name: str, collection_type: str):
+    """Count list items using bounded Qdrant facets only."""
+    item_key = "git_project_identifier" if collection_type == "code" else "file_path"
+    try:
+        item_count, item_status = _bounded_qdrant_facet_count(client, collection_name, item_key)
+        if collection_type == "code" and item_status != "unavailable":
+            file_count, file_status = _bounded_qdrant_facet_count(
+                client, collection_name, "file_path"
+            )
+            if file_status == "unavailable":
+                item_status = "unavailable"
+                item_count = None
+                file_count = None
+        else:
+            file_count = None
+    except Exception:
+        item_count = None
+        file_count = None
+        item_status = "unavailable"
+
+    return {
+        "item_count": item_count,
+        "item_unit": _item_unit_for_corpus_type(collection_type),
+        "file_count": file_count if collection_type == "code" else None,
+        "file_unit": "source files" if collection_type == "code" else None,
+        "item_count_status": item_status,
+    }
+
+
 def _get_qdrant_list_item_count(
     client, collection_name: str, collection_type: str, metadata: dict[str, Any] | None = None
 ):
@@ -376,38 +407,15 @@ def _get_qdrant_list_item_count(
             "item_count_status": metadata.get("count_source") or "metadata",
         }
 
-    item_key = "git_project_identifier" if collection_type == "code" else "file_path"
-    try:
-        item_count, item_status = _bounded_qdrant_facet_count(client, collection_name, item_key)
-        if collection_type == "code" and item_status != "unavailable":
-            file_count, file_status = _bounded_qdrant_facet_count(
-                client, collection_name, "file_path"
-            )
-            if file_status == "unavailable":
-                item_status = "unavailable"
-                item_count = None
-                file_count = None
-        else:
-            file_count = None
-    except Exception:
-        item_count = None
-        file_count = None
-        item_status = "unavailable"
+    item_counts = _facet_based_list_item_count(client, collection_name, collection_type)
 
-    if item_status == "unavailable":
+    if item_counts["item_count_status"] == "unavailable":
         try:
             return _scroll_qdrant_list_item_count(client, collection_name, collection_type)
         except Exception:
-            item_count = None
-            file_count = None
+            return item_counts
 
-    return {
-        "item_count": item_count,
-        "item_unit": _item_unit_for_corpus_type(collection_type),
-        "file_count": file_count if collection_type == "code" else None,
-        "file_unit": "source files" if collection_type == "code" else None,
-        "item_count_status": item_status,
-    }
+    return item_counts
 
 
 def _get_bounded_qdrant_list_item_count(
@@ -425,31 +433,7 @@ def _get_bounded_qdrant_list_item_count(
     if collection_type not in COUNTABLE_CORPUS_TYPES:
         return cached
 
-    item_key = "git_project_identifier" if collection_type == "code" else "file_path"
-    try:
-        item_count, item_status = _bounded_qdrant_facet_count(client, collection_name, item_key)
-        if collection_type == "code" and item_status != "unavailable":
-            file_count, file_status = _bounded_qdrant_facet_count(
-                client, collection_name, "file_path"
-            )
-            if file_status == "unavailable":
-                item_count = None
-                file_count = None
-                item_status = "unavailable"
-        else:
-            file_count = None
-    except Exception:
-        item_count = None
-        file_count = None
-        item_status = "unavailable"
-
-    return {
-        "item_count": item_count,
-        "item_unit": _item_unit_for_corpus_type(collection_type),
-        "file_count": file_count if collection_type == "code" else None,
-        "file_unit": "source files" if collection_type == "code" else None,
-        "item_count_status": item_status,
-    }
+    return _facet_based_list_item_count(client, collection_name, collection_type)
 
 
 def _cached_qdrant_list_item_count(collection_type: str, metadata: dict[str, Any] | None = None):
@@ -467,7 +451,7 @@ def _cached_qdrant_list_item_count(collection_type: str, metadata: dict[str, Any
     item_count = _metadata_int(metadata, "item_count")
     file_count = _metadata_int(metadata, "file_count") if collection_type == "code" else None
     count_status = (
-        metadata.get("count_source") or "metadata"
+        (metadata.get("count_source") or "metadata")
         if item_count is not None or file_count is not None
         else "not_requested"
     )
@@ -501,7 +485,7 @@ def _persist_list_item_count_metadata(
     try:
         update_collection_metadata(client, collection_name, **updates)
     except Exception:
-        pass
+        logger.debug("failed to persist list item count metadata", exc_info=True)
 
 
 def _format_list_item_count(corpus):
@@ -1343,35 +1327,35 @@ def corpus_info_command(name: str, output_json: bool):
 
             # Qdrant section
             if qdrant_info:
-                console.print(f"\n[bold]Qdrant Collection:[/bold]")
+                console.print("\n[bold]Qdrant Collection:[/bold]")
                 console.print(f"  {item_label.capitalize()}: {qdrant_info['item_count']:,}")
                 console.print(f"  Chunks: {qdrant_info['chunk_count']:,}")
                 console.print(f"  Status: {qdrant_info['status']}")
                 if qdrant_info["vectors"]:
-                    console.print(f"  Models:")
+                    console.print("  Models:")
                     for model_name, vec_info in qdrant_info["vectors"].items():
                         console.print(
                             f"    - {model_name}: {vec_info['size']}D ({vec_info['distance']})"
                         )
             else:
-                console.print(f"\n[yellow]Qdrant Collection: not found[/yellow]")
+                console.print("\n[yellow]Qdrant Collection: not found[/yellow]")
 
             # MeiliSearch section
             if meili_info:
-                console.print(f"\n[bold]MeiliSearch Index:[/bold]")
+                console.print("\n[bold]MeiliSearch Index:[/bold]")
                 console.print(f"  {item_label.capitalize()}: {meili_info['item_count']:,}")
                 console.print(f"  Chunks: {meili_info['chunk_count']:,}")
                 if meili_info["is_indexing"]:
-                    console.print(f"  Status: [yellow]indexing[/yellow]")
+                    console.print("  Status: [yellow]indexing[/yellow]")
             else:
-                console.print(f"\n[yellow]MeiliSearch Index: not found[/yellow]")
+                console.print("\n[yellow]MeiliSearch Index: not found[/yellow]")
 
             # Errors/warnings
             if errors:
                 console.print(f"\n[dim]Warnings: {', '.join(errors)}[/dim]")
 
             # Usage hint
-            console.print(f"\n[dim]Search with:[/dim]")
+            console.print("\n[dim]Search with:[/dim]")
             console.print(f'[dim]  arc search semantic "query" --corpus {name}[/dim]')
             console.print(f'[dim]  arc search text "query" --corpus {name}[/dim]')
 
@@ -1924,19 +1908,19 @@ def corpus_verify_command(
 
             # Overall status
             if overall_healthy:
-                console.print(f"[green]Overall Status: Healthy[/green]")
+                console.print("[green]Overall Status: Healthy[/green]")
             else:
-                console.print(f"[yellow]Overall Status: Issues detected[/yellow]")
+                console.print("[yellow]Overall Status: Issues detected[/yellow]")
 
             # Qdrant section
-            console.print(f"\n[bold]Qdrant Collection:[/bold]")
+            console.print("\n[bold]Qdrant Collection:[/bold]")
             if qdrant_result:
                 if qdrant_result.errors:
                     console.print("  [yellow]Verification errors:[/yellow]")
                     for error in qdrant_result.errors:
                         console.print(f"    [yellow]- {error}[/yellow]")
                 if qdrant_result.is_healthy:
-                    console.print(f"  [green]Status: Healthy[/green]")
+                    console.print("  [green]Status: Healthy[/green]")
                     console.print(
                         f"  Items: {qdrant_result.total_items} ({qdrant_result.complete_items} complete)"
                     )
@@ -1971,40 +1955,40 @@ def corpus_verify_command(
                                 f"  [dim]... and {qdrant_result.incomplete_items - 5} more[/dim]"
                             )
             else:
-                console.print(f"  [yellow]Not found or not accessible[/yellow]")
+                console.print("  [yellow]Not found or not accessible[/yellow]")
 
             # MeiliSearch section
-            console.print(f"\n[bold]MeiliSearch Index:[/bold]")
+            console.print("\n[bold]MeiliSearch Index:[/bold]")
             if meili_result:
                 if meili_result["is_healthy"]:
-                    console.print(f"  [green]Status: Healthy[/green]")
+                    console.print("  [green]Status: Healthy[/green]")
                 else:
-                    console.print(f"  [yellow]Status: Issues detected[/yellow]")
+                    console.print("  [yellow]Status: Issues detected[/yellow]")
                     for issue in meili_result["issues"]:
                         console.print(f"    [red]• {issue}[/red]")
 
                 console.print(f"  Documents: {meili_result['document_count']:,}")
                 if meili_result["is_indexing"]:
-                    console.print(f"  [yellow]Currently indexing...[/yellow]")
+                    console.print("  [yellow]Currently indexing...[/yellow]")
                 if meili_result["sample_accessible"]:
-                    console.print(f"  [green]Sample retrieval: OK[/green]")
+                    console.print("  [green]Sample retrieval: OK[/green]")
 
                 if meili_result["warnings"]:
-                    console.print(f"  Warnings:")
+                    console.print("  Warnings:")
                     for warning in meili_result["warnings"]:
                         console.print(f"    [dim]• {warning}[/dim]")
             else:
-                console.print(f"  [yellow]Not found or not accessible[/yellow]")
+                console.print("  [yellow]Not found or not accessible[/yellow]")
 
             # Errors
             if errors:
-                console.print(f"\n[red]Errors:[/red]")
+                console.print("\n[red]Errors:[/red]")
                 for error in errors:
                     console.print(f"  [red]• {error}[/red]")
 
             # Summary
             if overall_healthy and not errors:
-                console.print(f"\n[green]All checks passed[/green]")
+                console.print("\n[green]All checks passed[/green]")
 
         # Log successful operation (RDR-018)
         interaction_logger.finish(

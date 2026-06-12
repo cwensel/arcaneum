@@ -1,9 +1,11 @@
 """Configuration management for Arcaneum (RDR-003)."""
 
-from pydantic import BaseModel, Field
 from pathlib import Path
 from typing import Dict, List, Literal, Optional
+
 import yaml
+from pydantic import BaseModel, Field
+
 from arcaneum.embeddings.client import EMBEDDING_MODELS
 
 
@@ -108,9 +110,9 @@ def _build_default_models() -> Dict[str, ModelConfig]:
         backend = config.get("backend", "fastembed")
         dimensions = config.get("dimensions", 768)
 
-        # late_chunking is wired in config but not implemented in the encode
-        # path — historical placeholder. We previously sized chunks larger to
-        # exploit it, paid the attention-memory cost, and got no benefit.
+        # late_chunking is consumed by the PDF chunker. It is not implemented
+        # in the code/markdown embedding path, so code chunk sizing below is
+        # based on AST cleanliness and attention memory instead of late pooling.
         supports_late_chunking = backend == "sentence-transformers"
 
         # Determine chunk size based on backend and model characteristics.
@@ -135,7 +137,9 @@ def _build_default_models() -> Dict[str, ModelConfig]:
             # FastEmbed models: limited by token budget, use conservative sizing
             chunk_size = 460  # Safe margin from 512 token limit
 
-        # Calculate overlap (15% of chunk_size, rounded to nearest multiple of 23 for consistency)
+        # Calculate overlap at ~15% of chunk_size. Round down to a multiple of
+        # 23 to preserve the historical default for 1536-token chunks while
+        # keeping smaller AST-aligned chunks proportionally overlapped.
         chunk_overlap = max(int(chunk_size * 0.15 / 23) * 23, 1)
 
         char_to_token_ratio = 3.3

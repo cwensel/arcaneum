@@ -2,19 +2,17 @@
 
 import pytest
 import yaml
-from pathlib import Path
 from pydantic import ValidationError
 
 from arcaneum.config import (
     ArcaneumConfig,
+    CacheConfig,
     ModelConfig,
     QdrantConfig,
-    CacheConfig,
-    CollectionTemplate,
+    _build_default_models,
     load_config,
     save_config,
 )
-
 
 MINIMAL_MODEL = {
     "name": "test/model",
@@ -69,6 +67,21 @@ class TestModelConfig:
                 chunk_overlap=64,
                 distance="invalid",
             )
+
+    def test_default_models_encode_chunking_policy(self):
+        defaults = _build_default_models()
+
+        assert defaults["jina-code-st"].chunk_size == 512
+        assert defaults["jina-code-st"].chunk_overlap == 69
+        assert defaults["jina-code-st"].late_chunking is True
+
+        assert defaults["stella"].chunk_size == 768
+        assert defaults["stella"].chunk_overlap == 115
+        assert defaults["stella"].late_chunking is True
+
+        assert defaults["arctic-m"].chunk_size == 460
+        assert defaults["arctic-m"].chunk_overlap == 69
+        assert defaults["arctic-m"].late_chunking is False
 
 
 # --- QdrantConfig ---

@@ -45,7 +45,7 @@ arcaneum.yaml
 /.worktrees/
 _*
 !__init__.py
-.beads
+.kata/
 .roborev.toml
 .kata.toml
 .kata.local.toml

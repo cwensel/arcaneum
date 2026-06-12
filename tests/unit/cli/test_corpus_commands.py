@@ -22,6 +22,7 @@ def _mock_corpus_list_clients(
     collection_info_by_name,
     meili_chunks=None,
     qdrant_payloads_by_name=None,
+    qdrant_scroll_pages_by_name=None,
     qdrant_scroll_calls=None,
     qdrant_facets_by_name=None,
     qdrant_facet_calls=None,
@@ -32,6 +33,7 @@ def _mock_corpus_list_clients(
 
     meili_chunks = meili_chunks or {}
     qdrant_payloads_by_name = qdrant_payloads_by_name or {}
+    qdrant_scroll_pages_by_name = qdrant_scroll_pages_by_name or {}
     qdrant_facets_by_name = qdrant_facets_by_name or {}
 
     class Qdrant:
@@ -48,6 +50,10 @@ def _mock_corpus_list_clients(
                 qdrant_scroll_calls[collection_name] = (
                     qdrant_scroll_calls.get(collection_name, 0) + 1
                 )
+            if collection_name in qdrant_scroll_pages_by_name:
+                page_index = qdrant_scroll_calls[collection_name] - 1
+                payloads, next_offset = qdrant_scroll_pages_by_name[collection_name][page_index]
+                return [SimpleNamespace(payload=payload) for payload in payloads], next_offset
             payloads = qdrant_payloads_by_name.get(collection_name, [])
             return [SimpleNamespace(payload=payload) for payload in payloads], None
 
@@ -199,9 +205,9 @@ class TestCorpusCollectionMetadata:
         from arcaneum.indexing.collection_metadata import CollectionType
 
         values = set(CollectionType.values())
-        assert {"pdf", "code", "markdown"}.issubset(values), (
-            f"CollectionType missing required values: {values}"
-        )
+        assert {"pdf", "code", "markdown"}.issubset(
+            values
+        ), f"CollectionType missing required values: {values}"
 
 
 class TestCorpusDefaultModels:
@@ -524,6 +530,8 @@ class TestCorpusListModelInfo:
         assert facet_calls == [("LLM", "file_path")]
         assert metadata_updates[0][0] == "LLM"
         assert metadata_updates[0][1]["item_count"] == 2
+        assert metadata_updates[0][1]["item_unit"] == "documents"
+        assert metadata_updates[0][1]["count_source"] == "facet"
 
     def test_json_marks_chunk_mismatches(self, monkeypatch, capsys):
         from arcaneum.cli.corpus import list_corpora_command
@@ -761,6 +769,45 @@ class TestCorpusListModelInfo:
         assert metadata_updates[0][0] == "docs"
         assert metadata_updates[0][1]["item_count"] == 2
         assert metadata_updates[0][1]["count_source"] == "scroll"
+
+    def test_json_details_scroll_count_paginates_and_deduplicates(self, monkeypatch, capsys):
+        from arcaneum.cli.corpus import list_corpora_command
+
+        scroll_calls = {}
+        _mock_corpus_list_clients(
+            monkeypatch,
+            metadata_by_name={
+                "docs": {"collection_type": "pdf", "model": "arctic-m"},
+            },
+            collection_info_by_name={"docs": _collection_info(points_count=11_000)},
+            qdrant_facets_by_name={
+                "docs": {
+                    "file_path": [(f"/docs/{i}.pdf", 1) for i in range(10_000)],
+                },
+            },
+            qdrant_scroll_pages_by_name={
+                "docs": [
+                    ([{"file_path": "/docs/a.pdf"}, {"file_path": "/docs/b.pdf"}], "next"),
+                    ([{"file_path": "/docs/b.pdf"}, {"file_path": "/docs/c.pdf"}], None),
+                ],
+            },
+            qdrant_scroll_calls=scroll_calls,
+        )
+
+        list_corpora_command(details=True, output_json=True)
+
+        corpus = json.loads(capsys.readouterr().out)["data"]["corpora"][0]
+        assert corpus["item_count"] == 3
+        assert corpus["item_count_status"] == "scroll"
+        assert scroll_calls == {"docs": 2}
+
+    def test_cached_qdrant_count_ignores_stale_source_without_counts(self):
+        from arcaneum.cli.corpus import _cached_qdrant_list_item_count
+
+        counts = _cached_qdrant_list_item_count("pdf", {"count_source": "sync"})
+
+        assert counts["item_count"] is None
+        assert counts["item_count_status"] == "not_requested"
 
     def test_qdrant_item_count_uses_repositories_for_code(self):
         from arcaneum.cli.corpus import _get_qdrant_item_count

@@ -237,6 +237,64 @@ class TestHandleRenamesQdrant:
         assert payload["file_paths"] == ["/new/doc.pdf"]
         assert payload["file_quick_hashes"] == {"/new/doc.pdf": "newquick"}
 
+    def test_handle_renames_continues_when_existing_payload_is_missing(self):
+        """Base rename payload is still applied when optional multi-path fields are absent."""
+        qdrant = Mock()
+        point = Mock()
+        point.payload = {"quick_hash": "oldquick"}
+        qdrant.scroll.return_value = ([point], None)
+
+        sync = MetadataBasedSync(qdrant)
+        renamed = sync.handle_renames(
+            "test-corpus",
+            [("/old/doc.pdf", "/new/doc.pdf", {"filename": "doc.pdf"})],
+        )
+
+        assert renamed == 1
+        payload = qdrant.set_payload.call_args.kwargs["payload"]
+        assert payload["file_path"] == "/new/doc.pdf"
+        assert payload["filename"] == "doc.pdf"
+        assert "file_paths" not in payload
+        assert "file_quick_hashes" not in payload
+
+    def test_handle_renames_continues_when_existing_point_is_not_found(self):
+        """Missing lookup data should not block the simple file_path rename update."""
+        qdrant = Mock()
+        qdrant.scroll.return_value = ([], None)
+
+        sync = MetadataBasedSync(qdrant)
+        renamed = sync.handle_renames(
+            "test-corpus",
+            [("/old/doc.pdf", "/new/doc.pdf", {"filename": "doc.pdf"})],
+        )
+
+        assert renamed == 1
+        payload = qdrant.set_payload.call_args.kwargs["payload"]
+        assert payload == {"file_path": "/new/doc.pdf", "filename": "doc.pdf"}
+
+    def test_handle_renames_falls_back_to_point_quick_hash_for_missing_old_key(self):
+        qdrant = Mock()
+        point = Mock()
+        point.payload = {
+            "file_paths": ["/old/doc.pdf"],
+            "file_quick_hashes": {"/other/doc.pdf": "otherquick"},
+            "quick_hash": "pointquick",
+        }
+        qdrant.scroll.return_value = ([point], None)
+
+        sync = MetadataBasedSync(qdrant)
+        renamed = sync.handle_renames(
+            "test-corpus",
+            [("/old/doc.pdf", "/new/doc.pdf", {"filename": "doc.pdf"})],
+        )
+
+        assert renamed == 1
+        payload = qdrant.set_payload.call_args.kwargs["payload"]
+        assert payload["file_quick_hashes"] == {
+            "/other/doc.pdf": "otherquick",
+            "/new/doc.pdf": "pointquick",
+        }
+
 
 class TestRenameTuplesWithMetadata:
     """Tests for building Qdrant rename metadata."""
@@ -253,6 +311,17 @@ class TestRenameTuplesWithMetadata:
                 "/old/doc.pdf",
                 str(new_file.absolute()),
                 {"filename": "new.pdf", "quick_hash": "quick123"},
+            )
+        ]
+
+    def test_rename_tuples_omit_quick_hash_when_new_path_is_missing(self):
+        tuples = _rename_tuples_with_metadata([("/old/doc.pdf", "/missing/doc.pdf")])
+
+        assert tuples == [
+            (
+                "/old/doc.pdf",
+                "/missing/doc.pdf",
+                {"filename": "doc.pdf"},
             )
         ]
 

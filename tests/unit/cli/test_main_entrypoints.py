@@ -7,9 +7,9 @@ tests on the underlying *_command helpers bypass this layer and miss such
 regressions.
 """
 
+import json
 from unittest.mock import MagicMock, patch
 
-import json
 import click
 import pytest
 from click.testing import CliRunner
@@ -194,6 +194,21 @@ def test_main_json_formats_corpus_sync_git_flag_conflict(capsys):
     assert exit_code == 2
     assert payload["status"] == "error"
     assert "--git-update and --git-version" in payload["message"]
+
+
+def test_corpus_sync_rejects_invalid_mem_probe_interval_env(monkeypatch):
+    """Env fallback should use Click-style validation instead of raw ValueError."""
+    runner = CliRunner()
+    monkeypatch.setenv("ARC_MEM_PROBE_INTERVAL", "abc")
+
+    result = runner.invoke(
+        cli,
+        ["corpus", "sync", "Docs", "README.md"],
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code != 0
+    assert "ARC_MEM_PROBE_INTERVAL='abc' is not a valid number" in result.output
 
 
 def test_corpus_create_models_default_is_inferred():

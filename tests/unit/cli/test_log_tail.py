@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 from click.testing import CliRunner
 
-from arcaneum.cli.logs import CurrentLogTailer, current_interaction_log_path
+from arcaneum.cli.logs import CurrentLogTailer, current_interaction_log_path, tail_current_log
 from arcaneum.cli.main import cli
 
 
@@ -111,3 +111,12 @@ def test_log_tail_entrypoint_dispatches():
 
     assert result.exit_code == 0, result.output
     assert called == {"lines": 5, "poll_interval": 1.0}
+
+
+def test_tail_current_log_exits_cleanly_on_keyboard_interrupt(monkeypatch, tmp_path):
+    def raise_keyboard_interrupt(_interval):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("arcaneum.cli.logs.time.sleep", raise_keyboard_interrupt)
+
+    tail_current_log(log_dir=tmp_path, poll_interval=0.1)

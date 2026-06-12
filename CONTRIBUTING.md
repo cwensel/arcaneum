@@ -77,7 +77,7 @@ kata assign arcaneum-123 YourName
 kata close arcaneum-123 --reason done
 ```
 
-See **[AGENTS.md](AGENTS.md)** for agent guidelines.
+See your local kata workflow documentation for project-specific issue tracking.
 
 ### Using Recommendation Data Records (RDRs)
 
@@ -375,7 +375,7 @@ Or use GitHub issues if you prefer (maintainers will create issue records).
 ## Questions?
 
 - **Setup issues?** Run `arc doctor` for diagnostics
-- **Kata questions?** See [AGENTS.md](AGENTS.md)
+- **Kata questions?** See your local kata workflow documentation
 - **RDR questions?** See [docs/rdr/README.md](docs/rdr/README.md)
 - **Documentation questions?** See [docs/CONTRIBUTING-DOCS.md](docs/CONTRIBUTING-DOCS.md)
 - **Still stuck?** Open a GitHub issue or discussion

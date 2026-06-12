@@ -40,6 +40,7 @@ def _interaction_log_paths_through(log_dir: Path, active_path: Path) -> list[Pat
         return []
 
     prefix, suffix = InteractionLogger.LOG_FILENAME_TEMPLATE.split("{date}")
+    # ISO date filenames sort chronologically with normal string ordering.
     paths = [
         path
         for path in log_dir.glob(f"{prefix}*{suffix}")
@@ -110,7 +111,7 @@ class CurrentLogTailer:
             else:
                 with self._active_path.open("rb") as f:
                     data = f.read()
-                    self._offset = f.tell()
+                self._offset = self._active_path.stat().st_size
             self._started = True
             return data.decode("utf-8", errors="replace")
 
@@ -136,9 +137,12 @@ def tail_current_log(
     stream = stream or sys.stdout
     tailer = CurrentLogTailer(log_dir=log_dir, lines=lines)
 
-    while True:
-        output = tailer.poll()
-        if output:
-            stream.write(output)
-            stream.flush()
-        time.sleep(poll_interval)
+    try:
+        while True:
+            output = tailer.poll()
+            if output:
+                stream.write(output)
+                stream.flush()
+            time.sleep(poll_interval)
+    except KeyboardInterrupt:
+        return

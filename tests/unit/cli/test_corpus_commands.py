@@ -205,9 +205,9 @@ class TestCorpusCollectionMetadata:
         from arcaneum.indexing.collection_metadata import CollectionType
 
         values = set(CollectionType.values())
-        assert {"pdf", "code", "markdown"}.issubset(
-            values
-        ), f"CollectionType missing required values: {values}"
+        assert {"pdf", "code", "markdown"}.issubset(values), (
+            f"CollectionType missing required values: {values}"
+        )
 
 
 class TestCorpusDefaultModels:

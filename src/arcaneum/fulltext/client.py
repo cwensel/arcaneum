@@ -1,7 +1,16 @@
 """MeiliSearch client wrapper for Arcaneum (RDR-008)."""
 
+import logging
+import time
+from typing import Any, Dict, List, Optional
+
 import meilisearch
-from typing import Dict, List, Optional, Any
+
+logger = logging.getLogger(__name__)
+
+
+MEILI_TASK_WAIT_ATTEMPTS = 3
+MEILI_TASK_WAIT_RETRY_DELAY_SEC = 2
 
 
 class FullTextClient:
@@ -17,6 +26,37 @@ class FullTextClient:
         """
         self.url = url
         self.client = meilisearch.Client(url, api_key)
+
+    def _wait_for_task_with_retries(
+        self,
+        task_uid: int,
+        timeout_ms: int,
+        attempts: int = MEILI_TASK_WAIT_ATTEMPTS,
+        retry_delay_sec: int = MEILI_TASK_WAIT_RETRY_DELAY_SEC,
+    ) -> Any:
+        """Wait for a MeiliSearch task, retrying polling without re-enqueueing work."""
+        retryable_errors = (
+            meilisearch.errors.MeilisearchTimeoutError,
+            meilisearch.errors.MeilisearchCommunicationError,
+            TimeoutError,
+            ConnectionError,
+        )
+
+        for attempt in range(1, attempts + 1):
+            try:
+                return self.client.wait_for_task(task_uid, timeout_in_ms=timeout_ms)
+            except retryable_errors:
+                if attempt >= attempts:
+                    raise
+                logger.warning(
+                    "Timed out waiting for MeiliSearch task %s; retrying wait (%s/%s)",
+                    task_uid,
+                    attempt + 1,
+                    attempts,
+                )
+                time.sleep(retry_delay_sec)
+
+        raise RuntimeError(f"Failed waiting for MeiliSearch task {task_uid}")
 
     def create_index(
         self, name: str, primary_key: str = "id", settings: Optional[Dict[str, Any]] = None
@@ -188,7 +228,7 @@ class FullTextClient:
         """
         index = self.get_index(index_name)
         task = index.add_documents(documents, primary_key)
-        result = self.client.wait_for_task(task.task_uid, timeout_in_ms=timeout_ms)
+        result = self._wait_for_task_with_retries(task.task_uid, timeout_ms)
 
         # Check if task failed
         status = getattr(result, "status", None) or (
@@ -245,7 +285,7 @@ class FullTextClient:
         # Wait for all tasks to complete
         failed_tasks = []
         for task_uid in task_uids:
-            result = self.client.wait_for_task(task_uid, timeout_in_ms=timeout_ms)
+            result = self._wait_for_task_with_retries(task_uid, timeout_ms)
             status = getattr(result, "status", None) or (
                 result.get("status") if isinstance(result, dict) else None
             )

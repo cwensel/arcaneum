@@ -8,13 +8,21 @@ import functools
 import os
 import shutil
 import subprocess
+from types import SimpleNamespace
+from unittest.mock import Mock
 
+import meilisearch
 import pytest
+
 from arcaneum.fulltext.client import FullTextClient
 from arcaneum.fulltext.indexes import SOURCE_CODE_SETTINGS
 
-
 MEILISEARCH_URL = os.environ.get("MEILISEARCH_URL", "http://localhost:7700")
+
+
+@pytest.fixture
+def no_retry_sleep(monkeypatch):
+    monkeypatch.setattr("arcaneum.fulltext.client.time.sleep", lambda _seconds: None)
 
 
 @functools.lru_cache(maxsize=1)
@@ -221,6 +229,55 @@ class TestDocumentOperations:
         # Verify documents were added
         stats = client.get_index_stats(index_name)
         assert stats["numberOfDocuments"] == 2
+
+
+class TestDocumentWaitRetries:
+    """Unit tests for MeiliSearch task wait retry behavior."""
+
+    def test_add_documents_sync_retries_task_wait_without_reenqueueing(self, no_retry_sleep):
+        client = FullTextClient.__new__(FullTextClient)
+        client.client = Mock()
+        index = Mock()
+        index.add_documents.return_value = SimpleNamespace(task_uid=42)
+        client.get_index = Mock(return_value=index)
+        client.client.wait_for_task.side_effect = [
+            meilisearch.errors.MeilisearchTimeoutError("timed out"),
+            {"status": "succeeded"},
+        ]
+
+        result = client.add_documents_sync("idx", [{"id": 1}], timeout_ms=60000)
+
+        assert result == {"status": "succeeded"}
+        index.add_documents.assert_called_once_with([{"id": 1}], None)
+        assert client.client.wait_for_task.call_count == 2
+        client.client.wait_for_task.assert_called_with(42, timeout_in_ms=60000)
+
+    def test_add_documents_batch_parallel_retries_each_task_wait(self, no_retry_sleep):
+        client = FullTextClient.__new__(FullTextClient)
+        client.client = Mock()
+        index = Mock()
+        index.add_documents.side_effect = [
+            SimpleNamespace(task_uid=10),
+            SimpleNamespace(task_uid=11),
+        ]
+        client.get_index = Mock(return_value=index)
+        client.client.wait_for_task.side_effect = [
+            meilisearch.errors.MeilisearchTimeoutError("timed out"),
+            {"status": "succeeded"},
+            {"status": "succeeded"},
+        ]
+
+        result = client.add_documents_batch_parallel(
+            "idx",
+            [[{"id": 1}], [{"id": 2}]],
+            timeout_ms=120000,
+        )
+
+        assert result == {"total_documents": 2, "task_count": 2}
+        assert index.add_documents.call_count == 2
+        assert client.client.wait_for_task.call_args_list[0].args == (10,)
+        assert client.client.wait_for_task.call_args_list[1].args == (10,)
+        assert client.client.wait_for_task.call_args_list[2].args == (11,)
 
 
 class TestSearchOperations:

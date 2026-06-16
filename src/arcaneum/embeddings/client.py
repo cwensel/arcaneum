@@ -2264,7 +2264,7 @@ class EmbeddingClient:
             # Check for exact match first (models--org--model format)
             safe_model_name = model_path.replace("/", "--")
             model_dir = os.path.join(self.cache_dir, f"models--{safe_model_name}")
-            if os.path.exists(model_dir) and os.path.isdir(model_dir):
+            if self._fastembed_model_cache_complete(model_dir, model_path):
                 return True
 
             # Check for FastEmbed wrapped versions (models--qdrant--model-onnx format)
@@ -2287,6 +2287,45 @@ class EmbeddingClient:
                             sum(1 for part in model_parts if len(part) > 2 and part in item_lower)
                             >= len([p for p in model_parts if len(p) > 2]) * 0.6
                         ):
-                            return True
+                            if self._fastembed_model_cache_complete(item_path, model_path):
+                                return True
 
             return False
+
+    def _fastembed_model_cache_complete(self, model_dir: str, model_path: str) -> bool:
+        """Return True when a FastEmbed cache has its backend model artifact."""
+        if not (os.path.exists(model_dir) and os.path.isdir(model_dir)):
+            return False
+
+        required_file = self._fastembed_required_model_file(model_path)
+        if required_file is None:
+            return True
+
+        if os.path.isfile(os.path.join(model_dir, required_file)):
+            return True
+
+        snapshots_dir = os.path.join(model_dir, "snapshots")
+        if not os.path.isdir(snapshots_dir):
+            return False
+
+        for revision in os.listdir(snapshots_dir):
+            candidate = os.path.join(snapshots_dir, revision, required_file)
+            if os.path.isfile(candidate):
+                return True
+
+        return False
+
+    @staticmethod
+    def _fastembed_required_model_file(model_path: str) -> Optional[str]:
+        """Look up the model file FastEmbed needs for a supported model."""
+        try:
+            supported_models = TextEmbedding.list_supported_models()
+        except Exception:
+            logger.debug("Could not inspect FastEmbed supported models", exc_info=True)
+            return None
+
+        for model in supported_models:
+            if model.get("model") == model_path:
+                return model.get("model_file")
+
+        return None

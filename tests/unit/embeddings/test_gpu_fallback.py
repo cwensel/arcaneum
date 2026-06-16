@@ -180,6 +180,39 @@ class TestFastEmbedCoreMLPolicy:
         assert mock_text_embedding.call_args.kwargs["providers"] == ["CPUExecutionProvider"]
 
 
+class TestFastEmbedCacheCompleteness:
+    """FastEmbed cache detection validates backend-specific ONNX artifacts."""
+
+    def test_fastembed_cache_missing_model_file_is_not_cached(self, embedding_client, tmp_path):
+        cache_dir = tmp_path / "models"
+        model_dir = (
+            cache_dir
+            / "models--jinaai--jina-embeddings-v2-base-code"
+            / "snapshots"
+            / "516f4baf13dec4ddddda8631e019b5737c8bc250"
+        )
+        model_dir.mkdir(parents=True)
+        (model_dir / "model.safetensors").write_text("", encoding="utf-8")
+        embedding_client.cache_dir = str(cache_dir)
+
+        assert embedding_client.is_model_cached("jina-code") is False
+
+    def test_fastembed_cache_with_model_file_is_cached(self, embedding_client, tmp_path):
+        cache_dir = tmp_path / "models"
+        model_dir = (
+            cache_dir
+            / "models--jinaai--jina-embeddings-v2-base-code"
+            / "snapshots"
+            / "516f4baf13dec4ddddda8631e019b5737c8bc250"
+            / "onnx"
+        )
+        model_dir.mkdir(parents=True)
+        (model_dir / "model.onnx").write_text("", encoding="utf-8")
+        embedding_client.cache_dir = str(cache_dir)
+
+        assert embedding_client.is_model_cached("jina-code") is True
+
+
 class TestSystemMemoryPressureGuard:
     """Low system memory disables accelerator work before starting a batch."""
 

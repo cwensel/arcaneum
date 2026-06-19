@@ -7,6 +7,7 @@ import pytest
 
 from arcaneum.cli import sync as sync_module
 from arcaneum.cli.sync import (
+    AdaptiveProgress,
     _backfill_meili_to_qdrant,
     _fetch_chunks_for_files_bulk,
     _maybe_backfill_legacy_prompt_policy,
@@ -14,6 +15,24 @@ from arcaneum.cli.sync import (
     _repair_meili_metadata,
 )
 from arcaneum.embeddings.client import get_embedding_prompt_policy
+
+
+def test_adaptive_progress_uses_manual_refresh(monkeypatch):
+    """Avoid Rich's background renderer racing task mutation during long syncs."""
+    progress = AdaptiveProgress(disable=True)
+    refresh = MagicMock()
+    monkeypatch.setattr(progress, "refresh", refresh)
+
+    assert progress.live.auto_refresh is False
+
+    progress.start()
+    task = progress.add_task("Indexing...", total=2)
+    refresh.reset_mock()
+
+    progress.update(task, description="Processing file.py...")
+    progress.advance(task)
+
+    assert refresh.call_count == 2
 
 
 class MetadataQdrant:

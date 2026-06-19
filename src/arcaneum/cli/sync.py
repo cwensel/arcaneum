@@ -75,13 +75,14 @@ class AdaptiveProgress(Progress):
         super().start()
 
     def update(self, *args, **kwargs) -> None:
-        if self._adaptive_start_time is not None:
-            elapsed = self.get_time() - self._adaptive_start_time
-            self.speed_estimate_period = min(
-                self._max_estimate_period,
-                max(self._min_estimate_period, elapsed),
-            )
-        super().update(*args, **kwargs)
+        with self._lock:
+            if self._adaptive_start_time is not None:
+                elapsed = self.get_time() - self._adaptive_start_time
+                self.speed_estimate_period = min(
+                    self._max_estimate_period,
+                    max(self._min_estimate_period, elapsed),
+                )
+            super().update(*args, **kwargs)
 
 
 from ..cli.errors import InvalidArgumentError, ResourceNotFoundError

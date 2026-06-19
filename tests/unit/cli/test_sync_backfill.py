@@ -10,6 +10,7 @@ from arcaneum.cli.sync import (
     _backfill_meili_to_qdrant,
     _fetch_chunks_for_files_bulk,
     _maybe_backfill_legacy_prompt_policy,
+    _raise_if_sync_failures,
     _repair_meili_metadata,
 )
 from arcaneum.embeddings.client import get_embedding_prompt_policy
@@ -74,6 +75,28 @@ def test_corpus_sync_does_not_backfill_changed_prompt_policy():
 
     assert "differs" in issues[0]
     assert qdrant.upserted is None
+
+
+def test_corpus_sync_allows_success_when_no_file_operations_failed():
+    _raise_if_sync_failures(
+        files_failed=0,
+        meili_backfill_failed=0,
+        qdrant_backfill_failed=0,
+    )
+
+
+def test_corpus_sync_rejects_success_when_file_operations_failed():
+    with pytest.raises(RuntimeError) as exc:
+        _raise_if_sync_failures(
+            files_failed=1,
+            meili_backfill_failed=2,
+            qdrant_backfill_failed=3,
+        )
+
+    message = str(exc.value)
+    assert "1 file(s) failed" in message
+    assert "2 MeiliSearch backfill(s) failed" in message
+    assert "3 Qdrant backfill(s) failed" in message
 
 
 def test_fetch_chunks_for_files_bulk_preserves_pdf_ocr_metadata():

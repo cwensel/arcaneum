@@ -129,6 +129,22 @@ def _stamp_last_sync_metadata(qdrant, corpus: str) -> None:
         logger.warning("Failed to update last sync metadata for %s: %s", corpus, e)
 
 
+def _raise_if_sync_failures(
+    files_failed: int,
+    meili_backfill_failed: int,
+    qdrant_backfill_failed: int,
+) -> None:
+    """Prevent failed per-file work from being reported as a successful sync."""
+    failed_operations = files_failed + meili_backfill_failed + qdrant_backfill_failed
+    if failed_operations:
+        raise RuntimeError(
+            "Sync failed: "
+            f"{files_failed} file(s) failed, "
+            f"{meili_backfill_failed} MeiliSearch backfill(s) failed, "
+            f"{qdrant_backfill_failed} Qdrant backfill(s) failed"
+        )
+
+
 def _stamp_full_directory_count_metadata(
     qdrant,
     corpus: str,
@@ -610,6 +626,17 @@ def _is_git_repo(directory: Path) -> bool:
         return False
 
 
+def _git_root_for_path(path: Path) -> Optional[str]:
+    """Return the containing git root for a path, if any."""
+    try:
+        import git
+
+        repo = git.Repo(str(path), search_parent_directories=True)
+        return repo.working_tree_dir
+    except (git.InvalidGitRepositoryError, git.NoSuchPathError):
+        return None
+
+
 # Extensions that may contain minified content
 _MINIFIED_CHECK_EXTENSIONS = {".js", ".css"}
 
@@ -618,6 +645,9 @@ _MINIFIED_LINE_LENGTH_THRESHOLD = 5000
 
 # How many bytes to read when checking for minification
 _MINIFIED_CHECK_BYTES = 65536
+
+# How many bytes to inspect when broad git-backed code discovery is enabled.
+_TEXT_SNIFF_BYTES = 8192
 
 # Maximum file size (bytes) for source code files before skipping.
 # 1 MB of source code is extremely large — most real source files are <100 KB.
@@ -630,6 +660,27 @@ _MAX_CODE_FILE_SIZE = 1_000_000  # 1 MB
 # chunking instead.  Large generated/vendored C headers can OOM-kill worker
 # processes inside tree-sitter even when they are below _MAX_CODE_FILE_SIZE.
 _MAX_AST_FILE_SIZE = 256_000  # 256 KB
+
+
+def _is_probably_text_file(file_path: Path) -> bool:
+    """Return True when a tracked file is likely useful text/code content."""
+    try:
+        with open(file_path, "rb") as fh:
+            sample = fh.read(_TEXT_SNIFF_BYTES)
+    except OSError:
+        return False
+
+    if not sample:
+        return False
+    if b"\x00" in sample:
+        return False
+
+    control_bytes = sum(
+        1
+        for byte in sample
+        if byte < 32 and byte not in (9, 10, 12, 13)
+    )
+    return (control_bytes / len(sample)) < 0.10
 
 
 def _filter_excluded_files(
@@ -771,7 +822,11 @@ def discover_files(
         - files: sorted list of Path objects to index
         - git_roots: list of git root paths (str) discovered; empty for non-code
     """
-    # Determine extensions to look for
+    # Determine extensions to look for. For git-backed code corpora, the
+    # no-flag default is intentionally broad: git decides what belongs to the
+    # repo, then we discard binary/generated/vendor files. Passing --file-types
+    # still narrows discovery to the requested suffixes.
+    broad_git_code_discovery = corpus_type == "code" and not file_types
     if file_types:
         extensions = set(ext.strip().lower() for ext in file_types.split(","))
         # Ensure extensions start with '.'
@@ -779,7 +834,7 @@ def discover_files(
     else:
         extensions = set(SUPPORTED_EXTENSIONS_BY_TYPE.get(corpus_type, set()))
 
-    if not extensions:
+    if not extensions and not broad_git_code_discovery:
         logger.warning(f"No file extensions defined for corpus type: {corpus_type}")
         return [], []
 
@@ -790,21 +845,23 @@ def discover_files(
 
     if corpus_type == "code":
         git_discovery = GitProjectDiscovery()
+        containing_git_root = _git_root_for_path(directory)
+        directory_is_git_root = (
+            containing_git_root is not None
+            and Path(containing_git_root).resolve() == directory.resolve()
+        )
+        sub_repos = [] if directory_is_git_root else git_discovery.find_git_projects(str(directory))
 
-        if _is_git_repo(directory):
+        if directory_is_git_root:
             # The directory itself is a git repo — treat it as a single unit.
-            import git as gitlib
-
-            try:
-                repo = gitlib.Repo(str(directory), search_parent_directories=True)
-                root = repo.working_tree_dir
-            except (gitlib.InvalidGitRepositoryError, gitlib.NoSuchPathError):
-                root = str(directory.absolute())
+            root = containing_git_root or str(directory.absolute())
 
             if root not in skip_roots:
                 git_roots.append(root)
                 logger.info(f"Git repository detected, using git ls-files for {root}")
-                tracked = git_discovery.get_tracked_files(root, list(extensions))
+                tracked = git_discovery.get_tracked_files(
+                    root, None if broad_git_code_discovery else list(extensions)
+                )
                 # Filter to files actually under the requested directory
                 dir_abs = directory.absolute()
                 for fp in tracked:
@@ -817,23 +874,44 @@ def discover_files(
                         pass
             else:
                 logger.info(f"Skipping git repo (in skip list): {root}")
-        else:
+        elif sub_repos:
             # Folder-of-repos: discover every sub-repo and process each atomically.
-            sub_repos = git_discovery.find_git_projects(str(directory))
-            if sub_repos:
-                for root in sub_repos:
-                    if root in skip_roots:
-                        logger.info(f"Skipping git repo (in skip list): {root}")
-                        continue
-                    git_roots.append(root)
-                    logger.info(f"Found sub-repo, using git ls-files for {root}")
-                    tracked = git_discovery.get_tracked_files(root, list(extensions))
-                    git_tracked_files.extend(Path(fp) for fp in tracked if Path(fp).is_file())
+            for root in sub_repos:
+                if root in skip_roots:
+                    logger.info(f"Skipping git repo (in skip list): {root}")
+                    continue
+                git_roots.append(root)
+                logger.info(f"Found sub-repo, using git ls-files for {root}")
+                tracked = git_discovery.get_tracked_files(
+                    root, None if broad_git_code_discovery else list(extensions)
+                )
+                git_tracked_files.extend(Path(fp) for fp in tracked if Path(fp).is_file())
+        elif containing_git_root:
+            # Git-tracked subdirectory with no nested repos: use the containing
+            # repo but keep only tracked files under the requested directory.
+            root = containing_git_root
+            if root not in skip_roots:
+                git_roots.append(root)
+                logger.info(f"Git subdirectory detected, using git ls-files for {root}")
+                tracked = git_discovery.get_tracked_files(
+                    root, None if broad_git_code_discovery else list(extensions)
+                )
+                dir_abs = directory.absolute()
+                for fp in tracked:
+                    p = Path(fp)
+                    try:
+                        p.relative_to(dir_abs)
+                        if p.is_file():
+                            git_tracked_files.append(p)
+                    except ValueError:
+                        pass
             else:
-                # No sub-repos found — non-git directory, fall back to rglob.
-                logger.info(f"No git repos found under {directory}, falling back to rglob")
-                for ext in extensions:
-                    files.extend(f for f in directory.rglob(f"*{ext}") if f.is_file())
+                logger.info(f"Skipping git repo (in skip list): {root}")
+        else:
+            # No containing repo or sub-repos found — non-git directory, fall back to rglob.
+            logger.info(f"No git repos found under {directory}, falling back to rglob")
+            for ext in extensions:
+                files.extend(f for f in directory.rglob(f"*{ext}") if f.is_file())
     else:
         # pdf / markdown: always use rglob; git tracking is not relevant.
         for ext in extensions:
@@ -857,6 +935,8 @@ def discover_files(
             skip_dir_prefixes=(),
             base_directory=directory.absolute(),
         )
+        if broad_git_code_discovery:
+            git_tracked_files = [p for p in git_tracked_files if _is_probably_text_file(p)]
         files.extend(git_tracked_files)
 
     files.sort()
@@ -891,6 +971,9 @@ def _detect_renames(
     Returns:
         List of (old_path, new_path) tuples for detected renames
     """
+    if not new_file_paths:
+        return []
+
     renames = []
 
     for new_path in sorted(new_file_paths):
@@ -899,7 +982,13 @@ def _detect_renames(
             continue
 
         file_hash = compute_file_hash(file_path)
-        old_paths = sync_manager.find_file_by_content_hash(corpus, file_hash)
+        try:
+            old_paths = sync_manager.find_file_by_content_hash(
+                corpus, file_hash, raise_on_error=True
+            )
+        except Exception as e:
+            logger.warning("Skipping rename detection after content-hash lookup failed: %s", e)
+            return []
 
         if not old_paths:
             continue
@@ -1650,11 +1739,15 @@ def sync_directory_command(
                 elif force:
                     print_info("Sync mode: force (reindex all files)")
                 elif git_update:
-                    print_info("Sync mode: --git-update (skip repos with unchanged commit)")
+                    print_info("Sync mode: git commit-skip (--git-update)")
+                    print_info("  - Repos with unchanged HEAD commits are skipped entirely")
+                    print_info("  - Uncommitted changes are not checked in skipped repos")
                 elif git_version:
                     print_info("Sync mode: --git-version (keep multiple versions indexed)")
                 else:
-                    print_info("Sync mode: file-level (default, use --git-update for repo-level)")
+                    print_info("Sync mode: git-tracked files (default)")
+                    print_info("  - Git repos are discovered with git ls-files")
+                    print_info("  - Changed files are checked by path, mtime, and size")
             print_info("Dual indexing to:")
             print_info(f"  - Qdrant collection: {corpus} (semantic search)")
             print_info(f"  - MeiliSearch index: {corpus} (full-text search)")
@@ -1673,16 +1766,18 @@ def sync_directory_command(
         if corpus_type == "code" and dir_paths:
             _git_disc = GitProjectDiscovery()
             for dp in dir_paths:
-                if _is_git_repo(dp):
-                    import git as _gitlib
-
-                    try:
-                        _r = _gitlib.Repo(str(dp), search_parent_directories=True)
-                        all_dir_git_roots.append(_r.working_tree_dir)
-                    except (_gitlib.InvalidGitRepositoryError, _gitlib.NoSuchPathError):
-                        all_dir_git_roots.append(str(dp.absolute()))
+                containing_root = _git_root_for_path(dp)
+                is_exact_git_root = (
+                    containing_root is not None and Path(containing_root).resolve() == dp.resolve()
+                )
+                if is_exact_git_root:
+                    all_dir_git_roots.append(containing_root)
                 else:
-                    all_dir_git_roots.extend(_git_disc.find_git_projects(str(dp)))
+                    sub_roots = _git_disc.find_git_projects(str(dp))
+                    if sub_roots:
+                        all_dir_git_roots.extend(sub_roots)
+                    elif containing_root:
+                        all_dir_git_roots.append(containing_root)
 
         if (git_update or git_version) and not force:
             # For code corpora use the already-discovered repo roots so that
@@ -1866,12 +1961,16 @@ def sync_directory_command(
             if policy_issues and not dry_run:
                 raise InvalidArgumentError(_stale_policy_error(policy_issues, "parity sync"))
 
-            # Detect renames: files that appear "new" but match existing content
-            detected_renames = _detect_renames(
-                new_file_paths,
-                sync_manager,
-                corpus,
-            )
+            # Detect renames only when there is indexed content to compare
+            # against. A brand-new empty corpus has every discovered file in
+            # new_file_paths, and content-hash lookups just hammer Qdrant for
+            # impossible matches.
+            if all_indexed_paths:
+                detected_renames = _detect_renames(
+                    new_file_paths,
+                    sync_manager,
+                    corpus,
+                )
 
             renamed_old_paths = set()
             renamed_new_paths = set()
@@ -2027,7 +2126,10 @@ def sync_directory_command(
                 sync_manager,
                 corpus,
             )
-            detected_renames = _detect_renames(candidate_new_paths, sync_manager, corpus)
+            if already_indexed_files:
+                detected_renames = _detect_renames(candidate_new_paths, sync_manager, corpus)
+            else:
+                detected_renames = []
             if detected_renames:
                 renamed_new_paths = {new for old, new in detected_renames}
 
@@ -3037,6 +3139,8 @@ def sync_directory_command(
                 )
             if certification.get("stamped") and configured_models != normalized_configured_models:
                 update_collection_metadata(qdrant, corpus, model=normalized_configured_models)
+
+        _raise_if_sync_failures(files_failed, meili_backfill_failed, qdrant_backfill_failed)
 
         if not dry_run:
             if full_directory_count_sync:

@@ -4,6 +4,7 @@ import atexit
 import logging
 import os
 import platform
+import shutil
 import sys
 import threading
 import time
@@ -969,6 +970,24 @@ class EmbeddingClient:
                         )
                     except Exception as e:
                         last_error = e
+
+                if model_obj is None and self._is_missing_fastembed_artifact_error(last_error):
+                    purged = self._purge_fastembed_model_cache(model_name)
+                    if purged:
+                        print(
+                            "   Cached model files were incomplete; redownloading...",
+                            flush=True,
+                            file=sys.stderr,
+                        )
+                        try:
+                            model_obj = TextEmbedding(
+                                model_name=config["name"],
+                                cache_dir=self.cache_dir,
+                                local_files_only=False,
+                                providers=providers,
+                            )
+                        except Exception as e:
+                            last_error = e
 
                 if model_obj is not None:
                     self._models[model_name] = model_obj
@@ -2314,6 +2333,55 @@ class EmbeddingClient:
                 return True
 
         return False
+
+    @staticmethod
+    def _is_missing_fastembed_artifact_error(error: Optional[BaseException]) -> bool:
+        """Detect incomplete local FastEmbed caches from ONNX Runtime errors."""
+        if error is None:
+            return False
+
+        message = str(error).lower()
+        return (
+            ("no_suchfile" in message or "file doesn't exist" in message)
+            and ("model.onnx" in message or "onnx" in message)
+        )
+
+    def _purge_fastembed_model_cache(self, model_name: str) -> bool:
+        """Remove cached FastEmbed directories for a model so download can heal."""
+        if model_name not in EMBEDDING_MODELS:
+            raise _unknown_model_error(model_name)
+
+        config = EMBEDDING_MODELS[model_name]
+        model_path = config["name"]
+        safe_model_name = model_path.replace("/", "--")
+        candidates = {os.path.join(self.cache_dir, f"models--{safe_model_name}")}
+
+        if os.path.exists(self.cache_dir):
+            model_parts = (
+                model_path.lower().replace("-", "_").replace(".", "_").replace("/", "_").split("_")
+            )
+            significant_parts = [part for part in model_parts if len(part) > 2]
+            for item in os.listdir(self.cache_dir):
+                item_path = os.path.join(self.cache_dir, item)
+                if not (os.path.isdir(item_path) and item.startswith("models--")):
+                    continue
+                item_lower = item.lower().replace("-", "_").replace(".", "_")
+                if significant_parts and (
+                    sum(1 for part in significant_parts if part in item_lower)
+                    >= len(significant_parts) * 0.6
+                ):
+                    candidates.add(item_path)
+
+        purged = False
+        for candidate in candidates:
+            try:
+                if os.path.isdir(candidate):
+                    shutil.rmtree(candidate)
+                    purged = True
+            except OSError:
+                logger.warning("Failed to remove incomplete model cache %s", candidate, exc_info=True)
+
+        return purged
 
     @staticmethod
     def _fastembed_required_model_file(model_path: str) -> Optional[str]:

@@ -127,6 +127,33 @@ class TestGetModelReturnsCPUWhenPoisoned:
         assert mock_text_embedding.call_args_list[0].kwargs["local_files_only"] is True
         assert mock_text_embedding.call_args_list[1].kwargs["local_files_only"] is False
 
+    def test_fastembed_purges_corrupt_cache_and_retries_download(self, embedding_client, tmp_path):
+        """FastEmbed can reuse incomplete HF snapshots unless the cache is purged."""
+        cache_dir = tmp_path / "models"
+        model_dir = cache_dir / "models--jinaai--jina-embeddings-v2-base-code"
+        (model_dir / "snapshots" / "bad" / "onnx").mkdir(parents=True)
+        embedding_client.cache_dir = str(cache_dir)
+
+        missing_model_error = OSError(
+            "[ONNXRuntimeError] : 3 : NO_SUCHFILE : Load model from "
+            f"{model_dir}/snapshots/bad/onnx/model.onnx failed. File doesn't exist"
+        )
+        mock_model = MagicMock()
+
+        with patch(
+            "arcaneum.embeddings.client.TextEmbedding",
+            side_effect=[missing_model_error, missing_model_error, mock_model],
+        ) as mock_text_embedding:
+            with patch.object(embedding_client, "is_model_cached", return_value=True):
+                result = embedding_client.get_model("jina-code")
+
+        assert result is mock_model
+        assert mock_text_embedding.call_count == 3
+        assert not model_dir.exists()
+        assert mock_text_embedding.call_args_list[0].kwargs["local_files_only"] is True
+        assert mock_text_embedding.call_args_list[1].kwargs["local_files_only"] is False
+        assert mock_text_embedding.call_args_list[2].kwargs["local_files_only"] is False
+
 
 class TestFastEmbedCoreMLPolicy:
     """FastEmbed CoreML remains opt-in on Apple Silicon."""

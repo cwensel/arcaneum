@@ -46,7 +46,7 @@ class ASTCodeChunker:
         ".jsx": "javascript",
         ".ts": "typescript",
         ".tsx": "typescript",
-        ".cs": "c_sharp",
+        ".cs": "csharp",
         ".go": "go",
         ".rs": "rust",
         ".c": "c",
@@ -96,6 +96,7 @@ class ASTCodeChunker:
 
     # Character to token ratio (conservative estimate for code)
     CHARS_PER_TOKEN = 3.5
+    _warned_ast_failures = set()
 
     def __init__(
         self,
@@ -162,7 +163,9 @@ class ASTCodeChunker:
                         result = self._enforce_hard_limit(result)
                     return result
             except Exception as e:
-                logger.debug(f"AST parsing failed for {file_path} ({language}): {e}")
+                if language not in self._warned_ast_failures:
+                    logger.debug(f"AST parsing failed for {file_path} ({language}): {e}")
+                    self._warned_ast_failures.add(language)
                 # Fall through to line-based chunking
 
         # Fallback to line-based chunking

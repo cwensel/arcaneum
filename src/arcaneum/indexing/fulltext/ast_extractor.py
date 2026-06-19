@@ -98,7 +98,7 @@ DEFINITION_TYPES: Dict[str, Dict[str, str]] = {
         "class_specifier": "class",
         "struct_specifier": "class",
     },
-    "c_sharp": {
+    "csharp": {
         "method_declaration": "method",
         "class_declaration": "class",
         "interface_declaration": "interface",
@@ -159,7 +159,7 @@ class ASTFunctionExtractor:
         ".jsx": "javascript",
         ".ts": "typescript",
         ".tsx": "typescript",
-        ".cs": "c_sharp",
+        ".cs": "csharp",
         ".go": "go",
         ".rs": "rust",
         ".c": "c",

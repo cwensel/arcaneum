@@ -108,7 +108,7 @@ class TestASTFunctionExtractorLanguageDetection:
 
     def test_detect_csharp(self, extractor):
         """Test C# detection."""
-        assert extractor.detect_language("Program.cs") == "c_sharp"
+        assert extractor.detect_language("Program.cs") == "csharp"
 
     def test_detect_ruby(self, extractor):
         """Test Ruby detection."""

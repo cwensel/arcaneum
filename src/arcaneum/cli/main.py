@@ -1145,7 +1145,9 @@ def delete_corpus(name, confirm, output_json):
 )
 @click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 @click.option(
-    "--git-update", is_flag=True, help="Skip repos with unchanged commit hash (git-aware fast path)"
+    "--git-update",
+    is_flag=True,
+    help="Commit-hash fast path: skip a whole git repo when HEAD is unchanged",
 )
 @click.option(
     "--git-version", is_flag=True, help="Keep multiple versions indexed (different commits coexist)"

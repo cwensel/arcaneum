@@ -145,7 +145,7 @@ class TestASTCodeChunker:
             "lib.rs": "rust",
             "program.c": "c",
             "program.cpp": "cpp",
-            "Main.cs": "c_sharp",
+            "Main.cs": "csharp",
             "index.php": "php",
             "script.rb": "ruby",
             "App.kt": "kotlin",

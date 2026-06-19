@@ -20,7 +20,7 @@ from arcaneum.cli.sync import discover_files
 
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
-        ["git", *args],
+        ["git", "-c", "commit.gpgsign=false", *args],
         cwd=repo,
         check=True,
         capture_output=True,
@@ -163,6 +163,68 @@ class TestDiscoverFilesCode:
 
         # Two repos discovered
         assert len(roots) == 2
+
+    def test_code_default_includes_tracked_text_files_outside_allowlist(self, tmp_path):
+        """Code corpora default to tracked text files, not only known suffixes."""
+        repo = _make_repo(tmp_path / "repo")
+        (repo / "machine.scxml").write_text("<scxml />\n")
+        (repo / "Dockerfile").write_text("FROM scratch\n")
+        _git(repo, "add", "machine.scxml", "Dockerfile")
+        _git(repo, "commit", "-q", "-m", "add state machine files")
+
+        files, roots = discover_files(repo, None, "code")
+        names = {f.name for f in files}
+
+        assert names == {"machine.scxml", "Dockerfile"}
+        assert len(roots) == 1
+
+    def test_code_default_skips_tracked_binary_files(self, tmp_path):
+        """Broad git-backed code discovery still avoids binary tracked files."""
+        repo = _make_repo(tmp_path / "repo")
+        (repo / "machine.scxml").write_text("<scxml />\n")
+        (repo / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
+        _git(repo, "add", "machine.scxml", "logo.png")
+        _git(repo, "commit", "-q", "-m", "add mixed files")
+
+        files, _ = discover_files(repo, None, "code")
+        names = {f.name for f in files}
+
+        assert "machine.scxml" in names
+        assert "logo.png" not in names
+
+    def test_code_file_types_still_narrows_git_discovery(self, tmp_path):
+        """Passing --file-types keeps the previous explicit suffix filtering."""
+        repo = _make_repo(tmp_path / "repo")
+        (repo / "app.py").write_text("x = 1\n")
+        (repo / "machine.scxml").write_text("<scxml />\n")
+        _git(repo, "add", "app.py", "machine.scxml")
+        _git(repo, "commit", "-q", "-m", "add mixed source")
+
+        files, _ = discover_files(repo, ".py", "code")
+        names = {f.name for f in files}
+
+        assert names == {"app.py"}
+
+    def test_code_folder_of_repos_inside_parent_repo_prefers_child_repos(self, tmp_path):
+        """A tracked parent subdir named repos/ should not mask nested repos."""
+        parent = _make_repo(tmp_path / "parent")
+        repos_dir = parent / "repos"
+        repos_dir.mkdir()
+        (repos_dir / "README.md").write_text("# parent repo catalog\n")
+        _git(parent, "add", "repos/README.md")
+        _git(parent, "commit", "-q", "-m", "add repo catalog")
+
+        child = _make_repo(repos_dir / "child")
+        (child / "machine.scxml").write_text("<scxml />\n")
+        _git(child, "add", "machine.scxml")
+        _git(child, "commit", "-q", "-m", "add machine")
+
+        files, roots = discover_files(repos_dir, None, "code")
+        names = {f.name for f in files}
+        root_names = {Path(r).name for r in roots}
+
+        assert names == {"machine.scxml"}
+        assert root_names == {"child"}
 
     def test_code_folder_of_repos_returns_correct_git_roots(self, folder_of_repos):
         """git_roots contains the actual repo root paths, not the parent dir."""

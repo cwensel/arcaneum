@@ -595,7 +595,13 @@ class MetadataBasedSync:
             logger.warning(f"Error checking chunks for file_path {file_path}: {e}")
             return True
 
-    def find_file_by_content_hash(self, collection_name: str, file_hash: str) -> List[str]:
+    def find_file_by_content_hash(
+        self,
+        collection_name: str,
+        file_hash: str,
+        *,
+        raise_on_error: bool = False,
+    ) -> List[str]:
         """Find all file_paths in collection with given content hash.
 
         Returns ALL paths including both the primary file_path and any paths
@@ -604,6 +610,7 @@ class MetadataBasedSync:
         Args:
             collection_name: Qdrant collection name
             file_hash: Content hash to search for
+            raise_on_error: Re-raise backend errors instead of returning [].
 
         Returns:
             List of file_paths that have this content hash
@@ -647,6 +654,8 @@ class MetadataBasedSync:
             return paths
 
         except Exception as e:
+            if raise_on_error:
+                raise
             logger.warning(f"Error finding file by content hash: {e}")
             return []
 

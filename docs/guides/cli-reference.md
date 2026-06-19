@@ -153,7 +153,7 @@ arc corpus sync MyCorpus --from-file paths.txt             # Read paths from fil
 **Git-Aware Sync Options (for code corpora):**
 
 ```bash
-arc corpus sync MyCorpus /path/to/repo --git-update        # Skip unchanged repos (fast)
+arc corpus sync MyCorpus /path/to/repo --git-update        # Skip repos whose HEAD commit is unchanged
 arc corpus sync MyCorpus /path/to/repo --git-version       # Keep multiple versions indexed
 ```
 
@@ -180,7 +180,8 @@ arc corpus sync MyCorpus /path/to/repo --git-version       # Keep multiple versi
 - `--timeout`: Qdrant timeout in seconds (default: 120, increase for very large files)
 - `--verbose`: Show detailed progress (files, chunks, indexing)
 - `--json`: Output JSON format for scripting
-- `--git-update`: Skip repos with unchanged commit hash (git-aware fast path)
+- `--git-update`: Commit-hash fast path; skip an entire git repo when its HEAD commit
+  matches the last indexed commit
 - `--git-version`: Keep multiple versions indexed (different commits coexist)
 - `--mem-probe-interval`: Seconds between background memory snapshots (default: 0=off).
   Survives encode hangs that the per-file probe can't observe.
@@ -189,13 +190,16 @@ arc corpus sync MyCorpus /path/to/repo --git-version       # Keep multiple versi
 
 **Git Sync Modes:**
 
-| Mode           | Behavior                              | Use Case                     |
-| -------------- | ------------------------------------- | ---------------------------- |
-| Default        | File-level change detection           | General use, mixed content   |
-| `--git-update` | Skip repos if commit unchanged        | CI/batch re-indexing         |
-| `--git-version`| Index each commit as separate version | Compare code across versions |
+| Mode           | Behavior                                      | Use Case                     |
+| -------------- | --------------------------------------------- | ---------------------------- |
+| Default        | Discover git repos with `git ls-files`; check changed files by path, mtime, and size | General use, local worktrees |
+| `--git-update` | Before file checks, skip whole repos whose HEAD commit is unchanged | CI/batch re-indexing committed snapshots |
+| `--git-version`| Index each commit as separate version         | Compare code across versions |
 
-**Note:** `--git-update` and `--git-version` are mutually exclusive. Use `--force` to override either mode.
+**Note:** Default code sync is already git-aware. `--git-update` is not needed to
+recognize repos; it is an opt-in commit-hash skip and can skip uncommitted
+working-tree changes when HEAD has not changed. `--git-update` and `--git-version`
+are mutually exclusive. Use `--force` to override either mode.
 
 ### Corpus Repair
 

@@ -109,6 +109,27 @@ class TestDetectRenames:
 
         assert len(renames) == 0
 
+    def test_detect_renames_aborts_on_first_content_hash_backend_failure(
+        self, mock_sync_manager, tmp_path, caplog
+    ):
+        """A Qdrant disconnect should not emit one warning per new file."""
+        files = []
+        for name in ("a.pdf", "b.pdf", "c.pdf"):
+            file_path = tmp_path / name
+            file_path.write_text(name)
+            files.append(str(file_path.absolute()))
+
+        mock_sync_manager.find_file_by_content_hash.side_effect = RuntimeError(
+            "Server disconnected without sending a response."
+        )
+
+        with patch("arcaneum.cli.sync.compute_file_hash", return_value="abc123"):
+            renames = _detect_renames(set(files), mock_sync_manager, "test-corpus")
+
+        assert renames == []
+        assert mock_sync_manager.find_file_by_content_hash.call_count == 1
+        assert "Skipping rename detection after content-hash lookup failed" in caplog.text
+
     def test_filter_rename_candidates_excludes_existing_paths(self, mock_sync_manager):
         """Same-path quick-hash misses are modified files, not rename candidates."""
         mock_sync_manager._get_indexed_file_paths_set.return_value = {
@@ -123,6 +144,17 @@ class TestDetectRenames:
         )
 
         assert candidates == {"/repo/new-location.md"}
+
+    def test_find_file_by_content_hash_can_raise_backend_errors(self):
+        """Strict callers can distinguish lookup failure from no hash match."""
+        qdrant = Mock()
+        qdrant.scroll.side_effect = RuntimeError("disconnected")
+        sync = MetadataBasedSync(qdrant)
+
+        with pytest.raises(RuntimeError, match="disconnected"):
+            sync.find_file_by_content_hash("test-corpus", "abc123", raise_on_error=True)
+
+        assert sync.find_file_by_content_hash("test-corpus", "abc123") == []
 
 
 class TestHandleRenamesMeili:

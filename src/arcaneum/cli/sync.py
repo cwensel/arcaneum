@@ -675,11 +675,7 @@ def _is_probably_text_file(file_path: Path) -> bool:
     if b"\x00" in sample:
         return False
 
-    control_bytes = sum(
-        1
-        for byte in sample
-        if byte < 32 and byte not in (9, 10, 12, 13)
-    )
+    control_bytes = sum(1 for byte in sample if byte < 32 and byte not in (9, 10, 12, 13))
     return (control_bytes / len(sample)) < 0.10
 
 

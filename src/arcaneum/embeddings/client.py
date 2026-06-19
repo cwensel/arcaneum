@@ -2341,9 +2341,8 @@ class EmbeddingClient:
             return False
 
         message = str(error).lower()
-        return (
-            ("no_suchfile" in message or "file doesn't exist" in message)
-            and ("model.onnx" in message or "onnx" in message)
+        return ("no_suchfile" in message or "file doesn't exist" in message) and (
+            "model.onnx" in message or "onnx" in message
         )
 
     def _purge_fastembed_model_cache(self, model_name: str) -> bool:
@@ -2379,7 +2378,9 @@ class EmbeddingClient:
                     shutil.rmtree(candidate)
                     purged = True
             except OSError:
-                logger.warning("Failed to remove incomplete model cache %s", candidate, exc_info=True)
+                logger.warning(
+                    "Failed to remove incomplete model cache %s", candidate, exc_info=True
+                )
 
         return purged
 

@@ -97,14 +97,28 @@ else
     fail "Cannot connect to Docker daemon (is socket mounted?)"
 fi
 
-# Test 6: Install Arcaneum
-print_test "Installing Arcaneum from local source"
+# Test 6: Build and install Arcaneum
+print_test "Building Arcaneum wheel"
 cd ~/arcaneum
-# Use --break-system-packages for PEP 668 environments (safe in test container)
-if python3 -m pip install --user -e . --break-system-packages 2>/dev/null || python3 -m pip install --user -e .; then
-    pass "Arcaneum installed successfully"
+rm -rf build dist src/arcaneum.egg-info
+if python3 -m build --wheel; then
+    pass "Arcaneum wheel built successfully"
 else
-    fail "Arcaneum installation failed"
+    fail "Arcaneum wheel build failed"
+    exit 1
+fi
+
+WHEEL_PATH="$(find dist -maxdepth 1 -name 'arcaneum-*.whl' -print -quit)"
+if [ -z "$WHEEL_PATH" ]; then
+    fail "Arcaneum wheel not found in dist/"
+    exit 1
+fi
+
+print_test "Installing Arcaneum wheel with pipx"
+if python3 -m pipx install "$WHEEL_PATH"; then
+    pass "Arcaneum installed successfully from wheel"
+else
+    fail "Arcaneum wheel installation failed"
     exit 1
 fi
 

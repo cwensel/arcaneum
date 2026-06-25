@@ -55,8 +55,9 @@ COPY --chown=tester:tester . /home/tester/arcaneum
 # Switch to non-root user
 USER tester
 
-# Upgrade pip (--break-system-packages is safe in Docker container)
-RUN python3 -m pip install --user --upgrade pip setuptools wheel --break-system-packages
+# Install packaging tools used by the install smoke test
+# --break-system-packages is safe in this disposable test container.
+RUN python3 -m pip install --user --upgrade pip setuptools wheel build pipx --break-system-packages
 
 # Copy test script
 COPY --chown=tester:tester tests/docker/test-installation.sh /home/tester/test-installation.sh

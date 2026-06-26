@@ -88,7 +88,7 @@ jobs:
           cache: pip
 
       - name: Cache ML models
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cache/arcaneum/models
@@ -188,7 +188,7 @@ jobs:
           sudo apt-get install -y tesseract-ocr poppler-utils
 
       - name: Cache ML models
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cache/arcaneum/models
@@ -283,7 +283,7 @@ jobs:
           sudo apt-get install -y tesseract-ocr poppler-utils
 
       - name: Cache ML models
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cache/arcaneum/models

@@ -13,10 +13,10 @@ arc collection list --verbose     # Show type and vector details
 arc collection list --json        # JSON output
 
 # Create collection
-arc collection create MyCollection --type pdf        # PDF collection (stella model)
+arc collection create MyCollection --type pdf        # PDF collection (arctic-m model)
 arc collection create MyCollection --type code       # Code collection (jina-code)
-arc collection create MyCollection --type markdown   # Markdown collection (stella)
-arc collection create MyCollection --model stella    # Explicit model
+arc collection create MyCollection --type markdown   # Markdown collection (arctic-m)
+arc collection create MyCollection --model qwen3-embed  # Explicit model
 
 # View collection info
 arc collection info MyCollection
@@ -47,6 +47,6 @@ arc collection delete MyCollection --confirm
 
 ## Collection Types
 
-- **pdf**: Documents and PDFs (stella model, 1024D)
+- **pdf**: Documents and PDFs (arctic-m model, 768D)
 - **code**: Source code repositories (jina-code, 768D)
-- **markdown**: Documentation and notes (stella model, 1024D)
+- **markdown**: Documentation and notes (arctic-m model, 768D)

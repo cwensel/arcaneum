@@ -37,6 +37,8 @@ def _risk_tier(config: dict) -> str:
 
 def _support_tier(config: dict, default_for: list[str]) -> str:
     """Return the user-facing operational support tier."""
+    if config.get("deprecated"):
+        return "deprecated"
     if default_for:
         return "stable-default"
     if config.get("backend", "fastembed") == "fastembed":
@@ -146,6 +148,8 @@ def _model_catalog_row(alias: str, config: dict) -> dict:
         "recommended_for": config.get("recommended_for"),
         "default_for": default_for,
         "support_tier": _support_tier(config, default_for),
+        "deprecated": bool(config.get("deprecated", False)),
+        "superseded_by": config.get("superseded_by"),
         "install_extra": config.get("install_extra", "core"),
         "prompt_policy": _prompt_policy_summary(config),
         "context_limit": config.get("max_seq_length"),

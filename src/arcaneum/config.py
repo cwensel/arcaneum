@@ -128,7 +128,7 @@ def _build_default_models() -> Dict[str, ModelConfig]:
         # alignment and embedding quality.
         if supports_late_chunking:
             if dimensions >= 1024:
-                chunk_size = 768  # stella, codesage-large
+                chunk_size = 768  # qwen3-embed, stella, codesage-large
             else:
                 chunk_size = (
                     512  # jina-code: AST-clean, no resplits, ~half attention memory vs 1024

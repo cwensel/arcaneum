@@ -17,7 +17,7 @@ The `corpus` commands manage Qdrant and MeiliSearch together. Single-system comm
 arc corpus create MyCorpus --type pdf
 arc corpus create MyCorpus --type code
 arc corpus create MyCorpus --type markdown
-arc corpus create MyCorpus --type pdf --models stella,jina  # Multiple models
+arc corpus create MyCorpus --type pdf --models qwen3-embed,jina-v3  # Multiple models
 
 # Delete corpus (deletes both collection and index)
 arc corpus delete MyCorpus              # With confirmation prompt
@@ -104,7 +104,7 @@ Note: `meili_only` corpora cannot be auto-created (require `--type` and `--model
 
 By default, corpus sync uses GPU acceleration (MPS on Apple Silicon, CUDA on NVIDIA).
 
-**Large models on Apple Silicon:** Models like `stella` (1.5B params) may cause system
+**Large models on Apple Silicon:** Models like `jina-code-1.5b` (1.5B params) may cause system
 instability on Macs with limited memory. If you experience lockups:
 
 ```bash
@@ -121,5 +121,5 @@ arc corpus sync MyCorpus /path --models bge
 **Model sizes:**
 
 - `bge`, `bge-base`, `bge-small`: Safe for all systems
-- `stella` (1.5B): May cause issues on Macs with <16GB RAM
+- `stella` (1.5B, deprecated - use `qwen3-embed`): May cause issues on Macs with <16GB RAM
 - `nomic-code` (7B): Requires dedicated GPU with significant VRAM

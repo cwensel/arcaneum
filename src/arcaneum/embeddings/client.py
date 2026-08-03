@@ -17,11 +17,7 @@ from arcaneum.paths import get_models_dir
 
 logger = logging.getLogger(__name__)
 
-# Model configurations with dimensions
-# Note: "stella" is an alias for bge-large since actual stella (dunzhang/stella_en_1.5B_v5)
-# is not available in FastEmbed
-#
-# Model configurations with multiple backends
+# Model configurations with dimensions and multiple backends
 #
 # IMPORTANT - Memory and Batch Size Configuration:
 # ================================================
@@ -129,15 +125,33 @@ EMBEDDING_MODELS = {
         "mps_max_batch": 1,  # MPS: 7B model needs single-item batches to avoid OOM
     },
     # General purpose models (SentenceTransformers)
+    "qwen3-embed": {
+        "name": "Qwen/Qwen3-Embedding-0.6B",
+        "revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+        "dimensions": 1024,
+        "backend": "sentence-transformers",
+        "description": "Qwen3 Embedding 0.6B (1024D, 32K context, multilingual, no remote code)",
+        "available": True,
+        "recommended_for": "pdf",
+        "install_extra": "sentence-transformers",
+        "params_billions": 0.6,  # 600M params
+        # The model's config_sentence_transformers.json defines the "query"
+        # prompt (instruction-prefixed); documents are embedded unprefixed.
+        "query_prompt_name": "query",
+        # Model supports 32K context; cap to bound attention memory O(batch × seq_len²)
+        "max_seq_length": 8192,
+        "mps_max_batch": 8,  # MPS needs conservative batches due to unified memory
+    },
     "stella": {
         "name": "dunzhang/stella_en_1.5B_v5",
         "revision": "7817065102fd9e1b031fe874e910c01f40b2f001",
         "trust_remote_code": True,
         "dimensions": 1024,
         "backend": "sentence-transformers",
-        "description": "General purpose (1024D, high quality for docs/PDFs)",
+        "description": "DEPRECATED: use qwen3-embed (unmaintained remote code)",
         "available": True,
-        "recommended_for": "pdf",
+        "deprecated": True,
+        "superseded_by": "qwen3-embed",
         "install_extra": "sentence-transformers",
         "params_billions": 1.5,  # 1.5B params
         "query_prompt_name": "s2p_query",
@@ -443,6 +457,9 @@ class EmbeddingClient:
         self._device = self._detect_device() if use_gpu else "cpu"
         os.environ["SENTENCE_TRANSFORMERS_HOME"] = self.cache_dir
         self._models: Dict[str, TextEmbedding] = {}
+
+        # Deprecated models warn once per client instance, not per embed call.
+        self._deprecation_warned: set = set()
 
         # Set when a GPU encode times out — prevents further GPU use in this session.
         # After a timeout, a daemon thread is still running on the GPU; any new Metal
@@ -939,6 +956,18 @@ class EmbeddingClient:
         if model_name not in EMBEDDING_MODELS:
             raise _unknown_model_error(model_name)
 
+        deprecated_config = EMBEDDING_MODELS[model_name]
+        if deprecated_config.get("deprecated") and model_name not in self._deprecation_warned:
+            self._deprecation_warned.add(model_name)
+            replacement = deprecated_config.get("superseded_by")
+            hint = f" Use '{replacement}' for new corpora." if replacement else ""
+            message = (
+                f"Embedding model '{model_name}' is deprecated; existing corpora "
+                f"continue to work.{hint}"
+            )
+            logger.warning(message)
+            print(f"   Warning: {message}", file=sys.stderr, flush=True)
+
         # When GPU is poisoned, return CPU fallback for sentence-transformers models
         # instead of loading a new GPU model (RDR-020).
         if self._gpu_poisoned:
@@ -951,8 +980,6 @@ class EmbeddingClient:
             backend = config.get("backend", "fastembed")
 
             if backend == "fastembed":
-                import sys
-
                 # Check if model is cached to avoid unnecessary network calls
                 is_cached = self.is_model_cached(model_name)
 
@@ -1039,8 +1066,6 @@ class EmbeddingClient:
                         # Re-raise other errors as-is
                         raise last_error
             elif backend == "sentence-transformers":
-                import sys
-
                 try:
                     from sentence_transformers import SentenceTransformer
                 except ImportError as e:

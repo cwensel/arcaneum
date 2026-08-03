@@ -1,6 +1,7 @@
 """Unit tests for remote SentenceTransformer model loading policy."""
 
 import builtins
+import logging
 import re
 
 import pytest
@@ -113,6 +114,57 @@ def test_legacy_bge_provider_model_name_stamps_alias_prompt_policy():
 def test_unknown_provider_model_name_fails_prompt_policy_stamping():
     with pytest.raises(ValueError, match="Unknown model: unknown/provider-model"):
         get_embedding_prompt_policies("unknown/provider-model")
+
+
+def test_qwen3_embed_uses_native_backend_without_remote_code():
+    config = EMBEDDING_MODELS["qwen3-embed"]
+
+    assert config["name"] == "Qwen/Qwen3-Embedding-0.6B"
+    assert config["backend"] == "sentence-transformers"
+    assert config["dimensions"] == 1024
+    assert config["recommended_for"] == "pdf"
+    assert not config.get("trust_remote_code", False)
+    assert REVISION_RE.match(config["revision"])
+
+    kwargs = _sentence_transformer_load_kwargs(
+        "qwen3-embed",
+        config,
+        cache_folder="/tmp/models",
+        local_files_only=True,
+        device="cpu",
+    )
+
+    assert kwargs["trust_remote_code"] is False
+    assert kwargs["revision"] == config["revision"]
+
+
+def test_qwen3_embed_prompt_policy_uses_builtin_query_prompt():
+    policy = get_embedding_prompt_policy("qwen3-embed")
+
+    assert policy["query"]["prompt_name"] == "query"
+    assert "prompt_name" not in policy["document"]
+
+
+def test_stella_is_deprecated_in_favor_of_qwen3_embed():
+    config = EMBEDDING_MODELS["stella"]
+
+    assert config["deprecated"] is True
+    assert config["superseded_by"] == "qwen3-embed"
+    assert config.get("recommended_for") is None
+
+
+def test_get_model_warns_once_for_deprecated_models(caplog):
+    client = EmbeddingClient(cache_dir="/tmp/models", use_gpu=False)
+    sentinel = object()
+    client._models["stella"] = sentinel
+
+    with caplog.at_level(logging.WARNING, logger="arcaneum.embeddings.client"):
+        assert client.get_model("stella") is sentinel
+        assert client.get_model("stella") is sentinel
+
+    warnings = [r for r in caplog.records if "deprecated" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "qwen3-embed" in warnings[0].getMessage()
 
 
 def test_sentence_transformer_backend_reports_missing_extra(monkeypatch):

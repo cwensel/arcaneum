@@ -186,6 +186,42 @@ class TestModelsList:
             "mps_max": 1,
         }
 
+    def test_json_output_marks_deprecated_models(self, capsys):
+        """Test deprecated models expose the deprecation flag and replacement."""
+        from arcaneum.cli.models import list_models_command
+
+        mock_models = {
+            "stella": {
+                "name": "dunzhang/stella_en_1.5B_v5",
+                "dimensions": 1024,
+                "backend": "sentence-transformers",
+                "install_extra": "sentence-transformers",
+                "deprecated": True,
+                "superseded_by": "qwen3-embed",
+            },
+            "qwen3-embed": {
+                "name": "Qwen/Qwen3-Embedding-0.6B",
+                "dimensions": 1024,
+                "backend": "sentence-transformers",
+                "install_extra": "sentence-transformers",
+                "recommended_for": "pdf",
+            },
+        }
+
+        with patch("arcaneum.cli.models.EMBEDDING_MODELS", mock_models):
+            list_models_command(output_json=True)
+
+        output = json.loads(capsys.readouterr().out)
+        models = {model["alias"]: model for model in output["data"]["models"]}
+
+        assert models["stella"]["deprecated"] is True
+        assert models["stella"]["superseded_by"] == "qwen3-embed"
+        assert models["stella"]["support_tier"] == "deprecated"
+
+        assert models["qwen3-embed"]["deprecated"] is False
+        assert models["qwen3-embed"]["superseded_by"] is None
+        assert models["qwen3-embed"]["support_tier"] == "opt-in"
+
     def test_table_output_exposes_selection_columns(self):
         """Test table output shows the compact LLM selection columns."""
         from arcaneum.cli import models as models_module

@@ -35,6 +35,10 @@ Embedding models that depend on these methods (including **Stella** and **NV-Emb
 
 ### Upstream Status (August 2026)
 
+- **stella is deprecated in arcaneum** - the registry marks `stella` deprecated in
+  favor of `qwen3-embed` (`Qwen/Qwen3-Embedding-0.6B`), which needs no remote code
+  and tracks current transformers releases. Once stella is removed, the shim and
+  the `<5.0` cap below can be dropped.
 - **stella model** (`dunzhang/stella_en_1.5B_v5`) - effectively unmaintained;
   README-only commits for over a year and
   [not patched by maintainers](https://huggingface.co/NovaSearch/stella_en_1.5B_v5/discussions/47).

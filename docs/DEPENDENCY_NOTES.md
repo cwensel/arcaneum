@@ -2,9 +2,16 @@
 
 This document explains the reasoning behind key dependency constraints in `pyproject.toml`.
 
-Last reviewed: May 2026
+Last reviewed: August 2026
 
 ## DynamicCache Breaking Change (transformers v4.54+)
+
+**Status: mitigated.** The cap was relaxed from `<4.54.0` to `<5.0` in August 2026.
+A runtime shim in `src/arcaneum/embeddings/client.py` (`_ensure_dynamic_cache_compat`)
+restores the removed `DynamicCache.get_usable_length` by delegating to its direct
+replacement `get_seq_length()`. A local spike verified embeddings are **bit-identical**
+(cosine 1.0, max element-wise diff 0.0) between transformers 4.53.3 and 4.57.6+shim
+on the pinned Stella revision. transformers 5.x remains excluded — see below.
 
 ### Issue
 
@@ -26,15 +33,18 @@ Embedding models that depend on these methods (including **Stella** and **NV-Emb
 - The model tries to use removed cache methods
 - Batches fail with `RuntimeError: 'DynamicCache' object has no attribute 'get_usable_length'`
 
-### Upstream Status (May 2026)
+### Upstream Status (August 2026)
 
-**The issue still requires a guarded upper bound:**
-
-- **transformers 4.54.0+** - The cache refactor remains incompatible with the
-  official Stella model path this project supports
-- **transformers v5.x** - Now released, but not adopted here until the Stella
-  compatibility path is explicitly retested
-- **stella model** (`dunzhang/stella_en_1.5B_v5`) - [Not patched by maintainers](https://huggingface.co/NovaSearch/stella_en_1.5B_v5/discussions/47)
+- **stella model** (`dunzhang/stella_en_1.5B_v5`) - effectively unmaintained;
+  README-only commits for over a year and
+  [not patched by maintainers](https://huggingface.co/NovaSearch/stella_en_1.5B_v5/discussions/47).
+  Its `modeling_qwen.py` still calls `get_usable_length()` plus other removed APIs.
+- **transformers 4.54–4.x** - works with the arcaneum shim (verified bit-identical
+  embeddings on 4.57.6)
+- **transformers v5.x** - hard failure at model init:
+  `'Qwen2Config' object has no attribute 'rope_theta'` (v5 nests rope parameters,
+  the remote code reads them flat). Not fixable with a cache shim; would require
+  the community fork below.
 
 **Community workaround exists:**
 [`it-just-works/stella_en_1.5B_v5_bf16`][stella-fix] reimplements the deprecated method,
@@ -42,42 +52,48 @@ but we use the official model with constrained transformers versions for stabili
 
 [stella-fix]: https://huggingface.co/it-just-works/stella_en_1.5B_v5_bf16/commit/03aedd040580357ec688f3467f1109af5e053249
 
-### Solution: Stable Version Matrix (Tested & Verified)
+### Solution: Runtime Shim + `<5.0` Cap (Tested & Verified, August 2026)
 
 **Current constraints in pyproject.toml:**
 
 ```toml
-sentence-transformers>=5.5.1        # current stable, compatible with the transformers cap
-transformers>=4.40.0,<4.54.0        # 4.54+ has cache breaking changes
+sentence-transformers>=5.5.1        # no forcing function; supports transformers >=4.41,<6
+transformers>=4.40.0,<5.0           # 4.54+ works via shim; 5.x breaks Stella remote code
 torch>=2.12.0
-pymupdf-layout>=1.27.2.3            # Better PDF layout detection
 ```
 
-**Why this version matrix:**
+**The shim:** `_ensure_dynamic_cache_compat()` in `src/arcaneum/embeddings/client.py`,
+applied immediately after the lazy `sentence_transformers` import at both load sites.
+It re-adds `get_usable_length(new_seq_length, layer_idx=0)` as a delegate to
+`get_seq_length(layer_idx)` only when missing (no-op on transformers <4.54).
+Covered by `tests/unit/embeddings/test_transformers_compat.py`.
 
-1. ✅ **sentence-transformers 5.5.1** - Keeps current stable sentence-transformers while respecting the transformers cap
-2. ✅ **transformers 4.40-4.53** - Avoids cache breaking change in 4.54+
-3. ✅ **torch 2.12.0+** - Current PyPI stable baseline for the ML stack
-4. ✅ **pymupdf-layout 1.27.2.3+** - Improves PDF semantic chunking quality
+**Spike results (August 2026), all on CPU/fp32 at pinned revision `7817065`:**
 
-**What we tested & rejected:**
+- ✅ **transformers 4.57.6 + shim** - bit-identical to the 4.53.3 baseline
+  (cosine 1.0 on all probe texts, max element-wise diff 0.0); no re-indexing
+  needed for existing Stella corpora
+- ❌ **transformers 4.57.6 unpatched** - reproduces
+  `'DynamicCache' object has no attribute 'get_usable_length'`
+- ❌ **transformers 5.14.1** - fails at init on `rope_theta` before the cache
+  path is even reached
+- ❌ **`trust_remote_code=False` (native Qwen2 path)** - loads and runs but is
+  **silently wrong**: cosine vs. baseline drops to 0.42–0.85 and retrieval
+  breaks. Root cause: Stella's custom code runs the backbone with
+  **bidirectional attention** (`is_causal=False`), while native `Qwen2Model`
+  is strictly causal. Never load Stella without its remote code.
 
-- ❌ **transformers 4.57.5** - DynamicCache breaking change still present
-- ❌ **transformers 4.56.x, 4.55.x, 4.54.x** - All have the cache breaking change
-- ❌ **transformers v5.x** - Requires a separate Stella compatibility pass before adoption
+**Path to transformers 5.x (future work):**
 
-**Rationale:**
+- Requires abandoning the official model for the maintained community fork
+  [`it-just-works/stella_en_1.5B_v5_bf16`][stella-fork] (patched through
+  transformers 5.x as of July 2026). Costs: bf16 weights produce slightly
+  different embeddings (existing Stella corpora would need re-indexing), and
+  the fork's README documents 5.x load caveats requiring post-load sanity checks.
+- Watch [stella model discussions](https://huggingface.co/NovaSearch/stella_en_1.5B_v5/discussions)
+  for an official fix, though the repo appears unmaintained.
 
-- The DynamicCache breaking change has not been resolved in any transformers 4.54+ release
-- The stella model maintainers have not updated their code to use the new Cache API
-- This matrix prioritizes **stability & reliability** over latest features
-- sentence-transformers remains compatible with our <4.54.0 constraint
-
-**Future improvements:**
-
-- Run a Stella compatibility spike against transformers v5.x before lifting the cap
-- Watch [stella model discussions](https://huggingface.co/NovaSearch/stella_en_1.5B_v5/discussions) for upstream fix
-- Consider switching to patched stella model if upstream remains unfixed after v5.0 releases
+[stella-fork]: https://huggingface.co/it-just-works/stella_en_1.5B_v5_bf16
 
 ### Testing & Troubleshooting
 
@@ -90,8 +106,10 @@ pymupdf-layout>=1.27.2.3            # Better PDF layout detection
    ```
 
 2. If you see `'DynamicCache' object has no attribute 'get_usable_length'`:
-   - The upper bound constraint may have been removed or overridden
-   - Reinstall with correct constraint: `pip install "transformers>=4.40.0,<4.54.0"`
+   - You are likely loading the model outside arcaneum's client (the shim in
+     `embeddings/client.py` is applied at arcaneum's load sites only), or
+     running transformers 5.x
+   - Reinstall with correct constraint: `pip install "transformers>=4.40.0,<5.0"`
    - Then reinstall arcaneum: `pip install -e .`
 
 3. Check your versions:
@@ -100,7 +118,7 @@ pymupdf-layout>=1.27.2.3            # Better PDF layout detection
    pip show transformers sentence-transformers torch | grep Version
    ```
 
-   Expected: transformers 4.53.x or lower, sentence-transformers 5.5.x, torch 2.12.x+
+   Expected: transformers 4.x (any, 4.40+), sentence-transformers 5.5.x+, torch 2.12.x+
 
 **If you have persistent embedding errors:**
 
@@ -142,7 +160,7 @@ pymupdf-layout>=1.27.2.3            # Better PDF layout detection
 All other dependencies use flexible version constraints and should not cause similar issues:
 
 - **qdrant-client:** >=1.18.0
-- **sentence-transformers:** >=5.5.1 (kept behind the transformers <4.54 cap)
+- **sentence-transformers:** >=5.5.1 (compatible with the transformers <5.0 cap)
 - **torch:** >=2.12.0
 - **fastembed:** >=0.8.0 (uses ONNX, no transformers dependency)
 - **meilisearch:** >=0.41.0

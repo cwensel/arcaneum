@@ -253,6 +253,29 @@ TRUST_REMOTE_CODE_ALLOWLIST = {
 }
 
 
+def _ensure_dynamic_cache_compat(cache_cls=None) -> None:
+    """Restore DynamicCache.get_usable_length removed in transformers 4.54.
+
+    Stella's pinned remote code (dunzhang/stella_en_1.5B_v5 @ 7817065) calls
+    get_usable_length(), which the transformers 4.54 cache refactor removed.
+    get_seq_length() is the direct replacement; delegating to it produces
+    bit-identical embeddings (verified against a transformers 4.53 baseline).
+    No-op on transformers <4.54 where the method still exists. transformers
+    5.x is incompatible with the remote code for unrelated reasons (nested
+    rope config), hence the <5.0 cap in pyproject.toml.
+    """
+    if cache_cls is None:
+        try:
+            from transformers.cache_utils import DynamicCache as cache_cls
+        except ImportError:
+            return
+
+    if not hasattr(cache_cls, "get_usable_length"):
+        cache_cls.get_usable_length = lambda self, new_seq_length, layer_idx=0: (
+            self.get_seq_length(layer_idx)
+        )
+
+
 def _sentence_transformer_load_kwargs(
     model_key: str,
     config: Dict,
@@ -591,6 +614,7 @@ class EmbeddingClient:
             from sentence_transformers import SentenceTransformer
         except ImportError as e:
             raise _sentence_transformers_missing_error(model_name, config) from e
+        _ensure_dynamic_cache_compat()
         try:
             model = SentenceTransformer(
                 config["name"],
@@ -1021,6 +1045,7 @@ class EmbeddingClient:
                     from sentence_transformers import SentenceTransformer
                 except ImportError as e:
                     raise _sentence_transformers_missing_error(model_name, config) from e
+                _ensure_dynamic_cache_compat()
 
                 # Warn about large models on MPS - risk of system lockup
                 params_billions = config.get("params_billions", 0)

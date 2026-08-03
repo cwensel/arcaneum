@@ -92,12 +92,16 @@ ocr = [
 ]
 sentence-transformers = [
     "sentence-transformers>=5.5.1",
-    "transformers>=4.40.0,<4.54.0",  # 4.54+ has DynamicCache breaking change (see docs/DEPENDENCY_NOTES.md)
+    # 4.54+ needs the DynamicCache shim in embeddings/client.py; 5.x breaks
+    # Stella's pinned remote code entirely (see docs/DEPENDENCY_NOTES.md)
+    "transformers>=4.40.0,<5.0",
     "torch>=2.12.0",
 ]
 large-models = [
     "sentence-transformers>=5.5.1",
-    "transformers>=4.40.0,<4.54.0",  # 4.54+ has DynamicCache breaking change (see docs/DEPENDENCY_NOTES.md)
+    # 4.54+ needs the DynamicCache shim in embeddings/client.py; 5.x breaks
+    # Stella's pinned remote code entirely (see docs/DEPENDENCY_NOTES.md)
+    "transformers>=4.40.0,<5.0",
     "torch>=2.12.0",
 ]
 

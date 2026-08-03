@@ -14,10 +14,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from fastembed import TextEmbedding
 
 MODELS = {
-    "stella": "BAAI/bge-large-en-v1.5",
-    "modernbert": "nomic-ai/modernbert-embed-base",
+    "arctic-m": "snowflake/snowflake-arctic-embed-m",
+    "mxbai-large": "mixedbread-ai/mxbai-embed-large-v1",
     "bge": "BAAI/bge-large-en-v1.5",
-    "jina": "jinaai/jina-embeddings-v2-base-code",
+    "jina-code": "jinaai/jina-embeddings-v2-base-code",
 }
 
 

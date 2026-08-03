@@ -11,22 +11,24 @@ Arcaneum uses a **typed collection system** to ensure PDFs and source code are p
 **Definition:** A typed vector database in Qdrant for semantic search
 
 **Characteristics:**
+
 - Stores embeddings and metadata
 - **Must be typed** (pdf or code)
 - Single search system (Qdrant only)
 - Names are flexible, but types are enforced
 
 **Creation:**
+
 ```bash
 # PDF collection
-arc collection create docs --model stella --type pdf
+arc collection create docs --model qwen3-embed --type pdf
 
 # Source code collection
-arc collection create code --model stella --type code
+arc collection create code --model jina-code --type code
 
 # Names can be anything, but type is required
-arc collection create my-work-docs --model stella --type pdf
-arc collection create personal-code --model stella --type code
+arc collection create my-work-docs --model qwen3-embed --type pdf
+arc collection create personal-code --model jina-code --type code
 ```
 
 ### Corpus (RDR-009)
@@ -34,12 +36,14 @@ arc collection create personal-code --model stella --type code
 **Definition:** A unified searchable dataset across BOTH Qdrant AND MeiliSearch
 
 **Characteristics:**
+
 - Dual indexing: Qdrant (semantic) + MeiliSearch (full-text)
 - **Inherits type** from underlying collection
 - Same name used for both systems
 - Enables hybrid search workflows
 
 **Creation:**
+
 ```bash
 # Creates BOTH Qdrant collection AND MeiliSearch index
 arc corpus create docs --type pdf
@@ -55,20 +59,22 @@ arc corpus create code --type code
 
 ### Collection Types
 
-| Type | Content | Commands |
-|------|---------|----------|
-| `pdf` | PDF documents, scanned docs | `index-pdfs` |
+| Type   | Content                     | Commands       |
+| ------ | --------------------------- | -------------- |
+| `pdf`  | PDF documents, scanned docs | `index-pdfs`   |
 | `code` | Source code (15+ languages) | `index-source` |
 
 ### Type Enforcement
 
 **At Creation:**
+
 ```bash
-arc collection create docs --model stella --type pdf
+arc collection create docs --model qwen3-embed --type pdf
 # Stores: {"collection_type": "pdf", ...}
 ```
 
 **At Indexing:**
+
 ```bash
 # ✓ Valid: type matches
 arc index pdf ~/docs --collection docs
@@ -85,16 +91,18 @@ arc index code ~/projects --collection docs
 ### Metadata Schema
 
 **Collection-Level Metadata** (stored in Qdrant):
+
 ```python
 {
   "collection_type": "pdf",      # or "code" - ENFORCED
-  "model": "stella",
+  "model": "qwen3-embed",
   "created_at": "2025-10-27",
   "created_by": "arcaneum"
 }
 ```
 
 **Point-Level Metadata** (each chunk):
+
 ```python
 {
   "store_type": "pdf",           # or "source-code" - DESCRIPTIVE
@@ -105,18 +113,19 @@ arc index code ~/projects --collection docs
 ```
 
 **Key Difference:**
+
 - `collection_type`: Collection-level, **enforces** what can be indexed
 - `store_type`: Point-level, **describes** what was indexed
 
 ## Relationship Diagram
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │                   COLLECTION (typed)                     │
 │  ┌────────────────────────────────────────────────────┐ │
 │  │ Collection Metadata                                 │ │
 │  │ - collection_type: "pdf" or "code" (ENFORCED)      │ │
-│  │ - model: "stella"                                  │ │
+│  │ - model: "qwen3-embed"                             │ │
 │  │ - created_at: "2025-10-27"                         │ │
 │  └────────────────────────────────────────────────────┘ │
 │                                                          │
@@ -150,7 +159,7 @@ arc index code ~/projects --collection docs
 
 ```bash
 # Create typed collection
-arc collection create code --model stella --type code
+arc collection create code --model jina-code --type code
 
 # Index source code
 arc index code ~/projects --collection code
@@ -188,7 +197,7 @@ arc search text "def authenticate" --index code
 
 ```bash
 # Personal documents (PDFs)
-arc collection create personal-docs --model stella --type pdf
+arc collection create personal-docs --model qwen3-embed --type pdf
 arc index pdf ~/Documents --collection personal-docs
 
 # Work documents (PDFs)
@@ -196,11 +205,11 @@ arc collection create work-docs --model bge --type pdf
 arc index pdf ~/Work/PDFs --collection work-docs
 
 # Personal code
-arc collection create personal-code --model stella --type code
+arc collection create personal-code --model jina-code --type code
 arc index code ~/Code --collection personal-code
 
 # Work code
-arc collection create work-code --model stella --type code
+arc collection create work-code --model jina-code --type code
 arc index code ~/Work/Projects --collection work-code
 ```
 
@@ -208,7 +217,7 @@ arc index code ~/Work/Projects --collection work-code
 
 ```bash
 # Single collection can have multiple branches
-arc collection create my-app --model stella --type code
+arc collection create my-app --model jina-code --type code
 
 # Index main branch
 cd ~/my-app
@@ -230,9 +239,9 @@ arc index code ~/my-app --collection my-app
 ### Successful Operations
 
 ```bash
-✓ arc collection create docs --model stella --type pdf
+✓ arc collection create docs --model qwen3-embed --type pdf
 ✓ arc index pdf ~/documents --collection docs
-✓ arc collection create code --model stella --type code
+✓ arc collection create code --model jina-code --type code
 ✓ arc index code ~/projects --collection code
 ```
 
@@ -240,7 +249,7 @@ arc index code ~/my-app --collection my-app
 
 ```bash
 # Create PDF collection
-$ arc collection create docs --model stella --type pdf
+$ arc collection create docs --model qwen3-embed --type pdf
 
 # Try to index code into it
 $ arc index code ~/projects --collection docs
@@ -248,7 +257,7 @@ $ arc index code ~/projects --collection docs
    Create a new collection with --type code.
 
 # Create code collection
-$ arc collection create code --model stella --type code
+$ arc collection create code --model jina-code --type code
 
 # Try to index PDFs into it
 $ arc index pdf ~/documents --collection code
@@ -260,7 +269,7 @@ $ arc index pdf ~/documents --collection code
 
 ```bash
 # Old collection without type
-$ arc collection create old-collection --model stella
+$ arc collection create old-collection --model qwen3-embed
 # (no --type flag used)
 
 # First index operation succeeds with warning
@@ -284,7 +293,7 @@ $ arc index code ~/projects --collection old-collection
 ## Terminology Summary
 
 | Term | Meaning | Example |
-|------|---------|---------|
+| ------ | --------- | --------- |
 | **Collection** | Typed Qdrant vector database | `arc collection create code --type code` |
 | **Corpus** | Dual-indexed (Qdrant + MeiliSearch) | `arc corpus create docs --type pdf` |
 | **Collection Type** | Enforced at creation (pdf/code) | `--type code` |

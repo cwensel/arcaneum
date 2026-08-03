@@ -30,8 +30,8 @@ scp -r models_cache/ user@target-machine:/path/to/arcaneum/
 On your target machine:
 
 ```bash
-bin/arc collection create Standards --model stella
-bin/arc index pdf ./Standards --collection Standards --model stella
+bin/arc collection create Standards --model arctic-m
+bin/arc index pdf ./Standards --collection Standards --model arctic-m
 ```
 
 Models load from cache - no network access needed!
@@ -45,21 +45,24 @@ Models load from cache - no network access needed!
 ## Models Downloaded
 
 The script downloads these models:
-- `stella` (BAAI/bge-large-en-v1.5) - 1024D, general purpose
+
+- `arctic-m` (snowflake/snowflake-arctic-embed-m) - 768D, stable document default
 - `bge` (BAAI/bge-large-en-v1.5) - 1024D, precision
-- `modernbert` (nomic-ai/modernbert-embed-base) - 768D, long context
-- `jina` (jinaai/jina-embeddings-v2-base-code) - 768D, code + text
+- `mxbai-large` (mixedbread-ai/mxbai-embed-large-v1) - 1024D, high-quality English
+- `jina-code` (jinaai/jina-embeddings-v2-base-code) - 768D, code + text
 
 ## Cache Location
 
 Default: `./models_cache/`
 
 To use a different location:
+
 ```bash
 python scripts/download-models.py --cache-dir /custom/path
 ```
 
 Then set environment variable:
+
 ```bash
 export SENTENCE_TRANSFORMERS_HOME=/custom/path
 ```

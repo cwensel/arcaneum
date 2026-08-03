@@ -83,7 +83,7 @@ def run_indexing_benchmark(
             # Load model
             logger.info("Loading embedding model...")
             model = get_cached_model(
-                model_name="stella", cache_dir=str(get_models_dir()), use_gpu=True
+                model_name="qwen3-embed", cache_dir=str(get_models_dir()), use_gpu=True
             )
 
             # Create uploader
@@ -99,7 +99,7 @@ def run_indexing_benchmark(
             stats = uploader.index_directory(
                 pdf_dir=tmpdir,
                 collection_name=collection_name,
-                model_name="stella",
+                model_name="qwen3-embed",
                 force_reindex=True,
                 verbose=False,
             )

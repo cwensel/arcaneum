@@ -190,11 +190,11 @@ arc corpus sync MyCorpus /path/to/repo --git-version       # Keep multiple versi
 
 **Git Sync Modes:**
 
-| Mode           | Behavior                                      | Use Case                     |
-| -------------- | --------------------------------------------- | ---------------------------- |
-| Default        | Discover git repos with `git ls-files`; check changed files by path, mtime, and size | General use, local worktrees |
-| `--git-update` | Before file checks, skip whole repos whose HEAD commit is unchanged | CI/batch re-indexing committed snapshots |
-| `--git-version`| Index each commit as separate version         | Compare code across versions |
+| Mode            | Behavior                                                                             | Use Case                                 |
+| --------------- | ------------------------------------------------------------------------------------ | ---------------------------------------- |
+| Default         | Discover git repos with `git ls-files`; check changed files by path, mtime, and size | General use, local worktrees             |
+| `--git-update`  | Before file checks, skip whole repos whose HEAD commit is unchanged                  | CI/batch re-indexing committed snapshots |
+| `--git-version` | Index each commit as separate version                                                | Compare code across versions             |
 
 **Note:** Default code sync is already git-aware. `--git-update` is not needed to
 recognize repos; it is an opt-in commit-hash skip and can skip uncommitted
@@ -231,7 +231,7 @@ arc corpus repair MyCorpus --verbose                  # Show per-file quality sc
 
 **GPU and Apple Silicon:**
 
-Large models like `stella` (1.5B params) may cause system instability on Macs with
+Large models like `jina-code-1.5b` (1.5B params) may cause system instability on Macs with
 limited unified memory when GPU is enabled. CPU is the stable default; use `--gpu`
 only when accelerator throughput is worth the memory-risk tradeoff, or switch to a
 smaller model like `bge` (0.3B params).
@@ -257,7 +257,7 @@ arc corpus sync MyCorpus /path --mem-probe-interval 1 --mem-probe-log /tmp/mem.j
 arc corpus sync MyCorpus /path --mem-probe-interval 1 --mem-probe-log -
 ```
 
-Each line is a JSON object with `ts`, `phase` (e.g. `encoding:foo.pdf:stella`,
+Each line is a JSON object with `ts`, `phase` (e.g. `encoding:foo.pdf:qwen3-embed`,
 `indexing:foo.pdf`), `rss`, `mps_current`, `mps_driver`, `sys_used_pct`, and
 related fields. The output file is line-buffered so partial data survives a
 SIGKILL from macOS jetsam.
@@ -312,7 +312,7 @@ arc corpus parity MyCorpus --json
 
 ```text
 Checking parity for corpus 'Papers'...
-Corpus type: pdf, Models: stella
+Corpus type: pdf, Models: arctic-m
 
 Index Status:
   Files in both systems:     150
@@ -525,7 +525,7 @@ arc corpus delete MyCorpus --confirm --json
 arc collection create pdf-docs --type pdf
 
 # Create with specific model (optional override)
-arc collection create pdf-docs --type pdf --model stella
+arc collection create pdf-docs --type pdf --model qwen3-embed
 
 # With custom HNSW parameters
 arc collection create pdf-docs --type pdf --hnsw-m 16 --hnsw-ef 100
@@ -556,7 +556,7 @@ arc collection list --json
 **Output includes:**
 
 - **Name**: Collection name
-- **Model**: Embedding model used (e.g., stella, jina-code)
+- **Model**: Embedding model used (e.g., arctic-m, jina-code)
 - **Points**: Number of indexed documents
 - **Type** (verbose): Collection type (pdf, code, markdown)
 - **Vectors** (verbose): Vector dimensions and distance metrics
@@ -911,31 +911,64 @@ arc search text '"neural network"' --corpus pdf-docs
 
 ## Model Selection
 
-### General Purpose Models
+Speed and quality at a glance. Indexing speed is measured throughput on an
+Apple M2 Pro (32 GB) embedding ~350-word chunks through arc's embedding
+client with default settings; treat the ratios as guidance, not absolutes.
+Quality figures are published benchmark scores (different benchmarks are not
+comparable with each other — compare within a column, not across tables).
 
-| Model        | Dimensions | Best For                        | Late Chunking |
-| ------------ | ---------- | ------------------------------- | ------------- |
-| `arctic-m`   | 768D       | Stable docs/PDFs/markdown       | No            |
-| `stella`     | 1024D      | High-quality documents          | Yes           |
-| `mxbai-large`| 1024D      | High-quality FastEmbed docs     | No            |
-| `bge`        | 1024D      | Legacy BGE documents            | No            |
+Two things worth knowing before picking a model:
 
-### Code-Specific Models
+- FastEmbed models (`arctic-m`, `jina-code`, `bge-*`, `mxbai-large`) run on
+  CPU via ONNX and do not benefit from `--gpu`.
+- sentence-transformers models (`qwen3-embed`, `jina-code-0.5b`, etc.) do use
+  the GPU. On Apple Silicon with `--gpu`, `qwen3-embed` indexes *faster* than
+  the CPU-bound defaults — speed is only a reason to avoid it on machines
+  without a usable GPU or with tight memory (~2.4 GB model weights).
 
-**Stable default: `jina-code`**
+### Document Models (pdf/markdown)
 
-For source code indexing, use specialized code models optimized for programming languages:
+| Model         | Dims  | Context | Indexing speed¹                | Retrieval quality²          | Notes                                                 |
+| ------------- | ----- | ------- | ------------------------------ | --------------------------- | ----------------------------------------------------- |
+| `bge-small`   | 384D  | 512     | ~17/sec (CPU)                  | Lowest of the set           | Use when speed matters more than recall               |
+| `arctic-m`    | 768D  | 512     | ~5/sec (CPU)                   | Good (MTEB Retrieval 54.9)  | **Default** — stable, no extra install                |
+| `mxbai-large` | 1024D | 512     | slower than arctic-m           | Better (est.)               | Larger FastEmbed model, CPU-bound                     |
+| `qwen3-embed` | 1024D | 32K     | ~8/sec (`--gpu`), ~5/sec (CPU) | Best (MTEB English v2 70.7) | Multilingual; needs `arcaneum[sentence-transformers]` |
+| `stella`      | 1024D | -       | -                              | -                           | **Deprecated** — use `qwen3-embed`                    |
 
-| Model            | Dimensions | Context | Best For              | Notes                                    |
-| ---------------- | ---------- | ------- | --------------------- | ---------------------------------------- |
-| `jina-code`      | 768D       | 8K      | Stable default        | Lower memory, good code retrieval        |
-| `jina-code-0.5b` | 896D       | 32K     | Higher quality        | SOTA Sept 2025, opt-in                   |
-| `jina-code-1.5b` | 1536D      | 32K     | Highest quality       | SOTA Sept 2025, slower but best accuracy |
-| `codesage-large` | 1024D      | -       | 9 languages           | CodeSage V2, Dec 2024                    |
-| `nomic-code`     | 3584D      | -       | 6 languages           | 7B params, highest quality, slowest      |
+### Code Models
 
-**Recommendation:** Use `jina-code` for the most stable default. Use `jina-code-0.5b`
-or `jina-code-1.5b` when quality is more important than memory footprint.
+| Model            | Dims  | Context | Indexing speed¹        | Retrieval quality³ | Notes                                  |
+| ---------------- | ----- | ------- | ---------------------- | ------------------ | -------------------------------------- |
+| `jina-code`      | 768D  | 8K      | ~5/sec (CPU)           | Good               | **Default** — stable, no extra install |
+| `jina-code-0.5b` | 896D  | 32K     | ~qwen3-embed (est.)    | Better (78.4 avg)  | SOTA Sept 2025; use with `--gpu`       |
+| `jina-code-1.5b` | 1536D | 32K     | slowest practical      | Best (79.0 avg)    | 1.5B params; quality over throughput   |
+| `codesage-large` | 1024D | 8K      | between 0.5b and 1.5b  | Better             | 9 languages, CodeSage V2               |
+| `nomic-code`     | 3584D | 8K      | requires dedicated GPU | Best-in-class      | 7B params; impractical without CUDA    |
+
+¹ Measured (or estimated from parameter count where marked *est.*) on
+Apple M2 Pro, 32 GB, ~350-word chunks, arc defaults. CPU throughput can
+improve with `--cpu-workers`.
+² Document quality: `arctic-m` is MTEB Retrieval nDCG@10 (v1 leaderboard);
+`qwen3-embed` is MTEB English v2 mean (70.70, vs 69.43 for deprecated
+stella). Different scales — use them as within-column tiers.
+³ Code quality: average over 25 code-retrieval benchmarks reported by Jina
+for the jina-code-embeddings family.
+
+### Which model for which corpus?
+
+- **Code**: `jina-code` (default) is the safe choice. If retrieval quality
+  matters more than indexing time — e.g. a large codebase you search daily —
+  use `jina-code-0.5b` with `--gpu`; it costs roughly nothing extra on Apple
+  Silicon relative to the CPU default.
+- **Tech docs / PDFs / markdown (English)**: `arctic-m` (default) indexes on
+  CPU with solid retrieval. Prefer `qwen3-embed` when you want the best
+  retrieval quality, documents longer than 512 tokens per chunk, or have a
+  GPU available (where it is also the faster option).
+- **Multilingual or mixed corpora**: `qwen3-embed` (or `jina-v3` if you want
+  a FastEmbed-only install).
+- **Throughput-critical, quality-tolerant** (e.g. huge scratch corpora):
+  `bge-small` is ~3x faster than any other option.
 
 **Usage:**
 
@@ -1057,7 +1090,7 @@ available with `--gpu`:
 
 **Compatible Models** (verified with GPU):
 
-- `stella` - MPS support for high-quality PDFs/markdown
+- `qwen3-embed` - MPS support for high-quality PDFs/markdown
 - `jina-code` - MPS support for source code
 - `bge-small` - experimental CoreML support
 - `bge-base` - experimental CoreML support
@@ -1558,7 +1591,7 @@ RuntimeError: MPS backend out of memory (MPS allocated: 12.25 GiB...)
 1. The system uses adaptive batch sizes based on model size (automatic)
 2. Omit `--gpu` to stay on the stable CPU default
 3. When using `--gpu`, use `--embedding-batch-size 100` to reduce GPU memory usage
-4. Try a smaller model (e.g., `minilm` instead of `stella`)
+4. Try a smaller model (e.g., `minilm` instead of `qwen3-embed`)
 
 See [PDF Indexing Guide](pdf-indexing.md#gpu-memory-errors-mpscuda) for model memory requirements.
 

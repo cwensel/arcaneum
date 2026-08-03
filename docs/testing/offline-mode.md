@@ -74,9 +74,7 @@ TextEmbedding('jinaai/jina-embeddings-v3', cache_dir=cache_dir)
 
 # SentenceTransformers models
 SentenceTransformer(
-    'dunzhang/stella_en_1.5B_v5',
-    revision='7817065102fd9e1b031fe874e910c01f40b2f001',
-    trust_remote_code=True,
+    'Qwen/Qwen3-Embedding-0.6B',
     cache_folder=cache_dir,
 )
 SentenceTransformer(

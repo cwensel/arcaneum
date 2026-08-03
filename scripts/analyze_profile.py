@@ -71,7 +71,7 @@ def analyze_profile(prof_file: str, detailed: bool = False):
     print("=" * 80)
 
     for func in ps.stats.keys():
-        if "embed" in func[2].lower() or "stella" in func[2].lower():
+        if "embed" in func[2].lower() or "qwen" in func[2].lower():
             func_data = ps.stats[func]
             cc, nc, tt, ct = func_data[:4]
             print(f"{func[2]}: {ct:.3f}s cum, {tt:.3f}s total ({nc} calls)")

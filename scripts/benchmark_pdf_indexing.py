@@ -111,7 +111,7 @@ Content repeated for realistic testing:
 def benchmark_pdf_indexing(
     pdf_dir: Path,
     collection_name: str = "benchmark",
-    model_name: str = "stella",
+    model_name: str = "qwen3-embed",
     batch_size: int = 256,
     embedding_batch_size: int = 256,
     gpu: bool = True,
@@ -344,7 +344,9 @@ def main():
         "--pages-per-pdf", type=int, default=5, help="Pages per synthetic PDF (default: 5)"
     )
 
-    parser.add_argument("--model", default="stella", help="Embedding model (default: stella)")
+    parser.add_argument(
+        "--model", default="qwen3-embed", help="Embedding model (default: qwen3-embed)"
+    )
 
     parser.add_argument(
         "--batch-size", type=int, default=300, help="Qdrant upload batch size (default: 300)"

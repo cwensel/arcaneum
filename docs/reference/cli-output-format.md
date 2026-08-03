@@ -1,13 +1,14 @@
 # CLI Output Format Documentation
 
-This document describes the output formats, error codes, and conventions used by the Arcaneum CLI following RDR-006 best practices.
+This document describes the output formats, error codes, and conventions used by
+the Arcaneum CLI following RDR-006 best practices.
 
 ## Exit Codes
 
 All Arcaneum CLI commands follow a consistent exit code convention:
 
 | Exit Code | Name | Meaning | Examples |
-|-----------|------|---------|----------|
+| ----------- | ------ | --------- | ---------- |
 | **0** | SUCCESS | Command completed successfully | Collection created, files indexed, search returned results |
 | **1** | ERROR | General error (network, server, unexpected) | Qdrant connection failed, embedding model error, unexpected exception |
 | **2** | INVALID_ARGS | Invalid arguments or configuration | Unknown model name, invalid filter syntax, missing required field |
@@ -17,7 +18,7 @@ All Arcaneum CLI commands follow a consistent exit code convention:
 
 ```bash
 # Check exit code in bash
-arc collection create test --model stella
+arc collection create test --model qwen3-embed
 echo $?  # 0 = success
 
 arc collection create test --model invalid-model
@@ -34,15 +35,17 @@ echo $?  # 3 = not found
 Human-readable formatted output using Rich library with colors and formatting.
 
 **Features:**
+
 - Color-coded messages (green for success, red for errors, yellow for warnings)
 - Tables for list commands
 - Progress indicators for long-running operations
 - Emoji/symbols for visual clarity (✓, ✗, ➕, ↻)
 
 **Example:**
-```
+
+```text
 ✅ Created collection 'Research' with 2 models
-  • stella: 1024D
+  • qwen3-embed: 1024D
   • bge: 1024D
 ```
 
@@ -55,6 +58,7 @@ stdout contains only the JSON document; startup warnings, progress, and other
 human messages go to stderr.
 
 **Standard Format:**
+
 ```json
 {
   "status": "success|error",
@@ -77,29 +81,33 @@ Long-running commands (indexing, bulk operations) output progress messages with 
 ### Progress Message Format
 
 **Initialization:**
-```
+
+```text
 [INFO] Found 47 projects
 [INFO] Indexing 5 projects...
 ```
 
 **Progress Updates:**
-```
+
+```text
 [INFO] Processing 1/5 (20%) project-name#branch
 [INFO] Processing 2/5 (40%) another-project#main
 [INFO] Processing 3/5 (60%) third-project#develop
 ```
 
 **Completion:**
-```
+
+```text
 [INFO] Complete: 5 projects, 142 files, 3847 chunks
 ```
 
 ### Error Messages
 
 All errors use the `[ERROR]` prefix:
-```
+
+```text
 [ERROR] Collection 'Research' not found
-[ERROR] Unknown model: invalid-model. Available: stella, bge, jina-code, modernbert
+[ERROR] Unknown model: invalid-model. Available: qwen3-embed, bge, jina-code, arctic-m
 [ERROR] Invalid filter syntax: expected key=value
 ```
 
@@ -116,9 +124,9 @@ All errors use the `[ERROR]` prefix:
   "data": {
     "collection": "Research",
     "type": "pdf",
-    "models": ["stella", "bge"],
+    "models": ["qwen3-embed", "bge"],
     "vectors": {
-      "stella": 1024,
+      "qwen3-embed": 1024,
       "bge": 1024
     },
     "hnsw": {
@@ -143,7 +151,7 @@ All errors use the `[ERROR]` prefix:
         "name": "Research",
         "points_count": 1247,
         "vectors": {
-          "stella": {
+          "qwen3-embed": {
             "size": 1024,
             "distance": "Cosine"
           }
@@ -177,7 +185,7 @@ All errors use the `[ERROR]` prefix:
     "points_count": 1247,
     "status": "green",
     "vectors": {
-      "stella": {
+      "qwen3-embed": {
         "size": 1024,
         "distance": "Cosine"
       }
@@ -371,8 +379,8 @@ All errors use the `[ERROR]` prefix:
 
 #### Invalid Arguments (Exit Code 2)
 
-```
-[ERROR] Unknown model: invalid-model. Available: stella, bge, jina-code, modernbert
+```text
+[ERROR] Unknown model: invalid-model. Available: qwen3-embed, bge, jina-code, arctic-m
 [ERROR] Invalid filter syntax: expected key=value or JSON object
 [ERROR] --confirm flag required for non-interactive deletion
 [ERROR] Python 3.12+ required
@@ -380,7 +388,7 @@ All errors use the `[ERROR]` prefix:
 
 #### Resource Not Found (Exit Code 3)
 
-```
+```text
 [ERROR] Collection 'Research' not found
 [ERROR] Path does not exist: /nonexistent/path
 [ERROR] No git repository found at /path/to/non-repo
@@ -389,7 +397,7 @@ All errors use the `[ERROR]` prefix:
 
 #### General Errors (Exit Code 1)
 
-```
+```text
 [ERROR] Failed to connect to Qdrant at http://localhost:6333
 [ERROR] Failed to create collection: Timeout waiting for server
 [ERROR] Embedding generation failed: Out of memory
@@ -403,25 +411,30 @@ Claude Code can parse progress messages to track long-running operations.
 ### Pattern Matching
 
 **Discovery Messages:**
+
 ```regex
 ^\[INFO\] Found (\d+) (projects|files|PDFs)$
 ```
 
 **Progress Updates:**
+
 ```regex
 ^\[INFO\] Processing (\d+)/(\d+) \((\d+)%\) (.*)$
 ```
+
 - Capture groups: current, total, percentage, item_name
 
 **Completion Messages:**
+
 ```regex
 ^\[INFO\] Complete: (\d+) (projects|files), (\d+) (files|chunks), (\d+) chunks$
 ```
+
 - Capture groups: item_count1, item_type1, item_count2, item_type2, chunk_count
 
 ### Example Progress Sequence
 
-```
+```text
 [INFO] Found 3 projects
 [INFO] Indexing 3 projects...
 [INFO] Processing 1/3 (33%) myproject#main
@@ -437,11 +450,13 @@ Claude Code can parse progress messages to track long-running operations.
 #### Exit Code 1: Qdrant Connection Failed
 
 **Problem:**
-```
+
+```text
 [ERROR] Failed to connect to Qdrant at http://localhost:6333
 ```
 
 **Solutions:**
+
 1. Check if Qdrant Docker container is running: `docker ps | grep qdrant`
 2. Start services: `arc container start`
 3. Verify port: `curl http://localhost:6333/healthz`
@@ -449,11 +464,13 @@ Claude Code can parse progress messages to track long-running operations.
 #### Exit Code 2: Unknown Model
 
 **Problem:**
-```
-[ERROR] Unknown model: invalid. Available: stella, bge, jina-code, modernbert
+
+```text
+[ERROR] Unknown model: invalid. Available: qwen3-embed, bge, jina-code, arctic-m
 ```
 
 **Solutions:**
+
 1. Use one of the available models from the list
 2. Run `arc models list` to see all available models
 3. Check for typos in model name
@@ -461,11 +478,13 @@ Claude Code can parse progress messages to track long-running operations.
 #### Exit Code 3: Collection Not Found
 
 **Problem:**
-```
+
+```text
 [ERROR] Collection 'Research' not found
 ```
 
 **Solutions:**
+
 1. List existing collections: `arc collection list`
 2. Create the collection first: `arc collection create Research --type pdf`
 3. Check for typos in collection name
@@ -479,6 +498,7 @@ arc index code /code --collection Code --verbose
 ```
 
 This shows:
+
 - Detailed step-by-step progress
 - Timing information
 - Debug output from libraries
@@ -497,8 +517,9 @@ arc collection list --json | jq '.data.collections[] | .name'
 ### For Scripting
 
 1. **Always check exit codes:**
+
    ```bash
-   if arc collection create test --model stella --json; then
+   if arc collection create test --model qwen3-embed --json; then
        echo "Success!"
    else
        echo "Failed with exit code: $?"
@@ -506,11 +527,13 @@ arc collection list --json | jq '.data.collections[] | .name'
    ```
 
 2. **Parse JSON output with jq:**
+
    ```bash
    arc models list --json | jq -r '.data.models[] | select(.dimensions == 1024) | .alias'
    ```
 
 3. **Use --confirm for non-interactive deletion:**
+
    ```bash
    arc collection delete old-data --confirm --json
    ```
@@ -541,7 +564,8 @@ As noted in RDR-006, future versions may add:
 3. **Background Jobs** - Daemon mode for long-running operations
 4. **Enhanced Metrics** - Detailed performance and accuracy metrics
 
-For now, the CLI-first approach with JSON support provides the foundation for these enhancements without breaking backward compatibility.
+For now, the CLI-first approach with JSON support provides the foundation for
+these enhancements without breaking backward compatibility.
 
 ## References
 

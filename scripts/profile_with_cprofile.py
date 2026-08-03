@@ -95,7 +95,7 @@ def main():
                 # Load embedding model
                 print("Loading embedding model...")
                 embeddings = get_cached_model(
-                    model_name="stella", cache_dir=str(get_models_dir()), use_gpu=True
+                    model_name="qwen3-embed", cache_dir=str(get_models_dir()), use_gpu=True
                 )
 
                 # Create uploader
@@ -112,7 +112,7 @@ def main():
                 stats = uploader.index_directory(
                     pdf_dir=tmpdir,
                     collection_name=collection_name,
-                    model_name="stella",
+                    model_name="qwen3-embed",
                     model_config={"chunk_size": 512, "chunk_overlap": 50},
                     force_reindex=True,
                     verbose=False,

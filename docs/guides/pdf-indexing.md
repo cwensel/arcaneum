@@ -234,7 +234,7 @@ available with `--gpu` for 1.5-3x faster embedding generation on supported model
 
 **Compatible Models** (verified with GPU support):
 
-- **stella** (high-quality opt-in) - MPS support on Apple Silicon
+- **qwen3-embed** (high-quality opt-in) - MPS support on Apple Silicon
 - **jina-code** - Full MPS support on Apple Silicon
 - **bge-small**, **bge-base** - experimental CoreML support
 
@@ -243,7 +243,7 @@ available with `--gpu` for 1.5-3x faster embedding generation on supported model
 **When to enable GPU**:
 
 - You need faster embedding throughput
-- You are using an MPS/CUDA-supported model such as stella or jina-code
+- You are using an MPS/CUDA-supported model such as qwen3-embed or jina-code
 - You are comfortable falling back if memory pressure is detected
 
 ```bash
@@ -261,7 +261,7 @@ Choose the embedding model based on your use case:
 | Model           | Best For                     | Chunk Size | Late Chunking | GPU Support          |
 | --------------- | ---------------------------- | ---------- | ------------- | -------------------- |
 | **arctic-m**    | Stable default for PDFs/docs | 460 tokens | No            | CPU/FastEmbed        |
-| **stella**      | High-quality documents       | 768 tokens | Yes           | MPS                  |
+| **qwen3-embed** | High-quality documents       | 768 tokens | Yes           | MPS                  |
 | **mxbai-large** | High-quality FastEmbed docs  | 460 tokens | No            | CPU/FastEmbed        |
 | **bge**         | Legacy BGE documents         | 460 tokens | No            | Experimental CoreML  |
 
@@ -366,7 +366,7 @@ For large PDFs or many parallel workers:
 
 ### GPU Memory Errors (MPS/CUDA)
 
-If you see errors like `MPS backend out of memory` when using large models like `stella` (1.5B params):
+If you see errors like `MPS backend out of memory` when using large models like `jina-code-1.5b` (1.5B params):
 
 ```text
 RuntimeError: MPS backend out of memory (MPS allocated: 12.25 GiB...)
@@ -383,9 +383,9 @@ The system uses adaptive batch sizes based on model size, but if you still hit m
 
 | Model            | Size        | Memory Usage |
 | ---------------- | ----------- | ------------ |
-| `stella`         | 1.5B params | ~12-15 GB    |
-| `jina-code-1.5b` | 1.5B params | ~12-15 GB    |
 | `nomic-code`     | 7B params   | ~20+ GB      |
+| `jina-code-1.5b` | 1.5B params | ~12-15 GB    |
+| `qwen3-embed`    | 0.6B params | ~4-6 GB      |
 | `jina-code-0.5b` | 500M params | ~4-6 GB      |
 | `jina-code`      | 137M params | ~2-3 GB      |
 | `minilm`         | 22M params  | <1 GB        |
@@ -430,7 +430,7 @@ Model configs are defined in `config.py`:
 
 ```python
 DEFAULT_MODELS = {
-    "stella": ModelConfig(
+    "qwen3-embed": ModelConfig(
         chunk_size=768,  # Conservative for PDF
         chunk_overlap=115,  # 15% overlap
         late_chunking=True,

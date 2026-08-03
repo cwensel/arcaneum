@@ -12,7 +12,7 @@ This script measures:
 
 Usage:
     python scripts/benchmark_indexing.py --pdf-dir /path/to/pdfs --output results.json
-    python scripts/benchmark_indexing.py --benchmark embeddings --model stella --batch-sizes 256,512,1024
+    python scripts/benchmark_indexing.py --benchmark embeddings --model qwen3-embed --batch-sizes 256,512,1024
     python scripts/benchmark_indexing.py --benchmark pdf --gpu --file-workers 4
 """
 
@@ -76,7 +76,7 @@ class BenchmarkResults:
 
 
 def benchmark_embedding_batches(
-    model_name: str = "stella",
+    model_name: str = "qwen3-embed",
     batch_sizes: List[int] = None,
     gpu: bool = True,
     num_texts: int = 10000,
@@ -150,7 +150,7 @@ def benchmark_embedding_batches(
 
 
 def benchmark_embedding_comparison(
-    model_name: str = "stella", batch_size: int = 256, num_texts: int = 5000
+    model_name: str = "qwen3-embed", batch_size: int = 256, num_texts: int = 5000
 ) -> Dict:
     """Compare GPU vs CPU embedding performance."""
 
@@ -293,7 +293,7 @@ def main():
     )
 
     parser.add_argument(
-        "--model", default="stella", help="Embedding model to benchmark (default: stella)"
+        "--model", default="qwen3-embed", help="Embedding model to benchmark (default: qwen3-embed)"
     )
 
     parser.add_argument(

@@ -58,7 +58,9 @@ The system supports PDF documents and source code with git-aware, AST-based chun
 - **bge-base** (768D) - BGE base embeddings, balanced performance and speed
 - **bge-small** (384D) - BGE small embeddings, fastest for size-constrained scenarios
 
-See `arc models list` for complete model information and recommendations.
+See `arc models list` for complete model information and recommendations, and
+[Model Selection](docs/guides/cli-reference.md#model-selection) for a
+speed/quality comparison with per-corpus-type guidance.
 Use `arc models list --json` for the LLM-readable catalog: it includes backend,
 recommended and default corpus uses, support/risk tier, prompt policy, context
 limit, hardware support, runtime-aligned batch guidance, and reindex warnings.

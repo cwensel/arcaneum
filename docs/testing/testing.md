@@ -25,6 +25,7 @@ curl http://localhost:6333/health
 ```
 
 If not running:
+
 ```bash
 arc container start
 ```
@@ -38,6 +39,7 @@ pip install -e .
 ### 4. Check System Dependencies (for OCR)
 
 **macOS:**
+
 ```bash
 # Install if needed
 brew install tesseract poppler
@@ -48,6 +50,7 @@ pdfinfo -v
 ```
 
 **Ubuntu/Debian:**
+
 ```bash
 # Install if needed
 sudo apt-get install tesseract-ocr poppler-utils
@@ -102,7 +105,8 @@ bin/arc --help
 ```
 
 **Expected Output:**
-```
+
+```text
 Usage: arc [OPTIONS] COMMAND [ARGS]...
   Arcaneum: Semantic and full-text search tools for Qdrant and MeiliSearch
 ...
@@ -125,7 +129,8 @@ bin/arc collection list
 ```
 
 **Expected Output:**
-```
+
+```text
 Collections (0 total)
 No collections found
 ```
@@ -139,10 +144,11 @@ bin/arc collection create pdf-test --type pdf
 ```
 
 **Expected Output:**
-```
+
+```text
 ✓ Collection created: pdf-test
-  Model: stella (BAAI/bge-large-en-v1.5)
-  Dimensions: 1024
+  Model: arctic-m (snowflake/snowflake-arctic-embed-m)
+  Dimensions: 768
   Distance: cosine
 ```
 
@@ -153,10 +159,12 @@ mkdir -p test_pdfs
 ```
 
 **Option A: Use Sample PDFs**
+
 - Add some PDF files to `test_pdfs/` directory
 - Any PDFs work (documentation, papers, books, etc.)
 
 **Option B: Create a Test PDF (macOS/Linux with LaTeX)**
+
 ```bash
 cat > test_pdfs/sample.txt << 'EOF'
 This is a test document for PDF indexing.
@@ -182,10 +190,11 @@ bin/arc index pdf ./test_pdfs --collection pdf-test --verbose
 ```
 
 **Expected Output:**
-```
+
+```text
 Indexing PDFs from: /path/to/test_pdfs
 Collection: pdf-test
-Model: stella
+Model: arctic-m
 
 Found 1 total PDF files
 Incremental sync: 1 new/modified, 0 already indexed
@@ -219,14 +228,15 @@ bin/arc collection info pdf-test
 ```
 
 **Expected Output:**
-```
+
+```text
 Collection: pdf-test
 
 Vectors Configuration
 ┌──────────┬────────────┬────────┬─────────┐
 │ Vector   │ Size       │ Dist.  │ Count   │
 ├──────────┼────────────┼────────┼─────────┤
-│ stella   │ 1024       │ cosine │ 5       │
+│ arctic-m │ 768        │ cosine │ 5       │
 └──────────┴────────────┴────────┴─────────┘
 
 Configuration
@@ -242,7 +252,8 @@ bin/arc index pdf ./test_pdfs --collection pdf-test
 ```
 
 **Expected Output:**
-```
+
+```text
 ...
 Incremental sync: 0 new/modified, 1 already indexed
 No PDFs to index
@@ -258,7 +269,8 @@ bin/arc index pdf ./test_pdfs --collection pdf-test --force
 ```
 
 **Expected Output:**
-```
+
+```text
 ...
 Force reindex: processing all 1 PDFs
 ...
@@ -272,11 +284,12 @@ bin/arc index pdf ./test_pdfs --collection pdf-test --json
 ```
 
 **Expected Output:**
+
 ```json
 {
   "success": true,
   "collection": "pdf-test",
-  "model": "stella",
+  "model": "arctic-m",
   "stats": {
     "files": 0,
     "chunks": 0,
@@ -299,7 +312,8 @@ bin/arc index pdf ./test_pdfs \
 ```
 
 **Expected Output:**
-```
+
+```text
 ...
 Triggering OCR for scanned.pdf (text: 50 chars)
 OCR completed: 5000 chars, avg confidence: 85.0%
@@ -315,7 +329,8 @@ OCR completed: 5000 chars, avg confidence: 85.0%
 ```
 
 **Expected Output:**
-```
+
+```text
 === PDF Indexing Test Script ===
 
 Checking Qdrant server...
@@ -389,24 +404,28 @@ pip install -e .
 Once testing is complete, you can:
 
 1. **Index your real documents** (recommended, dual-indexing):
+
    ```bash
    bin/arc corpus create my-docs --type pdf
    bin/arc corpus sync my-docs /path/to/your/pdfs
    ```
 
    Or single-system (Qdrant only):
+
    ```bash
    bin/arc collection create my-docs --type pdf
    bin/arc index pdf /path/to/your/pdfs --collection my-docs
    ```
 
 2. **Search your documents:**
+
    ```bash
    bin/arc search semantic "your query" --corpus my-docs
    bin/arc search text "your query" --corpus my-docs
    ```
 
 3. **Commit the implementation:**
+
    ```bash
    git add .
    git commit -m "Implement RDR-004: PDF Bulk Indexing"

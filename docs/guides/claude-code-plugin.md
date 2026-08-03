@@ -321,7 +321,7 @@ python -m arcaneum.cli.main --version && echo "✓ Version command works"
 ```bash
 /list-collections --json
 /list-models --json
-/create-collection test-json --model stella --type code --json
+/create-collection test-json --model jina-code --type code --json
 /collection-info test-json --json
 /delete-collection test-json --confirm --json
 ```
@@ -856,6 +856,7 @@ kata create "Search filter syntax unclear in help text" \
 - **RDR-006**: `docs/rdr/RDR-006-claude-code-integration.md`
 - **Output Format**: `docs/reference/cli-output-format.md`
 - **Compliance Report**: `docs/reference/plugin-compliance.md`
+
 ## Quick Reference
 
 ### Essential Commands

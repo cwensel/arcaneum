@@ -29,7 +29,7 @@ python scripts/benchmark_indexing.py --no-gpu
 ### Parameters
 
 - `--benchmark`: Type of benchmark (embeddings, gpu-vs-cpu, full)
-- `--model`: Embedding model (default: stella)
+- `--model`: Embedding model (default: qwen3-embed)
 - `--batch-sizes`: Comma-separated batch sizes (default: 256,512,1024)
 - `--num-texts`: Number of texts to embed (default: 10000)
 - `--samples`: Number of samples per batch size (default: 3)
@@ -85,7 +85,7 @@ python scripts/benchmark_pdf_indexing.py \
 - `--pdf-dir`: Directory with PDF files
 - `--generate-test-pdfs`: Generate N synthetic PDFs
 - `--pages-per-pdf`: Pages per synthetic PDF (default: 5)
-- `--model`: Embedding model (default: stella)
+- `--model`: Embedding model (default: qwen3-embed)
 - `--batch-size`: Qdrant upload batch size (default: 300)
 - `--embedding-batch-size`: Embedding batch size (default: 256)
 - `--batch-sizes`: Compare multiple batch sizes
@@ -178,10 +178,10 @@ python -m memory_profiler scripts/benchmark_pdf_indexing.py \
 
 Based on analysis of FastEmbed and open-source implementations:
 
-| Component | Old Default | Optimized | Rationale |
-|-----------|-------------|-----------|-----------|
-| Embedding batch size | 200 | **256** | FastEmbed ONNX default (proven optimal) |
-| Upload batch size | 100 | **300** | 3x improvement without memory issues |
+| Component            | Old Default | Optimized | Rationale                               |
+| -------------------- | ----------- | --------- | --------------------------------------- |
+| Embedding batch size | 200         | **256**   | FastEmbed ONNX default (proven optimal) |
+| Upload batch size    | 100         | **300**   | 3x improvement without memory issues    |
 
 To test other batch sizes:
 
@@ -224,13 +224,13 @@ After running benchmarks, analyze:
 
 Cumulative improvements from all optimizations:
 
-| Optimization | Speedup | Notes |
-|-------------|---------|-------|
-| GPU thread lock removal | 20-30% | With multi-file workers + GPU |
-| Connection pooling | 10-20% | Already implemented |
-| GC optimization | 2-5% | Scales with chunk count |
-| Batch size tuning | 5-15% | Embedding + upload batches |
-| **Total Combined** | **30-50%** | Real-world impact depends on hardware |
+| Optimization            | Speedup    | Notes                                 |
+| ----------------------- | ---------- | ------------------------------------- |
+| GPU thread lock removal | 20-30%     | With multi-file workers + GPU         |
+| Connection pooling      | 10-20%     | Already implemented                   |
+| GC optimization         | 2-5%       | Scales with chunk count               |
+| Batch size tuning       | 5-15%      | Embedding + upload batches            |
+| **Total Combined**      | **30-50%** | Real-world impact depends on hardware |
 
 ## Troubleshooting
 
@@ -259,7 +259,7 @@ For real-world testing with arc CLI:
 time arc index pdf \
   --path ./test_pdfs \
   --collection benchmark \
-  --model stella \
+  --model qwen3-embed \
   --embedding-batch-size 256 \
   --verbose
 ```

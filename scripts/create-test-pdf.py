@@ -55,10 +55,10 @@ def create_test_pdf(output_path: Path):
     c.drawString(100, height - 130, "The system supports multiple embedding models:")
 
     models = [
-        "- stella: Best for long documents, 1024 dimensions",
+        "- qwen3-embed: Best for long documents, 1024 dimensions",
         "- bge: Best for precision, 1024 dimensions",
-        "- modernbert: Best for recent content, 768 dimensions",
-        "- jina: Best for code + text, 768 dimensions",
+        "- arctic-m: Stable document default, 768 dimensions",
+        "- jina-code: Best for code + text, 768 dimensions",
     ]
     y = height - 160
     for model in models:
@@ -81,7 +81,7 @@ def create_test_pdf(output_path: Path):
     c.drawString(100, height - 100, "Section 5: Usage Examples")
     c.setFont("Helvetica", 12)
     c.drawString(100, height - 130, "Basic indexing command:")
-    c.drawString(100, height - 150, "  bin/arc index pdf ./pdfs --collection docs --model stella")
+    c.drawString(100, height - 150, "  bin/arc index pdf ./pdfs --collection docs --model arctic-m")
 
     c.drawString(100, height - 190, "Index PDFs (OCR enabled by default):")
     c.drawString(100, height - 210, "  bin/arc index pdf ./pdfs --collection docs")
@@ -110,4 +110,4 @@ if __name__ == "__main__":
     create_test_pdf(output_file)
 
     print(f"✓ Test PDF ready for indexing")
-    print(f"  Run: bin/arc index pdf ./test_pdfs --collection pdf-test --model stella")
+    print(f"  Run: bin/arc index pdf ./test_pdfs --collection pdf-test --model arctic-m")

@@ -198,6 +198,27 @@ EMBEDDING_MODELS = {
         "max_seq_length": 8192,
         "mps_max_batch": 8,  # MPS needs conservative batches due to unified memory
     },
+    "gemma-embed": {
+        "name": "google/embeddinggemma-300m",
+        "revision": "57c266a740f537b4dc058e1b0cda161fd15afa75",
+        "dimensions": 768,
+        "backend": "sentence-transformers",
+        "description": "EmbeddingGemma 300M (768D, 2K context, multilingual, gated HF repo)",
+        "available": True,
+        "recommended_for": "pdf",
+        "install_extra": "sentence-transformers",
+        "params_billions": 0.3,  # 300M params
+        # Downloading requires accepting Google's license on Hugging Face and
+        # an authenticated token (hf auth login).
+        "gated": True,
+        # EmbeddingGemma requires task prefixes on BOTH roles (unlike qwen3-embed,
+        # which prefixes only queries). Literal prompts, applied by _prompted_texts;
+        # adding prompt_name as well would double-prefix.
+        "query_prompt": "task: search result | query: ",
+        "document_prompt": "title: none | text: ",
+        "max_seq_length": 2048,  # native context
+        "mps_max_batch": 16,  # half qwen3-embed's params → 2x its batch
+    },
     "stella": {
         "name": "dunzhang/stella_en_1.5B_v5",
         "revision": "7817065102fd9e1b031fe874e910c01f40b2f001",
@@ -590,6 +611,27 @@ class EmbeddingClient:
             sentinel.unlink()
         except Exception:
             logger.debug("CoreML crash sentinel check failed", exc_info=True)
+
+    def _gated_model_hint(self, model_name: str, config: Dict, error: Exception) -> Optional[str]:
+        """Explain the license/auth steps when a gated HF repo refuses a download.
+
+        Gated repos (e.g. google/embeddinggemma-300m) return 401/403 until the
+        user accepts the license on Hugging Face and authenticates locally.
+        """
+        if not config.get("gated"):
+            return None
+        error_msg = str(error).lower()
+        if not any(
+            marker in error_msg
+            for marker in ("401", "403", "gated", "unauthorized", "restricted")
+        ):
+            return None
+        return (
+            f"Model '{model_name}' is a gated Hugging Face repo and requires access approval.\n"
+            f"1. Accept the license at https://huggingface.co/{config['name']}\n"
+            f"2. Authenticate this machine with: hf auth login\n\n"
+            f"Original error: {error}"
+        )
 
     def _experimental_coreml_enabled(self) -> bool:
         """Return True when the user explicitly opts into FastEmbed CoreML.
@@ -1269,9 +1311,12 @@ class EmbeddingClient:
                             )
                         self._models[model_name] = model_obj
                     except Exception as e:
-                        # Detect and report network/SSL errors with helpful messages
+                        # Detect and report gated/network/SSL errors with helpful messages
+                        gated_hint = self._gated_model_hint(model_name, config, e)
                         error_msg = str(e).lower()
-                        if "ssl" in error_msg or "certificate" in error_msg:
+                        if gated_hint:
+                            raise RuntimeError(gated_hint) from e
+                        elif "ssl" in error_msg or "certificate" in error_msg:
                             raise RuntimeError(
                                 f"SSL certificate verification failed while downloading model '{model_name}'.\n"
                                 f"For corporate proxies with self-signed certificates, run:\n"

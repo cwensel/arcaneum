@@ -202,6 +202,7 @@ def estimate_safe_batch_size_v2(
     # CUDA: Use detailed memory model
     # Model weights (one-time GPU memory allocation)
     MODEL_WEIGHTS_GB = {
+        "gemma-embed": 1.2,  # 300M parameters (fp32)
         "qwen3-embed": 2.4,  # 600M parameters (fp32)
         "stella": 2.5,  # 1.5B parameters
         "jina": 0.5,  # ~110M parameters
@@ -217,6 +218,7 @@ def estimate_safe_batch_size_v2(
 
     # Activation memory per batch item (empirical measurements)
     ACTIVATION_MB_PER_ITEM = {
+        "gemma-embed": 5.0,  # 768D output
         "qwen3-embed": 8.0,  # 1024D output
         "stella": 8.0,  # 1024D output, large model
         "jina": 5.0,  # 768D output

@@ -145,6 +145,80 @@ def test_qwen3_embed_prompt_policy_uses_builtin_query_prompt():
     assert "prompt_name" not in policy["document"]
 
 
+def test_gated_model_download_failure_explains_license_step():
+    """A 401/gated download error must tell the user how to get access."""
+    client = EmbeddingClient(cache_dir="/tmp/models", use_gpu=False)
+
+    error = OSError("401 Client Error: Unauthorized for gated repo")
+    hint = client._gated_model_hint("gemma-embed", EMBEDDING_MODELS["gemma-embed"], error)
+
+    assert hint is not None
+    assert "https://huggingface.co/google/embeddinggemma-300m" in hint
+    assert "hf auth login" in hint
+
+    plain_error = OSError("disk full")
+    assert client._gated_model_hint("gemma-embed", EMBEDDING_MODELS["gemma-embed"], plain_error) is None
+    assert (
+        client._gated_model_hint("qwen3-embed", EMBEDDING_MODELS["qwen3-embed"], error) is None
+    )
+
+
+def test_gemma_embed_uses_native_backend_without_remote_code():
+    config = EMBEDDING_MODELS["gemma-embed"]
+
+    assert config["name"] == "google/embeddinggemma-300m"
+    assert config["backend"] == "sentence-transformers"
+    assert config["dimensions"] == 768
+    assert config["recommended_for"] == "pdf"
+    assert config["gated"] is True
+    assert not config.get("trust_remote_code", False)
+    assert REVISION_RE.match(config["revision"])
+
+    kwargs = _sentence_transformer_load_kwargs(
+        "gemma-embed",
+        config,
+        cache_folder="/tmp/models",
+        local_files_only=True,
+        device="cpu",
+    )
+
+    assert kwargs["trust_remote_code"] is False
+    assert kwargs["revision"] == config["revision"]
+
+
+def test_gemma_embed_prompt_policy_prefixes_queries_and_documents():
+    """EmbeddingGemma requires task prefixes on both roles (public model card)."""
+    policy = get_embedding_prompt_policy("gemma-embed")
+
+    assert policy["query"]["prompt"] == "task: search result | query: "
+    assert policy["document"]["prompt"] == "title: none | text: "
+    # Literal prompts only — a prompt_name as well would double-prefix.
+    assert "prompt_name" not in policy["query"]
+    assert "prompt_name" not in policy["document"]
+
+
+def test_gemma_embed_gated_download_error_explains_license_login(monkeypatch):
+    """A gated-repo failure must tell the user how to get access, not stack-trace."""
+    from types import ModuleType
+    from unittest.mock import MagicMock, patch
+
+    import sys as _sys
+
+    module = ModuleType("sentence_transformers")
+    module.SentenceTransformer = MagicMock(
+        side_effect=OSError(
+            "Access to model google/embeddinggemma-300m is restricted. "
+            "You must have access to it and be authenticated to access it."
+        )
+    )
+    monkeypatch.setitem(_sys.modules, "sentence_transformers", module)
+
+    client = EmbeddingClient(cache_dir="/tmp/models", use_gpu=False)
+    with patch.object(client, "is_model_cached", return_value=False):
+        with pytest.raises(RuntimeError, match="(?s)gated.*huggingface.co/google/embeddinggemma-300m"):
+            client.get_model("gemma-embed")
+
+
 def test_stella_is_deprecated_in_favor_of_qwen3_embed():
     config = EMBEDDING_MODELS["stella"]
 

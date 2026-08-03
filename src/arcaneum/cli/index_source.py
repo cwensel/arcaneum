@@ -266,6 +266,7 @@ def index_source_command(
                 "jinaai/jina-embeddings-v3": 1024,
                 "dunzhang/stella_en_1.5B_v5": 1024,
                 "Qwen/Qwen3-Embedding-0.6B": 1024,
+                "google/embeddinggemma-300m": 768,
             }
             vector_size = vector_sizes.get(embedding_model, 768)
             metadata_model = {
@@ -306,6 +307,7 @@ def index_source_command(
                     "bge": "BAAI/bge-large-en-v1.5",  # 1024D
                     "stella": "dunzhang/stella_en_1.5B_v5",  # 1024D
                     "qwen3-embed": "Qwen/Qwen3-Embedding-0.6B",  # 1024D
+                    "gemma-embed": "google/embeddinggemma-300m",  # 768D
                     "jina-code": "jinaai/jina-embeddings-v2-base-code",  # 768D - code-specific
                     "jina": "jinaai/jina-embeddings-v2-base-code",  # 768D
                     "jina-v3": "jinaai/jina-embeddings-v3",  # 1024D - multilingual

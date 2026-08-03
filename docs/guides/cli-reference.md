@@ -928,13 +928,14 @@ Two things worth knowing before picking a model:
 
 ### Document Models (pdf/markdown)
 
-| Model         | Dims  | Context | Indexing speed¹                | Retrieval quality²          | Notes                                                 |
-| ------------- | ----- | ------- | ------------------------------ | --------------------------- | ----------------------------------------------------- |
-| `bge-small`   | 384D  | 512     | ~17/sec (CPU)                  | Lowest of the set           | Use when speed matters more than recall               |
-| `arctic-m`    | 768D  | 512     | ~5/sec (CPU)                   | Good (MTEB Retrieval 54.9)  | **Default** — stable, no extra install                |
-| `mxbai-large` | 1024D | 512     | slower than arctic-m           | Better (est.)               | Larger FastEmbed model, CPU-bound                     |
-| `qwen3-embed` | 1024D | 32K⁴    | ~8/sec (`--gpu`), ~5/sec (CPU) | Best (MTEB English v2 70.7) | Multilingual; needs `arcaneum[sentence-transformers]` |
-| `stella`      | 1024D | -       | -                              | -                           | **Deprecated** — use `qwen3-embed`                    |
+| Model         | Dims  | Context | Indexing speed¹                | Retrieval quality²          | Notes                                                                    |
+| ------------- | ----- | ------- | ------------------------------ | --------------------------- | ------------------------------------------------------------------------ |
+| `bge-small`   | 384D  | 512     | ~17/sec (CPU)                  | Lowest of the set           | Use when speed matters more than recall                                  |
+| `arctic-m`    | 768D  | 512     | ~5/sec (CPU)                   | Good (MTEB Retrieval 54.9)  | **Default** — stable, no extra install                                   |
+| `mxbai-large` | 1024D | 512     | slower than arctic-m           | Better (est.)               | Larger FastEmbed model, CPU-bound                                        |
+| `gemma-embed` | 768D  | 2K      | ~2x qwen3-embed est. (`--gpu`) | Near-best (top open <500M)  | Gated HF repo; needs `arcaneum[sentence-transformers]` & `hf auth login` |
+| `qwen3-embed` | 1024D | 32K⁴    | ~8/sec (`--gpu`), ~5/sec (CPU) | Best (MTEB English v2 70.7) | Multilingual; needs `arcaneum[sentence-transformers]`                    |
+| `stella`      | 1024D | -       | -                              | -                           | **Deprecated** — use `qwen3-embed`                                       |
 
 ### Code Models
 
@@ -966,7 +967,9 @@ bound attention memory, so longer inputs are truncated at 8192.
 - **Tech docs / PDFs / markdown (English)**: `arctic-m` (default) indexes on
   CPU with solid retrieval. Prefer `qwen3-embed` when you want the best
   retrieval quality, documents longer than 512 tokens per chunk, or have a
-  GPU available (where it is also the faster option).
+  GPU available (where it is also the faster option). For fast high-quality
+  indexing with `--gpu`, `gemma-embed` offers top-tier retrieval in under 500M
+  parameters.
 - **Multilingual or mixed corpora**: `qwen3-embed` (or `jina-v3` if you want
   a FastEmbed-only install).
 - **Throughput-critical, quality-tolerant** (e.g. huge scratch corpora):

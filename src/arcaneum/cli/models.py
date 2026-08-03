@@ -150,6 +150,7 @@ def _model_catalog_row(alias: str, config: dict) -> dict:
         "support_tier": _support_tier(config, default_for),
         "deprecated": bool(config.get("deprecated", False)),
         "superseded_by": config.get("superseded_by"),
+        "gated": bool(config.get("gated", False)),
         "install_extra": config.get("install_extra", "core"),
         "prompt_policy": _prompt_policy_summary(config),
         "context_limit": config.get("max_seq_length"),

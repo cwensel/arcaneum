@@ -236,6 +236,7 @@ available with `--gpu` for 1.5-3x faster embedding generation on supported model
 **Compatible Models** (verified with GPU support):
 
 - **qwen3-embed** (high-quality opt-in) - MPS support on Apple Silicon
+- **gemma-embed** (fast high-quality) - MPS support on Apple Silicon; gated HF repo (accept license + `hf auth login`)
 - **jina-code** - Full MPS support on Apple Silicon
 - **bge-small**, **bge-base** - experimental CoreML support
 

@@ -48,6 +48,8 @@ The system supports PDF documents and source code with git-aware, AST-based chun
   (capped to 8192 tokens in arcaneum), multilingual, requires `arcaneum[sentence-transformers]`
 - **stella** (1024D) - **DEPRECATED**, use `qwen3-embed`; existing corpora continue to work
 - **mxbai-large** (1024D) - High-quality FastEmbed document model
+- **gemma-embed** (768D) - Fast high-quality document model, top open multilingual <500M params,
+  gated HF repo, requires `arcaneum[sentence-transformers]`
 - **jina-code** (768D) - **DEFAULT** for code - stable FastEmbed code model
 - **jina-code-st** (768D) - Legacy SentenceTransformers code path, requires `arcaneum[sentence-transformers]`
 - **jina-code-0.5b** (896D) - Higher-quality opt-in code model, 32K native context

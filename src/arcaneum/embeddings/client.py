@@ -2370,6 +2370,8 @@ class EmbeddingClient:
         if required_file is None:
             return True
 
+        # Defensive check for non-standard cache layouts; real HuggingFace
+        # caches keep model files under snapshots/<revision>/ (checked below).
         if os.path.isfile(os.path.join(model_dir, required_file)):
             return True
 
@@ -2391,9 +2393,9 @@ class EmbeddingClient:
             return False
 
         message = str(error).lower()
-        return ("no_suchfile" in message or "file doesn't exist" in message) and (
-            "model.onnx" in message or "onnx" in message
-        )
+        # Require a ".onnx" artifact mention so runtime-library paths like
+        # libonnxruntime_providers_shared.so don't trigger a cache purge.
+        return ("no_suchfile" in message or "file doesn't exist" in message) and ".onnx" in message
 
     def _purge_fastembed_model_cache(self, model_name: str) -> bool:
         """Remove cached FastEmbed directories for a model so download can heal."""
@@ -2406,19 +2408,11 @@ class EmbeddingClient:
         candidates = {os.path.join(self.cache_dir, f"models--{safe_model_name}")}
 
         if os.path.exists(self.cache_dir):
-            model_parts = (
-                model_path.lower().replace("-", "_").replace(".", "_").replace("/", "_").split("_")
-            )
-            significant_parts = [part for part in model_parts if len(part) > 2]
             for item in os.listdir(self.cache_dir):
                 item_path = os.path.join(self.cache_dir, item)
                 if not (os.path.isdir(item_path) and item.startswith("models--")):
                     continue
-                item_lower = item.lower().replace("-", "_").replace(".", "_")
-                if significant_parts and (
-                    sum(1 for part in significant_parts if part in item_lower)
-                    >= len(significant_parts) * 0.6
-                ):
+                if self._cache_dir_name_matches_model(item, model_path):
                     candidates.add(item_path)
 
         purged = False
@@ -2433,6 +2427,25 @@ class EmbeddingClient:
                 )
 
         return purged
+
+    @staticmethod
+    def _cache_dir_name_matches_model(dir_name: str, model_path: str) -> bool:
+        """Match an HF cache dir (models--<org>--<name>) to a model.
+
+        Purging is destructive, so this requires the directory's name tokens to
+        equal the model's — tolerating a different org and an "onnx" wrapper
+        suffix (FastEmbed re-uploads, e.g. qdrant/<name>-onnx) but never a
+        sibling model that merely shares most name tokens.
+        """
+        repo_name = dir_name.split("--")[-1]
+
+        def _tokens(value: str) -> set:
+            normalized = value.lower().replace("-", "_").replace(".", "_")
+            return {part for part in normalized.split("_") if len(part) > 2}
+
+        model_tokens = _tokens(model_path.split("/")[-1])
+        dir_tokens = _tokens(repo_name) - {"onnx"}
+        return bool(model_tokens) and dir_tokens == model_tokens
 
     @staticmethod
     def _fastembed_required_model_file(model_path: str) -> Optional[str]:

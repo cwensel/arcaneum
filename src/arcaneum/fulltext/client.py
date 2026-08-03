@@ -11,6 +11,9 @@ logger = logging.getLogger(__name__)
 
 MEILI_TASK_WAIT_ATTEMPTS = 3
 MEILI_TASK_WAIT_RETRY_DELAY_SEC = 2
+# Matches the meilisearch client's default wait_for_task timeout; used for
+# fast index-management tasks (create/delete index, settings updates).
+MEILI_INDEX_TASK_TIMEOUT_MS = 5000
 
 
 class FullTextClient:
@@ -56,8 +59,6 @@ class FullTextClient:
                 )
                 time.sleep(retry_delay_sec)
 
-        raise RuntimeError(f"Failed waiting for MeiliSearch task {task_uid}")
-
     def create_index(
         self, name: str, primary_key: str = "id", settings: Optional[Dict[str, Any]] = None
     ) -> meilisearch.index.Index:
@@ -74,14 +75,14 @@ class FullTextClient:
         """
         # Create index - returns TaskInfo object (not dict)
         task = self.client.create_index(name, {"primaryKey": primary_key})
-        self.client.wait_for_task(task.task_uid)
+        self._wait_for_task_with_retries(task.task_uid, MEILI_INDEX_TASK_TIMEOUT_MS)
 
         index = self.client.index(name)
 
         # Apply settings if provided
         if settings:
             task = index.update_settings(settings)
-            self.client.wait_for_task(task.task_uid)
+            self._wait_for_task_with_retries(task.task_uid, MEILI_INDEX_TASK_TIMEOUT_MS)
 
         return index
 
@@ -129,7 +130,7 @@ class FullTextClient:
     def delete_index(self, name: str) -> None:
         """Delete an index."""
         task = self.client.delete_index(name)
-        self.client.wait_for_task(task.task_uid)
+        self._wait_for_task_with_retries(task.task_uid, MEILI_INDEX_TASK_TIMEOUT_MS)
 
     def delete_documents_by_file_paths(
         self, index_name: str, file_paths: List[str], timeout_ms: int = 180000
@@ -179,7 +180,7 @@ class FullTextClient:
         # Wait for all deletion tasks
         for task_uid in task_uids:
             try:
-                self.client.wait_for_task(task_uid, timeout_in_ms=timeout_ms)
+                self._wait_for_task_with_retries(task_uid, timeout_ms)
             except Exception:
                 # Deletion failures are logged but not fatal
                 pass
@@ -365,7 +366,7 @@ class FullTextClient:
         """Update settings for an index."""
         index = self.get_index(index_name)
         task = index.update_settings(settings)
-        self.client.wait_for_task(task.task_uid)
+        self._wait_for_task_with_retries(task.task_uid, MEILI_INDEX_TASK_TIMEOUT_MS)
 
     def health_check(self) -> bool:
         """Check if MeiliSearch server is healthy."""

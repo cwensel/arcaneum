@@ -148,7 +148,10 @@ def _raise_if_sync_failures(
             "Sync failed: "
             f"{files_failed} file(s) failed, "
             f"{meili_backfill_failed} MeiliSearch backfill(s) failed, "
-            f"{qdrant_backfill_failed} Qdrant backfill(s) failed"
+            f"{qdrant_backfill_failed} Qdrant backfill(s) failed. "
+            "Re-run with --force to retry the failed files; a partially "
+            "indexed repo may otherwise be skipped by --git-update change "
+            "detection."
         )
 
 

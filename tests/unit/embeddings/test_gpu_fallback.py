@@ -222,7 +222,10 @@ class TestFastEmbedCacheCompleteness:
         (model_dir / "model.safetensors").write_text("", encoding="utf-8")
         embedding_client.cache_dir = str(cache_dir)
 
-        assert embedding_client.is_model_cached("jina-code") is False
+        with patch.object(
+            embedding_client, "_fastembed_required_model_file", return_value="onnx/model.onnx"
+        ):
+            assert embedding_client.is_model_cached("jina-code") is False
 
     def test_fastembed_cache_with_model_file_is_cached(self, embedding_client, tmp_path):
         cache_dir = tmp_path / "models"
@@ -237,7 +240,79 @@ class TestFastEmbedCacheCompleteness:
         (model_dir / "model.onnx").write_text("", encoding="utf-8")
         embedding_client.cache_dir = str(cache_dir)
 
-        assert embedding_client.is_model_cached("jina-code") is True
+        with patch.object(
+            embedding_client, "_fastembed_required_model_file", return_value="onnx/model.onnx"
+        ):
+            assert embedding_client.is_model_cached("jina-code") is True
+
+    def test_fastembed_cache_unknown_model_file_fails_open(self, embedding_client, tmp_path):
+        cache_dir = tmp_path / "models"
+        model_dir = (
+            cache_dir
+            / "models--jinaai--jina-embeddings-v2-base-code"
+            / "snapshots"
+            / "516f4baf13dec4ddddda8631e019b5737c8bc250"
+        )
+        model_dir.mkdir(parents=True)
+        embedding_client.cache_dir = str(cache_dir)
+
+        # Model absent from FastEmbed's registry: completeness cannot be
+        # judged, so an existing directory is trusted (fail-open).
+        with patch.object(embedding_client, "_fastembed_required_model_file", return_value=None):
+            assert embedding_client.is_model_cached("jina-code") is True
+
+
+class TestFastEmbedArtifactErrorDetection:
+    """Only genuine missing-.onnx-artifact errors trigger cache self-healing."""
+
+    def test_missing_model_artifact_is_detected(self, embedding_client):
+        error = RuntimeError(
+            "[ONNXRuntimeError] : 3 : NO_SUCHFILE : Load model from "
+            "/cache/snapshots/abc/onnx/model.onnx failed: file doesn't exist"
+        )
+        assert embedding_client._is_missing_fastembed_artifact_error(error) is True
+
+    def test_missing_optimized_artifact_is_detected(self, embedding_client):
+        error = RuntimeError("NO_SUCHFILE: /cache/snapshots/abc/model_optimized.onnx")
+        assert embedding_client._is_missing_fastembed_artifact_error(error) is True
+
+    def test_missing_runtime_library_is_not_detected(self, embedding_client):
+        error = RuntimeError(
+            "ONNX Runtime provider load failed: file doesn't exist "
+            "/usr/lib/libonnxruntime_providers_shared.so"
+        )
+        assert embedding_client._is_missing_fastembed_artifact_error(error) is False
+
+    def test_none_error_is_not_detected(self, embedding_client):
+        assert embedding_client._is_missing_fastembed_artifact_error(None) is False
+
+
+class TestFastEmbedCachePurge:
+    """Purging an incomplete cache never removes sibling models' caches."""
+
+    def test_purge_removes_exact_and_wrapped_dirs_only(self, embedding_client, tmp_path):
+        cache_dir = tmp_path / "models"
+        exact = cache_dir / "models--BAAI--bge-large-en-v1.5"
+        wrapped = cache_dir / "models--qdrant--bge-large-en-v1.5-onnx"
+        for d in (exact, wrapped):
+            d.mkdir(parents=True)
+        embedding_client.cache_dir = str(cache_dir)
+
+        assert embedding_client._purge_fastembed_model_cache("bge-large") is True
+        assert not exact.exists()
+        assert not wrapped.exists()
+
+    def test_purge_leaves_same_family_sibling_models(self, embedding_client, tmp_path):
+        cache_dir = tmp_path / "models"
+        target = cache_dir / "models--jinaai--jina-embeddings-v2-base-code"
+        sibling = cache_dir / "models--jinaai--jina-embeddings-v2-base-en"
+        for d in (target, sibling):
+            d.mkdir(parents=True)
+        embedding_client.cache_dir = str(cache_dir)
+
+        assert embedding_client._purge_fastembed_model_cache("jina-code") is True
+        assert not target.exists()
+        assert sibling.exists()
 
 
 class TestSystemMemoryPressureGuard:

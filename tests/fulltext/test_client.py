@@ -279,6 +279,48 @@ class TestDocumentWaitRetries:
         assert client.client.wait_for_task.call_args_list[1].args == (10,)
         assert client.client.wait_for_task.call_args_list[2].args == (11,)
 
+    def test_wait_retries_on_communication_error(self, no_retry_sleep):
+        client = FullTextClient.__new__(FullTextClient)
+        client.client = Mock()
+        client.client.wait_for_task.side_effect = [
+            meilisearch.errors.MeilisearchCommunicationError("connection reset"),
+            {"status": "succeeded"},
+        ]
+
+        result = client._wait_for_task_with_retries(42, timeout_ms=60000)
+
+        assert result == {"status": "succeeded"}
+        assert client.client.wait_for_task.call_count == 2
+
+    def test_wait_raises_after_exhausting_all_retries(self, no_retry_sleep):
+        client = FullTextClient.__new__(FullTextClient)
+        client.client = Mock()
+        client.client.wait_for_task.side_effect = meilisearch.errors.MeilisearchTimeoutError(
+            "timed out"
+        )
+
+        with pytest.raises(meilisearch.errors.MeilisearchTimeoutError):
+            client._wait_for_task_with_retries(42, timeout_ms=60000)
+
+        assert client.client.wait_for_task.call_count == 3
+
+    def test_delete_documents_by_file_paths_retries_task_wait(self, no_retry_sleep):
+        client = FullTextClient.__new__(FullTextClient)
+        client.client = Mock()
+        index = Mock()
+        index.delete_documents.return_value = SimpleNamespace(task_uid=7)
+        client.get_index = Mock(return_value=index)
+        client.client.wait_for_task.side_effect = [
+            meilisearch.errors.MeilisearchTimeoutError("timed out"),
+            {"status": "succeeded"},
+        ]
+
+        result = client.delete_documents_by_file_paths("idx", ["a.py"], timeout_ms=60000)
+
+        assert result["deleted_count"] == 1
+        assert client.client.wait_for_task.call_count == 2
+        client.client.wait_for_task.assert_called_with(7, timeout_in_ms=60000)
+
 
 class TestSearchOperations:
     """Tests for search functionality."""

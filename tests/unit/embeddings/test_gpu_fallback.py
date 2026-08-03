@@ -172,6 +172,31 @@ class TestFastEmbedCoreMLPolicy:
         assert "GPU requested, but FastEmbed/CoreML is experimental" in captured.err
         assert "ARC_EXPERIMENTAL_COREML=1" in captured.err
 
+    def test_fastembed_uses_coreml_when_gpu_flag_authorizes_it(self, monkeypatch):
+        """--gpu is an explicit opt-in; no additional env var should be needed."""
+        monkeypatch.delenv("ARC_EXPERIMENTAL_COREML", raising=False)
+
+        with patch("arcaneum.embeddings.client.get_models_dir", return_value="/tmp/models"):
+            from arcaneum.embeddings.client import EmbeddingClient
+
+            client = EmbeddingClient(
+                cache_dir="/tmp/models", use_gpu=True, allow_experimental_coreml=True
+            )
+            client._device = "mps"
+
+        mock_ort = MagicMock()
+        mock_ort.get_available_providers.return_value = [
+            "CoreMLExecutionProvider",
+            "CPUExecutionProvider",
+        ]
+
+        with patch("arcaneum.embeddings.client.sys.platform", "darwin"):
+            with patch("arcaneum.embeddings.client.platform.machine", return_value="arm64"):
+                with patch.dict("sys.modules", {"onnxruntime": mock_ort}):
+                    providers = client._resolve_fastembed_providers("arctic-m")
+
+        assert providers == ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+
     def test_fastembed_uses_coreml_when_explicitly_enabled(self, embedding_client, monkeypatch):
         monkeypatch.setenv("ARC_EXPERIMENTAL_COREML", "1")
 
@@ -205,6 +230,107 @@ class TestFastEmbedCoreMLPolicy:
 
         assert result is mock_model
         assert mock_text_embedding.call_args.kwargs["providers"] == ["CPUExecutionProvider"]
+
+
+class TestCoreMLCrashSentinel:
+    """CoreML sessions leave a sentinel so an OS kill is reported on the next run."""
+
+    def _client_with_coreml(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("ARC_EXPERIMENTAL_COREML", raising=False)
+        sentinel = tmp_path / "coreml-session.json"
+        with patch("arcaneum.embeddings.client._coreml_sentinel_path", return_value=sentinel):
+            with patch("arcaneum.embeddings.client.get_models_dir", return_value="/tmp/models"):
+                from arcaneum.embeddings.client import EmbeddingClient
+
+                client = EmbeddingClient(
+                    cache_dir="/tmp/models", use_gpu=True, allow_experimental_coreml=True
+                )
+                client._device = "mps"
+        return client, sentinel
+
+    def test_enabling_coreml_warns_and_writes_sentinel(self, tmp_path, monkeypatch, capsys):
+        client, sentinel = self._client_with_coreml(tmp_path, monkeypatch)
+
+        mock_ort = MagicMock()
+        mock_ort.get_available_providers.return_value = [
+            "CoreMLExecutionProvider",
+            "CPUExecutionProvider",
+        ]
+
+        with patch("arcaneum.embeddings.client._coreml_sentinel_path", return_value=sentinel):
+            with patch("arcaneum.embeddings.client.sys.platform", "darwin"):
+                with patch("arcaneum.embeddings.client.platform.machine", return_value="arm64"):
+                    with patch.dict("sys.modules", {"onnxruntime": mock_ort}):
+                        providers = client._resolve_fastembed_providers("arctic-m")
+
+        assert providers == ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+        captured = capsys.readouterr()
+        assert "experimental CoreML" in captured.err
+        assert "killed" in captured.err
+
+        import json
+        import os
+
+        data = json.loads(sentinel.read_text())
+        assert data["pid"] == os.getpid()
+        assert data["model"] == "arctic-m"
+
+    def test_stale_sentinel_warns_about_killed_run_and_clears(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        import json
+
+        sentinel = tmp_path / "coreml-session.json"
+        sentinel.write_text(json.dumps({"pid": 999999, "model": "arctic-m", "started": "x"}))
+
+        monkeypatch.delenv("ARC_EXPERIMENTAL_COREML", raising=False)
+        with patch("arcaneum.embeddings.client._coreml_sentinel_path", return_value=sentinel):
+            with patch("arcaneum.embeddings.client._pid_is_alive", return_value=False):
+                with patch("arcaneum.embeddings.client.get_models_dir", return_value="/tmp/models"):
+                    from arcaneum.embeddings.client import EmbeddingClient
+
+                    EmbeddingClient(cache_dir="/tmp/models")
+
+        captured = capsys.readouterr()
+        assert "did not exit cleanly" in captured.err
+        assert "arctic-m" in captured.err
+        assert not sentinel.exists()
+
+    def test_sentinel_for_live_process_is_left_alone(self, tmp_path, monkeypatch, capsys):
+        import json
+
+        sentinel = tmp_path / "coreml-session.json"
+        sentinel.write_text(json.dumps({"pid": 12345, "model": "arctic-m", "started": "x"}))
+
+        monkeypatch.delenv("ARC_EXPERIMENTAL_COREML", raising=False)
+        with patch("arcaneum.embeddings.client._coreml_sentinel_path", return_value=sentinel):
+            with patch("arcaneum.embeddings.client._pid_is_alive", return_value=True):
+                with patch("arcaneum.embeddings.client.get_models_dir", return_value="/tmp/models"):
+                    from arcaneum.embeddings.client import EmbeddingClient
+
+                    EmbeddingClient(cache_dir="/tmp/models")
+
+        captured = capsys.readouterr()
+        assert "did not exit cleanly" not in captured.err
+        assert sentinel.exists()
+
+    def test_clean_exit_removes_own_sentinel_only(self, tmp_path):
+        import json
+        import os
+
+        from arcaneum.embeddings import client as client_module
+
+        sentinel = tmp_path / "coreml-session.json"
+
+        sentinel.write_text(json.dumps({"pid": os.getpid(), "model": "arctic-m"}))
+        with patch("arcaneum.embeddings.client._coreml_sentinel_path", return_value=sentinel):
+            client_module._remove_coreml_sentinel()
+        assert not sentinel.exists()
+
+        sentinel.write_text(json.dumps({"pid": 999999, "model": "arctic-m"}))
+        with patch("arcaneum.embeddings.client._coreml_sentinel_path", return_value=sentinel):
+            client_module._remove_coreml_sentinel()
+        assert sentinel.exists()
 
 
 class TestFastEmbedCacheCompleteness:

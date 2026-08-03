@@ -127,7 +127,7 @@ def _hardware_support(config: dict) -> dict:
         "cpu": True,
         "cuda": False,
         "mps": "experimental-coreml",
-        "mps_note": "requires ARC_EXPERIMENTAL_COREML=1",
+        "mps_note": "enabled by --gpu (or ARC_EXPERIMENTAL_COREML=1); experimental CoreML",
     }
 
 

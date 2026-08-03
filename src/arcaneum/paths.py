@@ -57,6 +57,23 @@ def get_data_dir() -> Path:
     return data_dir
 
 
+def get_state_dir() -> Path:
+    """Get the state directory (XDG-compliant: ~/.local/state/arcaneum).
+
+    Runtime state (crash sentinels, session markers) that is neither cache
+    nor user data belongs in XDG_STATE_HOME.
+
+    Creates the directory if it doesn't exist.
+
+    Returns:
+        Path to ~/.local/state/arcaneum directory
+    """
+    state_home = os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))
+    state_dir = Path(state_home) / "arcaneum"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    return state_dir
+
+
 def get_config_dir() -> Path:
     """Get the config directory (XDG-compliant: ~/.config/arcaneum).
 

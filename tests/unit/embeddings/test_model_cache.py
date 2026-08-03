@@ -74,3 +74,30 @@ def test_cached_model_isolates_gpu_mode(monkeypatch, tmp_path):
 
     assert gpu_client is not cpu_client
     assert [client.cache_kwargs["use_gpu"] for client in clients] == [False, True]
+
+
+def test_cached_model_isolates_coreml_opt_in(monkeypatch, tmp_path):
+    clients = []
+
+    def fake_client(**kwargs):
+        client = MagicMock()
+        client.cache_kwargs = kwargs
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(model_cache, "_model_cache", {})
+    monkeypatch.setattr(model_cache, "EmbeddingClient", fake_client)
+
+    default_client = model_cache.get_cached_model("arctic-m", cache_dir=str(tmp_path), use_gpu=True)
+    coreml_client = model_cache.get_cached_model(
+        "arctic-m",
+        cache_dir=str(tmp_path),
+        use_gpu=True,
+        allow_experimental_coreml=True,
+    )
+
+    assert coreml_client is not default_client
+    assert [client.cache_kwargs["allow_experimental_coreml"] for client in clients] == [
+        False,
+        True,
+    ]

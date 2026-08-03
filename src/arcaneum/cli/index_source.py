@@ -200,7 +200,10 @@ def index_source_command(
         # saving 7-8 seconds on subsequent CLI invocations within the same session
         # CPU is the stable default; --gpu opts into accelerator embedding.
         embedding_client = get_cached_model(
-            model_name=model, cache_dir=str(get_models_dir()), use_gpu=not no_gpu
+            model_name=model,
+            cache_dir=str(get_models_dir()),
+            use_gpu=not no_gpu,
+            allow_experimental_coreml=not no_gpu,
         )
 
         # Show configuration at start (if verbose)

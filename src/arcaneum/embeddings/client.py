@@ -13,9 +13,65 @@ from typing import Any, Dict, List, Optional
 
 from fastembed import TextEmbedding
 
-from arcaneum.paths import get_models_dir
+from arcaneum.paths import get_models_dir, get_state_dir
 
 logger = logging.getLogger(__name__)
+
+
+def _coreml_sentinel_path():
+    """Path of the crash sentinel marking an in-flight CoreML session."""
+    return get_state_dir() / "coreml-session.json"
+
+
+def _pid_is_alive(pid: int) -> bool:
+    """Best-effort liveness check for the pid recorded in the sentinel."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except Exception:
+        pass
+    return True
+
+
+def _write_coreml_sentinel(model_name: str) -> None:
+    """Record that this process is about to run experimental CoreML.
+
+    The sentinel is removed on clean interpreter exit. A SIGKILL (e.g. the OS
+    reclaiming memory) skips atexit, so a leftover sentinel with a dead pid
+    means the previous CoreML run was killed — the next EmbeddingClient warns
+    about it via _warn_if_previous_coreml_session_killed().
+    """
+    import json
+    from datetime import datetime, timezone
+
+    try:
+        _coreml_sentinel_path().write_text(
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "model": model_name,
+                    "started": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+        )
+        atexit.register(_remove_coreml_sentinel)
+    except Exception:
+        logger.debug("Could not write CoreML crash sentinel", exc_info=True)
+
+
+def _remove_coreml_sentinel() -> None:
+    """Remove this process's CoreML sentinel (clean-exit path)."""
+    import json
+
+    try:
+        sentinel = _coreml_sentinel_path()
+        if not sentinel.exists():
+            return
+        if json.loads(sentinel.read_text()).get("pid") == os.getpid():
+            sentinel.unlink()
+    except Exception:
+        logger.debug("Could not remove CoreML crash sentinel", exc_info=True)
 
 # Model configurations with dimensions and multiple backends
 #
@@ -432,7 +488,13 @@ def _sentence_transformers_missing_error(model_name: str, config: Dict) -> Runti
 class EmbeddingClient:
     """Manages embedding model instances with caching and GPU acceleration (RDR-013 Phase 2)."""
 
-    def __init__(self, cache_dir: str = None, use_gpu: bool = False, cpu_workers: int = None):
+    def __init__(
+        self,
+        cache_dir: str = None,
+        use_gpu: bool = False,
+        cpu_workers: int = None,
+        allow_experimental_coreml: bool = False,
+    ):
         """Initialize embedding client.
 
         Args:
@@ -441,6 +503,11 @@ class EmbeddingClient:
                      Default: False (CPU only for backward compatibility)
             cpu_workers: Number of batch workers for parallel embedding in CPU mode
                         Default: 1 (conservative, prevents system crashes from thread over-subscription)
+            allow_experimental_coreml: Authorize the experimental CoreML provider for
+                        FastEmbed models on Apple Silicon. Set True when the user
+                        explicitly opted into GPU (e.g., passed --gpu); paths that
+                        enable GPU implicitly should leave this False so CoreML
+                        stays gated behind ARC_EXPERIMENTAL_COREML.
 
         GPU Support (RDR-013):
             - SentenceTransformers models (stella, jina-code): MPS on Apple Silicon, CUDA on NVIDIA
@@ -454,6 +521,8 @@ class EmbeddingClient:
         """
         self.cache_dir = cache_dir or str(get_models_dir())
         self.use_gpu = use_gpu
+        self._allow_experimental_coreml = allow_experimental_coreml
+        self._warn_if_previous_coreml_session_killed()
         self._device = self._detect_device() if use_gpu else "cpu"
         os.environ["SENTENCE_TRANSFORMERS_HOME"] = self.cache_dir
         self._models: Dict[str, TextEmbedding] = {}
@@ -493,16 +562,47 @@ class EmbeddingClient:
         if not use_gpu:
             self._configure_cpu_threading()
 
+    def _warn_if_previous_coreml_session_killed(self) -> None:
+        """Report a CoreML session that never exited cleanly (likely OS kill).
+
+        A SIGKILL from memory pressure gives the dying process no chance to
+        warn, so the warning is issued here, on the next EmbeddingClient
+        construction, based on the leftover crash sentinel.
+        """
+        import json
+
+        try:
+            sentinel = _coreml_sentinel_path()
+            if not sentinel.exists():
+                return
+            data = json.loads(sentinel.read_text())
+            pid = data.get("pid")
+            if pid is not None and _pid_is_alive(pid):
+                return
+            message = (
+                f"A previous run using experimental CoreML "
+                f"(model '{data.get('model', 'unknown')}', started {data.get('started', 'unknown')}) "
+                "did not exit cleanly — likely killed by the OS due to memory exhaustion. "
+                "Re-run without --gpu for stable CPU embedding."
+            )
+            logger.info(message)
+            print(f"⚠ {message}", file=sys.stderr, flush=True)
+            sentinel.unlink()
+        except Exception:
+            logger.debug("CoreML crash sentinel check failed", exc_info=True)
+
     def _experimental_coreml_enabled(self) -> bool:
         """Return True when the user explicitly opts into FastEmbed CoreML.
 
         CoreMLExecutionProvider can be unstable for large transformer ONNX
         models on Apple Silicon because ORT may split the graph into many
         CoreML/CPU partitions and allocate large native unified-memory buffers
-        outside Python's normal accounting. GPU is opt-in for stability, and
-        this specific FastEmbed/CoreML provider pair requires an additional
-        explicit opt-in.
+        outside Python's normal accounting. An explicit --gpu flag counts as
+        the opt-in (allow_experimental_coreml); paths that enable GPU
+        implicitly still require ARC_EXPERIMENTAL_COREML.
         """
+        if self._allow_experimental_coreml:
+            return True
         return os.environ.get("ARC_EXPERIMENTAL_COREML", "").lower() in {
             "1",
             "true",
@@ -540,6 +640,14 @@ class EmbeddingClient:
 
             available_providers = ort.get_available_providers()
             if "CoreMLExecutionProvider" in available_providers:
+                warning = (
+                    f"Using experimental CoreML for '{model_name}'. This can exhaust "
+                    "system memory; if this process is killed by the OS, re-run "
+                    "without --gpu."
+                )
+                logger.info(warning)
+                print(f"⚠ {warning}", file=sys.stderr, flush=True)
+                _write_coreml_sentinel(model_name)
                 return ["CoreMLExecutionProvider", "CPUExecutionProvider"]
         except Exception:
             logger.debug("CoreML provider detection failed for FastEmbed", exc_info=True)

@@ -273,7 +273,7 @@ All errors use the `[ERROR]` prefix:
           "cpu": true,
           "cuda": false,
           "mps": "experimental-coreml",
-          "mps_note": "requires ARC_EXPERIMENTAL_COREML=1"
+          "mps_note": "enabled by --gpu (or ARC_EXPERIMENTAL_COREML=1); experimental CoreML"
         },
         "suggested_batches": {
           "outer": {

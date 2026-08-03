@@ -29,20 +29,23 @@ from typing import Dict, Tuple
 from arcaneum.embeddings.client import EmbeddingClient
 
 # Global model cache with thread-safe access
-_model_cache: Dict[Tuple[str, str, bool], EmbeddingClient] = {}
+_model_cache: Dict[Tuple[str, str, bool, bool], EmbeddingClient] = {}
 _cache_lock = threading.Lock()
 
 
-def _get_cache_key(model_name: str, cache_dir: str, use_gpu: bool) -> Tuple[str, str, bool]:
+def _get_cache_key(
+    model_name: str, cache_dir: str, use_gpu: bool, allow_experimental_coreml: bool
+) -> Tuple[str, str, bool, bool]:
     """Generate a cache key for a model configuration."""
     normalized_cache_dir = str(Path(cache_dir).expanduser().resolve())
-    return (model_name, normalized_cache_dir, use_gpu)
+    return (model_name, normalized_cache_dir, use_gpu, allow_experimental_coreml)
 
 
 def get_cached_model(
     model_name: str,
     cache_dir: str,
     use_gpu: bool = False,
+    allow_experimental_coreml: bool = False,
 ) -> EmbeddingClient:
     """Get or create a cached embedding model.
 
@@ -53,6 +56,8 @@ def get_cached_model(
         model_name: Model identifier (stella, bge-large, jina-v3, etc.)
         cache_dir: Directory for cached model files
         use_gpu: Enable GPU acceleration
+        allow_experimental_coreml: Authorize experimental FastEmbed/CoreML
+            (set when the user explicitly passed --gpu)
 
     Returns:
         EmbeddingClient instance with model pre-loaded
@@ -62,7 +67,7 @@ def get_cached_model(
         Cache entries are isolated by model name, cache_dir, and GPU mode.
     """
     with _cache_lock:
-        cache_key = _get_cache_key(model_name, cache_dir, use_gpu)
+        cache_key = _get_cache_key(model_name, cache_dir, use_gpu, allow_experimental_coreml)
 
         if cache_key in _model_cache:
             return _model_cache[cache_key]
@@ -71,6 +76,7 @@ def get_cached_model(
         client = EmbeddingClient(
             cache_dir=cache_dir,
             use_gpu=use_gpu,
+            allow_experimental_coreml=allow_experimental_coreml,
         )
         client.get_model(model_name)
 

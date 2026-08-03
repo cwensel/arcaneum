@@ -172,7 +172,10 @@ def index_markdown_command(
         # get_cached_model ensures models are cached for the process lifetime,
         # saving 7-8 seconds on subsequent CLI invocations within the same session
         embeddings = get_cached_model(
-            model_name=model, cache_dir=str(get_models_dir()), use_gpu=not no_gpu
+            model_name=model,
+            cache_dir=str(get_models_dir()),
+            use_gpu=not no_gpu,
+            allow_experimental_coreml=not no_gpu,
         )
 
         # Validate collection type (must be 'markdown' or untyped)

@@ -2377,7 +2377,10 @@ def sync_directory_command(
             # Initialize embedding client after chunking so the fork pool above
             # never inherits PyTorch/ONNX allocator state.
             use_gpu = not no_gpu and os.environ.get("ARC_NO_GPU", "").lower() not in ("1", "true")
-            embedding_client = EmbeddingClient(use_gpu=use_gpu, cpu_workers=cpu_workers)
+            # --gpu is an explicit opt-in, so it also authorizes experimental CoreML
+            embedding_client = EmbeddingClient(
+                use_gpu=use_gpu, cpu_workers=cpu_workers, allow_experimental_coreml=use_gpu
+            )
 
             # Initialize git discovery for code corpora
             git_discovery = GitProjectDiscovery() if corpus_type == "code" else None
@@ -2924,7 +2927,8 @@ def sync_directory_command(
 
             # Need embedding client for Qdrant backfill
             use_gpu = not no_gpu and os.environ.get("ARC_NO_GPU", "").lower() not in ("1", "true")
-            embedding_client = EmbeddingClient(use_gpu=use_gpu)
+            # --gpu is an explicit opt-in, so it also authorizes experimental CoreML
+            embedding_client = EmbeddingClient(use_gpu=use_gpu, allow_experimental_coreml=use_gpu)
 
             # Get model config for chunking
             first_model = model_list[0]

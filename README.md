@@ -76,7 +76,8 @@ model registry.
 - **CPU is the default** for the most stable indexing behavior
 - Supports Apple Silicon (MPS) and NVIDIA GPUs (CUDA)
 - Use `--gpu` to opt into accelerator embedding
-- FastEmbed/CoreML on Apple Silicon is experimental and requires `ARC_EXPERIMENTAL_COREML=1`
+- FastEmbed/CoreML on Apple Silicon is experimental; `--gpu` enables it
+  (`ARC_EXPERIMENTAL_COREML=1` for paths without the flag, e.g. parity backfill)
 
 ### CLI-First Design
 

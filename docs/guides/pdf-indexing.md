@@ -230,7 +230,8 @@ available with `--gpu` for 1.5-3x faster embedding generation on supported model
 
 - **Apple Silicon**: Uses MPS (Metal Performance Shaders) backend
 - **NVIDIA GPUs**: Uses CUDA backend
-- **FastEmbed/CoreML**: Experimental on Apple Silicon; set `ARC_EXPERIMENTAL_COREML=1`
+- **FastEmbed/CoreML**: Experimental on Apple Silicon; enabled by `--gpu`
+  (`ARC_EXPERIMENTAL_COREML=1` for paths without the flag, e.g. parity backfill)
 
 **Compatible Models** (verified with GPU support):
 

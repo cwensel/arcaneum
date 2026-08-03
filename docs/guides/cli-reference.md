@@ -933,7 +933,7 @@ Two things worth knowing before picking a model:
 | `bge-small`   | 384D  | 512     | ~17/sec (CPU)                  | Lowest of the set           | Use when speed matters more than recall               |
 | `arctic-m`    | 768D  | 512     | ~5/sec (CPU)                   | Good (MTEB Retrieval 54.9)  | **Default** — stable, no extra install                |
 | `mxbai-large` | 1024D | 512     | slower than arctic-m           | Better (est.)               | Larger FastEmbed model, CPU-bound                     |
-| `qwen3-embed` | 1024D | 32K     | ~8/sec (`--gpu`), ~5/sec (CPU) | Best (MTEB English v2 70.7) | Multilingual; needs `arcaneum[sentence-transformers]` |
+| `qwen3-embed` | 1024D | 32K⁴    | ~8/sec (`--gpu`), ~5/sec (CPU) | Best (MTEB English v2 70.7) | Multilingual; needs `arcaneum[sentence-transformers]` |
 | `stella`      | 1024D | -       | -                              | -                           | **Deprecated** — use `qwen3-embed`                    |
 
 ### Code Models
@@ -941,8 +941,8 @@ Two things worth knowing before picking a model:
 | Model            | Dims  | Context | Indexing speed¹        | Retrieval quality³ | Notes                                  |
 | ---------------- | ----- | ------- | ---------------------- | ------------------ | -------------------------------------- |
 | `jina-code`      | 768D  | 8K      | ~5/sec (CPU)           | Good               | **Default** — stable, no extra install |
-| `jina-code-0.5b` | 896D  | 32K     | ~qwen3-embed (est.)    | Better (78.4 avg)  | SOTA Sept 2025; use with `--gpu`       |
-| `jina-code-1.5b` | 1536D | 32K     | slowest practical      | Best (79.0 avg)    | 1.5B params; quality over throughput   |
+| `jina-code-0.5b` | 896D  | 32K⁴    | ~qwen3-embed (est.)    | Better (78.4 avg)  | SOTA Sept 2025; use with `--gpu`       |
+| `jina-code-1.5b` | 1536D | 32K⁴    | slowest practical      | Best (79.0 avg)    | 1.5B params; quality over throughput   |
 | `codesage-large` | 1024D | 8K      | between 0.5b and 1.5b  | Better             | 9 languages, CodeSage V2               |
 | `nomic-code`     | 3584D | 8K      | requires dedicated GPU | Best-in-class      | 7B params; impractical without CUDA    |
 
@@ -954,6 +954,8 @@ improve with `--cpu-workers`.
 stella). Different scales — use them as within-column tiers.
 ³ Code quality: average over 25 code-retrieval benchmarks reported by Jina
 for the jina-code-embeddings family.
+⁴ Native model context; arcaneum caps `max_seq_length` to 8192 tokens to
+bound attention memory, so longer inputs are truncated at 8192.
 
 ### Which model for which corpus?
 
@@ -968,7 +970,7 @@ for the jina-code-embeddings family.
 - **Multilingual or mixed corpora**: `qwen3-embed` (or `jina-v3` if you want
   a FastEmbed-only install).
 - **Throughput-critical, quality-tolerant** (e.g. huge scratch corpora):
-  `bge-small` is ~3x faster than any other option.
+  `bge-small` is ~2-3x faster than the next-fastest option.
 
 **Usage:**
 

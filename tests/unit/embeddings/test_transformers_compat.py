@@ -2,6 +2,8 @@
 transformers 4.54 removed DynamicCache.get_usable_length, which Stella's pinned
 remote code still calls)."""
 
+import pytest
+
 from arcaneum.embeddings.client import _ensure_dynamic_cache_compat
 
 
@@ -33,6 +35,8 @@ class TestEnsureDynamicCacheCompat:
         assert cache.get_usable_length(100) == 42
 
     def test_defaults_to_transformers_dynamic_cache(self):
+        pytest.importorskip("transformers")
+
         # With the real transformers installed, the call must not raise and the
         # class must end up with a working get_usable_length either way.
         _ensure_dynamic_cache_compat()

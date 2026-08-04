@@ -8,8 +8,10 @@ import pytest
 from arcaneum.cli import sync as sync_module
 from arcaneum.cli.sync import (
     AdaptiveProgress,
+    AdaptiveTimeRemainingColumn,
     _backfill_meili_to_qdrant,
     _fetch_chunks_for_files_bulk,
+    _file_progress_weight,
     _maybe_backfill_legacy_prompt_policy,
     _raise_if_sync_failures,
     _repair_meili_metadata,
@@ -33,6 +35,41 @@ def test_adaptive_progress_uses_manual_refresh(monkeypatch):
     progress.advance(task)
 
     assert refresh.call_count == 2
+
+
+def test_adaptive_eta_retains_history_as_window_grows():
+    """Early samples remain available when the adaptive window expands."""
+    now = [0.0]
+    progress = AdaptiveProgress(
+        disable=True,
+        get_time=lambda: now[0],
+        min_estimate_period=20,
+        max_estimate_period=100,
+    )
+    progress.start()
+    task_id = progress.add_task("Indexing...", total=10)
+
+    for timestamp in (10.0, 30.0, 70.0):
+        now[0] = timestamp
+        progress.advance(task_id)
+
+    task = progress.tasks[task_id]
+    column = AdaptiveTimeRemainingColumn(min_period=20, max_period=100)
+
+    assert progress.speed_estimate_period == 100
+    assert len(task._progress) == 3
+    assert column._time_remaining(task) == 210
+
+
+def test_file_progress_weight_uses_bytes_and_keeps_empty_files_visible(tmp_path):
+    small = tmp_path / "small.pdf"
+    empty = tmp_path / "empty.pdf"
+    small.write_bytes(b"x" * 4096)
+    empty.touch()
+
+    assert _file_progress_weight(small) == 4096
+    assert _file_progress_weight(empty) == 1
+    assert _file_progress_weight(tmp_path / "missing.pdf") == 1
 
 
 class MetadataQdrant:

@@ -37,6 +37,7 @@ import hashlib
 import sys
 from concurrent.futures import as_completed
 from datetime import datetime, timezone
+from math import ceil
 from multiprocessing import cpu_count
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -51,6 +52,7 @@ from rich.progress import (
     TextColumn,
     TimeRemainingColumn,
 )
+from rich.text import Text
 
 
 class AdaptiveProgress(Progress):
@@ -65,30 +67,78 @@ class AdaptiveProgress(Progress):
         self, *args, min_estimate_period: float = 120, max_estimate_period: float = 300, **kwargs
     ):
         kwargs.setdefault("auto_refresh", False)
-        kwargs.setdefault("speed_estimate_period", min_estimate_period)
+        # Rich permanently discards samples older than speed_estimate_period.
+        # Retain the maximum history here so the display column can safely grow
+        # its estimate window without losing early samples.
+        kwargs.setdefault("speed_estimate_period", max_estimate_period)
         super().__init__(*args, **kwargs)
         self._min_estimate_period = min_estimate_period
         self._max_estimate_period = max_estimate_period
-        self._adaptive_start_time: Optional[float] = None
-
-    def start(self) -> None:
-        self._adaptive_start_time = self.get_time()
-        super().start()
 
     def update(self, *args, **kwargs) -> None:
-        with self._lock:
-            if self._adaptive_start_time is not None:
-                elapsed = self.get_time() - self._adaptive_start_time
-                self.speed_estimate_period = min(
-                    self._max_estimate_period,
-                    max(self._min_estimate_period, elapsed),
-                )
-            super().update(*args, **kwargs)
+        super().update(*args, **kwargs)
         self.refresh()
 
     def advance(self, *args, **kwargs) -> None:
         super().advance(*args, **kwargs)
         self.refresh()
+
+
+class AdaptiveTimeRemainingColumn(TimeRemainingColumn):
+    """ETA column that expands its sample window as a task matures."""
+
+    def __init__(self, min_period: float = 120, max_period: float = 300, **kwargs):
+        super().__init__(**kwargs)
+        self.min_period = min_period
+        self.max_period = max_period
+
+    def _time_remaining(self, task) -> Optional[int]:
+        if task.finished:
+            return 0
+        elapsed = task.elapsed or 0
+        window = min(self.max_period, max(self.min_period, elapsed))
+        cutoff = task.get_time() - window
+        samples = [sample for sample in task._progress if sample.timestamp >= cutoff]
+        if len(samples) < 2:
+            return None
+        sample_time = samples[-1].timestamp - samples[0].timestamp
+        if sample_time <= 0:
+            return None
+        speed = sum(sample.completed for sample in samples[1:]) / sample_time
+        if speed <= 0 or task.remaining is None:
+            return None
+        return ceil(task.remaining / speed)
+
+    def render(self, task):
+        if self.elapsed_when_finished and task.finished:
+            task_time = task.finished_time
+            style = "progress.elapsed"
+        else:
+            task_time = self._time_remaining(task)
+            style = "progress.remaining"
+
+        if task.total is None:
+            return Text("", style=style)
+        if task_time is None:
+            return Text("--:--" if self.compact else "-:--:--", style=style)
+
+        minutes, seconds = divmod(int(task_time), 60)
+        hours, minutes = divmod(minutes, 60)
+        if self.compact and not hours:
+            formatted = f"{minutes:02d}:{seconds:02d}"
+        else:
+            formatted = f"{hours:d}:{minutes:02d}:{seconds:02d}"
+        return Text(formatted, style=style)
+
+
+def _file_progress_weight(path: Path) -> int:
+    """Return a stable non-zero progress weight based on file size."""
+    try:
+        return max(path.stat().st_size, 1)
+    except OSError:
+        # Let the normal processing path report inaccessible files. Giving the
+        # file a minimal weight still lets the progress task reach completion.
+        return 1
 
 
 from ..cli.errors import InvalidArgumentError, ResourceNotFoundError
@@ -1915,7 +1965,9 @@ def sync_directory_command(
 
         # Apply change detection (skip already indexed files) unless --force
         already_indexed_count = 0
+        already_indexed_bytes = 0
         total_corpus_files = len(files)  # Default: all discovered files
+        total_corpus_bytes = sum(_file_progress_weight(path) for path in files)
         meili_backfill_paths = []  # Files in Qdrant but missing from MeiliSearch
         qdrant_backfill_paths = []  # Files in MeiliSearch but missing from Qdrant
         detected_renames = []  # Rename/move detections
@@ -2104,9 +2156,15 @@ def sync_directory_command(
             ]
 
             already_indexed_count = len(truly_unchanged)
+            already_indexed_bytes = sum(
+                _file_progress_weight(path) for path in truly_unchanged
+            )
 
             # Calculate total corpus size for progress display
             total_corpus_files = already_indexed_count + len(files_to_process)
+            total_corpus_bytes = already_indexed_bytes + sum(
+                _file_progress_weight(path) for path in files_to_process
+            )
 
             if not output_json:
                 if already_indexed_count > 0:
@@ -2168,7 +2226,13 @@ def sync_directory_command(
                 ]
 
             already_indexed_count = len(already_indexed_files)
+            already_indexed_bytes = sum(
+                _file_progress_weight(path) for path in already_indexed_files
+            )
             total_corpus_files = already_indexed_count + len(files_to_process)
+            total_corpus_bytes = already_indexed_bytes + sum(
+                _file_progress_weight(path) for path in files_to_process
+            )
 
             if not output_json:
                 if already_indexed_count > 0:
@@ -2429,18 +2493,19 @@ def sync_directory_command(
                     TextColumn("[progress.description]{task.description}"),
                     BarColumn(),
                     TaskProgressColumn(),
-                    TimeRemainingColumn(),
+                    AdaptiveTimeRemainingColumn(),
                     console=console,
                     disable=output_json,
                 ) as progress:
                     task = progress.add_task(
-                        "Indexing...", total=total_corpus_files, completed=already_indexed_count
+                        "Indexing...", total=total_corpus_bytes, completed=already_indexed_bytes
                     )
 
                     # Track repair results for quality comparison reporting
                     repair_results = []  # (filename, old_score, new_score, action)
 
                     for file_path in files:
+                        file_progress_weight = _file_progress_weight(file_path)
                         progress.update(task, description=f"Processing {file_path.name}...")
                         _set_phase(f"file:{file_path.name}")
 
@@ -2479,7 +2544,7 @@ def sync_directory_command(
                                             f"exceeds {format_size(_MAX_CODE_FILE_SIZE)} limit "
                                             f"(likely generated/data file)[/yellow]"
                                         )
-                                    progress.advance(task)
+                                    progress.advance(task, file_progress_weight)
                                     continue
 
                             if corpus_type == "pdf":
@@ -2530,7 +2595,7 @@ def sync_directory_command(
                                     )
                                 if repair:
                                     repair_results.append((file_path.name, None, None, "no_text"))
-                                progress.advance(task)
+                                progress.advance(task, file_progress_weight)
                                 continue
 
                             # Repair mode: score new chunks, compare to old, then delete old data
@@ -2558,7 +2623,7 @@ def sync_directory_command(
                                         repair_results.append(
                                             (file_path.name, old_score, new_score, action)
                                         )
-                                        progress.advance(task)
+                                        progress.advance(task, file_progress_weight)
                                         continue
 
                                     repair_results.append(
@@ -2854,7 +2919,7 @@ def sync_directory_command(
                                         f"[dim]  To re-index with CPU: {reindex_cmd}[/dim]"
                                     )
 
-                        progress.advance(task)
+                        progress.advance(task, file_progress_weight)
                         _set_phase("idle")
 
             finally:
@@ -2893,7 +2958,7 @@ def sync_directory_command(
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
                 TaskProgressColumn(),
-                TimeRemainingColumn(),
+                AdaptiveTimeRemainingColumn(),
                 console=console,
                 disable=output_json,
             ) as progress:
@@ -2969,7 +3034,7 @@ def sync_directory_command(
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
                 TaskProgressColumn(),
-                TimeRemainingColumn(),
+                AdaptiveTimeRemainingColumn(),
                 console=console,
                 disable=output_json,
             ) as progress:
@@ -5004,7 +5069,7 @@ def _parity_single_corpus(
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
                 TaskProgressColumn(),
-                TimeRemainingColumn(),
+                AdaptiveTimeRemainingColumn(),
                 console=console,
                 disable=output_json,
             ) as progress:
@@ -5053,7 +5118,7 @@ def _parity_single_corpus(
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
                 TaskProgressColumn(),
-                TimeRemainingColumn(),
+                AdaptiveTimeRemainingColumn(),
                 console=console,
                 disable=output_json,
             ) as progress:

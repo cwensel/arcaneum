@@ -40,6 +40,24 @@ and remain explicitly skipped until their backend qualification work lands. A
 backend result must name its hardware, OS, model, precision, and dependency
 versions; throughput alone is insufficient without correctness and reliability.
 
+### PyTorch MPS qualification
+
+MPS remains experimental. Run its opt-in qualification through the spawned worker:
+
+```bash
+PYTHONPATH="$PWD/src" python scripts/benchmark_accelerators.py \
+  --backend mps --model jina-code-st --iterations 5 --soak-batches 10000 \
+  --output benchmarks/results/mps-$(uname -m).json
+```
+
+The runner compares the same cached model in CPU and MPS worker processes, records
+cold/warm throughput, numerical agreement, RSS and MPS driver memory, and retains
+an experimental decision unless speedup is at least 1.25x and all 10,000 soak
+batches complete. It refuses an unsafe
+`PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0`. Model, dependency, or MPS unavailability
+produces an `inconclusive` artifact rather than a false pass. Install the
+`sentence-transformers` extra and rerun on an MPS-capable host.
+
 ## Overview
 
 Two benchmarking scripts are available:

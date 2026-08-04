@@ -17,6 +17,16 @@ import numpy as np
 
 class SentenceTransformerAcceleratorBackend:
     def __init__(self, config: dict[str, Any]) -> None:
+        import torch
+
+        requested_device = config["device"]
+        if requested_device == "mps" and not torch.backends.mps.is_available():
+            raise RuntimeError(
+                "PyTorch MPS is not available (built="
+                f"{torch.backends.mps.is_built()}); qualification cannot run"
+            )
+        if requested_device == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError("PyTorch CUDA is not available; qualification cannot run")
         # Importing client is safe in this spawned child and reuses the canonical,
         # pinned model and prompt policies.  It must never be imported by the parent.
         from sentence_transformers import SentenceTransformer
@@ -124,13 +134,20 @@ class SentenceTransformerAcceleratorBackend:
         ) from last_error
 
     def health(self) -> dict[str, Any]:
-        return {
+        result = {
             "pid": os.getpid(),
             "model": self.model_name,
             "device": self.device,
             "model_loads": 1,
             "encodes": self._encodes,
         }
+        if self.device == "mps":
+            import torch
+
+            result["mps_current_allocated_bytes"] = int(torch.mps.current_allocated_memory())
+            result["mps_driver_allocated_bytes"] = int(torch.mps.driver_allocated_memory())
+            result["mps_recommended_max_bytes"] = int(torch.mps.recommended_max_memory())
+        return result
 
     def close(self) -> None:
         self.model = None

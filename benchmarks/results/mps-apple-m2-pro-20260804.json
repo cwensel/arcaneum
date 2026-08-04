@@ -1,0 +1,93 @@
+{
+  "backend": {
+    "device": "mps",
+    "dimensions": 0,
+    "model": "jina-code-st",
+    "name": "pytorch-mps-worker",
+    "precision": "float32"
+  },
+  "correctness": {
+    "finite": false,
+    "max_absolute_error": 0.0,
+    "mean_absolute_error": 0.0,
+    "minimum_cosine_similarity": 0.0,
+    "passed": false,
+    "reference_backend": "pytorch-cpu-worker",
+    "shape": [
+      0,
+      0
+    ]
+  },
+  "environment": {
+    "architecture": "arm64",
+    "chip": "Apple M2 Pro",
+    "cpu": "arm",
+    "dependencies": {
+      "numpy": "2.2.6",
+      "psutil": "7.1.3",
+      "sentence-transformers": "5.2.0",
+      "torch": "2.8.0",
+      "transformers": "4.53.3"
+    },
+    "logical_cpu_count": 12,
+    "memory_bytes": 34359738368,
+    "model_identifier": "Mac14,9",
+    "model_name": "MacBook Pro",
+    "os": "Darwin",
+    "os_release": "25.6.0",
+    "python": "3.12.13"
+  },
+  "fixture": {
+    "length_classes": [
+      "long",
+      "medium",
+      "oversized",
+      "short"
+    ],
+    "manifest_sha256": "da62785afe275cff1b607cebb62f415a9c21089c842a4fe18a86c45e8199e165",
+    "manifest_version": "1.0.0",
+    "total_texts": 15,
+    "unique_texts": 4
+  },
+  "harness_version": "1.0.0",
+  "performance": {
+    "cold_start_seconds": 0.0,
+    "latency_seconds": {
+      "p50": 0.0,
+      "p95": 0.0,
+      "samples": []
+    },
+    "mps_peak_driver_allocated_bytes": null,
+    "peak_rss_bytes": 40058880,
+    "throughput_texts_per_second": 0.0,
+    "warm_iterations": 0,
+    "warm_total_seconds": 0.0
+  },
+  "qualification": {
+    "containment_evidence": {
+      "timeout_reaps_worker": "tests/embeddings/test_worker_protocol.py",
+      "validated": true
+    },
+    "decision": "experimental",
+    "reason": "WorkerCrashedError: PyTorch MPS is not available (built=True); qualification cannot run",
+    "soak_target_batches": 10000,
+    "speedup_gate": 1.25,
+    "watermarks": {
+      "high": "0.8",
+      "low": "0.6"
+    }
+  },
+  "reliability": {
+    "attempted_batches": 0,
+    "completed_batches": 0,
+    "failures": 1,
+    "fallbacks": 0,
+    "restarts": 0
+  },
+  "run": {
+    "id": "20260804T225912Z-mps",
+    "recorded_at": "2026-08-04T22:59:12.970769+00:00",
+    "status": "inconclusive"
+  },
+  "schema_version": "1.0.0"
+}

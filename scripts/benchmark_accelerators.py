@@ -13,6 +13,7 @@ from arcaneum.benchmarks.accelerator import (
     run_reference_benchmark,
     write_json,
 )
+from arcaneum.benchmarks.mps import run_mps_qualification
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = ROOT / "benchmarks" / "fixtures" / "accelerator-v1" / "manifest.json"
@@ -24,6 +25,12 @@ def main() -> int:
     parser.add_argument("--iterations", type=int, default=3)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--summary", type=Path)
+    parser.add_argument("--backend", choices=("reference-cpu", "mps"), default="reference-cpu")
+    parser.add_argument("--model", default="jina-code-st")
+    parser.add_argument("--cache-dir", default=str(Path.home() / ".cache" / "arcaneum" / "models"))
+    parser.add_argument("--soak-batches", type=int, default=100)
+    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--compare", nargs=2, type=Path, metavar=("BASELINE", "CANDIDATE"))
     args = parser.parse_args()
 
@@ -34,7 +41,18 @@ def main() -> int:
 
     if args.iterations < 1:
         parser.error("--iterations must be at least 1")
-    result = run_reference_benchmark(args.manifest, iterations=args.iterations)
+    if args.backend == "mps":
+        result = run_mps_qualification(
+            args.manifest,
+            model=args.model,
+            cache_dir=args.cache_dir,
+            iterations=args.iterations,
+            soak_batches=args.soak_batches,
+            batch_size=args.batch_size,
+            timeout=args.timeout,
+        )
+    else:
+        result = run_reference_benchmark(args.manifest, iterations=args.iterations)
     summary = render_summary(result)
     if args.output:
         write_json(args.output, result)

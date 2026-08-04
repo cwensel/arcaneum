@@ -340,10 +340,11 @@ ERROR: MPS backend out of memory (MPS allocated: X GiB, ...)
 
 **Quick fixes:**
 
-1. **Allow unlimited GPU memory** (when using `--gpu`):
+1. **Keep conservative allocator limits** (when using `--gpu`):
 
    ```bash
-   export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
+   export PYTORCH_MPS_LOW_WATERMARK_RATIO=0.6
+   export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.8
    arc index code ~/project --collection MyCode --gpu
    ```
 
@@ -359,15 +360,9 @@ ERROR: MPS backend out of memory (MPS allocated: X GiB, ...)
    arc index code ~/project --collection MyCode
    ```
 
-**Permanent fix:** Add to your `~/.zshrc` or `~/.bashrc`:
-
-```bash
-export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
-```
-
-**Why this happens:** Apple Silicon uses unified memory shared between CPU and GPU.
-When other apps use significant memory, PyTorch's default safety limits can trigger
-OOM errors even when memory is technically available.
+Never set `PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0`: it disables the allocator's
+upper bound and can let unified-memory pressure terminate the process or destabilize
+macOS. If the conservative limit produces OOM, reduce the batch size or use CPU.
 
 ## Claude Code Plugin
 

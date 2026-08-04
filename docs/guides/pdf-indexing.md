@@ -225,28 +225,15 @@ To bypass incremental sync and reindex everything, use `--force`.
 
 ## GPU Acceleration
 
-CPU embedding is the default for stable unattended indexing. GPU acceleration is
-available with `--gpu` for 1.5-3x faster embedding generation on supported models:
+CPU embedding is the stable default. `--gpu` requests an eligible experimental
+PyTorch MPS/CUDA or FastEmbed/CoreML backend; it does not guarantee placement or
+improved throughput. MLX is unavailable. PDF layout analysis itself runs in a
+separate spawned process and is not controlled by the embedding backend.
 
-- **Apple Silicon**: Uses MPS (Metal Performance Shaders) backend
-- **NVIDIA GPUs**: Uses CUDA backend
-- **FastEmbed/CoreML**: Experimental on Apple Silicon; enabled by `--gpu`
-  (`ARC_EXPERIMENTAL_COREML=1` for paths without the flag, e.g. parity backfill)
-
-**Compatible Models** (verified with GPU support):
-
-- **qwen3-embed** (high-quality opt-in) - MPS support on Apple Silicon
-- **gemma-embed** (fast high-quality) - MPS support on Apple Silicon; gated HF repo (accept license + `hf auth login`)
-- **jina-code** - Full MPS support on Apple Silicon
-- **bge-small**, **bge-base** - experimental CoreML support
-
-**Performance**: 1.5-3x speedup with GPU compared to CPU embedding.
-
-**When to enable GPU**:
-
-- You need faster embedding throughput
-- You are using an MPS/CUDA-supported model such as qwen3-embed or jina-code
-- You are comfortable falling back if memory pressure is detected
+Use acceleration only when you can observe the run and accept a worker reap plus
+CPU fallback. See [Embedding acceleration and PDF layout workers](accelerators.md)
+for current model/platform states, verbose diagnostics, safety limits, and
+checked-in benchmark evidence.
 
 ```bash
 # Opt into GPU for corpus sync

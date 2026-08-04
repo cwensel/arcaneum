@@ -76,10 +76,15 @@ model registry.
 ### GPU Acceleration
 
 - **CPU is the default** for the most stable indexing behavior
-- Supports Apple Silicon (MPS) and NVIDIA GPUs (CUDA)
-- Use `--gpu` to opt into accelerator embedding
-- FastEmbed/CoreML on Apple Silicon is experimental; `--gpu` enables it
-  (`ARC_EXPERIMENTAL_COREML=1` for paths without the flag, e.g. parity backfill)
+- `--gpu` explicitly requests an eligible experimental accelerator; it does not
+  guarantee GPU placement or a speedup
+- PyTorch MPS/CUDA embedding workers and FastEmbed/CoreML are independently
+  qualified; no accelerator combination is currently stable
+- MLX is unavailable, while PDF layout analysis runs in a separate worker and is
+  not an embedding backend
+
+See [Embedding acceleration and PDF layout workers](docs/guides/accelerators.md)
+for the capability matrix, worker fallback behavior, diagnostics, and evidence.
 
 ### CLI-First Design
 

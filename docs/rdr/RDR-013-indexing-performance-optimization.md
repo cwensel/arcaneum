@@ -1,5 +1,12 @@
 # Recommendation 013: Indexing Pipeline Performance Optimization
 
+> **Historical document:** accelerator compatibility and speed estimates in this
+> RDR predate process isolation and the versioned benchmark suite. They are not
+> current support claims. Use
+> [`capabilities-v1.json`](../../src/arcaneum/embeddings/capabilities-v1.json),
+> [the accelerator guide](../guides/accelerators.md), and checked-in benchmark
+> artifacts for current behavior.
+
 ## Metadata
 - **Date**: 2025-10-29
 - **Implementation Date**: 2025-11-02

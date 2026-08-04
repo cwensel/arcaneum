@@ -155,29 +155,19 @@ Features:
 - Markdown: stella (1024D, document-optimized)
 - Source: jina-code (768D, code-optimized)
 
-**Performance:**
-
-- PDF: ~10-30 PDFs/minute (depends on OCR workload)
-- Markdown: ~50-100 files/minute (depends on file size)
-- Source: 100-200 files/second (depends on file size)
-- Batch upload: 100-200 chunks per batch
-- Parallel workers: 4 (adjustable with --workers for PDF/source)
-- **GPU acceleration**: opt-in with --gpu for faster embedding on supported models
+**Performance:** Measure the selected model, corpus, extraction workload, and
+hardware with the repository benchmark tools. `--gpu` requests an experimental
+eligible backend; it does not guarantee accelerator placement or improved
+throughput.
 
 **GPU Acceleration:**
 
-CPU embedding is the default for stable unattended indexing. GPU acceleration is
-available with `--gpu`:
-
-- **Apple Silicon**: MPS (Metal Performance Shaders) backend
-- **NVIDIA GPUs**: CUDA backend
-- **FastEmbed/CoreML**: Experimental on Apple Silicon; set `ARC_EXPERIMENTAL_COREML=1`
-
-**Compatible models** (verified with GPU support):
-
-- stella (high-quality PDFs/markdown) - MPS support
-- jina-code (source code) - MPS support
-- bge-small, bge-base - experimental CoreML support
+CPU embedding is the stable default. `--gpu` requests an eligible experimental
+backend: PyTorch MPS or CUDA for SentenceTransformers, or ONNX Runtime CoreML for
+FastEmbed on Apple Silicon. CoreML placement may be hybrid CPU/CoreML. MLX is not
+available. PDF layout inference runs in its own process and is unrelated to the
+embedding backend. See `docs/guides/accelerators.md` for current capability states,
+worker timeout/fallback behavior, verbose diagnostics, and benchmark evidence.
 
 **Offline Mode:**
 

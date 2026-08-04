@@ -354,7 +354,7 @@ ERROR: MPS backend out of memory (MPS allocated: X GiB, ...)
    arc index code ~/project --collection MyCode --gpu --embedding-batch-size 100
    ```
 
-3. **Stay on CPU mode** (default, slower but reliable):
+3. **Stay on CPU mode** (the stable default):
 
    ```bash
    arc index code ~/project --collection MyCode

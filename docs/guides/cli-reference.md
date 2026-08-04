@@ -911,69 +911,62 @@ arc search text '"neural network"' --corpus pdf-docs
 
 ## Model Selection
 
-Speed and quality at a glance. Indexing speed is measured throughput on an
-Apple M2 Pro (32 GB) embedding ~350-word chunks through arc's embedding
-client with default settings; treat the ratios as guidance, not absolutes.
-Quality figures are published benchmark scores (different benchmarks are not
-comparable with each other — compare within a column, not across tables).
+Model shape and retrieval quality at a glance. Quality figures are published
+model scores; different benchmarks are not comparable across columns. Arcaneum
+does not use model-table estimates as accelerator qualification evidence.
 
 Two things worth knowing before picking a model:
 
-- FastEmbed models (`arctic-m`, `jina-code`, `bge-*`, `mxbai-large`) run on
-  CPU via ONNX and do not benefit from `--gpu`.
-- sentence-transformers models (`qwen3-embed`, `jina-code-0.5b`, etc.) do use
-  the GPU. On Apple Silicon with `--gpu`, `qwen3-embed` indexes *faster* than
-  the CPU-bound defaults — speed is only a reason to avoid it on machines
-  without a usable GPU or with tight memory (~2.4 GB model weights).
+- FastEmbed models (`arctic-m`, `jina-code`, `bge-*`, `mxbai-large`) use stable
+  ONNX CPU by default. `--gpu` may request experimental CoreML on Apple Silicon,
+  but provider placement may remain partly on CPU.
+- SentenceTransformers models (`qwen3-embed`, `jina-code-0.5b`, etc.) use
+  PyTorch CPU by default. `--gpu` may request experimental MPS or CUDA through a
+  spawned worker. No combination is currently qualified as stable.
 
 ### Document Models (pdf/markdown)
 
-| Model         | Dims  | Context | Indexing speed¹                | Retrieval quality²          | Notes                                                                    |
-| ------------- | ----- | ------- | ------------------------------ | --------------------------- | ------------------------------------------------------------------------ |
-| `bge-small`   | 384D  | 512     | ~17/sec (CPU)                  | Lowest of the set           | Use when speed matters more than recall                                  |
-| `arctic-m`    | 768D  | 512     | ~5/sec (CPU)                   | Good (MTEB Retrieval 54.9)  | **Default** — stable, no extra install                                   |
-| `mxbai-large` | 1024D | 512     | slower than arctic-m           | Better (est.)               | Larger FastEmbed model, CPU-bound                                        |
-| `gemma-embed` | 768D  | 2K      | ~2x qwen3-embed est. (`--gpu`) | Near-best (top open <500M)  | Gated HF repo; needs `arcaneum[sentence-transformers]` & `hf auth login` |
-| `qwen3-embed` | 1024D | 32K⁴    | ~8/sec (`--gpu`), ~5/sec (CPU) | Best (MTEB English v2 70.7) | Multilingual; needs `arcaneum[sentence-transformers]`                    |
-| `stella`      | 1024D | -       | -                              | -                           | **Deprecated** — use `qwen3-embed`                                       |
+| Model         | Dims  | Context | Retrieval quality¹          | Notes                                                                    |
+| ------------- | ----- | ------- | --------------------------- | ------------------------------------------------------------------------ |
+| `bge-small`   | 384D  | 512     | Lowest of the set           | Small FastEmbed model; stable ONNX CPU                                   |
+| `arctic-m`    | 768D  | 512     | Good (MTEB Retrieval 54.9)  | **Default** — stable ONNX CPU, no extra install                          |
+| `mxbai-large` | 1024D | 512     | Better (est.)               | Larger FastEmbed model                                                   |
+| `gemma-embed` | 768D  | 2K      | Near-best (top open <500M)  | Gated repo; needs `arcaneum[sentence-transformers]` and authentication   |
+| `qwen3-embed` | 1024D | 32K³    | Best (MTEB English v2 70.7) | Multilingual; needs `arcaneum[sentence-transformers]`                    |
+| `stella`      | 1024D | -       | -                           | **Deprecated** — use `qwen3-embed`                                       |
 
 ### Code Models
 
-| Model            | Dims  | Context | Indexing speed¹        | Retrieval quality³ | Notes                                  |
-| ---------------- | ----- | ------- | ---------------------- | ------------------ | -------------------------------------- |
-| `jina-code`      | 768D  | 8K      | ~5/sec (CPU)           | Good               | **Default** — stable, no extra install |
-| `jina-code-0.5b` | 896D  | 32K⁴    | ~qwen3-embed (est.)    | Better (78.4 avg)  | SOTA Sept 2025; use with `--gpu`       |
-| `jina-code-1.5b` | 1536D | 32K⁴    | slowest practical      | Best (79.0 avg)    | 1.5B params; quality over throughput   |
-| `codesage-large` | 1024D | 8K      | between 0.5b and 1.5b  | Better             | 9 languages, CodeSage V2               |
-| `nomic-code`     | 3584D | 8K      | requires dedicated GPU | Best-in-class      | 7B params; impractical without CUDA    |
+| Model            | Dims  | Context | Retrieval quality² | Notes                                               |
+| ---------------- | ----- | ------- | ------------------ | --------------------------------------------------- |
+| `jina-code`      | 768D  | 8K      | Good               | **Default** — stable ONNX CPU, no extra install     |
+| `jina-code-0.5b` | 896D  | 32K³    | Better (78.4 avg)  | 0.5B SentenceTransformers model                     |
+| `jina-code-1.5b` | 1536D | 32K³    | Best (79.0 avg)    | 1.5B SentenceTransformers model                     |
+| `codesage-large` | 1024D | 8K      | Better             | Remote-code SentenceTransformers model, 9 languages |
+| `nomic-code`     | 3584D | 8K      | Best-in-class      | 7B model with substantial memory requirements       |
 
-¹ Measured (or estimated from parameter count where marked *est.*) on
-Apple M2 Pro, 32 GB, ~350-word chunks, arc defaults. CPU throughput can
-improve with `--cpu-workers`.
-² Document quality: `arctic-m` is MTEB Retrieval nDCG@10 (v1 leaderboard);
+¹ Document quality: `arctic-m` is MTEB Retrieval nDCG@10 (v1 leaderboard);
 `qwen3-embed` is MTEB English v2 mean (70.70, vs 69.43 for deprecated
 stella). Different scales — use them as within-column tiers.
-³ Code quality: average over 25 code-retrieval benchmarks reported by Jina
+² Code quality: average over 25 code-retrieval benchmarks reported by Jina
 for the jina-code-embeddings family.
-⁴ Native model context; arcaneum caps `max_seq_length` to 8192 tokens to
+³ Native model context; arcaneum caps `max_seq_length` to 8192 tokens to
 bound attention memory, so longer inputs are truncated at 8192.
 
 ### Which model for which corpus?
 
-- **Code**: `jina-code` (default) is the safe choice. If retrieval quality
-  matters more than indexing time — e.g. a large codebase you search daily —
-  use `jina-code-0.5b` with `--gpu`; it costs roughly nothing extra on Apple
-  Silicon relative to the CPU default.
+- **Code**: `jina-code` (default) is the stable choice. Consider
+  `jina-code-0.5b` for a different retrieval-quality tradeoff, but benchmark it
+  on your corpus; its accelerator path is experimental.
 - **Tech docs / PDFs / markdown (English)**: `arctic-m` (default) indexes on
   CPU with solid retrieval. Prefer `qwen3-embed` when you want the best
   retrieval quality, documents longer than 512 tokens per chunk, or have a
-  GPU available (where it is also the faster option). For fast high-quality
-  indexing with `--gpu`, `gemma-embed` offers top-tier retrieval in under 500M
-  parameters.
+  GPU available for an explicit experiment. `gemma-embed` is another gated,
+  optional model; neither has a blanket accelerator performance guarantee.
 - **Multilingual or mixed corpora**: `qwen3-embed` (or `jina-v3` if you want
   a FastEmbed-only install).
-- **Throughput-critical, quality-tolerant** (e.g. huge scratch corpora):
-  `bge-small` is ~2-3x faster than the next-fastest option.
+- **Throughput-critical, quality-tolerant**: benchmark `bge-small` against the
+  stable default on your hardware and corpus.
 
 **Usage:**
 
@@ -1066,7 +1059,7 @@ Additional options for `arc index` commands:
 **Performance Tuning:**
 
 - `--embedding-batch-size N`: Batch size for embedding generation [default: 200]
-  - Larger batches (300-500) improve throughput 10-20%
+  - Larger batches can increase memory and are not universally faster
   - Limited benefit from thread parallelism due to embedding lock (see Architecture Notes below)
 - `--process-priority low|normal|high`: Process scheduling priority [default: normal]
   - Use `low` for background indexing to avoid blocking foreground tasks
@@ -1084,24 +1077,17 @@ larger batches is actually more efficient. Use `--embedding-batch-size` for thro
 
 ### GPU Acceleration
 
-CPU embedding is the default for stable unattended indexing. GPU acceleration is
-available with `--gpu`:
+CPU embedding is the stable default. `--gpu` requests a backend allowed by the
+deny-by-default capability matrix: PyTorch MPS/CUDA for SentenceTransformers or
+experimental ONNX Runtime CoreML for FastEmbed on Apple Silicon. It does not
+guarantee accelerator placement or improved throughput. MLX is unavailable, and
+PDF layout inference is a separate process rather than an embedding backend.
 
-- **Apple Silicon**: Uses MPS (Metal Performance Shaders) backend
-- **NVIDIA GPUs**: Uses CUDA backend
-- **FastEmbed/CoreML**: Experimental on Apple Silicon; enabled by `--gpu`
-  (`ARC_EXPERIMENTAL_COREML=1` for paths without the flag, e.g. parity backfill)
+See [Embedding acceleration and PDF layout workers](accelerators.md) for current
+states, persistent-worker reap/fallback behavior, verbose diagnostics, safety
+guidance, and reproducible benchmark artifacts.
 
-**Performance**: 1.5-3x speedup with GPU for supported embedding models.
-
-**Compatible Models** (verified with GPU):
-
-- `qwen3-embed` - MPS support for high-quality PDFs/markdown
-- `jina-code` - MPS support for source code
-- `bge-small` - experimental CoreML support
-- `bge-base` - experimental CoreML support
-
-**Enable GPU** when speed is more important than maximum stability:
+**Request an experimental accelerator** for an observed run:
 
 ```bash
 arc index pdf /path/to/pdfs --collection docs --gpu

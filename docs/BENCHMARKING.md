@@ -35,8 +35,8 @@ PYTHONPATH="$PWD/src" python scripts/benchmark_accelerators.py --compare \
 The schema is
 `benchmarks/schema/accelerator-result-v1.schema.json`; the input manifest is
 `benchmarks/fixtures/accelerator-v1/manifest.json`. Ordinary CI runs only the CPU
-contract baseline. CUDA, MPS, CoreML, and MLX measurements are deliberately opt-in
-and remain explicitly skipped until their backend qualification work lands. A
+contract baseline. CUDA, MPS, and CoreML measurements are deliberately opt-in.
+MLX currently runs an offline feasibility inventory rather than inference. A
 backend result must name its hardware, OS, model, precision, and dependency
 versions; throughput alone is insufficient without correctness and reliability.
 
@@ -108,6 +108,20 @@ Runtime rejected the model's 30,522-row embedding table for CoreML, created no
 compiled cache entry, and fell back to CPU for unsupported nodes. Numerical output
 matched CPU exactly, but the speed, placement, and soak gates did not pass.
 
+### MLX feasibility inventory
+
+MLX is unavailable in runtime policy. Its offline probe inventories installed
+packages, pinned source snapshots, and converted assets without downloads:
+
+```bash
+PYTHONPATH="$PWD/src" python scripts/benchmark_accelerators.py \
+  --backend mlx --output benchmarks/results/mlx-local.json
+```
+
+The checked-in artifact records `defer` because no MLX runtime or converted
+strategic-model assets were available. It contains no inferred throughput or
+correctness result. See [the model assessment](mlx-feasibility.md).
+
 ## Overview
 
 Two benchmarking scripts are available:
@@ -144,23 +158,9 @@ python scripts/benchmark_indexing.py --no-gpu
 - `--report`: Text report file
 - `--verbose`: Verbose output
 
-### Illustrative Output (not measured evidence)
-
-```text
-EMBEDDING BATCH SIZE BENCHMARK
---------------------------------------------------------------------------------
-  Batch  256:  18523 emb/sec (0.54s ± 0.02s)   0.0%
-  Batch  512:  20145 emb/sec (0.50s ± 0.01s)   +8.8%⭐ BEST
-  Batch 1024:  19876 emb/sec (0.50s ± 0.02s)   +7.3%
-
-  → Recommendation: Use batch_size=512 for 8.8% speedup
-
-GPU VS CPU COMPARISON
---------------------------------------------------------------------------------
-  GPU: 20145 emb/sec (0.50s) - {'device': 'cuda', 'gpu_enabled': True}
-  CPU:  2340 emb/sec (4.27s)
-  GPU Speedup: 8.61x faster than CPU
-```
+The legacy script is useful for exploratory local profiling, but its output is
+not capability evidence. Do not copy its recommendations or speed ratios into
+user guidance; record comparable results with the versioned harness instead.
 
 ## Benchmark 2: PDF Indexing
 

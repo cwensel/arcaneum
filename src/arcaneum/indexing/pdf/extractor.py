@@ -5,6 +5,7 @@ import importlib.util
 import io
 import logging
 import re
+import threading
 import warnings
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -25,6 +26,25 @@ warnings.filterwarnings("ignore", category=UserWarning, module="pymupdf")
 pymupdf.TOOLS.mupdf_display_errors(False)
 
 logger = logging.getLogger(__name__)
+
+# PyMuPDF4LLM exposes layout selection as process-global state. Serialize the
+# selection and conversion so extractor instances with different policies cannot
+# change the backend underneath one another.
+_PYMUPDF4LLM_LAYOUT_LOCK = threading.RLock()
+
+
+@contextlib.contextmanager
+def _pymupdf4llm_layout(enabled: bool):
+    """Select PyMuPDF4LLM layout mode for one conversion and restore it."""
+    with _PYMUPDF4LLM_LAYOUT_LOCK:
+        previous = bool(getattr(pymupdf4llm, "_use_layout", False))
+        if previous != enabled:
+            pymupdf4llm.use_layout(enabled)
+        try:
+            yield
+        finally:
+            if previous != enabled:
+                pymupdf4llm.use_layout(previous)
 
 
 class PDFExtractor:
@@ -190,16 +210,17 @@ class PDFExtractor:
 
                 # Suppress pymupdf4llm's noisy stdout output
                 # ("=== Document parser messages ===", "Using Tesseract...", "OCR on page...")
-                with contextlib.redirect_stdout(io.StringIO()):
-                    pages = pymupdf4llm.to_markdown(
-                        str(pdf_path),
-                        page_chunks=True,
-                        ignore_images=self.ignore_images,
-                        write_images=self.preserve_images,
-                        force_text=True,
-                        table_strategy="lines_strict",
-                        use_ocr=self.use_ocr,
-                    )
+                with _pymupdf4llm_layout(self.use_layout_analysis):
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        pages = pymupdf4llm.to_markdown(
+                            str(pdf_path),
+                            page_chunks=True,
+                            ignore_images=self.ignore_images,
+                            write_images=self.preserve_images,
+                            force_text=True,
+                            table_strategy="lines_strict",
+                            use_ocr=self.use_ocr,
+                        )
 
                 for page_num, page in enumerate(pages):
                     page_md = page["text"]

@@ -1,6 +1,6 @@
 """Unit tests for PDF extraction metadata."""
 
-from arcaneum.indexing.pdf.extractor import PDFExtractor
+from arcaneum.indexing.pdf.extractor import PDFExtractor, pymupdf4llm
 
 
 class _FakeDoc:
@@ -62,3 +62,30 @@ def test_markdown_extraction_parses_document_once_with_page_chunks(monkeypatch, 
         {"page_number": 1, "start_char": 0, "page_text_length": 10},
         {"page_number": 2, "start_char": 11, "page_text_length": 11},
     ]
+
+
+def test_markdown_extraction_disables_layout_for_conversion(monkeypatch, tmp_path):
+    pdf_path = tmp_path / "document.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    layout_states = []
+
+    monkeypatch.setattr(PDFExtractor, "_has_type3_fonts", lambda self, path: False)
+    monkeypatch.setattr("arcaneum.indexing.pdf.extractor.pymupdf.open", lambda path: _FakeDoc())
+    monkeypatch.setattr("arcaneum.indexing.pdf.extractor.pymupdf4llm._use_layout", True)
+
+    def fake_use_layout(enabled):
+        monkeypatch.setattr("arcaneum.indexing.pdf.extractor.pymupdf4llm._use_layout", enabled)
+        layout_states.append(enabled)
+
+    def fake_to_markdown(*args, **kwargs):
+        assert kwargs["page_chunks"] is True
+        assert not pymupdf4llm._use_layout
+        return [{"text": "Plain text", "metadata": {"page_number": 1}}]
+
+    monkeypatch.setattr("arcaneum.indexing.pdf.extractor.pymupdf4llm.use_layout", fake_use_layout)
+    monkeypatch.setattr("arcaneum.indexing.pdf.extractor.pymupdf4llm.to_markdown", fake_to_markdown)
+
+    _, metadata = PDFExtractor(use_layout_analysis=False).extract(pdf_path)
+
+    assert layout_states == [False, True]
+    assert metadata["layout_analyzed"] is False

@@ -69,3 +69,26 @@ a PDF layout reliability signal. Suppressing stderr would hide evidence and is
 not a resolution. If it correlates with crashes, corruption, or accumulating
 memory, isolate layout extraction in the dedicated process proposed by kata
 `4x5y`.
+
+## Runtime containment
+
+Arcaneum now performs PyMuPDF4LLM conversion in one persistent spawned process.
+The child exclusively imports and owns pymupdf4llm, pymupdf-layout, and their
+PyTorch state; the parent receives only page text, page metadata, and structured
+errors. Native parser output remains in the child. A timeout or crash terminates
+and joins that child before normalized, non-layout PyMuPDF extraction begins.
+The next document starts a clean replacement worker.
+
+Use the benchmark harness to quantify model-startup amortization on a
+representative corpus:
+
+```console
+PYTHONPATH=src python scripts/benchmark_pdf_layout_worker.py \
+  document-a.pdf document-b.pdf --iterations 3 --layout on
+```
+
+The JSON report compares one persistent worker with restarting a worker for
+every document and records total time, per-document time, process identities,
+and the observed persistence speedup. Keep results tied to the input corpus and
+dependency/platform versions; do not generalize one machine's ratio into a
+product-wide performance claim.

@@ -1,17 +1,22 @@
 """PDF text extraction with PyMuPDF and pdfplumber fallback (RDR-004, RDR-016)."""
 
-import contextlib
 import importlib.util
-import io
 import logging
 import re
-import threading
 import warnings
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import pymupdf
-import pymupdf4llm
+
+from arcaneum.indexing.pdf.layout_worker import (
+    LayoutConversionError,
+    LayoutRequest,
+    LayoutWorkerCrashed,
+    LayoutWorkerTimeout,
+    PDFLayoutWorker,
+    shared_layout_worker,
+)
 
 # pymupdf-layout is now auto-initialized by pymupdf4llm >= 1.27.2
 # The Layout class was renamed to DocumentLayoutAnalyzer in 1.27.x
@@ -27,25 +32,6 @@ pymupdf.TOOLS.mupdf_display_errors(False)
 
 logger = logging.getLogger(__name__)
 
-# PyMuPDF4LLM exposes layout selection as process-global state. Serialize the
-# selection and conversion so extractor instances with different policies cannot
-# change the backend underneath one another.
-_PYMUPDF4LLM_LAYOUT_LOCK = threading.RLock()
-
-
-@contextlib.contextmanager
-def _pymupdf4llm_layout(enabled: bool):
-    """Select PyMuPDF4LLM layout mode for one conversion and restore it."""
-    with _PYMUPDF4LLM_LAYOUT_LOCK:
-        previous = bool(getattr(pymupdf4llm, "_use_layout", False))
-        if previous != enabled:
-            pymupdf4llm.use_layout(enabled)
-        try:
-            yield
-        finally:
-            if previous != enabled:
-                pymupdf4llm.use_layout(previous)
-
 
 class PDFExtractor:
     """Extract text from PDFs using PyMuPDF with pdfplumber fallback."""
@@ -57,6 +43,7 @@ class PDFExtractor:
         preserve_images: bool = False,
         use_layout_analysis: bool = True,
         use_ocr: bool = False,
+        layout_worker: Optional[PDFLayoutWorker] = None,
     ):
         """Initialize PDF extractor.
 
@@ -68,12 +55,14 @@ class PDFExtractor:
             use_ocr: Enable pymupdf4llm auto-OCR for garbled text (default: False).
                      When False, OCR is handled by the repair/sync pipeline via quality scoring.
                      Set True when re-extracting known-garbled files.
+            layout_worker: Override the shared spawned worker (primarily for testing).
         """
         self.markdown_conversion = markdown_conversion
         self.ignore_images = ignore_images and not preserve_images
         self.preserve_images = preserve_images
         self.use_ocr = use_ocr
         self.use_layout_analysis = use_layout_analysis and HAS_PYMUPDF_LAYOUT
+        self.layout_worker = layout_worker
 
     def extract(self, pdf_path: Path) -> Tuple[str, dict]:
         """Extract text from PDF with optional markdown conversion (RDR-016).
@@ -205,41 +194,37 @@ class PDFExtractor:
             page_boundaries = []
             current_pos = 0
 
-            with pymupdf.open(pdf_path) as doc:
-                page_count = len(doc)
+            worker = self.layout_worker or shared_layout_worker()
+            result = worker.convert(
+                LayoutRequest(
+                    pdf_path=str(pdf_path.resolve()),
+                    layout=self.use_layout_analysis,
+                    ignore_images=self.ignore_images,
+                    preserve_images=self.preserve_images,
+                    use_ocr=self.use_ocr,
+                )
+            )
+            pages = result["pages"]
+            page_count = result["page_count"]
 
-                # Suppress pymupdf4llm's noisy stdout output
-                # ("=== Document parser messages ===", "Using Tesseract...", "OCR on page...")
-                with _pymupdf4llm_layout(self.use_layout_analysis):
-                    with contextlib.redirect_stdout(io.StringIO()):
-                        pages = pymupdf4llm.to_markdown(
-                            str(pdf_path),
-                            page_chunks=True,
-                            ignore_images=self.ignore_images,
-                            write_images=self.preserve_images,
-                            force_text=True,
-                            table_strategy="lines_strict",
-                            use_ocr=self.use_ocr,
-                        )
+            for page_num, page in enumerate(pages):
+                page_md = page["text"]
 
-                for page_num, page in enumerate(pages):
-                    page_md = page["text"]
+                # Normalize the page text
+                page_md = self._normalize_whitespace_edge_cases(page_md)
 
-                    # Normalize the page text
-                    page_md = self._normalize_whitespace_edge_cases(page_md)
-
-                    if page_md.strip():
-                        page_boundaries.append(
-                            {
-                                "page_number": page.get("metadata", {}).get(
-                                    "page_number", page_num + 1
-                                ),
-                                "start_char": current_pos,
-                                "page_text_length": len(page_md),
-                            }
-                        )
-                        page_texts.append(page_md)
-                        current_pos += len(page_md) + 1  # +1 for newline separator
+                if page_md.strip():
+                    page_boundaries.append(
+                        {
+                            "page_number": page.get("metadata", {}).get(
+                                "page_number", page_num + 1
+                            ),
+                            "start_char": current_pos,
+                            "page_text_length": len(page_md),
+                        }
+                    )
+                    page_texts.append(page_md)
+                    current_pos += len(page_md) + 1  # +1 for newline separator
 
             # Join pages with newline
             md_text = "\n".join(page_texts)
@@ -260,24 +245,40 @@ class PDFExtractor:
 
             return md_text, metadata
 
-        except RuntimeError as e:
+        except LayoutConversionError as e:
             # Handle PyMuPDF font digest errors (code=4: no font file for digest)
             # This occurs when TEXT_COLLECT_STYLES flag encounters fonts without embedded data
             # (Base-14 fonts, system fonts). The error is in fake-bold detection optimization,
             # not core text extraction. Fallback maintains quality.
             error_msg = str(e)
-            if "font" in error_msg.lower() or "code=4" in error_msg:
+            if e.font_error:
                 logger.debug(
                     f"Markdown conversion failed for {pdf_path.name} "
                     f"(font digest error: {error_msg}). This is a known PyMuPDF4LLM "
                     f"limitation with certain fonts. Falling back to normalized extraction."
                 )
+                # Keep the fallback boundary strict: no native layout worker
+                # remains alive while local normalized extraction proceeds.
+                worker.close()
                 # Fall back to normalized extraction - quality is maintained
                 # (only loses fake-bold deduplication optimization)
                 return self._extract_with_pymupdf_normalized(pdf_path)
             else:
-                # Re-raise other RuntimeErrors
+                # Re-raise non-font conversion errors.
                 raise
+        except (LayoutWorkerTimeout, LayoutWorkerCrashed) as e:
+            # The worker client guarantees the native process is terminated and
+            # reaped before raising. It is now safe to continue with local,
+            # non-layout PyMuPDF extraction.
+            logger.warning(
+                "PDF layout worker failed for %s (%s); using normalized extraction",
+                pdf_path.name,
+                e,
+            )
+            text, metadata = self._extract_with_pymupdf_normalized(pdf_path)
+            metadata["layout_fallback_reason"] = type(e).__name__
+            metadata["layout_fallback_detail"] = str(e)
+            return text, metadata
 
     def _extract_with_pymupdf_normalized(self, pdf_path: Path) -> Tuple[str, dict]:
         """Extract text with normalization only (RDR-016 opt-in for maximum savings).

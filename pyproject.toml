@@ -57,7 +57,8 @@ dependencies = [
     "tree-sitter>=0.26.0",  # Required at runtime; tree-sitter-language-pack 1.6.3 dropped it from deps
     # 1.6.3 dropped the direct tree-sitter dependency; 1.8 switched to
     # method-based bindings, which ast_extractor supports.
-    "tree-sitter-language-pack>=1.14.0",
+    # 1.14.1 segfaults while parsing large Python functions on Linux.
+    "tree-sitter-language-pack>=1.14.0,<1.14.1",
     "llama-index-core>=0.14.6",
     "GitPython>=3.1.45",
     # Markdown indexing dependencies (RDR-014)

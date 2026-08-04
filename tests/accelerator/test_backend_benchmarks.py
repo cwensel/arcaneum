@@ -10,7 +10,7 @@ import pytest
 pytestmark = pytest.mark.accelerator
 
 
-@pytest.mark.parametrize("backend", ["cuda", "mlx"])
+@pytest.mark.parametrize("backend", ["cuda"])
 def test_backend_qualification_is_not_part_of_ordinary_ci(backend):
     pytest.skip(f"{backend} benchmark adapter is opt-in and not implemented in baseline csk2")
 

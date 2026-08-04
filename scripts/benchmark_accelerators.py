@@ -15,6 +15,7 @@ from arcaneum.benchmarks.accelerator import (
 )
 from arcaneum.benchmarks.coreml import run_coreml_qualification
 from arcaneum.benchmarks.cuda import run_cuda_qualification
+from arcaneum.benchmarks.mlx import run_mlx_feasibility
 from arcaneum.benchmarks.mps import run_mps_qualification
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,7 +29,9 @@ def main() -> int:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--summary", type=Path)
     parser.add_argument(
-        "--backend", choices=("reference-cpu", "mps", "cuda", "coreml"), default="reference-cpu"
+        "--backend",
+        choices=("reference-cpu", "mps", "cuda", "coreml", "mlx"),
+        default="reference-cpu",
     )
     parser.add_argument("--model", default="jina-code-st")
     parser.add_argument("--cache-dir", default=str(Path.home() / ".cache" / "arcaneum" / "models"))
@@ -88,6 +91,8 @@ def main() -> int:
             iterations=args.iterations,
             soak_texts=args.soak_texts,
         )
+    elif args.backend == "mlx":
+        result = run_mlx_feasibility(args.manifest, cache_dir=args.cache_dir)
     else:
         result = run_reference_benchmark(args.manifest, iterations=args.iterations)
     summary = render_summary(result)

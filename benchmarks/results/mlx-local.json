@@ -1,0 +1,171 @@
+{
+  "backend": {
+    "device": "apple-silicon",
+    "dimensions": 0,
+    "model": "strategic-model-inventory",
+    "name": "mlx-feasibility",
+    "precision": "not-selected"
+  },
+  "correctness": {
+    "finite": false,
+    "max_absolute_error": 0.0,
+    "mean_absolute_error": 0.0,
+    "minimum_cosine_similarity": 0.0,
+    "passed": false,
+    "reference_backend": "sentence-transformers-cpu",
+    "shape": [
+      0,
+      0
+    ]
+  },
+  "environment": {
+    "architecture": "arm64",
+    "cpu": "arm",
+    "dependencies": {
+      "mlx": {
+        "installed": false,
+        "version": null
+      },
+      "mlx-embeddings": {
+        "installed": false,
+        "version": null
+      },
+      "mlx-lm": {
+        "installed": false,
+        "version": null
+      },
+      "sentence-transformers": {
+        "installed": true,
+        "version": "5.6.1"
+      },
+      "transformers": {
+        "installed": true,
+        "version": "4.57.6"
+      }
+    },
+    "logical_cpu_count": 12,
+    "memory_bytes": 34359738368,
+    "os": "Darwin",
+    "os_release": "25.6.0",
+    "python": "3.12.13"
+  },
+  "fixture": {
+    "length_classes": [
+      "long",
+      "medium",
+      "oversized",
+      "short"
+    ],
+    "manifest_sha256": "da62785afe275cff1b607cebb62f415a9c21089c842a4fe18a86c45e8199e165",
+    "manifest_version": "1.0.0",
+    "total_texts": 15,
+    "unique_texts": 4
+  },
+  "harness_version": "1.0.0",
+  "performance": {
+    "cold_start_seconds": 0.0,
+    "latency_seconds": {
+      "p50": 0.0,
+      "p95": 0.0,
+      "samples": []
+    },
+    "peak_rss_bytes": 76480512,
+    "throughput_texts_per_second": 0.0,
+    "warm_iterations": 0,
+    "warm_total_seconds": 0.0
+  },
+  "qualification": {
+    "decision": "defer",
+    "exact_rerun": "PYTHONPATH=$PWD/src python scripts/benchmark_accelerators.py --backend mlx --output benchmarks/results/mlx-local.json",
+    "inventory": {
+      "cache_root": "~/.cache/arcaneum/models",
+      "models": [
+        {
+          "alias": "minilm",
+          "architecture": "BertModel",
+          "conversion_assessment": "architecturally simple baseline; conversion still unverified",
+          "converted_mlx_assets": [],
+          "dimensions": 384,
+          "pooling": "attention-mask-aware mean pooling, then L2 normalization",
+          "prompt_policy": "no query or document prompt",
+          "ready_for_offline_probe": false,
+          "repository": "sentence-transformers/all-MiniLM-L6-v2",
+          "revision": "c9745ed1d9f207416be6d2e6f8de32d1f16199bf",
+          "source_precision": "float32 safetensors",
+          "source_snapshot_cached": true,
+          "tokenizer": "BERT WordPiece"
+        },
+        {
+          "alias": "jina-code-st",
+          "architecture": "JinaBertForMaskedLM (remote model code)",
+          "conversion_assessment": "custom remote-code architecture requires a dedicated MLX port",
+          "converted_mlx_assets": [],
+          "dimensions": 768,
+          "pooling": "model-defined sentence embedding; parity must be measured",
+          "prompt_policy": "retrieval.query / retrieval.passage task policy",
+          "ready_for_offline_probe": false,
+          "repository": "jinaai/jina-embeddings-v2-base-code",
+          "revision": "516f4baf13dec4ddddda8631e019b5737c8bc250",
+          "source_precision": "float32 safetensors/ONNX cache assets",
+          "source_snapshot_cached": true,
+          "tokenizer": "Jina/BERT tokenizer assets"
+        },
+        {
+          "alias": "qwen3-embed",
+          "architecture": "Qwen3ForCausalLM",
+          "conversion_assessment": "base architecture is plausible; embedding pooling parity unverified",
+          "converted_mlx_assets": [],
+          "dimensions": 1024,
+          "pooling": "last token, including the query prompt, then L2 normalization",
+          "prompt_policy": "query prompt_name=query; documents remain unprefixed",
+          "ready_for_offline_probe": false,
+          "repository": "Qwen/Qwen3-Embedding-0.6B",
+          "revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+          "source_precision": "source safetensors precision; MLX quantization not selected",
+          "source_snapshot_cached": true,
+          "tokenizer": "Qwen tokenizer with model chat/template assets"
+        }
+      ],
+      "packages": {
+        "mlx": {
+          "installed": false,
+          "version": null
+        },
+        "mlx-embeddings": {
+          "installed": false,
+          "version": null
+        },
+        "mlx-lm": {
+          "installed": false,
+          "version": null
+        },
+        "sentence-transformers": {
+          "installed": true,
+          "version": "5.6.1"
+        },
+        "transformers": {
+          "installed": true,
+          "version": "4.57.6"
+        }
+      }
+    },
+    "network_access": "prohibited by this probe",
+    "reason": "defer: MLX runtime is not installed; no performance or parity run was attempted",
+    "runnable_models": [],
+    "soak_target_batches": 10000,
+    "speedup_gate": 1.25
+  },
+  "reliability": {
+    "attempted_batches": 0,
+    "completed_batches": 0,
+    "failures": 0,
+    "fallbacks": 0,
+    "restarts": 0
+  },
+  "run": {
+    "id": "20260804T231751Z-mlx-feasibility",
+    "recorded_at": "2026-08-04T23:17:51.483224+00:00",
+    "status": "inconclusive"
+  },
+  "schema_version": "1.0.0"
+}

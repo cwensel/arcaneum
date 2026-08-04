@@ -13,6 +13,7 @@ from arcaneum.benchmarks.accelerator import (
     run_reference_benchmark,
     write_json,
 )
+from arcaneum.benchmarks.cuda import run_cuda_qualification
 from arcaneum.benchmarks.mps import run_mps_qualification
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,11 +26,16 @@ def main() -> int:
     parser.add_argument("--iterations", type=int, default=3)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--summary", type=Path)
-    parser.add_argument("--backend", choices=("reference-cpu", "mps"), default="reference-cpu")
+    parser.add_argument(
+        "--backend", choices=("reference-cpu", "mps", "cuda"), default="reference-cpu"
+    )
     parser.add_argument("--model", default="jina-code-st")
     parser.add_argument("--cache-dir", default=str(Path.home() / ".cache" / "arcaneum" / "models"))
     parser.add_argument("--soak-batches", type=int, default=100)
+    parser.add_argument("--soak-texts", type=int, default=1500)
+    parser.add_argument("--soak-seconds", type=float, default=0.0)
     parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--token-budget", type=int, default=8192)
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--compare", nargs=2, type=Path, metavar=("BASELINE", "CANDIDATE"))
     args = parser.parse_args()
@@ -41,6 +47,12 @@ def main() -> int:
 
     if args.iterations < 1:
         parser.error("--iterations must be at least 1")
+    if args.batch_size < 1:
+        parser.error("--batch-size must be at least 1")
+    if args.token_budget < 1:
+        parser.error("--token-budget must be at least 1")
+    if args.soak_texts < 0 or args.soak_seconds < 0:
+        parser.error("soak targets cannot be negative")
     if args.backend == "mps":
         result = run_mps_qualification(
             args.manifest,
@@ -49,6 +61,18 @@ def main() -> int:
             iterations=args.iterations,
             soak_batches=args.soak_batches,
             batch_size=args.batch_size,
+            timeout=args.timeout,
+        )
+    elif args.backend == "cuda":
+        result = run_cuda_qualification(
+            args.manifest,
+            model=args.model,
+            cache_dir=args.cache_dir,
+            iterations=args.iterations,
+            soak_texts=args.soak_texts,
+            soak_seconds=args.soak_seconds,
+            batch_size=args.batch_size,
+            token_budget=args.token_budget,
             timeout=args.timeout,
         )
     else:

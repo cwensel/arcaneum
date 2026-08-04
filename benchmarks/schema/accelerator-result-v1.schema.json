@@ -14,7 +14,7 @@
     "performance": {"type": "object", "required": ["cold_start_seconds", "warm_total_seconds", "warm_iterations", "throughput_texts_per_second", "latency_seconds", "peak_rss_bytes"]},
     "reliability": {"type": "object", "required": ["attempted_batches", "completed_batches", "failures", "fallbacks", "restarts"]},
     "correctness": {"type": "object", "required": ["reference_backend", "shape", "finite", "max_absolute_error", "mean_absolute_error", "minimum_cosine_similarity", "passed"]},
-    "qualification": {"type": "object", "required": ["decision", "reason", "speedup_gate", "soak_target_batches", "watermarks"]}
+    "qualification": {"type": "object", "required": ["decision", "reason", "speedup_gate", "soak_target_batches"]}
   },
   "additionalProperties": false
 }

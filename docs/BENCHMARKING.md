@@ -58,6 +58,34 @@ batches complete. It refuses an unsafe
 produces an `inconclusive` artifact rather than a false pass. Install the
 `sentence-transformers` extra and rerun on an MPS-capable host.
 
+### PyTorch CUDA qualification
+
+CUDA also remains experimental until a concrete hardware/model/precision combination
+passes the qualification gates. Run it through the persistent spawned worker with a
+cached model:
+
+```bash
+PYTHONPATH="$PWD/src" python scripts/benchmark_accelerators.py \
+  --backend cuda --model jina-code-st --iterations 5 \
+  --soak-texts 100000 --token-budget 8192 --batch-size 8 \
+  --output benchmarks/results/cuda-$(uname -m).json
+```
+
+The result records the NVIDIA device, UUID, driver, compute capability, CUDA runtime,
+model and dependency versions, cold/warm throughput, CPU numerical agreement, parent
+RSS, CUDA allocated/reserved peaks, and the configured token/shape budget. The OOM
+policy makes at most two reduced-batch retries inside the worker; any timeout or
+unhandled OOM reaps the worker and leaves the run inconclusive. Qualification does
+not restart a failed worker or hide a failure with CPU fallback.
+
+A combination is `qualified` only with at least 1.25x same-model CPU throughput,
+cosine agreement of at least 0.999, zero failures/OOM retries, and either 100,000
+completed soak texts or three elapsed soak hours. Use `--soak-seconds 10800` for the
+time gate; when both soak flags are supplied, both requested amounts are run even
+though either promotion gate suffices. On a host without usable CUDA or a complete
+cached model, the command writes an explicit `inconclusive`/`experimental` artifact
+with zero throughput and the exact setup failure. It never invents measurements.
+
 ## Overview
 
 Two benchmarking scripts are available:

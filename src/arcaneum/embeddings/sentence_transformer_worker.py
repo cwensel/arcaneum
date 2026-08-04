@@ -55,7 +55,7 @@ class SentenceTransformerAcceleratorBackend:
                 ),
             )
         except Exception:
-            if not local_only:
+            if not local_only or config.get("strict_local_files_only"):
                 raise
             # Match the historical loader: prefer a complete offline cache, then
             # allow Hugging Face to fill missing artifacts.
@@ -72,6 +72,7 @@ class SentenceTransformerAcceleratorBackend:
         if "max_seq_length" in self.model_config:
             self.model.max_seq_length = self.model_config["max_seq_length"]
         self._encodes = 0
+        self._oom_retries = 0
 
     def _sync(self) -> None:
         import torch
@@ -127,6 +128,7 @@ class SentenceTransformerAcceleratorBackend:
                     raise
                 if index == len(attempts) - 1:
                     break
+                self._oom_retries += 1
                 self._clear()
                 time.sleep(0.5 if index == 0 else 1.0)
         raise RuntimeError(
@@ -140,6 +142,7 @@ class SentenceTransformerAcceleratorBackend:
             "device": self.device,
             "model_loads": 1,
             "encodes": self._encodes,
+            "oom_retries": self._oom_retries,
         }
         if self.device == "mps":
             import torch
@@ -147,6 +150,22 @@ class SentenceTransformerAcceleratorBackend:
             result["mps_current_allocated_bytes"] = int(torch.mps.current_allocated_memory())
             result["mps_driver_allocated_bytes"] = int(torch.mps.driver_allocated_memory())
             result["mps_recommended_max_bytes"] = int(torch.mps.recommended_max_memory())
+        elif self.device == "cuda":
+            import torch
+
+            properties = torch.cuda.get_device_properties(torch.cuda.current_device())
+            result.update(
+                {
+                    "cuda_device_name": properties.name,
+                    "cuda_compute_capability": [properties.major, properties.minor],
+                    "cuda_total_memory_bytes": int(properties.total_memory),
+                    "cuda_allocated_bytes": int(torch.cuda.memory_allocated()),
+                    "cuda_reserved_bytes": int(torch.cuda.memory_reserved()),
+                    "cuda_peak_allocated_bytes": int(torch.cuda.max_memory_allocated()),
+                    "cuda_peak_reserved_bytes": int(torch.cuda.max_memory_reserved()),
+                    "cuda_runtime_version": torch.version.cuda,
+                }
+            )
         return result
 
     def close(self) -> None:

@@ -170,6 +170,25 @@ from ..utils.formatting import format_size
 from .corpus_defaults import DEFAULT_MODELS_BY_CORPUS_TYPE
 
 console = Console()
+
+
+def _report_embedding_backend(embedding_client, model_names, verbose, output_json):
+    """Expose capability selection without changing machine-readable output."""
+    if not verbose or output_json:
+        return
+    for model_name in model_names:
+        state = embedding_client.get_backend_diagnostics(model_name)
+        detail = (
+            f"Embedding backend: model={model_name} backend={state['backend']} "
+            f"state={state['state']} device={state['device']} "
+            f"evidence={state['evidence_version']} "
+            f"worker_restarts={state['worker_restart_count']}"
+        )
+        if state.get("fallback_reason"):
+            detail += f" fallback={state['fallback_reason']}"
+        console.print(f"[dim]{detail}[/dim]")
+
+
 logger = logging.getLogger(__name__)
 MEILI_RENAME_UPDATE_TIMEOUT_MS = 300000
 
@@ -2156,9 +2175,7 @@ def sync_directory_command(
             ]
 
             already_indexed_count = len(truly_unchanged)
-            already_indexed_bytes = sum(
-                _file_progress_weight(path) for path in truly_unchanged
-            )
+            already_indexed_bytes = sum(_file_progress_weight(path) for path in truly_unchanged)
 
             # Calculate total corpus size for progress display
             total_corpus_files = already_indexed_count + len(files_to_process)
@@ -2445,6 +2462,7 @@ def sync_directory_command(
             embedding_client = EmbeddingClient(
                 use_gpu=use_gpu, cpu_workers=cpu_workers, allow_experimental_coreml=use_gpu
             )
+            _report_embedding_backend(embedding_client, model_list, verbose, output_json)
 
             # Initialize git discovery for code corpora
             git_discovery = GitProjectDiscovery() if corpus_type == "code" else None
@@ -2994,6 +3012,7 @@ def sync_directory_command(
             use_gpu = not no_gpu and os.environ.get("ARC_NO_GPU", "").lower() not in ("1", "true")
             # --gpu is an explicit opt-in, so it also authorizes experimental CoreML
             embedding_client = EmbeddingClient(use_gpu=use_gpu, allow_experimental_coreml=use_gpu)
+            _report_embedding_backend(embedding_client, model_list, verbose, output_json)
 
             # Get model config for chunking
             first_model = model_list[0]
@@ -5101,6 +5120,7 @@ def _parity_single_corpus(
             # Initialize embedding client (parity uses env var only, not CLI flag)
             use_gpu = os.environ.get("ARC_NO_GPU", "").lower() not in ("1", "true")
             embedding_client = EmbeddingClient(use_gpu=use_gpu)
+            _report_embedding_backend(embedding_client, model_list, verbose, output_json)
 
             # Get model config for chunking
             first_model = model_list[0]

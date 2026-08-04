@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from fastembed import TextEmbedding
 
+from arcaneum.embeddings.capabilities import BackendSelection, select_backend
 from arcaneum.embeddings.worker_protocol import (
     AcceleratorWorkerSession,
     WorkerConfig,
@@ -84,6 +85,7 @@ def _remove_coreml_sentinel() -> None:
             sentinel.unlink()
     except Exception:
         logger.debug("Could not remove CoreML crash sentinel", exc_info=True)
+
 
 # Model configurations with dimensions and multiple backends
 #
@@ -374,8 +376,8 @@ def _ensure_dynamic_cache_compat(cache_cls=None) -> None:
             return
 
     if not hasattr(cache_cls, "get_usable_length"):
-        cache_cls.get_usable_length = lambda self, new_seq_length, layer_idx=0: (
-            self.get_seq_length(layer_idx)
+        cache_cls.get_usable_length = lambda self, new_seq_length, layer_idx=0: self.get_seq_length(
+            layer_idx
         )
 
 
@@ -557,6 +559,9 @@ class EmbeddingClient:
         self._allow_experimental_coreml = allow_experimental_coreml
         self._warn_if_previous_coreml_session_killed()
         self._device = self._detect_device() if use_gpu else "cpu"
+        self._backend_selections: dict[str, BackendSelection] = {}
+        self._backend_fallback_reasons: dict[str, str] = {}
+        self._worker_restart_count = 0
         os.environ["SENTENCE_TRANSFORMERS_HOME"] = self.cache_dir
         self._models: Dict[str, TextEmbedding] = {}
 
@@ -629,8 +634,7 @@ class EmbeddingClient:
             return None
         error_msg = str(error).lower()
         if not any(
-            marker in error_msg
-            for marker in ("401", "403", "gated", "unauthorized", "restricted")
+            marker in error_msg for marker in ("401", "403", "gated", "unauthorized", "restricted")
         ):
             return None
         return (
@@ -670,6 +674,21 @@ class EmbeddingClient:
         """
         if not (self.use_gpu and self._device == "mps"):
             return None
+
+        selection = self._backend_selections.get(model_name) or self._select_model_backend(
+            model_name
+        )
+        if selection.backend != "onnxruntime-coreml":
+            message = selection.fallback_reason or "CoreML combination is not qualified"
+            logger.info("Using CPUExecutionProvider for '%s': %s", model_name, message)
+            print(
+                f"   GPU requested, but FastEmbed/CoreML is experimental for "
+                f"'{model_name}'. Using CPUExecutionProvider. "
+                f"Set ARC_EXPERIMENTAL_COREML=1 to opt in. {message}",
+                file=sys.stderr,
+                flush=True,
+            )
+            return ["CPUExecutionProvider"]
 
         is_apple_silicon = sys.platform == "darwin" and platform.machine().lower() in {
             "arm64",
@@ -1011,6 +1030,44 @@ class EmbeddingClient:
             "gpu_available": self._device != "cpu",
         }
 
+    def get_backend_diagnostics(self, model_name: str) -> Dict[str, Any]:
+        """Return verbose-safe capability and fallback state for one model."""
+        selection = self._backend_selections.get(model_name)
+        if selection is None and model_name in EMBEDDING_MODELS:
+            selection = self._select_model_backend(model_name)
+        if selection is None:
+            return {
+                "model": model_name,
+                "state": "unavailable",
+                "fallback_reason": "unknown embedding model",
+                "worker_restart_count": self._worker_restart_count,
+            }
+        result = selection.as_dict()
+        result["fallback_reason"] = self._backend_fallback_reasons.get(
+            model_name, selection.fallback_reason
+        )
+        result["worker_restart_count"] = self._worker_restart_count
+        return result
+
+    def _select_model_backend(self, model_name: str) -> BackendSelection:
+        config = EMBEDDING_MODELS[model_name]
+        requested = self._device if self.use_gpu else "cpu"
+        selection = select_backend(
+            model=model_name,
+            model_backend=config.get("backend", "fastembed"),
+            requested_device=requested,
+            # --gpu remains the explicit opt-in for experimental acceleration.
+            allow_experimental=(
+                self._experimental_coreml_enabled()
+                if config.get("backend") == "fastembed"
+                else self.use_gpu
+            ),
+        )
+        self._backend_selections[model_name] = selection
+        if selection.fallback_reason:
+            self._backend_fallback_reasons[model_name] = selection.fallback_reason
+        return selection
+
     def _get_optimal_batch_size(self, model_name: str) -> int:
         """Calculate optimal batch size based on model and device (arcaneum-i7oa).
 
@@ -1074,6 +1131,9 @@ class EmbeddingClient:
         if model_name not in EMBEDDING_MODELS:
             raise _unknown_model_error(model_name)
 
+        selection = self._select_model_backend(model_name)
+        config = EMBEDDING_MODELS[model_name]
+
         deprecated_config = EMBEDDING_MODELS[model_name]
         if deprecated_config.get("deprecated") and model_name not in self._deprecation_warned:
             self._deprecation_warned.add(model_name)
@@ -1088,18 +1148,17 @@ class EmbeddingClient:
 
         # When GPU is poisoned, return CPU fallback for sentence-transformers models
         # instead of loading a new GPU model (RDR-020).
-        if self._gpu_poisoned:
-            config = EMBEDDING_MODELS[model_name]
+        if self._gpu_poisoned or (
+            self.use_gpu
+            and config.get("backend") == "sentence-transformers"
+            and selection.device == "cpu"
+        ):
             if config.get("backend") == "sentence-transformers":
                 return self._get_cpu_fallback_model(model_name)
 
         # A GPU SentenceTransformer is represented in the parent by a marker
         # only. Loading and native imports happen when the spawned worker starts.
-        config = EMBEDDING_MODELS[model_name]
-        if (
-            config.get("backend") == "sentence-transformers"
-            and self._device in ("mps", "cuda")
-        ):
+        if config.get("backend") == "sentence-transformers" and self._device in ("mps", "cuda"):
             return _AcceleratorModelProxy()
 
         if model_name not in self._models:
@@ -1641,6 +1700,9 @@ class EmbeddingClient:
             self._drop_accelerator_worker(model_name)
             self._gpu_poisoned = True
             self._models.pop(model_name, None)
+            self._backend_fallback_reasons[model_name] = (
+                f"accelerator worker reaped after {type(exc).__name__}: {exc}"
+            )
             logger.warning(
                 "Accelerator worker failed for '%s'; falling back to CPU after reap: %s",
                 model_name,

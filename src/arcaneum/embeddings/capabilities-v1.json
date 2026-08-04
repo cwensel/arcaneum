@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0.0",
+  "evidence_version": "accelerator-architecture-2026-08-04",
+  "rules": [
+    {"backend": "fastembed-cpu", "platform": "*", "model_backend": "fastembed", "state": "stable", "evidence": "ordinary CPU integration suite"},
+    {"backend": "pytorch-cpu", "platform": "*", "model_backend": "sentence-transformers", "state": "stable", "evidence": "CPU fallback integration suite"},
+    {"backend": "pytorch-mps", "platform": "darwin-arm64", "model_backend": "sentence-transformers", "state": "experimental", "evidence": "benchmarks/results/mps-apple-m2-pro-20260804.json"},
+    {"backend": "onnxruntime-coreml", "platform": "darwin-arm64", "models": ["bge-small"], "state": "experimental", "evidence": "benchmarks/results/coreml-bge-small-apple-silicon-experimental.json"},
+    {"backend": "onnxruntime-coreml", "platform": "darwin-arm64", "model_backend": "fastembed", "state": "experimental", "evidence": "unqualified compatibility path; explicit opt-in only"},
+    {"backend": "pytorch-cuda", "platform": "linux-x86_64", "model_backend": "sentence-transformers", "state": "experimental", "evidence": "benchmarks/results/cuda-apple-m2-pro-20260804.json (inconclusive availability probe; no passing CUDA hardware artifact)"},
+    {"backend": "mlx", "platform": "darwin-arm64", "models": ["minilm", "jina-code-st", "qwen3-embed"], "state": "unavailable", "evidence": "benchmarks/results/mlx-local.json and docs/mlx-feasibility.md; decision deferred pending provisioned runtime and converted assets"}
+  ]
+}

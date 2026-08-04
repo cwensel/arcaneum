@@ -39,6 +39,19 @@ Support tiers define the promise users can rely on:
 | Supported opt-in | SentenceTransformers models behind `arcaneum[sentence-transformers]` or `arcaneum[large-models]` | Must preserve documented dependency caps and produce clear model/runtime errors |
 | Experimental accelerator | `--gpu`, CUDA, MPS, and CoreML/FastEmbed paths | Must remain opt-in, have smoke tests where hardware is available, and degrade to actionable errors rather than implicit data changes |
 
+The canonical runtime matrix is the versioned
+`src/arcaneum/embeddings/capabilities-v1.json` data file. Selection is
+deny-by-default: only a named `stable` model/backend/platform rule may be chosen
+automatically; `experimental` requires `--gpu` (CoreML also accepts its legacy
+environment opt-in), while `rejected`, `unavailable`, and unknown combinations
+use deterministic CPU. Current accelerator evidence does not qualify any MPS,
+CUDA, CoreML, or MLX combination as stable. With `--verbose`, sync reports the
+selected backend, capability state and evidence version, fallback reason, and
+worker restart count. Human diagnostics remain suppressed in JSON output.
+MLX is currently represented as `unavailable`, not rejected: its feasibility
+decision is deferred until a provisioned runtime and converted assets permit
+correctness, performance, and soak measurements.
+
 Default model changes are compatibility events because they affect embedding
 dimensions, prompt policy, or retrieval behavior. A 1.0 default-model change
 requires release notes, a reindex warning, and tests covering stale prompt-policy

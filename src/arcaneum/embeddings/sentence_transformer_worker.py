@@ -93,19 +93,23 @@ class SentenceTransformerAcceleratorBackend:
             torch.cuda.synchronize()
             torch.cuda.empty_cache()
 
-    def _encode_once(self, texts: list[str], batch_size: int) -> np.ndarray:
+    def _encode_once(self, texts: list[str], batch_size: int, **policy: Any) -> np.ndarray:
         self._sync()
         result = self.model.encode(
             texts,
             batch_size=batch_size,
             show_progress_bar=False,
             convert_to_numpy=True,
+            **policy,
         )
         self._sync()
         return np.asarray(result, dtype=np.float32)
 
     def encode(self, texts: list[str], **options: Any) -> np.ndarray:
         batch_size = max(1, int(options.get("batch_size", 1)))
+        policy = {
+            key: options[key] for key in ("task", "prompt_name") if options.get(key) is not None
+        }
         oom_markers = (
             "enough space",
             "mpsgraph",
@@ -119,7 +123,7 @@ class SentenceTransformerAcceleratorBackend:
         last_error: BaseException | None = None
         for index, attempt_size in enumerate(attempts):
             try:
-                result = self._encode_once(texts, attempt_size)
+                result = self._encode_once(texts, attempt_size, **policy)
                 self._encodes += 1
                 return result
             except BaseException as exc:

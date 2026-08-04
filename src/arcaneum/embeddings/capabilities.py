@@ -32,6 +32,17 @@ def load_capabilities() -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def coreml_provider_options(cache_dir: Path) -> dict[str, str]:
+    """Production CoreML options matching the qualified evaluation path."""
+    return {
+        "ModelFormat": "MLProgram",
+        "RequireStaticInputShapes": "1",
+        "ModelCacheDirectory": str(cache_dir.expanduser().resolve()),
+        "SpecializationStrategy": "FastPrediction",
+        "ProfileComputePlan": "1",
+    }
+
+
 def platform_key() -> str:
     system = sys.platform
     machine = platform.machine().lower()

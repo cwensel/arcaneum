@@ -12,6 +12,7 @@ import multiprocessing as mp
 import os
 import queue
 import signal
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -208,6 +209,7 @@ class AcceleratorWorkerSession:
         self._replies: mp.Queue[dict[str, Any]] | None = None
         self._process: BaseProcess | None = None
         self._in_flight = False
+        self._request_lock = threading.RLock()
 
     @property
     def pid(self) -> int | None:
@@ -236,8 +238,9 @@ class AcceleratorWorkerSession:
         return self
 
     def encode(self, texts: list[str], *, timeout: float, **options: Any) -> np.ndarray:
-        request_id = self._send(MessageType.ENCODE, texts=texts, options=options)
-        reply = self._receive(request_id, MessageType.ENCODED, timeout)
+        with self._request_lock:
+            request_id = self._send(MessageType.ENCODE, texts=texts, options=options)
+            reply = self._receive(request_id, MessageType.ENCODED, timeout)
         payload = reply["payload"]
         try:
             shape = tuple(payload["shape"])
@@ -251,19 +254,21 @@ class AcceleratorWorkerSession:
         return np.array(result, copy=True, order="C")
 
     def health(self, *, timeout: float = 1.0) -> dict[str, Any]:
-        request_id = self._send(MessageType.HEARTBEAT)
-        return self._receive(request_id, MessageType.HEALTH, timeout)["payload"]
+        with self._request_lock:
+            request_id = self._send(MessageType.HEARTBEAT)
+            return self._receive(request_id, MessageType.HEALTH, timeout)["payload"]
 
     def shutdown(self, *, timeout: float = 5.0) -> None:
-        if self._process is None:
-            return
-        if self._process.is_alive():
-            try:
-                request_id = self._send(MessageType.SHUTDOWN)
-                self._receive(request_id, MessageType.SHUTDOWN_COMPLETE, timeout)
-            except (WorkerCrashedError, WorkerProtocolError, WorkerTimeoutError):
-                pass
-        self._reap(graceful=True)
+        with self._request_lock:
+            if self._process is None:
+                return
+            if self._process.is_alive():
+                try:
+                    request_id = self._send(MessageType.SHUTDOWN)
+                    self._receive(request_id, MessageType.SHUTDOWN_COMPLETE, timeout)
+                except (WorkerCrashedError, WorkerProtocolError, WorkerTimeoutError):
+                    pass
+            self._reap(graceful=True)
 
     def _send(self, kind: MessageType, **payload: Any) -> str:
         if self._commands is None or self._process is None or not self._process.is_alive():

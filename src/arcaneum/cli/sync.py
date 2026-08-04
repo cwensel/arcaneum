@@ -1550,6 +1550,7 @@ def sync_directory_command(
         from_file=from_file,
     )
 
+    embedding_clients = []
     try:
         # Validate and resolve all paths (directories or files)
         dir_paths = []
@@ -2462,6 +2463,7 @@ def sync_directory_command(
             embedding_client = EmbeddingClient(
                 use_gpu=use_gpu, cpu_workers=cpu_workers, allow_experimental_coreml=use_gpu
             )
+            embedding_clients.append(embedding_client)
             _report_embedding_backend(embedding_client, model_list, verbose, output_json)
 
             # Initialize git discovery for code corpora
@@ -2835,19 +2837,10 @@ def sync_directory_command(
 
                             total_indexed += 1
 
-                            # Periodic memory hygiene: the diagnostic showed RSS
-                            # grows in bursts on files with long dense chunks —
-                            # PyTorch's allocator holds pages between calls and
-                            # libc's malloc doesn't return them to the OS. A
-                            # gc.collect + GPU cache flush every N files gives
-                            # PyTorch a chance to trim its internal pools
-                            # without fighting the per-batch caching strategy.
+                            # Periodically collect parent-owned Python objects.
+                            # Native allocator cleanup is child-owned.
                             if total_indexed % 50 == 0:
-                                try:
-                                    gc.collect()
-                                    embedding_client._clear_gpu_cache()
-                                except Exception:
-                                    logger.debug("periodic gc/flush failed", exc_info=True)
+                                gc.collect()
 
                             # Per-file memory probe — opt-in via verbose. Also always
                             # warn on suspicious single-file growth so leaks on
@@ -2894,19 +2887,11 @@ def sync_directory_command(
                                     #         f"Unified memory leak — kill -USR1 {os.getpid()} for "
                                     #         f"detailed dump.[/yellow]"
                                     #     )
-                                # Reactive cache flush: any time the driver grew
-                                # by >500MB on a single file, force an immediate
-                                # gc + empty_cache rather than waiting for the
-                                # every-50-files periodic flush. The flush won't
-                                # shrink the high-water mark but it lets Metal
-                                # reorganize cached pages before the next file's
-                                # encode demands a new buffer.
+                                # Collect parent-owned Python objects after a
+                                # large worker-reported memory delta. Native
+                                # allocator cleanup remains child-owned.
                                 if _drv_delta > 500 * 1024 * 1024:
-                                    try:
-                                        gc.collect()
-                                        embedding_client._clear_gpu_cache()
-                                    except Exception:
-                                        logger.debug("reactive flush failed", exc_info=True)
+                                    gc.collect()
                                 _mem_prev = _mem_now
                             except Exception:
                                 logger.debug("memory probe failed", exc_info=True)
@@ -3012,6 +2997,7 @@ def sync_directory_command(
             use_gpu = not no_gpu and os.environ.get("ARC_NO_GPU", "").lower() not in ("1", "true")
             # --gpu is an explicit opt-in, so it also authorizes experimental CoreML
             embedding_client = EmbeddingClient(use_gpu=use_gpu, allow_experimental_coreml=use_gpu)
+            embedding_clients.append(embedding_client)
             _report_embedding_backend(embedding_client, model_list, verbose, output_json)
 
             # Get model config for chunking
@@ -3384,6 +3370,12 @@ def sync_directory_command(
         interaction_logger.finish(error=str(e))
         print_error(f"Failed to sync directory: {e}", output_json)
         sys.exit(1)
+    finally:
+        for owned_client in embedding_clients:
+            _report_embedding_backend(
+                owned_client, locals().get("model_list", []), verbose, output_json
+            )
+            owned_client.close()
 
 
 def _fetch_chunks_for_files_bulk(
@@ -4777,6 +4769,7 @@ def _parity_single_corpus(
             dry_run=dry_run,
         )
 
+    embedding_client = None
     try:
         if not output_json:
             print_info(f"Checking parity for corpus '{corpus}'...")
@@ -5118,9 +5111,12 @@ def _parity_single_corpus(
                 )
 
             # Initialize embedding client (parity uses env var only, not CLI flag)
-            use_gpu = os.environ.get("ARC_NO_GPU", "").lower() not in ("1", "true")
+            # Parity backfill has no explicit accelerator flag; stable CPU is mandatory.
+            use_gpu = False
             embedding_client = EmbeddingClient(use_gpu=use_gpu)
-            _report_embedding_backend(embedding_client, model_list, verbose, output_json)
+            _report_embedding_backend(
+                embedding_client, locals().get("model_list", []), verbose, output_json
+            )
 
             # Get model config for chunking
             first_model = model_list[0]
@@ -5240,6 +5236,12 @@ def _parity_single_corpus(
         if not all_corpora_mode:
             interaction_logger.finish(error=str(e))
         raise
+    finally:
+        if embedding_client is not None:
+            _report_embedding_backend(
+                embedding_client, locals().get("model_list", []), verbose, output_json
+            )
+            embedding_client.close()
 
 
 def parity_command(

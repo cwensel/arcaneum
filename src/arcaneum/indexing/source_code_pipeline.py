@@ -816,9 +816,7 @@ class SourceCodeIndexer:
             import gc
 
             gc.collect()
-            # Clear GPU cache if using GPU to prevent memory buildup across projects
-            if self.embedding_client.use_gpu:
-                self.embedding_client._clear_gpu_cache()
+            # Native accelerator cache is child-owned and cleared on worker teardown.
 
         else:
             # Non-streaming mode: embed all, then upload (original behavior)
@@ -890,8 +888,7 @@ class SourceCodeIndexer:
 
             gc.collect()
             # Clear GPU cache if using GPU to prevent memory buildup across projects
-            if self.embedding_client.use_gpu:
-                self.embedding_client._clear_gpu_cache()
+            # Native accelerator cache is child-owned and cleared on worker teardown.
 
         # Calculate files/chunks for this project
         project_files = self.stats["files_processed"] - initial_files

@@ -79,25 +79,8 @@ class MemorySnapshot:
 
 
 def _mps_memory() -> tuple[Optional[int], Optional[int], Optional[int]]:
-    """Return (current, driver, recommended_max) bytes for MPS, or Nones.
-
-    Each call is independent — if MPS isn't present we return (None, None, None)
-    and silently skip. torch.mps accessors don't allocate.
-    """
-    try:
-        import torch
-
-        if not torch.backends.mps.is_available():
-            return (None, None, None)
-        current = torch.mps.current_allocated_memory()
-        driver = torch.mps.driver_allocated_memory()
-        try:
-            rec_max = torch.mps.recommended_max_memory()
-        except Exception:
-            rec_max = None
-        return (current, driver, rec_max)
-    except Exception:
-        return (None, None, None)
+    """Parent probes are runtime-neutral; native memory belongs to worker health."""
+    return (None, None, None)
 
 
 _PROC = psutil.Process(os.getpid())

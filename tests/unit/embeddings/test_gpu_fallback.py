@@ -190,7 +190,10 @@ class TestFastEmbedCoreMLPolicy:
                 with patch.dict("sys.modules", {"onnxruntime": mock_ort}):
                     providers = client._resolve_fastembed_providers("arctic-m")
 
-        assert providers == ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+        assert providers[0][0] == "CoreMLExecutionProvider"
+        assert providers[0][1]["ModelFormat"] == "MLProgram"
+        assert providers[0][1]["RequireStaticInputShapes"] == "1"
+        assert providers[1] == "CPUExecutionProvider"
 
     def test_fastembed_uses_coreml_when_explicitly_enabled(self, embedding_client, monkeypatch):
         monkeypatch.setenv("ARC_EXPERIMENTAL_COREML", "1")
@@ -206,7 +209,9 @@ class TestFastEmbedCoreMLPolicy:
                 with patch.dict("sys.modules", {"onnxruntime": mock_ort}):
                     providers = embedding_client._resolve_fastembed_providers("bge-large")
 
-        assert providers == ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+        assert providers[0][0] == "CoreMLExecutionProvider"
+        assert providers[0][1]["SpecializationStrategy"] == "FastPrediction"
+        assert providers[1] == "CPUExecutionProvider"
 
     def test_get_model_passes_cpu_provider_for_fastembed_by_default(
         self, embedding_client, monkeypatch
@@ -258,7 +263,9 @@ class TestCoreMLCrashSentinel:
                     with patch.dict("sys.modules", {"onnxruntime": mock_ort}):
                         providers = client._resolve_fastembed_providers("arctic-m")
 
-        assert providers == ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+        assert providers[0][0] == "CoreMLExecutionProvider"
+        assert providers[0][1]["ProfileComputePlan"] == "1"
+        assert providers[1] == "CPUExecutionProvider"
         captured = capsys.readouterr()
         assert "experimental CoreML" in captured.err
         assert "killed" in captured.err
@@ -270,9 +277,7 @@ class TestCoreMLCrashSentinel:
         assert data["pid"] == os.getpid()
         assert data["model"] == "arctic-m"
 
-    def test_stale_sentinel_warns_about_killed_run_and_clears(
-        self, tmp_path, monkeypatch, capsys
-    ):
+    def test_stale_sentinel_warns_about_killed_run_and_clears(self, tmp_path, monkeypatch, capsys):
         import json
 
         sentinel = tmp_path / "coreml-session.json"

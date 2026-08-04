@@ -1,5 +1,6 @@
 import multiprocessing as mp
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pytest
@@ -117,3 +118,12 @@ def test_malformed_replies_are_rejected(reply):
 def test_invalid_queue_bound_is_rejected():
     with pytest.raises(ValueError, match="queue_size"):
         WorkerConfig(FACTORY, {}, queue_size=0)
+
+
+def test_concurrent_callers_are_serialized_without_crossed_replies():
+    with session(delay=0.01) as worker:
+        inputs = [[f"file-{index}"] for index in range(8)]
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(lambda value: worker.encode(value, timeout=2), inputs))
+        assert [row[0, 0] for row in results] == [len(value[0]) for value in inputs]
+        assert worker.health(timeout=2)["backend"]["encodes"] == len(inputs)

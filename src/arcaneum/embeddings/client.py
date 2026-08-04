@@ -8,11 +8,23 @@ import shutil
 import sys
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, TimeoutError, wait
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import numpy as np
 from fastembed import TextEmbedding
 
-from arcaneum.embeddings.capabilities import BackendSelection, select_backend
+from arcaneum.embeddings.batch_scheduler import (
+    BatchBudget,
+    BatchResultCollector,
+    OversizePolicy,
+    schedule_batches,
+)
+from arcaneum.embeddings.capabilities import (
+    BackendSelection,
+    coreml_provider_options,
+    select_backend,
+)
 from arcaneum.embeddings.worker_protocol import (
     AcceleratorWorkerSession,
     WorkerConfig,
@@ -562,6 +574,7 @@ class EmbeddingClient:
         self._backend_selections: dict[str, BackendSelection] = {}
         self._backend_fallback_reasons: dict[str, str] = {}
         self._worker_restart_count = 0
+        self._worker_failure_count = 0
         os.environ["SENTENCE_TRANSFORMERS_HOME"] = self.cache_dir
         self._models: Dict[str, TextEmbedding] = {}
 
@@ -672,15 +685,14 @@ class EmbeddingClient:
         Returning CPUExecutionProvider here still allows the rest of the client
         to keep GPU enabled for other model backends in the same run.
         """
-        if not (self.use_gpu and self._device == "mps"):
-            return None
-
         selection = self._backend_selections.get(model_name) or self._select_model_backend(
             model_name
         )
         if selection.backend != "onnxruntime-coreml":
             message = selection.fallback_reason or "CoreML combination is not qualified"
             logger.info("Using CPUExecutionProvider for '%s': %s", model_name, message)
+            if not self.use_gpu:
+                return ["CPUExecutionProvider"]
             print(
                 f"   GPU requested, but FastEmbed/CoreML is experimental for "
                 f"'{model_name}'. Using CPUExecutionProvider. "
@@ -716,7 +728,11 @@ class EmbeddingClient:
                 logger.info(warning)
                 print(f"⚠ {warning}", file=sys.stderr, flush=True)
                 _write_coreml_sentinel(model_name)
-                return ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+                compiled_cache = Path(get_models_dir()).parent / "coreml-compiled"
+                return [
+                    ("CoreMLExecutionProvider", coreml_provider_options(compiled_cache)),
+                    "CPUExecutionProvider",
+                ]
         except Exception:
             logger.debug("CoreML provider detection failed for FastEmbed", exc_info=True)
 
@@ -952,6 +968,10 @@ class EmbeddingClient:
         worker = self._accelerator_workers.get(model_name)
         if worker is not None and worker.is_alive:
             return worker
+        if worker is not None:
+            worker.shutdown()
+            self._accelerator_workers.pop(model_name, None)
+            self._worker_restart_count += 1
         config = WorkerConfig(
             "arcaneum.embeddings.sentence_transformer_worker:"
             "create_sentence_transformer_accelerator_backend",
@@ -1047,6 +1067,7 @@ class EmbeddingClient:
             model_name, selection.fallback_reason
         )
         result["worker_restart_count"] = self._worker_restart_count
+        result["worker_failure_count"] = self._worker_failure_count
         return result
 
     def _select_model_backend(self, model_name: str) -> BackendSelection:
@@ -1535,8 +1556,6 @@ class EmbeddingClient:
             # Metal/MPS can fail with "Invalid buffer size" when trying to allocate output buffers
             # for hundreds of embeddings at once, even with small internal batch_size
             MAX_OUTER_BATCH = 128  # Process at most 128 texts per model.encode() call
-            import numpy as np
-
             # Sort by length so each internal batch pads to similar-length sequences,
             # not to the longest sequence in a heterogenous mix. Without this, one
             # near-max-length chunk in a batch of 16 inflates attention memory by
@@ -1594,41 +1613,29 @@ class EmbeddingClient:
             # Removing .tolist() conversion saves 5-15% overhead on embeddings (arcaneum-zfch)
             return embeddings
         else:
-            # FastEmbed: use embed()
-            # Process in batches to prevent hangs
-            BATCH_SIZE = 100
-
-            # Pre-allocate result array to avoid incremental list extensions (arcaneum-knl6)
-            # First batch determines embedding dimensions
-            first_batch = texts[: min(BATCH_SIZE, len(texts))]
-            first_embeddings = list(model.embed(first_batch))
-
-            if not first_embeddings:
+            # FastEmbed: schedule by token and padded shape, then restore caller order.
+            if not texts:
                 return []
-
-            # Get dimensions from first embedding
-            dim = len(first_embeddings[0])
-
-            # Pre-allocate numpy array with correct shape and dtype
-            import numpy as np
-
-            all_embeddings = np.zeros((len(texts), dim), dtype=np.float32)
-
-            # Fill first batch
-            for idx, emb in enumerate(first_embeddings):
-                all_embeddings[idx] = emb
-
-            # Process remaining batches and fill array slices (arcaneum-knl6)
-            offset = len(first_embeddings)
-            for i in range(BATCH_SIZE, len(texts), BATCH_SIZE):
-                batch = texts[i : i + BATCH_SIZE]
-                batch_embeddings = list(model.embed(batch))
-                batch_size = len(batch_embeddings)
-                all_embeddings[offset : offset + batch_size] = batch_embeddings
-                offset += batch_size
-                # Release batch references to prevent memory accumulation in loop scope
-                del batch_embeddings
-                del batch
+            max_batch = min(batch_size, 100)
+            max_sequence = int(model_config.get("max_seq_length", 512))
+            budget = BatchBudget(
+                max_actual_tokens=max_sequence * max_batch,
+                max_padded_tokens=max_sequence * max_batch,
+                max_sequence_tokens=max_sequence,
+                max_batch_size=max_batch,
+                oversize_policy=OversizePolicy.TRUNCATE,
+            )
+            batches = schedule_batches(
+                texts,
+                budget=budget,
+                count_tokens=lambda text: max(1, (len(text.encode("utf-8")) + 3) // 4),
+                truncate=lambda text, limit: text[:limit],
+            )
+            collector = BatchResultCollector(len(texts))
+            for scheduled in batches:
+                rows = np.asarray(list(model.embed(scheduled.texts)), dtype=np.float32)
+                collector.add(scheduled, rows)
+            all_embeddings = collector.finalize()
 
             # Validate embeddings before returning
             if not self._validate_embeddings(all_embeddings, len(texts), model_name):
@@ -1683,11 +1690,35 @@ class EmbeddingClient:
 
         try:
             worker = self._get_accelerator_worker(model_name)
-            result = worker.encode(
-                texts,
-                timeout=encode_timeout,
-                batch_size=internal_batch_size,
+            model_config = EMBEDDING_MODELS[model_name]
+            max_sequence = int(model_config.get("max_seq_length", 512))
+            token_budget = int(
+                model_config.get("accelerator_token_budget", max_sequence * internal_batch_size)
             )
+            budget = BatchBudget(
+                max_actual_tokens=token_budget,
+                max_padded_tokens=token_budget,
+                max_sequence_tokens=max_sequence,
+                max_batch_size=internal_batch_size,
+                oversize_policy=OversizePolicy.TRUNCATE,
+            )
+            batches = schedule_batches(
+                texts,
+                budget=budget,
+                count_tokens=lambda text: max(1, (len(text.encode("utf-8")) + 3) // 4),
+                truncate=lambda text, limit: text[:limit],
+            )
+            collector = BatchResultCollector(len(texts))
+            encode_policy = _sentence_transformer_encode_kwargs(model_name, prompt_type)
+            for scheduled in batches:
+                rows = worker.encode(
+                    scheduled.texts,
+                    timeout=encode_timeout,
+                    batch_size=len(scheduled.items),
+                    **encode_policy,
+                )
+                collector.add(scheduled, rows)
+            result = collector.finalize()
             if not self._validate_embeddings(result, len(texts), model_name):
                 # Malformed/corrupt native output invalidates this worker just as a
                 # crash does. Reap it before constructing any CPU model.
@@ -1700,6 +1731,7 @@ class EmbeddingClient:
             self._drop_accelerator_worker(model_name)
             self._gpu_poisoned = True
             self._models.pop(model_name, None)
+            self._worker_failure_count += 1
             self._backend_fallback_reasons[model_name] = (
                 f"accelerator worker reaped after {type(exc).__name__}: {exc}"
             )

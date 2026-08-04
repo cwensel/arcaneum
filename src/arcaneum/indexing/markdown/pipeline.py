@@ -362,9 +362,7 @@ class MarkdownIndexingPipeline:
                     )
 
                 # Memory cleanup (streaming mode)
-                # Clear GPU cache if using GPU to prevent memory buildup across files
-                if self.embeddings.use_gpu:
-                    self.embeddings._clear_gpu_cache()
+                # Native accelerator cache is child-owned and cleared on worker teardown.
 
                 # Return empty points since we already uploaded
                 return ([], file_chunk_count, None)
@@ -411,8 +409,7 @@ class MarkdownIndexingPipeline:
 
                 # Memory cleanup (non-streaming mode)
                 # Clear GPU cache if using GPU to prevent memory buildup across files
-                if self.embeddings.use_gpu:
-                    self.embeddings._clear_gpu_cache()
+                # Native accelerator cache is child-owned and cleared on worker teardown.
 
                 return (points, file_chunk_count, None)
 

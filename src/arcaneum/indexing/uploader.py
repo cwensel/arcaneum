@@ -484,9 +484,7 @@ class PDFBatchUploader:
                 # Release large data structures and clear GPU cache between PDFs
                 del texts, chunks
                 gc.collect()
-                # Clear GPU cache if using GPU to prevent memory buildup across PDFs
-                if embedding_client.use_gpu:
-                    embedding_client._clear_gpu_cache()
+                # Native accelerator cache is child-owned and cleared on worker teardown.
 
             else:
                 # Non-streaming mode: embed all, then upload in batches (original behavior)
@@ -571,8 +569,7 @@ class PDFBatchUploader:
                 del texts, embeddings, chunks, points_batch
                 gc.collect()
                 # Clear GPU cache if using GPU to prevent memory buildup across PDFs
-                if embedding_client.use_gpu:
-                    embedding_client._clear_gpu_cache()
+                # Native accelerator cache is child-owned and cleared on worker teardown.
 
             # Return empty list since we already uploaded
             # uploaded_count is used for stats

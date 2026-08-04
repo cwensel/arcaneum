@@ -2,6 +2,44 @@
 
 This guide explains how to benchmark the indexing pipeline performance and measure the impact of the optimizations applied.
 
+> [!IMPORTANT]
+> Historical speedups, "Expected Output," recommendations, and utilization figures
+> in this guide are illustrative examples, not checked-in measurements. They must
+> not be used to claim that a backend or batch size is qualified. The versioned
+> accelerator harness below is the comparable evidence format; its
+> `example-accelerator-v1.json` file is explicitly synthetic.
+
+## Reproducible accelerator baseline
+
+The accelerator benchmark contract separates environment, fixture identity, cold
+start, warm throughput, p50/p95 latency, peak RSS, reliability counters, and
+numerical agreement. Its synthetic fixtures include short, medium, long, and
+oversized code/prose inputs and are identified by a content digest. Results with a
+different schema version or fixture digest cannot be compared.
+
+Run the deterministic CPU contract baseline (no model download):
+
+```bash
+PYTHONPATH="$PWD/src" python scripts/benchmark_accelerators.py \
+  --output /tmp/arcaneum-accelerator-cpu.json \
+  --summary /tmp/arcaneum-accelerator-cpu.txt
+```
+
+Compare two compatible results:
+
+```bash
+PYTHONPATH="$PWD/src" python scripts/benchmark_accelerators.py --compare \
+  baseline.json candidate.json
+```
+
+The schema is
+`benchmarks/schema/accelerator-result-v1.schema.json`; the input manifest is
+`benchmarks/fixtures/accelerator-v1/manifest.json`. Ordinary CI runs only the CPU
+contract baseline. CUDA, MPS, CoreML, and MLX measurements are deliberately opt-in
+and remain explicitly skipped until their backend qualification work lands. A
+backend result must name its hardware, OS, model, precision, and dependency
+versions; throughput alone is insufficient without correctness and reliability.
+
 ## Overview
 
 Two benchmarking scripts are available:
@@ -38,7 +76,7 @@ python scripts/benchmark_indexing.py --no-gpu
 - `--report`: Text report file
 - `--verbose`: Verbose output
 
-### Expected Output
+### Illustrative Output (not measured evidence)
 
 ```text
 EMBEDDING BATCH SIZE BENCHMARK
@@ -94,7 +132,7 @@ python scripts/benchmark_pdf_indexing.py \
 - `--report`: Text report file
 - `--verbose`: Verbose output
 
-### Expected Output
+### Illustrative Output (not measured evidence)
 
 ```text
 PDF INDEXING BENCHMARK REPORT
@@ -128,7 +166,7 @@ python scripts/benchmark_pdf_indexing.py \
   --output baseline.json \
   --report baseline_report.txt
 
-# Expected metrics to track:
+# Illustrative metrics to track:
 # - Total indexing time (seconds)
 # - Chunks per second
 # - GPU utilization (check nvidia-smi during run)
@@ -204,7 +242,7 @@ watch -n 0.1 nvidia-smi
 sudo powermetrics --samplers gpu_power,gpu_frequency --show-empty-samples
 ```
 
-Expected GPU metrics:
+Illustrative GPU metrics (not qualification evidence):
 
 - GPU utilization: 80-95%
 - Memory: 2-8 GB (depending on model and batch size)
@@ -220,9 +258,10 @@ After running benchmarks, analyze:
 4. **Multi-file Parallelism**: Should scale with file workers (arcaneum-m7hg fix)
 5. **Memory Stability**: Memory usage should remain steady during long runs
 
-## Expected Speedup Summary
+## Illustrative Speedup Summary
 
-Cumulative improvements from all optimizations:
+The following historical estimates are unverified and retained only as context;
+use versioned benchmark results for decisions:
 
 | Optimization            | Speedup    | Notes                                 |
 | ----------------------- | ---------- | ------------------------------------- |

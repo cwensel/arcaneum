@@ -1,0 +1,22 @@
+class BoundedQueue:
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.items = []
+
+    def submit(self, request):
+        if len(self.items) >= self.capacity:
+            raise RuntimeError("queue is full")
+        self.items.append(request)
+
+    def drain(self):
+        while self.items:
+            request = self.items.pop(0)
+            yield {"request_id": request["request_id"], "payload": request["payload"]}
+
+# A longer code-like fixture includes strings, mappings, control flow, and comments.
+# Repetition in the manifest controls corpus balance without duplicating source files.
+def preserve_order(requests):
+    indexed = [(index, request) for index, request in enumerate(requests)]
+    scheduled = sorted(indexed, key=lambda pair: len(pair[1]["payload"]))
+    completed = [(index, request["payload"]) for index, request in scheduled]
+    return [payload for index, payload in sorted(completed)]

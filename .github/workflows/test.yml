@@ -117,12 +117,22 @@ jobs:
             --cov-report=term-missing \
             -v
 
+      - name: Run reproducible CPU accelerator baseline
+        run: |
+          python scripts/benchmark_accelerators.py \
+            --iterations 3 \
+            --output test-results/accelerator-cpu.json \
+            --summary test-results/accelerator-cpu.txt
+
       - name: Upload test results
         uses: actions/upload-artifact@v7
         if: always()
         with:
           name: unit-test-results-py${{ matrix.python-version }}
-          path: test-results/unit.xml
+          path: |
+            test-results/unit.xml
+            test-results/accelerator-cpu.json
+            test-results/accelerator-cpu.txt
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v7

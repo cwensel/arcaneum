@@ -1,0 +1,10 @@
+{
+  "manifest_version": "1.0.0",
+  "description": "Redistributable synthetic code and prose spanning representative chunk lengths.",
+  "fixtures": [
+    {"id": "short-code", "length_class": "short", "path": "short-code.txt", "repetitions": 8},
+    {"id": "medium-prose", "length_class": "medium", "path": "medium-prose.txt", "repetitions": 4},
+    {"id": "long-code", "length_class": "long", "path": "long-code.txt", "repetitions": 2},
+    {"id": "oversized-prose", "length_class": "oversized", "path": "oversized-prose.txt", "repetitions": 1}
+  ]
+}

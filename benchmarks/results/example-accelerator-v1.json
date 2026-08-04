@@ -1,0 +1,57 @@
+{
+  "backend": {
+    "device": "example",
+    "dimensions": 64,
+    "model": "deterministic-shake256",
+    "name": "example-accelerator",
+    "precision": "float32"
+  },
+  "correctness": {
+    "finite": true,
+    "max_absolute_error": 0.000001,
+    "mean_absolute_error": 0.0000001,
+    "minimum_cosine_similarity": 0.999999,
+    "passed": true,
+    "reference_backend": "reference-cpu",
+    "shape": [15, 64]
+  },
+  "environment": {
+    "architecture": "example",
+    "cpu": "example fixture; not a measured result",
+    "dependencies": {"runtime": "0.0-example"},
+    "logical_cpu_count": 1,
+    "memory_bytes": 1,
+    "os": "example",
+    "os_release": "example",
+    "python": "3.12.0"
+  },
+  "fixture": {
+    "length_classes": ["long", "medium", "oversized", "short"],
+    "manifest_sha256": "da62785afe275cff1b607cebb62f415a9c21089c842a4fe18a86c45e8199e165",
+    "manifest_version": "1.0.0",
+    "total_texts": 15,
+    "unique_texts": 4
+  },
+  "harness_version": "1.0.0",
+  "performance": {
+    "cold_start_seconds": 1.0,
+    "latency_seconds": {"p50": 0.5, "p95": 0.6, "samples": [0.5, 0.6]},
+    "peak_rss_bytes": 1048576,
+    "throughput_texts_per_second": 30.0,
+    "warm_iterations": 2,
+    "warm_total_seconds": 1.0
+  },
+  "reliability": {
+    "attempted_batches": 3,
+    "completed_batches": 3,
+    "failures": 0,
+    "fallbacks": 0,
+    "restarts": 0
+  },
+  "run": {
+    "id": "example-not-measured",
+    "recorded_at": "2026-01-01T00:00:00+00:00",
+    "status": "example"
+  },
+  "schema_version": "1.0.0"
+}

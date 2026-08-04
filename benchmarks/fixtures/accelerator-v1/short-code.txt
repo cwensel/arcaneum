@@ -1,0 +1,3 @@
+def normalize(values):
+    total = sum(values)
+    return [value / total for value in values]

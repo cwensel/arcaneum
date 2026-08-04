@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cwensel/arcaneum/benchmarks/schema/accelerator-result-v1.schema.json",
+  "title": "Arcaneum accelerator benchmark result v1",
+  "type": "object",
+  "required": ["schema_version", "harness_version", "run", "environment", "backend", "fixture", "performance", "reliability", "correctness"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "harness_version": {"type": "string"},
+    "run": {"type": "object", "required": ["id", "recorded_at", "status"]},
+    "environment": {"type": "object", "required": ["os", "os_release", "architecture", "python", "cpu", "logical_cpu_count", "memory_bytes", "dependencies"]},
+    "backend": {"type": "object", "required": ["name", "device", "model", "precision", "dimensions"]},
+    "fixture": {"type": "object", "required": ["manifest_version", "manifest_sha256", "length_classes", "unique_texts", "total_texts"]},
+    "performance": {"type": "object", "required": ["cold_start_seconds", "warm_total_seconds", "warm_iterations", "throughput_texts_per_second", "latency_seconds", "peak_rss_bytes"]},
+    "reliability": {"type": "object", "required": ["attempted_batches", "completed_batches", "failures", "fallbacks", "restarts"]},
+    "correctness": {"type": "object", "required": ["reference_backend", "shape", "finite", "max_absolute_error", "mean_absolute_error", "minimum_cosine_similarity", "passed"]}
+  },
+  "additionalProperties": false
+}

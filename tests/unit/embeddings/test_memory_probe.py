@@ -2,9 +2,9 @@
 
 import json
 import signal
-import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 from arcaneum.embeddings.memory_probe import (
     MemorySnapshot,
@@ -108,10 +108,10 @@ def test_install_dump_handler_registers_sigusr1():
 
 def test_snapshot_accepts_embedding_client_with_pending_cleanup():
     class Stub:
-        _pending_gpu_cleanup = {"jina-code": (object(), object())}
+        _accelerator_workers = {"jina-code": SimpleNamespace(is_alive=True)}
 
     snap = snapshot(embedding_client=Stub())
-    assert snap.pending_gpu_cleanup == 1
+    assert snap.active_accelerator_workers == 1
 
 
 def test_set_phase_and_get_phase_roundtrip():
@@ -141,7 +141,7 @@ def test_format_snapshot_jsonl_is_parseable_with_expected_keys():
         "sys_used_pct",
         "sys_available",
         "sys_total",
-        "pending_gpu_cleanup",
+        "active_accelerator_workers",
     ):
         assert key in obj, f"missing {key} in {obj}"
     assert obj["phase"] == "encoding:test.pdf"

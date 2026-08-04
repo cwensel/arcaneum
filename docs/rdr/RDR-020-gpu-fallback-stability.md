@@ -6,10 +6,14 @@
 ## Metadata
 
 - **Date**: 2026-02-22
-- **Status**: Final
+- **Status**: Superseded for MPS/CUDA containment by RDR-022
 - **Type**: Bug Fix
 - **Priority**: High
 - **Related Issues**: RDR-013 (Indexing Performance Optimization)
+
+Daemon encode threads, deferred model cleanup, and interpreter-exit thread joins
+have been removed. The CPU fallback policy remains applicable, but a failed spawned
+child is now terminated and reaped before the CPU model is loaded.
 
 ## Problem Statement
 

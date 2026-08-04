@@ -1,9 +1,7 @@
 """Unit tests for GPU fallback stability (RDR-020)."""
 
-import threading
 import sys
-from types import ModuleType
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -27,10 +25,7 @@ def embedding_client():
         # Override device detection for tests
         client._device = "mps"
         yield client
-        # Clear any mock threads left in _pending_gpu_cleanup so the atexit
-        # handler doesn't log "did not finish within 300s" warnings for the
-        # MagicMock threads these tests inject.
-        client._pending_gpu_cleanup.clear()
+        client.close()
 
 
 class TestGetModelReturnsCPUWhenPoisoned:
@@ -512,56 +507,6 @@ class TestSystemMemoryPressureGuard:
         assert embedding_client._models["jina-code-st"] is mock_model
 
 
-class TestDeferredGpuCleanup:
-    """_try_deferred_gpu_cleanup() handles dead/alive daemon threads."""
-
-    def test_cleanup_dead_thread(self, embedding_client):
-        dead_thread = MagicMock(spec=threading.Thread)
-        dead_thread.is_alive.return_value = False
-        model_ref = MagicMock()
-
-        embedding_client._pending_gpu_cleanup["jina-code-st"] = (dead_thread, model_ref)
-
-        with patch.object(embedding_client, "_clear_gpu_cache"):
-            result = embedding_client._try_deferred_gpu_cleanup()
-
-        assert result is True
-        assert "jina-code-st" not in embedding_client._pending_gpu_cleanup
-
-    def test_no_cleanup_alive_thread(self, embedding_client):
-        alive_thread = MagicMock(spec=threading.Thread)
-        alive_thread.is_alive.return_value = True
-        model_ref = MagicMock()
-
-        embedding_client._pending_gpu_cleanup["jina-code-st"] = (alive_thread, model_ref)
-
-        result = embedding_client._try_deferred_gpu_cleanup()
-
-        assert result is False
-        assert "jina-code-st" in embedding_client._pending_gpu_cleanup
-
-    def test_no_pending_cleanup(self, embedding_client):
-        result = embedding_client._try_deferred_gpu_cleanup()
-
-        assert result is False
-
-    def test_mixed_threads(self, embedding_client):
-        dead_thread = MagicMock(spec=threading.Thread)
-        dead_thread.is_alive.return_value = False
-        alive_thread = MagicMock(spec=threading.Thread)
-        alive_thread.is_alive.return_value = True
-
-        embedding_client._pending_gpu_cleanup["model-a"] = (dead_thread, MagicMock())
-        embedding_client._pending_gpu_cleanup["model-b"] = (alive_thread, MagicMock())
-
-        with patch.object(embedding_client, "_clear_gpu_cache"):
-            result = embedding_client._try_deferred_gpu_cleanup()
-
-        assert result is True
-        assert "model-a" not in embedding_client._pending_gpu_cleanup
-        assert "model-b" in embedding_client._pending_gpu_cleanup
-
-
 class TestEmbedImplCpuBatchSizingWhenPoisoned:
     """_embed_impl uses CPU batch sizing when poisoned (not GPU memory probing)."""
 
@@ -589,136 +534,6 @@ class TestEmbedImplCpuBatchSizingWhenPoisoned:
 
                     # GPU memory probing should NOT be called when poisoned
                     mock_gpu_mem.assert_not_called()
-
-
-class TestGpuPoisonStaysSticky:
-    """Completed cleanup does not re-enable GPU after timeout poisoning."""
-
-    def test_deferred_cleanup_keeps_cpu_fallback(self, embedding_client):
-        embedding_client._gpu_poisoned = True
-        finished_thread = MagicMock(spec=threading.Thread)
-        finished_thread.is_alive.return_value = False
-        embedding_client._pending_gpu_cleanup["jina-code-st"] = (finished_thread, MagicMock())
-        cpu_model = MagicMock()
-
-        with patch.object(
-            embedding_client,
-            "_get_cpu_fallback_model",
-            return_value=cpu_model,
-        ) as get_cpu:
-            with patch.object(embedding_client, "_encode_on_cpu_fallback") as encode_cpu:
-                encode_cpu.return_value = np.random.rand(2, 768).astype(np.float32)
-
-                result = embedding_client._encode_with_oom_recovery(
-                    MagicMock(),
-                    ["text1", "text2"],
-                    internal_batch_size=8,
-                    model_name="jina-code-st",
-                )
-
-        assert result is encode_cpu.return_value
-        assert embedding_client._gpu_poisoned is True
-        assert embedding_client._pending_gpu_cleanup == {}
-        get_cpu.assert_called_once_with("jina-code-st")
-        encode_cpu.assert_called_once_with(
-            cpu_model, ["text1", "text2"], "jina-code-st", "document"
-        )
-
-    def test_poison_stays_set_with_alive_thread(self, embedding_client):
-        embedding_client._gpu_poisoned = True
-        alive_thread = MagicMock(spec=threading.Thread)
-        alive_thread.is_alive.return_value = True
-        embedding_client._pending_gpu_cleanup["jina-code-st"] = (alive_thread, MagicMock())
-        cpu_model = MagicMock()
-
-        with patch.object(embedding_client, "_get_cpu_fallback_model", return_value=cpu_model):
-            with patch.object(embedding_client, "_encode_on_cpu_fallback") as encode_cpu:
-                encode_cpu.return_value = np.random.rand(2, 768).astype(np.float32)
-
-                embedding_client._encode_with_oom_recovery(
-                    MagicMock(),
-                    ["text1", "text2"],
-                    internal_batch_size=8,
-                    model_name="jina-code-st",
-                )
-
-        assert embedding_client._gpu_poisoned is True
-        assert "jina-code-st" in embedding_client._pending_gpu_cleanup
-
-
-class TestTimeoutHandlerReleasesModel:
-    """try_encode() timeout handler pops GPU model and stores for deferred cleanup."""
-
-    def test_model_popped_on_timeout(self, embedding_client):
-        """When encode times out, GPU model is removed from _models and stored in _pending_gpu_cleanup."""
-        mock_model = MagicMock()
-        mock_model._backend = "sentence-transformers"
-        embedding_client._models["jina-code-st"] = mock_model
-
-        # Make the encode thread hang (never complete within timeout)
-        original_thread_init = threading.Thread.__init__
-
-        def mock_thread_join(self_thread, timeout=None):
-            """Simulate thread not completing within timeout."""
-            pass  # Don't actually wait
-
-        mock_cpu_model = MagicMock()
-        mock_cpu_model.encode.return_value = np.random.rand(2, 768).astype(np.float32)
-
-        with patch.object(threading.Thread, "join", mock_thread_join):
-            with patch.object(threading.Thread, "is_alive", return_value=True):
-                with patch.object(
-                    embedding_client, "_get_cpu_fallback_model", return_value=mock_cpu_model
-                ):
-                    embedding_client._encode_with_oom_recovery(
-                        mock_model,
-                        ["text1", "text2"],
-                        internal_batch_size=8,
-                        model_name="jina-code-st",
-                        encode_timeout=0,  # Immediate timeout
-                    )
-
-        # Model should be removed from _models
-        assert "jina-code-st" not in embedding_client._models
-
-        # Model should be in pending cleanup
-        assert "jina-code-st" in embedding_client._pending_gpu_cleanup
-        thread, model_ref = embedding_client._pending_gpu_cleanup["jina-code-st"]
-        assert model_ref is mock_model
-
-        # GPU should be poisoned
-        assert embedding_client._gpu_poisoned is True
-
-
-class TestAtexitJoinGpuThreads:
-    """_atexit_join_gpu_threads() joins pending daemon threads before exit."""
-
-    def test_joins_alive_thread(self, embedding_client):
-        thread = MagicMock(spec=threading.Thread)
-        thread.is_alive.return_value = True
-        embedding_client._pending_gpu_cleanup["jina-code-st"] = (thread, MagicMock())
-
-        embedding_client._atexit_join_gpu_threads()
-
-        thread.join.assert_called_once_with(timeout=300)
-
-    def test_skips_dead_thread(self, embedding_client):
-        thread = MagicMock(spec=threading.Thread)
-        thread.is_alive.return_value = False
-        embedding_client._pending_gpu_cleanup["jina-code-st"] = (thread, MagicMock())
-
-        embedding_client._atexit_join_gpu_threads()
-
-        thread.join.assert_not_called()
-
-    def test_noop_when_no_pending(self, embedding_client):
-        """Should not raise when no pending cleanup, and leave state untouched."""
-        embedding_client._pending_gpu_cleanup = {}
-
-        embedding_client._atexit_join_gpu_threads()
-
-        # Nothing to join, pending set remains empty
-        assert embedding_client._pending_gpu_cleanup == {}
 
 
 class TestCpuFallbackBounded:
@@ -864,7 +679,7 @@ class TestEmbedSortsByLength:
 
     def test_unsort_preserves_unique_embeddings(self, embedding_client):
         """No two texts of the same length must get crossed-up rows."""
-        mock_model = self._stub_st_model(embedding_client)
+        self._stub_st_model(embedding_client)
 
         def encode_side_effect(input_texts, **kwargs):
             # Encode = one-hot of the input order so we can detect any mix-up

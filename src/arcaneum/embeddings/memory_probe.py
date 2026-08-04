@@ -36,7 +36,6 @@ from typing import Callable, Optional
 
 import psutil
 
-
 _BYTES_PER_GB = 1024**3
 
 
@@ -51,7 +50,7 @@ class MemorySnapshot:
     mps_recommended_max_bytes: Optional[int] = None
     system_available_bytes: int = 0
     system_total_bytes: int = 0
-    pending_gpu_cleanup: int = 0  # from EmbeddingClient, if passed in
+    active_accelerator_workers: int = 0  # from EmbeddingClient, if passed in
 
     def delta(self, prev: "MemorySnapshot") -> dict:
         # Δdrv/Δsys_used are the actual leak signal on Apple Silicon — Metal
@@ -110,9 +109,12 @@ def snapshot(embedding_client=None) -> MemorySnapshot:
     vm = psutil.virtual_memory()
     mps_current, mps_driver, mps_rec_max = _mps_memory()
 
-    pending = 0
+    active_workers = 0
     if embedding_client is not None:
-        pending = len(getattr(embedding_client, "_pending_gpu_cleanup", {}) or {})
+        active_workers = sum(
+            worker.is_alive
+            for worker in (getattr(embedding_client, "_accelerator_workers", {}) or {}).values()
+        )
 
     return MemorySnapshot(
         rss_bytes=mi.rss,
@@ -124,7 +126,7 @@ def snapshot(embedding_client=None) -> MemorySnapshot:
         mps_recommended_max_bytes=mps_rec_max,
         system_available_bytes=vm.available,
         system_total_bytes=vm.total,
-        pending_gpu_cleanup=pending,
+        active_accelerator_workers=active_workers,
     )
 
 
@@ -150,8 +152,8 @@ def format_snapshot(snap: MemorySnapshot) -> str:
         f"threads={snap.thread_count}",
         f"gc_objs={snap.gc_objects}",
     ]
-    if snap.pending_gpu_cleanup:
-        parts.append(f"pending_cleanup={snap.pending_gpu_cleanup}")
+    if snap.active_accelerator_workers:
+        parts.append(f"accelerator_workers={snap.active_accelerator_workers}")
     sys_pct = 0.0
     if snap.system_total_bytes:
         used = snap.system_total_bytes - snap.system_available_bytes
@@ -215,7 +217,7 @@ def format_snapshot_jsonl(snap: MemorySnapshot, phase: str = "") -> str:
         "sys_used_pct": sys_used_pct,
         "sys_available": snap.system_available_bytes,
         "sys_total": snap.system_total_bytes,
-        "pending_gpu_cleanup": snap.pending_gpu_cleanup,
+        "active_accelerator_workers": snap.active_accelerator_workers,
     }
     return json.dumps(obj, separators=(",", ":"))
 
@@ -252,7 +254,7 @@ def start_probe_thread(
         log_path: File path for JSONL output. None falls back to
             ~/.arcaneum/logs/arc-mem-<utc>-<pid>.jsonl. Pass "-" to write to
             stderr instead.
-        embedding_client: Optional client to surface pending_gpu_cleanup count.
+        embedding_client: Optional client to surface live accelerator worker count.
 
     Returns:
         stop() callable that signals the thread to exit. Idempotent.

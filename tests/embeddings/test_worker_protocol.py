@@ -1,4 +1,5 @@
 import multiprocessing as mp
+import time
 
 import numpy as np
 import pytest
@@ -56,6 +57,18 @@ def test_timeout_terminates_and_reaps_worker():
     assert not worker.is_alive
     assert worker.pid is None
     assert pid not in {child.pid for child in mp.active_children()}
+
+
+def test_timed_out_encode_cannot_continue_after_reap(tmp_path):
+    marker = tmp_path / "encode-completed"
+    worker = session(delay=0.3, completion_marker=str(marker)).start()
+
+    with pytest.raises(WorkerTimeoutError):
+        worker.encode(["slow"], timeout=0.02)
+    time.sleep(0.4)
+
+    assert not marker.exists()
+    assert not worker.is_alive
 
 
 def test_orderly_shutdown_is_idempotent_and_leaves_no_child():

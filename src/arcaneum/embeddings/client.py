@@ -6,16 +6,28 @@ import os
 import platform
 import shutil
 import sys
-import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, TimeoutError, wait
 from typing import Any, Dict, List, Optional
 
 from fastembed import TextEmbedding
 
+from arcaneum.embeddings.worker_protocol import (
+    AcceleratorWorkerSession,
+    WorkerConfig,
+    WorkerCrashedError,
+    WorkerProtocolError,
+    WorkerTimeoutError,
+)
 from arcaneum.paths import get_models_dir, get_state_dir
 
 logger = logging.getLogger(__name__)
+
+
+class _AcceleratorModelProxy:
+    """Parent-side marker; contains no model or native runtime state."""
+
+    _backend = "sentence-transformers"
 
 
 def _coreml_sentinel_path():
@@ -551,23 +563,18 @@ class EmbeddingClient:
         # Deprecated models warn once per client instance, not per embed call.
         self._deprecation_warned: set = set()
 
-        # Set when a GPU encode times out — prevents further GPU use in this session.
-        # After a timeout, a daemon thread is still running on the GPU; any new Metal
-        # command buffers would conflict and cause a fatal assertion (SIGABRT).
+        # Sticky after accelerator failure so later work uses the stable CPU path.
         self._gpu_poisoned = False
 
         # CPU fallback models: model_name → SentenceTransformer on device="cpu"
         # Lazy-loaded when _gpu_poisoned is True, so remaining files can still be processed.
         self._cpu_fallback_models = {}
 
-        # Deferred GPU cleanup: model_name → (thread, model_ref) for daemon threads
-        # still running on GPU after timeout. Cleaned up when thread completes. (RDR-020)
-        self._pending_gpu_cleanup = {}
-
-        # Register atexit handler to join daemon threads before Python destroys the
-        # MPS allocator. Without this, a daemon thread still running model.encode()
-        # on Metal will SIGSEGV when __cxa_finalize tears down MPSAllocator. (RDR-020)
-        atexit.register(self._atexit_join_gpu_threads)
+        # Persistent spawned workers: model name → child process session.  The
+        # parent stores only protocol handles; native runtime/model state stays in
+        # the child and can be synchronously terminated and reaped.
+        self._accelerator_workers: dict[str, AcceleratorWorkerSession] = {}
+        atexit.register(self.close)
 
         # CPU parallelization settings
         # Default to 1 worker (sequential batching) to avoid thread over-subscription.
@@ -734,19 +741,13 @@ class EmbeddingClient:
             return False
 
         self._gpu_poisoned = True
+        self._drop_accelerator_worker(model_name)
         if model_name in self._models:
             # Drop the active accelerator model reference so subsequent
             # get_model() calls load the CPU fallback for SentenceTransformers.
             # FastEmbed models already use CPUExecutionProvider by default on
             # Apple Silicon, so this is mainly for PyTorch MPS/CUDA models.
             self._models.pop(model_name, None)
-            try:
-                import gc
-
-                gc.collect()
-                self._clear_gpu_cache()
-            except Exception:
-                logger.debug("GPU cleanup after memory-pressure fallback failed", exc_info=True)
 
         logger.warning(
             "Disabling GPU for this session before embedding '%s': "
@@ -831,8 +832,7 @@ class EmbeddingClient:
            live thread pool and must be called here to actually get parallel
            CPU encode. Without this, MPS-started processes can end up with
            torch.get_num_threads() == 1, producing single-core CPU encodes
-           that run for minutes per file while the daemon thread still
-           holds MPS state.
+           that run for minutes per file.
 
         Idempotent: env vars are only set if absent; torch setters are
         cheap and the values are stable across calls.
@@ -841,7 +841,7 @@ class EmbeddingClient:
 
         # Mutate torch's live thread pool directly — env vars alone are too
         # late once torch is imported. cpu_count - 2 leaves headroom for
-        # the hung MPS daemon thread and the main process.
+        # indexing orchestration and the parent process.
         #
         # Note: torch.set_num_threads() is process-global; once the client has
         # fallen back after GPU poisoning, the _gpu_poisoned flag remains sticky
@@ -912,67 +912,40 @@ class EmbeddingClient:
             )
         return np.concatenate(chunks, axis=0)
 
-    def _try_deferred_gpu_cleanup(self) -> bool:
-        """Reclaim GPU resources from completed daemon threads (RDR-020).
+    def close(self) -> None:
+        """Shut down and reap every accelerator child; safe to call repeatedly."""
+        for worker in list(self._accelerator_workers.values()):
+            worker.shutdown()
+        self._accelerator_workers.clear()
 
-        After a GPU timeout, the daemon thread holds a closure reference to the model.
-        Once the thread completes, we can safely delete the model ref and clear GPU cache.
+    def __enter__(self) -> "EmbeddingClient":
+        return self
 
-        Returns:
-            True if any cleanup occurred, False otherwise.
-        """
-        if not self._pending_gpu_cleanup:
-            return False
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        self.close()
 
-        import gc
+    def _drop_accelerator_worker(self, model_name: str) -> None:
+        worker = self._accelerator_workers.pop(model_name, None)
+        if worker is not None:
+            worker.shutdown()
 
-        cleaned = False
-        finished = []
-
-        for name, (thread, model_ref) in self._pending_gpu_cleanup.items():
-            if not thread.is_alive():
-                finished.append(name)
-                del model_ref
-                cleaned = True
-                logger.info(f"Daemon thread for '{name}' completed, releasing GPU model ref.")
-
-        for name in finished:
-            del self._pending_gpu_cleanup[name]
-
-        if cleaned:
-            gc.collect()
-            # Safe to clear GPU cache now — no active command buffers
-            self._clear_gpu_cache()
-            logger.info("Deferred GPU cleanup complete.")
-
-        return cleaned
-
-    def _atexit_join_gpu_threads(self):
-        """Join pending daemon threads at process exit to prevent SIGSEGV (RDR-020).
-
-        When Python exits, __cxa_finalize destroys the MPS allocator. If a daemon
-        thread is still running model.encode() on Metal, it will SIGSEGV trying to
-        use the destroyed allocator. This handler waits for daemon threads to finish
-        before Python's cleanup runs.
-
-        Tradeoff: the daemon thread holds a closure reference to the GPU model
-        (~3 GB), so GPU memory is not reclaimed until the thread completes. If the
-        Metal command buffer is permanently stuck, the 300s join timeout here will
-        still expire and we proceed to interpreter shutdown — which may then
-        SIGSEGV during allocator teardown. A stuck GPU thread is already a
-        terminal state for this process; the warning logged below is the signal
-        that shutdown may be noisy. We do not force-terminate because a clean
-        exit is preferable whenever the GPU does in fact drain within the window.
-        """
-        if not self._pending_gpu_cleanup:
-            return
-
-        for name, (thread, _model_ref) in list(self._pending_gpu_cleanup.items()):
-            if thread.is_alive():
-                logger.info(f"Waiting for GPU daemon thread '{name}' to finish before exit...")
-                thread.join(timeout=300)  # 5 min max wait
-                if thread.is_alive():
-                    logger.warning(f"GPU daemon thread '{name}' did not finish within 300s.")
+    def _get_accelerator_worker(self, model_name: str) -> AcceleratorWorkerSession:
+        worker = self._accelerator_workers.get(model_name)
+        if worker is not None and worker.is_alive:
+            return worker
+        config = WorkerConfig(
+            "arcaneum.embeddings.sentence_transformer_worker:"
+            "create_sentence_transformer_accelerator_backend",
+            {
+                "model_name": model_name,
+                "device": self._device,
+                "cache_dir": self.cache_dir,
+                "local_files_only": self.is_model_cached(model_name),
+            },
+        )
+        worker = AcceleratorWorkerSession(config, startup_timeout=120.0).start()
+        self._accelerator_workers[model_name] = worker
+        return worker
 
     def _detect_device(self) -> str:
         """Detect best available GPU device (RDR-013 Phase 2).
@@ -980,15 +953,10 @@ class EmbeddingClient:
         Returns:
             "mps" for Apple Silicon, "cuda" for NVIDIA, "cpu" if no GPU available
         """
-        try:
-            import torch
-
-            if torch.backends.mps.is_available():
-                return "mps"  # Apple Silicon GPU
-            elif torch.cuda.is_available():
-                return "cuda"  # NVIDIA GPU
-        except ImportError:
-            pass
+        if sys.platform == "darwin" and platform.machine().lower() in {"arm64", "aarch64"}:
+            return "mps"
+        if shutil.which("nvidia-smi"):
+            return "cuda"
         return "cpu"
 
     def _configure_cpu_threading(self):
@@ -1125,8 +1093,16 @@ class EmbeddingClient:
             if config.get("backend") == "sentence-transformers":
                 return self._get_cpu_fallback_model(model_name)
 
+        # A GPU SentenceTransformer is represented in the parent by a marker
+        # only. Loading and native imports happen when the spawned worker starts.
+        config = EMBEDDING_MODELS[model_name]
+        if (
+            config.get("backend") == "sentence-transformers"
+            and self._device in ("mps", "cuda")
+        ):
+            return _AcceleratorModelProxy()
+
         if model_name not in self._models:
-            config = EMBEDDING_MODELS[model_name]
             backend = config.get("backend", "fastembed")
 
             if backend == "fastembed":
@@ -1477,28 +1453,14 @@ class EmbeddingClient:
             # This replaces the previous hard-coded values (8/32/64) which caused
             # excessive kernel launches and poor GPU utilization
             if self._device in ("mps", "cuda") and not self._gpu_poisoned:
-                from ..utils.memory import estimate_safe_batch_size_v2, get_gpu_memory_info
-
-                available_bytes, _, device_type = get_gpu_memory_info()
-                if available_bytes:
-                    internal_batch_size = estimate_safe_batch_size_v2(
-                        model_name=model_name,
-                        available_gpu_bytes=available_bytes,
-                        pipeline_overhead_gb=0.3,
-                        safety_factor=0.6,
-                        device_type=self._device,
-                    )
-                    logger.debug(
-                        f"Dynamic internal_batch_size={internal_batch_size} for "
-                        f"model.encode() on {self._device} "
-                        f"(available: {available_bytes / (1024**3):.1f}GB)"
-                    )
-                else:
-                    # Fallback if memory detection fails
-                    internal_batch_size = 64
-                    logger.debug(
-                        f"Memory detection failed, using fallback internal_batch_size={internal_batch_size}"
-                    )
+                # Runtime memory probes import torch and initialize native state in
+                # the parent. Use the model's conservative qualified cap; token/shape
+                # scheduling supplies the finer-grained bound outside this client.
+                internal_batch_size = int(
+                    model_config.get("mps_max_batch", min(batch_size, 64))
+                    if self._device == "mps"
+                    else min(batch_size, self.get_optimal_batch_size(model_name))
+                )
 
                 # Apply max_internal_batch limit if specified (for OOM recovery)
                 if max_internal_batch is not None and max_internal_batch < internal_batch_size:
@@ -1527,7 +1489,6 @@ class EmbeddingClient:
 
             if len(sorted_texts) > MAX_OUTER_BATCH:
                 # Process in outer batches to avoid large buffer allocations
-                import gc
 
                 logger.debug(
                     f"Large input ({len(sorted_texts)} texts), processing in {MAX_OUTER_BATCH}-text outer batches"
@@ -1540,11 +1501,6 @@ class EmbeddingClient:
                 for start_idx in range(0, len(sorted_texts), MAX_OUTER_BATCH):
                     end_idx = min(start_idx + MAX_OUTER_BATCH, len(sorted_texts))
                     batch_texts = sorted_texts[start_idx:end_idx]
-
-                    # Clear cache before each outer batch to prevent fragmentation
-                    if self._device in ("mps", "cuda") and not self._gpu_poisoned and start_idx > 0:
-                        gc.collect()
-                        self._clear_gpu_cache()
 
                     batch_embeddings = self._encode_with_oom_recovery(
                         model, batch_texts, internal_batch_size, model_name, prompt_type
@@ -1635,9 +1591,10 @@ class EmbeddingClient:
         Metal/MPS OOM errors can occur in two ways:
         1. Python exception is raised (we catch and retry)
         2. Error printed to stderr but function returns corrupted data (we validate and retry)
-        3. GPU hangs indefinitely retrying at the C++ level (we timeout via thread)
+        3. Native GPU work hangs indefinitely (the parent times out and kills its process)
 
-        This method handles all three cases.
+        The persistent child handles recoverable OOM retries. The parent validates
+        returned CPU arrays and enforces the kill/reap boundary for hangs or crashes.
 
         Args:
             model: SentenceTransformer model
@@ -1652,165 +1609,50 @@ class EmbeddingClient:
         Raises:
             RuntimeError: If GPU memory is exhausted even at batch_size=1, or encode times out
         """
-        # Attempt deferred GPU cleanup between files (RDR-020). Cleanup only
-        # releases completed daemon-thread model refs; poisoning remains sticky
-        # because re-entering MPS/CUDA after a native timeout is unsafe.
-        if self._gpu_poisoned:
-            self._try_deferred_gpu_cleanup()
-
         if self._gpu_poisoned:
             cpu_model = self._get_cpu_fallback_model(model_name)
             logger.info(f"GPU poisoned, falling back to CPU for {len(texts)} texts")
             return self._encode_on_cpu_fallback(cpu_model, texts, model_name, prompt_type)
 
-        # CPU short-circuit: the daemon-thread + timeout + poisoning machinery below
-        # only makes sense for MPS/CUDA hangs at the Metal/CUDA C++ level. On CPU the
+        # CPU short-circuit: process timeout and poisoning only make sense for
+        # MPS/CUDA hangs at the native level. On CPU the
         # 120s timeout misfires on legitimate slow encodes, and the "fallback" path
         # would spawn a second CPU encode that competes with the still-running first
         # one for OMP threads and RAM. Run inline with bounded batching instead.
         if self._device == "cpu":
             return self._encode_on_cpu_fallback(model, texts, model_name, prompt_type)
 
-        import gc
-        import sys
-
-        mps_oom_patterns = [
-            "enough space",
-            "mpsgraph",
-            "mps backend out of memory",
-            "command buffer exited with error",
-            "invalid buffer size",  # Metal buffer allocation failure
-        ]
-
-        def try_encode(batch_size: int):
-            """Try to encode and validate, returning None if OOM/corruption detected.
-
-            Runs model.encode() in a daemon thread with a timeout to prevent
-            infinite hangs when the GPU retries failed Metal command buffers
-            at the C++ level (where Python's try/except can't intervene).
-            """
-            # Use a container to pass result/exception back from thread
-            container = {"result": None, "error": None}
-
-            def _run_encode():
-                try:
-                    self._sync_gpu_if_needed()
-
-                    result = model.encode(
-                        texts,
-                        batch_size=batch_size,
-                        show_progress_bar=False,
-                        convert_to_numpy=True,
-                        **_sentence_transformer_encode_kwargs(model_name, prompt_type),
-                    )
-
-                    self._sync_gpu_if_needed()
-                    container["result"] = result
-                except Exception as e:
-                    container["error"] = e
-
-            thread = threading.Thread(target=_run_encode, daemon=True)
-            thread.start()
-            thread.join(timeout=encode_timeout)
-
-            if thread.is_alive():
-                # Thread is stuck - GPU is hanging.
-                # Do NOT call _clear_gpu_cache() here — the daemon thread is still
-                # executing model.encode() on the GPU. Clearing the cache while Metal
-                # command buffers are in-flight causes a fatal assertion:
-                #   "commit an already committed command buffer" → SIGABRT
-                # The daemon thread will eventually finish or die on its own.
-                #
-                # Poison the GPU so no further encode attempts touch it this session.
-                self._gpu_poisoned = True
-                logger.warning(
-                    f"model.encode() timed out after {encode_timeout}s at batch_size={batch_size} "
-                    f"for {len(texts)} texts — GPU likely hung on Metal OOM retry loop. "
-                    f"GPU is now disabled for this session, falling back to CPU."
-                )
-                import sys
-
-                print(
-                    "  GPU encode timed out — falling back to CPU for remaining work.",
-                    file=sys.stderr,
-                    flush=True,
-                )
-
-                # Release GPU model from self._models to prevent OOM (RDR-020).
-                # The daemon thread holds a closure reference to `model`, so the actual
-                # GPU memory (~3GB) stays until the thread completes. But removing from
-                # self._models prevents get_model() from returning it and prevents loading
-                # a second GPU copy.
-                if model_name in self._models:
-                    gpu_model_ref = self._models.pop(model_name)
-                    self._pending_gpu_cleanup[model_name] = (thread, gpu_model_ref)
-                    logger.info(
-                        f"Removed GPU model '{model_name}' from active models. "
-                        f"Daemon thread holds closure ref; deferred cleanup pending."
-                    )
-
-                # Fall back to CPU for these texts instead of raising
-                cpu_model = self._get_cpu_fallback_model(model_name)
-                return self._encode_on_cpu_fallback(cpu_model, texts, model_name, prompt_type)
-
-            # Thread completed - check for exceptions
-            if container["error"] is not None:
-                e = container["error"]
-                error_msg = str(e).lower()
-                is_mps_oom = self._device == "mps" and any(p in error_msg for p in mps_oom_patterns)
-                if is_mps_oom:
-                    logger.debug(f"MPS OOM exception at batch_size={batch_size}: {e}")
-                    return None  # Signal to retry
-                else:
-                    raise e  # Non-OOM error, propagate
-
-            result = container["result"]
-
-            # Validate - Metal OOM can corrupt results without raising exceptions
+        try:
+            worker = self._get_accelerator_worker(model_name)
+            result = worker.encode(
+                texts,
+                timeout=encode_timeout,
+                batch_size=internal_batch_size,
+            )
             if not self._validate_embeddings(result, len(texts), model_name):
-                logger.debug(f"Embeddings corrupted at batch_size={batch_size}")
-                return None  # Treat as OOM, caller will retry
-
+                # Malformed/corrupt native output invalidates this worker just as a
+                # crash does. Reap it before constructing any CPU model.
+                self._drop_accelerator_worker(model_name)
+                raise WorkerProtocolError("accelerator produced invalid embeddings")
             return result
-
-        # Try with requested batch size
-        result = try_encode(internal_batch_size)
-        if result is not None:
-            return result
-
-        # OOM or corruption detected - clear cache and retry with batch_size=1
-        logger.debug(
-            f"OOM/corruption at batch_size={internal_batch_size}, clearing cache and retrying with batch_size=1"
-        )
-        print(
-            f"  (GPU memory pressure, reducing batch {internal_batch_size} → 1...)",
-            file=sys.stderr,
-            flush=True,
-        )
-
-        gc.collect()
-        self._clear_gpu_cache()
-        time.sleep(0.5)  # Brief pause for GPU recovery
-
-        result = try_encode(1)
-        if result is not None:
-            return result
-
-        # Still failing - try one more time after aggressive cleanup
-        logger.debug("Still failing at batch_size=1, aggressive cleanup and final retry")
-        gc.collect()
-        self._clear_gpu_cache()
-        time.sleep(1.0)  # Longer pause
-
-        result = try_encode(1)
-        if result is not None:
-            return result
-
-        # Give up
-        raise RuntimeError(
-            "MPS GPU memory exhausted even at batch_size=1. "
-            "Omit --gpu to use the stable CPU default."
-        )
+        except (WorkerTimeoutError, WorkerCrashedError, WorkerProtocolError) as exc:
+            # AcceleratorWorkerSession has already terminated and joined on every
+            # request failure. shutdown() is idempotent and covers validation above.
+            self._drop_accelerator_worker(model_name)
+            self._gpu_poisoned = True
+            self._models.pop(model_name, None)
+            logger.warning(
+                "Accelerator worker failed for '%s'; falling back to CPU after reap: %s",
+                model_name,
+                exc,
+            )
+            print(
+                "  GPU worker stopped — falling back to CPU for remaining work.",
+                file=sys.stderr,
+                flush=True,
+            )
+            cpu_model = self._get_cpu_fallback_model(model_name)
+            return self._encode_on_cpu_fallback(cpu_model, texts, model_name, prompt_type)
 
     def embed_parallel(
         self,
@@ -1960,8 +1802,6 @@ class EmbeddingClient:
             # memory from PDF extraction may not be fully released yet.
             if clear_before_batch:
                 gc.collect()
-                self._clear_gpu_cache()
-                logger.debug("Cleared GPU cache before first batch")
 
             for start_idx in range(0, len(texts), batch_size):
                 self._maybe_disable_gpu_for_memory_pressure(model_name)
@@ -1970,8 +1810,6 @@ class EmbeddingClient:
                 # available memory for attention allocations (arcaneum-mem-leak)
                 if clear_before_batch and batch_idx > 0:
                     gc.collect()
-                    self._clear_gpu_cache()
-                    logger.debug(f"Cleared GPU cache before batch {batch_idx + 1}")
 
                 batch_start_time = time.time()
                 end_idx = min(start_idx + batch_size, len(texts))
@@ -1987,10 +1825,6 @@ class EmbeddingClient:
 
                 while batch_embeddings is None:
                     try:
-                        # Synchronize GPU before embedding to surface any pending async errors
-                        # Metal/MPS errors can be raised asynchronously after previous operations
-                        self._sync_gpu_if_needed()
-
                         result = self.embed(
                             batch_texts,
                             model_name,
@@ -1999,9 +1833,6 @@ class EmbeddingClient:
                             if current_max_internal != batch_size
                             else None,
                         )
-
-                        # Synchronize again after embedding to catch any errors before considering batch done
-                        self._sync_gpu_if_needed()
 
                         # Validate embeddings - Metal OOM can corrupt results without raising exceptions
                         # The errors are printed to stderr but embeddings may contain NaN/garbage
@@ -2016,8 +1847,7 @@ class EmbeddingClient:
                         # User pressed Ctrl-C - clean up and re-raise
                         # This handles interrupts that arrive between GPU operations
                         logger.debug("KeyboardInterrupt received during embedding")
-                        gc.collect()
-                        self._clear_gpu_cache()
+                        self._drop_accelerator_worker(model_name)
                         raise
                     except Exception as e:
                         # Detect GPU OOM from various sources:
@@ -2061,11 +1891,7 @@ class EmbeddingClient:
                             current_max_internal = new_max
                             effective_batch_size = new_max  # Remember for future batches
 
-                            # Clear cache and wait for GPU to recover
-                            gc.collect()
-                            self._clear_gpu_cache()
-                            # Brief pause to let GPU recover
-                            time.sleep(0.5)
+                            # Native cache recovery happens inside the worker.
                         elif is_oom:
                             # Already at minimum batch size - provide helpful error message
                             raise RuntimeError(
@@ -2126,12 +1952,9 @@ class EmbeddingClient:
                 # For models with clear_before_batch, this is redundant but harmless.
                 if not clear_before_batch and batch_idx % cache_clear_interval == 0:
                     gc.collect()
-                    self._clear_gpu_cache()
-                    logger.debug(f"Cleared GPU cache after batch {batch_idx}")
 
             # Final cleanup
             gc.collect()
-            self._clear_gpu_cache()
 
             return all_embeddings
 
@@ -2251,50 +2074,6 @@ class EmbeddingClient:
                     )
 
             return all_embeddings
-
-    def _clear_gpu_cache(self):
-        """Clear GPU memory cache (CUDA or MPS).
-
-        Best practice: synchronize() before empty_cache() to ensure all
-        GPU operations complete before releasing memory. (arcaneum-mem-leak)
-
-        Note:
-            This helps free GPU memory after releasing models or between batches.
-        """
-        try:
-            import torch
-
-            if self._device == "cuda":
-                torch.cuda.synchronize()
-                torch.cuda.empty_cache()
-                logger.debug("Cleared CUDA cache")
-            elif self._device == "mps":
-                torch.mps.synchronize()
-                torch.mps.empty_cache()
-                logger.debug("Cleared MPS cache")
-        except Exception as e:
-            # Not fatal if cache clearing fails
-            logger.debug(f"Could not clear GPU cache: {e}")
-
-    def _sync_gpu_if_needed(self):
-        """Synchronize GPU to surface any pending async errors.
-
-        Metal/MPS operations can raise errors asynchronously after the Python
-        call returns. Calling synchronize() forces any pending GPU operations
-        to complete and raises any errors that occurred.
-
-        This is lighter weight than _clear_gpu_cache() - it only syncs, doesn't
-        clear memory.
-        """
-        if not self.use_gpu or self._device == "cpu":
-            return
-
-        import torch
-
-        if self._device == "cuda":
-            torch.cuda.synchronize()
-        elif self._device == "mps":
-            torch.mps.synchronize()
 
     def _validate_embeddings(self, embeddings, expected_count: int, model_name: str) -> bool:
         """Validate embeddings are not corrupted by GPU OOM.

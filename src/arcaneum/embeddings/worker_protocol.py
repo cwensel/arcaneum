@@ -17,6 +17,7 @@ import uuid
 from dataclasses import dataclass
 from enum import StrEnum
 from multiprocessing.process import BaseProcess
+from pathlib import Path
 from typing import Any, Protocol
 
 import numpy as np
@@ -49,7 +50,7 @@ class WorkerCrashedError(RuntimeError):
 
 
 class WorkerBackend(Protocol):
-    def encode(self, texts: list[str]) -> np.ndarray: ...
+    def encode(self, texts: list[str], **options: Any) -> np.ndarray: ...
 
     def health(self) -> dict[str, Any]: ...
 
@@ -141,7 +142,12 @@ def _worker_main(
                     texts = command["payload"].get("texts")
                     if not isinstance(texts, list) or not all(isinstance(t, str) for t in texts):
                         raise ValueError("encode texts must be a list of strings")
-                    result = np.array(backend.encode(texts), dtype=np.float32, copy=True, order="C")
+                    options = command["payload"].get("options", {})
+                    if not isinstance(options, dict):
+                        raise ValueError("encode options must be a mapping")
+                    result = np.array(
+                        backend.encode(texts, **options), dtype=np.float32, copy=True, order="C"
+                    )
                     # A plain nested list is independently owned CPU data on the wire.
                     replies.put(
                         make_message(
@@ -229,8 +235,8 @@ class AcceleratorWorkerSession:
             raise WorkerCrashedError(reply["payload"].get("message", "worker init failed"))
         return self
 
-    def encode(self, texts: list[str], *, timeout: float) -> np.ndarray:
-        request_id = self._send(MessageType.ENCODE, texts=texts)
+    def encode(self, texts: list[str], *, timeout: float, **options: Any) -> np.ndarray:
+        request_id = self._send(MessageType.ENCODE, texts=texts, options=options)
         reply = self._receive(request_id, MessageType.ENCODED, timeout)
         payload = reply["payload"]
         try:
@@ -334,16 +340,19 @@ class DeterministicFakeBackend:
     def __init__(self, config: dict[str, Any]) -> None:
         if config.get("fail_init"):
             raise RuntimeError("requested fake initialization failure")
+        self.config = config
         self.dimension = int(config.get("dimension", 3))
         self.delay = float(config.get("delay", 0.0))
         self.crash = bool(config.get("crash", False))
         self._encodes = 0
 
-    def encode(self, texts: list[str]) -> np.ndarray:
+    def encode(self, texts: list[str], **options: Any) -> np.ndarray:
         if self.crash:
             os._exit(86)
         if self.delay:
             time.sleep(self.delay)
+        if marker := self.config.get("completion_marker"):
+            Path(marker).write_text("completed")
         self._encodes += 1
         return np.array(
             [

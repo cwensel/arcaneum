@@ -86,6 +86,28 @@ though either promotion gate suffices. On a host without usable CUDA or a comple
 cached model, the command writes an explicit `inconclusive`/`experimental` artifact
 with zero throughput and the exact setup failure. It never invents measurements.
 
+### CoreML qualification
+
+CoreML is opt-in and remains experimental. The runner uses a locally cached
+FastEmbed model, requests MLProgram with static inputs, FastPrediction
+specialization, compute-plan profiling, and a compiled cache outside the checkout.
+It measures cold construction/compilation separately from warm inference, pads
+fixed batch-count buckets, restores output order, compares with ONNX CPU, and
+reports CoreML-only, hybrid CoreML/CPU, or unknown provider placement. Tokenizer
+sequence shapes remain dynamic; the result records that limitation explicitly.
+
+```bash
+ARC_RUN_COREML_QUALIFICATION=1 PYTHONPATH="$PWD/src" \
+  python scripts/benchmark_accelerators.py --backend coreml --model bge-small \
+  --coreml-cache-dir "$HOME/.cache/arcaneum/coreml" \
+  --output benchmarks/results/coreml-local.json
+```
+
+The checked-in Apple Silicon probe was hybrid and 0.985x as fast as CPU. ONNX
+Runtime rejected the model's 30,522-row embedding table for CoreML, created no
+compiled cache entry, and fell back to CPU for unsupported nodes. Numerical output
+matched CPU exactly, but the speed, placement, and soak gates did not pass.
+
 ## Overview
 
 Two benchmarking scripts are available:

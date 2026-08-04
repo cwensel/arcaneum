@@ -13,6 +13,7 @@ from arcaneum.benchmarks.accelerator import (
     run_reference_benchmark,
     write_json,
 )
+from arcaneum.benchmarks.coreml import run_coreml_qualification
 from arcaneum.benchmarks.cuda import run_cuda_qualification
 from arcaneum.benchmarks.mps import run_mps_qualification
 
@@ -27,7 +28,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--summary", type=Path)
     parser.add_argument(
-        "--backend", choices=("reference-cpu", "mps", "cuda"), default="reference-cpu"
+        "--backend", choices=("reference-cpu", "mps", "cuda", "coreml"), default="reference-cpu"
     )
     parser.add_argument("--model", default="jina-code-st")
     parser.add_argument("--cache-dir", default=str(Path.home() / ".cache" / "arcaneum" / "models"))
@@ -37,6 +38,9 @@ def main() -> int:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--token-budget", type=int, default=8192)
     parser.add_argument("--timeout", type=float, default=120.0)
+    parser.add_argument(
+        "--coreml-cache-dir", type=Path, default=Path.home() / ".cache" / "arcaneum" / "coreml"
+    )
     parser.add_argument("--compare", nargs=2, type=Path, metavar=("BASELINE", "CANDIDATE"))
     args = parser.parse_args()
 
@@ -74,6 +78,15 @@ def main() -> int:
             batch_size=args.batch_size,
             token_budget=args.token_budget,
             timeout=args.timeout,
+        )
+    elif args.backend == "coreml":
+        result = run_coreml_qualification(
+            args.manifest,
+            model=args.model,
+            cache_dir=args.cache_dir,
+            compiled_cache_dir=args.coreml_cache_dir,
+            iterations=args.iterations,
+            soak_texts=args.soak_texts,
         )
     else:
         result = run_reference_benchmark(args.manifest, iterations=args.iterations)

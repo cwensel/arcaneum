@@ -10,7 +10,7 @@ import pytest
 pytestmark = pytest.mark.accelerator
 
 
-@pytest.mark.parametrize("backend", ["cuda", "coreml", "mlx"])
+@pytest.mark.parametrize("backend", ["cuda", "mlx"])
 def test_backend_qualification_is_not_part_of_ordinary_ci(backend):
     pytest.skip(f"{backend} benchmark adapter is opt-in and not implemented in baseline csk2")
 
@@ -18,3 +18,8 @@ def test_backend_qualification_is_not_part_of_ordinary_ci(backend):
 def test_mps_qualification_requires_explicit_opt_in():
     if not __import__("os").environ.get("ARC_RUN_MPS_QUALIFICATION"):
         pytest.skip("set ARC_RUN_MPS_QUALIFICATION=1 and run the benchmark CLI")
+
+
+def test_coreml_qualification_requires_explicit_opt_in():
+    if not __import__("os").environ.get("ARC_RUN_COREML_QUALIFICATION"):
+        pytest.skip("set ARC_RUN_COREML_QUALIFICATION=1 and run the benchmark CLI")

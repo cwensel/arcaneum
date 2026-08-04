@@ -22,9 +22,43 @@ def test_markdown_extraction_marks_auto_ocr_method(monkeypatch, tmp_path):
     monkeypatch.setattr("arcaneum.indexing.pdf.extractor.pymupdf.open", lambda path: _FakeDoc())
     monkeypatch.setattr(
         "arcaneum.indexing.pdf.extractor.pymupdf4llm.to_markdown",
-        lambda *args, **kwargs: "OCR text",
+        lambda *args, **kwargs: [{"text": "OCR text", "metadata": {"page_number": 1}}],
     )
 
     _, metadata = PDFExtractor(use_ocr=True).extract(pdf_path)
 
     assert metadata["extraction_method"] == "pymupdf4llm_ocr"
+
+
+def test_markdown_extraction_parses_document_once_with_page_chunks(monkeypatch, tmp_path):
+    pdf_path = tmp_path / "document.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+
+    class _TwoPageDoc(_FakeDoc):
+        def __len__(self):
+            return 2
+
+    calls = []
+
+    def fake_to_markdown(*args, **kwargs):
+        calls.append((args, kwargs))
+        return [
+            {"text": "First page", "metadata": {"page_number": 1}},
+            {"text": "Second page", "metadata": {"page_number": 2}},
+        ]
+
+    monkeypatch.setattr(PDFExtractor, "_has_type3_fonts", lambda self, path: False)
+    monkeypatch.setattr("arcaneum.indexing.pdf.extractor.pymupdf.open", lambda path: _TwoPageDoc())
+    monkeypatch.setattr("arcaneum.indexing.pdf.extractor.pymupdf4llm.to_markdown", fake_to_markdown)
+
+    text, metadata = PDFExtractor().extract(pdf_path)
+
+    assert text == "First page\nSecond page"
+    assert len(calls) == 1
+    assert calls[0][1]["page_chunks"] is True
+    assert "pages" not in calls[0][1]
+    assert metadata["page_count"] == 2
+    assert metadata["page_boundaries"] == [
+        {"page_number": 1, "start_char": 0, "page_text_length": 10},
+        {"page_number": 2, "start_char": 11, "page_text_length": 11},
+    ]

@@ -1,15 +1,16 @@
 """PDF text extraction with PyMuPDF and pdfplumber fallback (RDR-004, RDR-016)."""
 
-import pymupdf
-import pymupdf4llm
-from pathlib import Path
-from typing import Tuple, Optional, Dict, Any
 import contextlib
 import importlib.util
 import io
 import logging
-import warnings
 import re
+import warnings
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
+
+import pymupdf
+import pymupdf4llm
 
 # pymupdf-layout is now auto-initialized by pymupdf4llm >= 1.27.2
 # The Layout class was renamed to DocumentLayoutAnalyzer in 1.27.x
@@ -146,7 +147,7 @@ class PDFExtractor:
         return text.strip()
 
     def _extract_with_markdown(self, pdf_path: Path) -> Tuple[str, dict]:
-        """Extract text as markdown using PyMuPDF4LLM with optional layout analysis (RDR-016 default).
+        """Extract text as markdown using PyMuPDF4LLM with optional layout analysis.
 
         This is the quality-first approach that provides semantic structure
         (headers, lists, tables) while still achieving token savings through
@@ -172,8 +173,14 @@ class PDFExtractor:
             # Get layout analysis for enhanced structure detection (optional)
             layout_info = self._get_layout_analysis() if self.use_layout_analysis else None
 
-            # Extract page-by-page to track page boundaries
-            # pymupdf4llm.to_markdown with page_chunks gives us per-page text
+            # Parse the document once and ask pymupdf4llm for per-page output.
+            # Calling to_markdown(pages=[...]) in a loop is especially expensive
+            # when pymupdf-layout is installed: each call reparses the document and
+            # constructs / destroys its PyTorch layout analyzer.  Apart from making
+            # extraction scale roughly with pages squared, that repeated teardown can
+            # emit PyTorch "Deallocating Tensor that still has live PyObject
+            # references" warnings.  page_chunks preserves the page granularity we
+            # need without repeatedly initializing the analyzer.
             page_texts = []
             page_boundaries = []
             current_pos = 0
@@ -181,20 +188,21 @@ class PDFExtractor:
             with pymupdf.open(pdf_path) as doc:
                 page_count = len(doc)
 
-                for page_num in range(page_count):
-                    # Extract single page as markdown
-                    # Suppress pymupdf4llm's noisy stdout output
-                    # ("=== Document parser messages ===", "Using Tesseract...", "OCR on page...")
-                    with contextlib.redirect_stdout(io.StringIO()):
-                        page_md = pymupdf4llm.to_markdown(
-                            str(pdf_path),
-                            pages=[page_num],
-                            ignore_images=self.ignore_images,
-                            write_images=self.preserve_images,
-                            force_text=True,
-                            table_strategy="lines_strict",
-                            use_ocr=self.use_ocr,
-                        )
+                # Suppress pymupdf4llm's noisy stdout output
+                # ("=== Document parser messages ===", "Using Tesseract...", "OCR on page...")
+                with contextlib.redirect_stdout(io.StringIO()):
+                    pages = pymupdf4llm.to_markdown(
+                        str(pdf_path),
+                        page_chunks=True,
+                        ignore_images=self.ignore_images,
+                        write_images=self.preserve_images,
+                        force_text=True,
+                        table_strategy="lines_strict",
+                        use_ocr=self.use_ocr,
+                    )
+
+                for page_num, page in enumerate(pages):
+                    page_md = page["text"]
 
                     # Normalize the page text
                     page_md = self._normalize_whitespace_edge_cases(page_md)
@@ -202,7 +210,9 @@ class PDFExtractor:
                     if page_md.strip():
                         page_boundaries.append(
                             {
-                                "page_number": page_num + 1,
+                                "page_number": page.get("metadata", {}).get(
+                                    "page_number", page_num + 1
+                                ),
                                 "start_char": current_pos,
                                 "page_text_length": len(page_md),
                             }

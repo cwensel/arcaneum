@@ -278,7 +278,16 @@ def status_command(output_json=False):
     print_info("Container Services Status:", output_json)
     if not output_json:
         print()
-    ps_result = run_compose_command(["ps"], capture_output=output_json, output_json=output_json)
+    # Include stopped services so the status table does not look empty when the
+    # Compose project exists but its containers are not currently running. Pass
+    # the same interpolation environment used by ``start`` to avoid Compose
+    # warning that MEILISEARCH_API_KEY is unset while reading the project.
+    ps_result = run_compose_command(
+        ["ps", "--all"],
+        capture_output=output_json,
+        env=get_container_env(),
+        output_json=output_json,
+    )
     if ps_result is None:
         _exit_on_error()
 

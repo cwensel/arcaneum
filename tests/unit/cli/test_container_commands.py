@@ -184,6 +184,36 @@ class TestContainerRestart:
 class TestContainerStatus:
     """Test 'arc container status' command."""
 
+    def test_compose_status_includes_stopped_services_and_environment(self):
+        """Status should show stopped containers without Compose interpolation warnings."""
+        from arcaneum.cli.docker import status_command
+
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run") as mock_run:
+                mock_result = MagicMock()
+                mock_result.returncode = 0
+                mock_result.stdout = '{"Volumes": []}'
+                mock_run.return_value = mock_result
+
+                with patch(
+                    "arcaneum.cli.docker.get_compose_file",
+                    return_value="/path/to/docker-compose.yml",
+                ):
+                    with patch(
+                        "arcaneum.cli.docker.get_container_env",
+                        return_value={"MEILISEARCH_API_KEY": "test-key", "MEILI_ENV": "production"},
+                    ):
+                        with patch("arcaneum.cli.docker.check_qdrant_health", return_value=False):
+                            with patch(
+                                "arcaneum.cli.docker.check_meilisearch_health",
+                                return_value=False,
+                            ):
+                                status_command.callback()
+
+        compose_call = next(call for call in mock_run.call_args_list if "compose" in call.args[0])
+        assert compose_call.args[0][-2:] == ["ps", "--all"]
+        assert compose_call.kwargs["env"]["MEILISEARCH_API_KEY"] == "test-key"
+
     def test_running_containers_shown(self, capsys):
         """Test that running containers are shown."""
         from arcaneum.cli.docker import status_command

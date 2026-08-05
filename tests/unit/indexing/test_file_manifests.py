@@ -79,7 +79,14 @@ def test_ready_quick_hash_scan_uses_indexed_manifests_only():
         match=MatchValue(value=FILE_MANIFEST_PAYLOAD_VALUE),
     )
     assert manifest_condition in qdrant.scroll.call_args.kwargs["scroll_filter"].must
-    assert qdrant.scroll.call_args.kwargs["with_payload"] == ["file_path", "quick_hash"]
+    assert qdrant.scroll.call_args.kwargs["with_payload"] == [
+        "file_path",
+        "quick_hash",
+        "file_hash",
+        "chunk_count",
+        "file_size",
+        "store_type",
+    ]
 
 
 def test_legacy_backfill_writes_one_manifest_per_physical_path_then_stamps():
@@ -248,7 +255,44 @@ def test_ready_chunk_counts_are_read_from_manifests():
     )
 
     assert MetadataBasedSync(qdrant).get_chunk_counts_by_file("code") == {"/repo/a.py": 7}
-    assert qdrant.scroll.call_args.kwargs["with_payload"] == ["file_path", "chunk_count"]
+    assert qdrant.scroll.call_args.kwargs["with_payload"] == [
+        "file_path",
+        "quick_hash",
+        "file_hash",
+        "chunk_count",
+        "file_size",
+        "store_type",
+    ]
+
+
+def test_ready_manifest_snapshot_is_reused_across_sync_checks():
+    qdrant = MagicMock()
+    qdrant.retrieve.return_value = [_ready_metadata_point()]
+    qdrant.get_collection.return_value = _collection_info(
+        {FILE_MANIFEST_PAYLOAD_KEY: SimpleNamespace()}
+    )
+    qdrant.scroll.return_value = (
+        [
+            SimpleNamespace(
+                payload={
+                    "file_path": "/repo/a.py",
+                    "quick_hash": "quick",
+                    "file_hash": "content",
+                    "chunk_count": 7,
+                    "file_size": 10,
+                    "store_type": "code",
+                }
+            )
+        ],
+        None,
+    )
+    sync = MetadataBasedSync(qdrant)
+
+    assert sync._get_indexed_quick_hashes("code") == {("/repo/a.py", "quick")}
+    assert sync._get_indexed_file_paths_set("code") == {"/repo/a.py"}
+    assert sync.get_indexed_paths_by_content_hash("code") == {"content": ["/repo/a.py"]}
+    assert sync.get_chunk_counts_by_file("code") == {"/repo/a.py": 7}
+    assert qdrant.scroll.call_count == 1
 
 
 def test_chunk_content_hash_query_explicitly_excludes_reserved_points():

@@ -209,6 +209,7 @@ def _finalize_embedding_clients(clients, model_names, verbose, output_json):
 
 logger = logging.getLogger(__name__)
 MEILI_RENAME_UPDATE_TIMEOUT_MS = 300000
+GIT_SYNC_HEADS_FIELD = "git_sync_heads"
 
 
 def _ensure_file_manifests(
@@ -303,6 +304,94 @@ def _stamp_last_sync_metadata(qdrant, corpus: str) -> None:
         )
     except Exception as e:
         logger.warning("Failed to update last sync metadata for %s: %s", corpus, e)
+
+
+def _repo_has_tracked_changes(git_root: str) -> bool:
+    """Return true unless the repository is provably clean for tracked files."""
+    try:
+        import git
+
+        return git.Repo(git_root).is_dirty(untracked_files=False)
+    except Exception as e:
+        logger.warning("Could not inspect git status for %s: %s", git_root, e)
+        return True
+
+
+def _automatic_git_skip_roots(
+    git_roots: List[str], metadata: Dict[str, Any]
+) -> Tuple[Set[str], Dict[str, str]]:
+    """Select clean repositories whose last successful sync was at current HEAD.
+
+    The returned HEAD map contains every clean repository inspected and can be
+    persisted only after the surrounding full sync completes successfully.
+    """
+    stored_heads = metadata.get(GIT_SYNC_HEADS_FIELD, {})
+    if not isinstance(stored_heads, dict):
+        stored_heads = {}
+
+    discovery = GitProjectDiscovery()
+    skip_roots: Set[str] = set()
+    clean_heads: Dict[str, str] = {}
+    for git_root in git_roots:
+        meta = discovery.extract_metadata(git_root)
+        if meta is None or _repo_has_tracked_changes(git_root):
+            continue
+        clean_heads[meta.identifier] = meta.commit_hash
+        if stored_heads.get(meta.identifier) == meta.commit_hash:
+            skip_roots.add(git_root)
+    return skip_roots, clean_heads
+
+
+def _automatic_git_fast_path_enabled(
+    *,
+    corpus_type: str,
+    dir_paths: List[Path],
+    single_files: List[Path],
+    from_file: Optional[str],
+    file_types: Optional[str],
+    force: bool,
+    parity: bool,
+    repair: bool,
+    git_update: bool,
+    git_version: bool,
+    dry_run: bool,
+) -> bool:
+    """Return whether this invocation is a complete default code-directory sync."""
+    return bool(
+        corpus_type == "code"
+        and dir_paths
+        and not single_files
+        and not from_file
+        and not file_types
+        and not force
+        and not parity
+        and not repair
+        and not git_update
+        and not git_version
+        and not dry_run
+    )
+
+
+def _stamp_git_sync_heads(
+    qdrant,
+    corpus: str,
+    original_metadata: Dict[str, Any],
+    git_roots: List[str],
+    clean_heads: Dict[str, str],
+) -> None:
+    """Record clean HEADs after a successful, complete directory sync."""
+    stored_heads = original_metadata.get(GIT_SYNC_HEADS_FIELD, {})
+    merged_heads = dict(stored_heads) if isinstance(stored_heads, dict) else {}
+
+    # Remove stale stamps for every repository in this sync's scope, including
+    # dirty repositories. A later clean run must process them before skipping.
+    discovery = GitProjectDiscovery()
+    for git_root in git_roots:
+        meta = discovery.extract_metadata(git_root)
+        if meta is not None:
+            merged_heads.pop(meta.identifier, None)
+    merged_heads.update(clean_heads)
+    update_collection_metadata(qdrant, corpus, **{GIT_SYNC_HEADS_FIELD: merged_heads})
 
 
 def _raise_if_sync_failures(
@@ -1149,6 +1238,22 @@ def _detect_renames(
     if not new_file_paths:
         return []
 
+    try:
+        indexed_paths_by_hash = sync_manager.get_indexed_paths_by_content_hash(corpus)
+    except Exception as e:
+        logger.warning("Skipping rename detection after manifest lookup failed: %s", e)
+        return []
+
+    missing_paths_by_hash = {
+        file_hash: sorted(path for path in paths if not Path(path).exists())
+        for file_hash, paths in indexed_paths_by_hash.items()
+    }
+    missing_paths_by_hash = {
+        file_hash: paths for file_hash, paths in missing_paths_by_hash.items() if paths
+    }
+    if not missing_paths_by_hash:
+        return []
+
     renames = []
 
     for new_path in sorted(new_file_paths):
@@ -1157,25 +1262,12 @@ def _detect_renames(
             continue
 
         file_hash = compute_file_hash(file_path)
-        try:
-            old_paths = sync_manager.find_file_by_content_hash(
-                corpus, file_hash, raise_on_error=True
-            )
-        except Exception as e:
-            logger.warning("Skipping rename detection after content-hash lookup failed: %s", e)
-            return []
-
+        old_paths = missing_paths_by_hash.get(file_hash)
         if not old_paths:
             continue
-
-        # Filter to old paths that no longer exist on disk
-        missing_old_paths = [p for p in old_paths if not Path(p).exists()]
-
-        if not missing_old_paths:
-            # All old paths still exist — this is a duplicate, not a rename
-            continue
-
-        old_path = missing_old_paths[0]
+        old_path = old_paths.pop(0)
+        if not old_paths:
+            missing_paths_by_hash.pop(file_hash, None)
         renames.append((old_path, new_path))
 
     return renames
@@ -1964,6 +2056,39 @@ def sync_directory_command(
                     elif containing_root:
                         all_dir_git_roots.append(containing_root)
 
+        # The default code sync may skip a repository only when a previous
+        # successful full sync explicitly stamped this exact HEAD and tracked
+        # files are still clean. Legacy corpora naturally take the normal path
+        # once, then gain the stamp for subsequent runs.
+        automatic_git_fast_path = _automatic_git_fast_path_enabled(
+            corpus_type=corpus_type,
+            dir_paths=dir_paths,
+            single_files=single_files,
+            from_file=from_file,
+            file_types=file_types,
+            force=force,
+            parity=parity,
+            repair=repair,
+            git_update=git_update,
+            git_version=git_version,
+            dry_run=dry_run,
+        )
+        clean_git_heads: Dict[str, str] = {}
+        if automatic_git_fast_path:
+            automatic_skip_roots, clean_git_heads = _automatic_git_skip_roots(
+                all_dir_git_roots, metadata
+            )
+            skip_git_roots.update(automatic_skip_roots)
+            if not output_json:
+                stored_heads = metadata.get(GIT_SYNC_HEADS_FIELD, {})
+                for git_root in automatic_skip_roots:
+                    meta = GitProjectDiscovery().extract_metadata(git_root)
+                    if meta is not None:
+                        print_info(
+                            f"Skipping {meta.identifier}: clean repo unchanged "
+                            f"({stored_heads[meta.identifier][:7]})"
+                        )
+
         if (git_update or git_version) and not force:
             # For code corpora use the already-discovered repo roots so that
             # folder-of-repos directories are expanded to individual repos.
@@ -2419,6 +2544,10 @@ def sync_directory_command(
                             discovered_git_roots,
                             files_failed=0,
                         )
+                    if automatic_git_fast_path:
+                        _stamp_git_sync_heads(
+                            qdrant, corpus, metadata, all_dir_git_roots, clean_git_heads
+                        )
                     _stamp_last_sync_metadata(qdrant, corpus)
                 interaction_logger.finish(result_count=files_renamed)
                 return
@@ -2432,6 +2561,10 @@ def sync_directory_command(
                         all_discovered_paths,
                         discovered_git_roots,
                         files_failed=0,
+                    )
+                if automatic_git_fast_path:
+                    _stamp_git_sync_heads(
+                        qdrant, corpus, metadata, all_dir_git_roots, clean_git_heads
                     )
                 _stamp_last_sync_metadata(qdrant, corpus)
             if output_json:
@@ -3403,6 +3536,10 @@ def sync_directory_command(
                     all_discovered_paths,
                     discovered_git_roots,
                     files_failed,
+                )
+            if automatic_git_fast_path:
+                _stamp_git_sync_heads(
+                    qdrant, corpus, metadata, all_dir_git_roots, clean_git_heads
                 )
             _stamp_last_sync_metadata(qdrant, corpus)
 

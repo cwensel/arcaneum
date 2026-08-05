@@ -239,6 +239,7 @@ class MetadataBasedSync:
         self.qdrant = qdrant_client
         self._manifest_indexes_ready: set[str] = set()
         self._zero_vectors_by_collection: Dict[str, Any] = {}
+        self._manifest_snapshots: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
     @staticmethod
     def file_manifest_id(collection_name: str, file_path: str) -> str:
@@ -256,6 +257,69 @@ class MetadataBasedSync:
                 )
             ]
         )
+
+    def _invalidate_manifest_snapshot(self, collection_name: str) -> None:
+        self._manifest_snapshots.pop(collection_name, None)
+
+    def get_file_manifest_snapshot(
+        self,
+        collection_name: str,
+        progress_callback: Optional[Callable[[int], None]] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Load authoritative per-file metadata with one paginated scan."""
+        cached = self._manifest_snapshots.get(collection_name)
+        if cached is not None:
+            return cached
+        if not file_manifests_ready(self.qdrant, collection_name):
+            raise FileManifestScanError(collection_name)
+
+        self.ensure_file_manifest_payload_index(collection_name)
+        snapshot: Dict[str, Dict[str, Any]] = {}
+        offset = None
+        scanned = 0
+        try:
+            while True:
+                points, offset = self.qdrant.scroll(
+                    collection_name=collection_name,
+                    scroll_filter=self._manifest_filter(),
+                    limit=1000,
+                    offset=offset,
+                    with_payload=[
+                        "file_path",
+                        "quick_hash",
+                        "file_hash",
+                        "chunk_count",
+                        "file_size",
+                        "store_type",
+                    ],
+                    with_vectors=False,
+                )
+                for point in points:
+                    if point.payload and point.payload.get("file_path"):
+                        path = str(Path(point.payload["file_path"]).absolute())
+                        snapshot[path] = dict(point.payload)
+                scanned += len(points)
+                if progress_callback:
+                    progress_callback(scanned)
+                if not points or offset is None:
+                    break
+        except Exception as exc:
+            logger.warning("Error querying file manifests: %s", exc)
+            raise FileManifestScanError(collection_name) from exc
+
+        self._manifest_snapshots[collection_name] = snapshot
+        return snapshot
+
+    def get_indexed_paths_by_content_hash(
+        self, collection_name: str
+    ) -> Dict[str, List[str]]:
+        """Return content hashes mapped to physical paths from one snapshot."""
+        paths_by_hash: Dict[str, List[str]] = {}
+        for path, payload in self.get_file_manifest_snapshot(collection_name).items():
+            file_hash = payload.get("file_hash")
+            if file_hash:
+                paths_by_hash.setdefault(file_hash, []).append(path)
+        return paths_by_hash
 
     def ensure_file_manifest_payload_index(self, collection_name: str) -> None:
         """Create the keyword index required for efficient manifest scans."""
@@ -339,6 +403,7 @@ class MetadataBasedSync:
         self.ensure_file_manifest_payload_index(collection_name)
         point = self.build_file_manifest_point(collection_name, file_path, quick_hash, **metadata)
         self.qdrant.upsert(collection_name=collection_name, points=[point], wait=True)
+        self._invalidate_manifest_snapshot(collection_name)
 
     def delete_file_manifest(self, collection_name: str, file_path: str) -> None:
         """Delete the manifest for one physical source path."""
@@ -349,6 +414,7 @@ class MetadataBasedSync:
             ),
             wait=True,
         )
+        self._invalidate_manifest_snapshot(collection_name)
 
     def copy_file_manifest(
         self,
@@ -523,6 +589,7 @@ class MetadataBasedSync:
             self.qdrant.upsert(collection_name=collection_name, points=batch, wait=True)
 
         stamp_file_manifests_ready(self.qdrant, collection_name)
+        self._invalidate_manifest_snapshot(collection_name)
         return len(manifests)
 
     def _get_indexed_quick_hashes(
@@ -552,7 +619,14 @@ class MetadataBasedSync:
 
         try:
             if manifests_ready:
-                self.ensure_file_manifest_payload_index(collection_name)
+                snapshot = self.get_file_manifest_snapshot(
+                    collection_name, progress_callback=progress_callback
+                )
+                return {
+                    (path, payload["quick_hash"])
+                    for path, payload in snapshot.items()
+                    if payload.get("quick_hash")
+                }
             while True:
                 points, offset = self.qdrant.scroll(
                     collection_name=collection_name,
@@ -628,7 +702,7 @@ class MetadataBasedSync:
 
         try:
             if manifests_ready:
-                self.ensure_file_manifest_payload_index(collection_name)
+                return set(self.get_file_manifest_snapshot(collection_name))
             while True:
                 points, offset = self.qdrant.scroll(
                     collection_name=collection_name,
@@ -676,7 +750,12 @@ class MetadataBasedSync:
 
         try:
             if manifests_ready:
-                self.ensure_file_manifest_payload_index(collection_name)
+                return {
+                    path: payload.get("chunk_count", 0)
+                    for path, payload in self.get_file_manifest_snapshot(
+                        collection_name
+                    ).items()
+                }
             while True:
                 points, offset = self.qdrant.scroll(
                     collection_name=collection_name,

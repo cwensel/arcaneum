@@ -21,7 +21,7 @@ class TestDetectRenames:
     def mock_sync_manager(self):
         """Create mock MetadataBasedSync instance."""
         manager = Mock()
-        manager.find_file_by_content_hash = Mock(return_value=[])
+        manager.get_indexed_paths_by_content_hash = Mock(return_value={})
         return manager
 
     def test_detect_renames_finds_moved_files(self, mock_sync_manager, tmp_path):
@@ -35,7 +35,7 @@ class TestDetectRenames:
         old_path = str(tmp_path / "old_dir" / "doc.pdf")  # Does not exist on disk
 
         # Mock: content hash matches an old path that no longer exists
-        mock_sync_manager.find_file_by_content_hash.return_value = [old_path]
+        mock_sync_manager.get_indexed_paths_by_content_hash.return_value = {"abc123": [old_path]}
 
         with patch("arcaneum.cli.sync.compute_file_hash", return_value="abc123"):
             renames = _detect_renames(
@@ -60,7 +60,7 @@ class TestDetectRenames:
         new_path = str(new_file.absolute())
         old_path = str(old_file.absolute())
 
-        mock_sync_manager.find_file_by_content_hash.return_value = [old_path]
+        mock_sync_manager.get_indexed_paths_by_content_hash.return_value = {"abc123": [old_path]}
 
         with patch("arcaneum.cli.sync.compute_file_hash", return_value="abc123"):
             renames = _detect_renames(
@@ -79,7 +79,9 @@ class TestDetectRenames:
         new_path = str(new_file.absolute())
 
         # No matching content hash in the index
-        mock_sync_manager.find_file_by_content_hash.return_value = []
+        mock_sync_manager.get_indexed_paths_by_content_hash.return_value = {
+            "oldhash": [str(tmp_path / "deleted.pdf")]
+        }
 
         with patch("arcaneum.cli.sync.compute_file_hash", return_value="xyz789"):
             renames = _detect_renames(
@@ -98,7 +100,9 @@ class TestDetectRenames:
         new_path = str(new_file.absolute())
 
         # No match because the hash is different from anything in the index
-        mock_sync_manager.find_file_by_content_hash.return_value = []
+        mock_sync_manager.get_indexed_paths_by_content_hash.return_value = {
+            "oldhash": [str(tmp_path / "old.pdf")]
+        }
 
         with patch("arcaneum.cli.sync.compute_file_hash", return_value="newhash"):
             renames = _detect_renames(
@@ -109,7 +113,7 @@ class TestDetectRenames:
 
         assert len(renames) == 0
 
-    def test_detect_renames_aborts_on_first_content_hash_backend_failure(
+    def test_detect_renames_aborts_on_bulk_content_hash_backend_failure(
         self, mock_sync_manager, tmp_path, caplog
     ):
         """A Qdrant disconnect should not emit one warning per new file."""
@@ -119,7 +123,7 @@ class TestDetectRenames:
             file_path.write_text(name)
             files.append(str(file_path.absolute()))
 
-        mock_sync_manager.find_file_by_content_hash.side_effect = RuntimeError(
+        mock_sync_manager.get_indexed_paths_by_content_hash.side_effect = RuntimeError(
             "Server disconnected without sending a response."
         )
 
@@ -127,8 +131,28 @@ class TestDetectRenames:
             renames = _detect_renames(set(files), mock_sync_manager, "test-corpus")
 
         assert renames == []
-        assert mock_sync_manager.find_file_by_content_hash.call_count == 1
-        assert "Skipping rename detection after content-hash lookup failed" in caplog.text
+        assert mock_sync_manager.get_indexed_paths_by_content_hash.call_count == 1
+        assert "Skipping rename detection after manifest lookup failed" in caplog.text
+
+    def test_detect_renames_uses_one_bulk_lookup_for_many_candidates(
+        self, mock_sync_manager, tmp_path
+    ):
+        """Candidate count must not multiply Qdrant requests."""
+        paths = set()
+        for index in range(100):
+            path = tmp_path / f"new-{index}.md"
+            path.write_text(str(index))
+            paths.add(str(path.absolute()))
+        mock_sync_manager.get_indexed_paths_by_content_hash.return_value = {
+            "unmatched": [str(tmp_path / "missing.md")]
+        }
+
+        with patch("arcaneum.cli.sync.compute_file_hash", return_value="new"):
+            assert _detect_renames(paths, mock_sync_manager, "test-corpus") == []
+
+        mock_sync_manager.get_indexed_paths_by_content_hash.assert_called_once_with(
+            "test-corpus"
+        )
 
     def test_filter_rename_candidates_excludes_existing_paths(self, mock_sync_manager):
         """Same-path quick-hash misses are modified files, not rename candidates."""

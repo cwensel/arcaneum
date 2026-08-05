@@ -648,6 +648,9 @@ class TestEmbedSortsByLength:
         mock_model = MagicMock()
         mock_model._backend = "sentence-transformers"
         embedding_client._models["jina-code-st"] = mock_model
+        # CPU-only CI resolves SentenceTransformers through the fallback cache
+        # before consulting the general model cache.
+        embedding_client._cpu_fallback_models["jina-code-st"] = mock_model
         return mock_model
 
     def test_sorted_input_to_encode(self, embedding_client):

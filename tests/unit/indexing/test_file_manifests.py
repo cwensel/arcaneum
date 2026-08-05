@@ -18,9 +18,12 @@ from arcaneum.indexing.common.sync import (
 )
 
 
-def _collection_info():
+def _collection_info(payload_schema=None):
     vectors = {"dense": SimpleNamespace(size=3)}
-    return SimpleNamespace(config=SimpleNamespace(params=SimpleNamespace(vectors=vectors)))
+    return SimpleNamespace(
+        config=SimpleNamespace(params=SimpleNamespace(vectors=vectors)),
+        payload_schema=payload_schema or {},
+    )
 
 
 def _ready_metadata_point():
@@ -123,6 +126,39 @@ def test_failed_backfill_never_writes_readiness_stamp():
     qdrant.upsert.assert_not_called()
 
 
+def test_existing_manifest_index_conflict_is_idempotent_across_sync_instances():
+    qdrant = MagicMock()
+    qdrant.retrieve.return_value = [_ready_metadata_point()]
+    qdrant.get_collection.return_value = _collection_info()
+    qdrant.create_payload_index.side_effect = RuntimeError("409 index already exists")
+    qdrant.scroll.return_value = (
+        [SimpleNamespace(payload={"file_path": "/repo/a.py", "quick_hash": "quick"})],
+        None,
+    )
+
+    first = MetadataBasedSync(qdrant)._get_indexed_quick_hashes("code")
+    second = MetadataBasedSync(qdrant)._get_indexed_file_paths_set("code")
+
+    assert first == {("/repo/a.py", "quick")}
+    assert second == {"/repo/a.py"}
+    assert qdrant.create_payload_index.call_count == 2
+
+
+def test_ready_chunk_counts_are_read_from_manifests():
+    qdrant = MagicMock()
+    qdrant.retrieve.return_value = [_ready_metadata_point()]
+    qdrant.get_collection.return_value = _collection_info(
+        {FILE_MANIFEST_PAYLOAD_KEY: SimpleNamespace()}
+    )
+    qdrant.scroll.return_value = (
+        [SimpleNamespace(payload={"file_path": "/repo/a.py", "chunk_count": 7})],
+        None,
+    )
+
+    assert MetadataBasedSync(qdrant).get_chunk_counts_by_file("code") == {"/repo/a.py": 7}
+    assert qdrant.scroll.call_args.kwargs["with_payload"] == ["file_path", "chunk_count"]
+
+
 def test_chunk_content_hash_query_explicitly_excludes_reserved_points():
     qdrant = MagicMock()
     qdrant.scroll.return_value = ([], None)
@@ -135,10 +171,13 @@ def test_chunk_content_hash_query_explicitly_excludes_reserved_points():
 
 def test_user_point_count_excludes_collection_metadata_and_manifests():
     qdrant = MagicMock()
-    qdrant.retrieve.return_value = [_ready_metadata_point()]
     qdrant.count.return_value = SimpleNamespace(count=12)
+    collection_info = SimpleNamespace(
+        points_count=113,
+        payload_schema={FILE_MANIFEST_PAYLOAD_KEY: SimpleNamespace()},
+    )
 
-    assert user_point_count(qdrant, "code", total_points=113) == 100
+    assert user_point_count(qdrant, "code", collection_info) == 100
 
     manifest_condition = FieldCondition(
         key=FILE_MANIFEST_PAYLOAD_KEY,

@@ -550,7 +550,7 @@ def list_corpora_command(details: bool, output_json: bool):
             for col in collections.collections:
                 metadata = get_collection_metadata(qdrant, col.name)
                 col_info = qdrant.get_collection(col.name)
-                chunk_count = user_point_count(qdrant, col.name, col_info.points_count)
+                chunk_count = user_point_count(qdrant, col.name, col_info)
                 models = _build_corpus_model_info(metadata, col_info)
                 collection_type = metadata.get("collection_type")
                 last_sync, last_sync_status = _last_sync_state(metadata, chunk_count)
@@ -1204,7 +1204,7 @@ def corpus_info_command(name: str, output_json: bool):
                         "distance": str(vector_params.distance),
                     }
 
-            chunk_count = user_point_count(qdrant_client, name, col_info.points_count)
+            chunk_count = user_point_count(qdrant_client, name, col_info)
 
             # Get unique item count (files or repos)
             item_count = _get_qdrant_item_count(qdrant_client, name, collection_type)

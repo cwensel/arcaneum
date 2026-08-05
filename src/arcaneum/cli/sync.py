@@ -273,14 +273,15 @@ def _rename_file_manifests(
     """Move deterministic manifests after both indexes confirm a rename."""
     for old_path, new_path in renames:
         new_file = Path(new_path)
-        sync_manager.upsert_file_manifest(
+        sync_manager.copy_file_manifest(
             corpus,
+            old_path,
             new_path,
             compute_quick_hash(new_file),
+            delete_source=True,
             file_size=new_file.stat().st_size,
             store_type=corpus_type,
         )
-        sync_manager.delete_file_manifest(corpus, old_path)
 
 
 def _delete_file_manifests(
@@ -4569,7 +4570,7 @@ def _discover_corpora_for_parity() -> List[Dict[str, Any]]:
         for col in collections.collections:
             metadata = get_collection_metadata(qdrant, col.name)
             col_info = qdrant.get_collection(col.name)
-            chunk_count = user_point_count(qdrant, col.name, col_info.points_count)
+            chunk_count = user_point_count(qdrant, col.name, col_info)
             qdrant_collections[col.name] = {
                 "type": metadata.get("collection_type"),
                 "model": metadata.get("model"),

@@ -61,16 +61,18 @@ def stamp_file_manifests_ready(client: QdrantClient, collection_name: str) -> No
 def user_point_count(
     client: QdrantClient,
     collection_name: str,
-    total_points: Optional[int] = None,
+    collection_info: Optional[Any] = None,
 ) -> int:
     """Return chunk points, excluding collection metadata and file manifests."""
-    if total_points is None:
-        total_points = client.get_collection(collection_name).points_count
+    if collection_info is None:
+        collection_info = client.get_collection(collection_name)
+    total_points = collection_info.points_count
     if total_points <= 0:
         return 0
 
     reserved_points = 1  # The fixed collection metadata point.
-    if file_manifests_ready(client, collection_name):
+    payload_schema = getattr(collection_info, "payload_schema", {}) or {}
+    if FILE_MANIFEST_PAYLOAD_KEY in payload_schema:
         manifest_filter = Filter(
             must=[
                 FieldCondition(

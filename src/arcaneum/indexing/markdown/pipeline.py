@@ -22,7 +22,7 @@ from ...cli.output import timestamp
 from ...embeddings.client import EMBEDDING_MODELS, EmbeddingClient
 from ...schema.document import persisted_metadata_fields
 from ...utils.formatting import format_duration
-from ..collection_metadata import file_manifests_ready
+from ..collection_metadata import file_manifests_ready, stamp_file_manifests_ready
 from ..common.sync import MetadataBasedSync, compute_file_hash, compute_quick_hash
 from .chunker import SemanticMarkdownChunker
 from .discovery import MarkdownDiscovery
@@ -155,12 +155,12 @@ class MarkdownIndexingPipeline:
                         collection_name, [(old_path, new_path, new_metadata)]
                     )
                     if result > 0:
-                        self.sync.delete_file_manifest(collection_name, old_path)
-                        self.sync.upsert_file_manifest(
+                        self.sync.copy_file_manifest(
                             collection_name,
+                            old_path,
                             new_path,
                             quick_hash,
-                            file_hash=file_hash,
+                            delete_source=True,
                             file_size=file_metadata.file_size,
                             store_type="markdown",
                         )
@@ -185,11 +185,11 @@ class MarkdownIndexingPipeline:
                     collection_name, file_hash, new_path, quick_hash
                 )
                 if path_already_tracked or result > 0:
-                    self.sync.upsert_file_manifest(
+                    self.sync.copy_file_manifest(
                         collection_name,
+                        old_paths[0],
                         new_path,
                         quick_hash,
-                        file_hash=file_hash,
                         file_size=file_metadata.file_size,
                         store_type="markdown",
                     )
@@ -373,7 +373,7 @@ class MarkdownIndexingPipeline:
                 )
                 embedding_elapsed = time.time() - embedding_start
 
-                if uploaded_count != file_chunk_count or file_chunk_count == 0:
+                if uploaded_count != file_chunk_count:
                     raise RuntimeError(
                         f"Incomplete markdown upload: {uploaded_count}/{file_chunk_count} chunks"
                     )
@@ -393,10 +393,11 @@ class MarkdownIndexingPipeline:
                     print(
                         f"\r{embedding_ts}   → embedding ({file_chunk_count} chunks) [{total_batches}/{total_batches} batches]    "
                     )
-                    print(
-                        f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed / total_batches:.2f}s/batch)",
-                        flush=True,
-                    )
+                    if total_batches:
+                        print(
+                            f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed / total_batches:.2f}s/batch)",
+                            flush=True,
+                        )
 
                 # Memory cleanup (streaming mode)
                 # Native accelerator cache is child-owned and cleared on worker teardown.
@@ -539,6 +540,8 @@ class MarkdownIndexingPipeline:
                 print("All markdown files up to date")
             else:
                 print(f"{timestamp()} ✅ All markdown files are up to date")
+            if force_reindex and file_list is None:
+                stamp_file_manifests_ready(self.qdrant, collection_name)
             return {"files": 0, "chunks": 0, "errors": 0}
 
         # Show count
@@ -769,6 +772,8 @@ class MarkdownIndexingPipeline:
                 if stats["errors"] > 0:
                     print(f"{stats['errors']} error(s)")
 
+            if force_reindex and file_list is None and stats["errors"] == 0:
+                stamp_file_manifests_ready(self.qdrant, collection_name)
             return stats
 
         except Exception as e:

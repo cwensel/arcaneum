@@ -218,7 +218,7 @@ class CollectionVerifier:
 
         # Get total point count
         collection_info = self.qdrant.get_collection(collection_name)
-        total_points = user_point_count(self.qdrant, collection_name, collection_info.points_count)
+        total_points = user_point_count(self.qdrant, collection_name, collection_info)
 
         if collection_type == "code":
             result = self._verify_code_collection(

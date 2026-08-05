@@ -229,6 +229,44 @@ def test_non_streaming_index_directory_still_counts_files(md_file):
     assert stats["errors"] == 0
 
 
+def test_force_reindex_empty_markdown_records_zero_chunk_manifest(tmp_path):
+    """An empty markdown file remains a successful no-chunk index operation."""
+    markdown_file = tmp_path / "empty.md"
+    markdown_file.write_text("", encoding="utf-8")
+    pipeline, qdrant = _make_pipeline(streaming=True)
+
+    stats = pipeline.index_directory(
+        markdown_dir=tmp_path,
+        collection_name="md",
+        model_name="stella",
+        model_config={"vector_name": None, "chunk_size": 512, "chunk_overlap": 50},
+        force_reindex=True,
+        file_list=[markdown_file],
+    )
+
+    manifests = [point.payload for point in qdrant.upserted if point.payload.get("is_metadata")]
+    assert stats == {"files": 0, "chunks": 0, "errors": 0}
+    assert manifests[-1]["chunk_count"] == 0
+
+
+def test_full_force_markdown_stamps_manifest_readiness(monkeypatch, md_file):
+    pipeline, _ = _make_pipeline(streaming=True)
+    pipeline.discovery.discover_files = Mock(return_value=[md_file])
+    pipeline._process_single_markdown = Mock(return_value=([], 0, None))
+    stamp = Mock()
+    monkeypatch.setattr("arcaneum.indexing.markdown.pipeline.stamp_file_manifests_ready", stamp)
+
+    pipeline.index_directory(
+        markdown_dir=md_file.parent,
+        collection_name="md",
+        model_name="stella",
+        model_config={"vector_name": None, "chunk_size": 512, "chunk_overlap": 50},
+        force_reindex=True,
+    )
+
+    stamp.assert_called_once_with(pipeline.qdrant, "md")
+
+
 def test_streaming_force_delete_failure_counts_file_error(md_file):
     """Force pre-delete failures must stop upload and count as errors."""
     qdrant = FailingDeleteQdrant()

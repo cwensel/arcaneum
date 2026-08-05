@@ -118,17 +118,16 @@ def test_code_rename_replaces_manifest_and_stale_cleanup_deletes(tmp_path):
     sync_module._rename_file_manifests(manager, "Code", "code", [(old_path, str(new_file))])
     sync_module._delete_file_manifests(manager, "Code", "code", [stale_path])
 
-    assert manager.method_calls[0] == call.upsert_file_manifest(
+    assert manager.method_calls[0] == call.copy_file_manifest(
         "Code",
+        old_path,
         str(new_file),
         sync_module.compute_quick_hash(new_file),
+        delete_source=True,
         file_size=new_file.stat().st_size,
         store_type="code",
     )
-    assert manager.method_calls[1:] == [
-        call.delete_file_manifest("Code", old_path),
-        call.delete_file_manifest("Code", stale_path),
-    ]
+    assert manager.method_calls[1:] == [call.delete_file_manifest("Code", stale_path)]
 
 
 def test_manifest_lifecycle_supports_markdown_and_pdf(tmp_path):

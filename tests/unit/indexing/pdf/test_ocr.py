@@ -238,3 +238,81 @@ def test_pdf_force_delete_failure_counts_file_error(tmp_path):
     assert stats["files"] == 0
     assert stats["chunks"] == 0
     assert stats["errors"] == 1
+
+
+def test_full_force_pdf_zero_chunk_result_stamps_readiness(monkeypatch, tmp_path):
+    """Zero-chunk PDFs do not dereference an empty point list or block readiness."""
+    pdf_path = tmp_path / "empty.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    qdrant = MagicMock()
+    qdrant.get_collection.return_value = MagicMock(points_count=0)
+    uploader = PDFBatchUploader(
+        qdrant_client=qdrant,
+        embedding_client=MagicMock(),
+        file_workers=1,
+    )
+    uploader._process_single_pdf = MagicMock(
+        return_value=(
+            [],
+            0,
+            None,
+            {
+                "ocr_pages_processed": 0,
+                "ocr_pages_failed": 0,
+                "ocr_confidence": None,
+            },
+        )
+    )
+    stamp = MagicMock()
+    monkeypatch.setattr("arcaneum.indexing.uploader.stamp_file_manifests_ready", stamp)
+
+    stats = uploader.index_directory(
+        pdf_dir=tmp_path,
+        collection_name="docs",
+        model_name="stella",
+        model_config={"chunk_size": 512, "chunk_overlap": 50},
+        force_reindex=True,
+    )
+
+    assert stats["errors"] == 0
+    assert stats["files"] == 0
+    stamp.assert_called_once_with(qdrant, "docs")
+
+
+def test_force_reindex_empty_pdf_records_zero_chunk_manifest(tmp_path):
+    pdf_path = tmp_path / "empty.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    qdrant = MagicMock()
+    qdrant.scroll.return_value = ([], None)
+    qdrant.get_collection.return_value = MagicMock(points_count=0, payload_schema={})
+    uploader = PDFBatchUploader(
+        qdrant_client=qdrant,
+        embedding_client=MagicMock(),
+        file_workers=1,
+        ocr_enabled=False,
+    )
+    uploader.extractor.extract = MagicMock(return_value=("", {}))
+    chunker = MagicMock()
+    chunker.chunk.return_value = []
+    uploader._shared_embedding_client.embed_parallel.return_value = []
+
+    result = uploader._process_single_pdf(
+        pdf_path=pdf_path,
+        collection_name="docs",
+        model_name="stella",
+        chunker=chunker,
+        point_id_start=1,
+        verbose=False,
+        pdf_idx=1,
+        total_pdfs=1,
+        force_reindex=True,
+    )
+
+    assert result[0:3] == ([], 0, None)
+    manifest_points = [
+        point
+        for call in qdrant.upsert.call_args_list
+        for point in call.kwargs["points"]
+        if point.payload.get("is_metadata")
+    ]
+    assert manifest_points[-1].payload["chunk_count"] == 0

@@ -19,7 +19,7 @@ from ..monitoring.cpu_stats import create_monitor
 from ..schema.document import persisted_metadata_fields
 from ..utils.formatting import format_duration
 from ..utils.memory import calculate_safe_workers, log_memory_stats
-from .collection_metadata import file_manifests_ready
+from .collection_metadata import file_manifests_ready, stamp_file_manifests_ready
 from .common.sync import MetadataBasedSync, compute_file_hash, compute_quick_hash
 from .pdf.chunker import PDFChunker
 from .pdf.extractor import PDFExtractor
@@ -205,12 +205,12 @@ class PDFBatchUploader:
                         collection_name, [(old_path, new_path, new_metadata)]
                     )
                     if result > 0:
-                        self.sync.delete_file_manifest(collection_name, old_path)
-                        self.sync.upsert_file_manifest(
+                        self.sync.copy_file_manifest(
                             collection_name,
+                            old_path,
                             new_path,
                             quick_hash,
-                            file_hash=file_hash,
+                            delete_source=True,
                             file_size=pdf_path.stat().st_size,
                             store_type="pdf",
                         )
@@ -235,11 +235,11 @@ class PDFBatchUploader:
                     collection_name, file_hash, new_path, quick_hash
                 )
                 if path_already_tracked or result > 0:
-                    self.sync.upsert_file_manifest(
+                    self.sync.copy_file_manifest(
                         collection_name,
+                        old_paths[0],
                         new_path,
                         quick_hash,
-                        file_hash=file_hash,
                         file_size=pdf_path.stat().st_size,
                         store_type="pdf",
                     )
@@ -497,10 +497,11 @@ class PDFBatchUploader:
                     print(
                         f"\r{embedding_ts}   → embedding ({file_chunk_count} chunks) [{total_batches}/{total_batches} batches]    "
                     )
-                    print(
-                        f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed / total_batches:.2f}s/batch)",
-                        flush=True,
-                    )
+                    if total_batches:
+                        print(
+                            f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed / total_batches:.2f}s/batch)",
+                            flush=True,
+                        )
 
                 # Memory cleanup (streaming mode)
                 # Release large data structures and clear GPU cache between PDFs
@@ -525,10 +526,11 @@ class PDFBatchUploader:
                     print(
                         f"\r{embedding_ts}   → embedding ({file_chunk_count} chunks) [{total_batches}/{total_batches} batches]    "
                     )
-                    print(
-                        f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed / total_batches:.2f}s/batch)",
-                        flush=True,
-                    )
+                    if total_batches:
+                        print(
+                            f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed / total_batches:.2f}s/batch)",
+                            flush=True,
+                        )
 
                 # Stage 5: Create and upload points in batches
                 # This avoids holding all points in memory at once
@@ -593,7 +595,7 @@ class PDFBatchUploader:
                 # Clear GPU cache if using GPU to prevent memory buildup across PDFs
                 # Native accelerator cache is child-owned and cleared on worker teardown.
 
-            if uploaded_count != file_chunk_count or file_chunk_count == 0:
+            if uploaded_count != file_chunk_count:
                 raise RuntimeError(
                     f"Incomplete PDF upload: {uploaded_count}/{file_chunk_count} chunks"
                 )
@@ -724,6 +726,8 @@ class PDFBatchUploader:
                 print("All PDFs up to date")
             else:
                 print(f"{timestamp()} ✅ All PDFs are up to date")
+            if force_reindex and file_list is None:
+                stamp_file_manifests_ready(self.qdrant, collection_name)
             return {
                 "files": 0,
                 "chunks": 0,
@@ -985,6 +989,8 @@ class PDFBatchUploader:
         del stats["ocr_confidence_sum"]
         del stats["ocr_pdf_count"]
 
+        if force_reindex and file_list is None and stats["errors"] == 0:
+            stamp_file_manifests_ready(self.qdrant, collection_name)
         return stats
 
     def _record_ocr_stats(self, stats: Dict, ocr_stats: Dict):

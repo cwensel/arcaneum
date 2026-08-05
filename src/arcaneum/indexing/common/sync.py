@@ -253,12 +253,21 @@ class MetadataBasedSync:
         """Create the keyword index required for efficient manifest scans."""
         if collection_name in self._manifest_indexes_ready:
             return
-        self.qdrant.create_payload_index(
-            collection_name=collection_name,
-            field_name=FILE_MANIFEST_PAYLOAD_KEY,
-            field_schema=PayloadSchemaType.KEYWORD,
-            wait=True,
-        )
+        info = self.qdrant.get_collection(collection_name)
+        if FILE_MANIFEST_PAYLOAD_KEY not in (getattr(info, "payload_schema", {}) or {}):
+            try:
+                self.qdrant.create_payload_index(
+                    collection_name=collection_name,
+                    field_name=FILE_MANIFEST_PAYLOAD_KEY,
+                    field_schema=PayloadSchemaType.KEYWORD,
+                    wait=True,
+                )
+            except Exception as exc:
+                # Another process may create the index between inspection and
+                # creation. Qdrant reports that harmless race as a conflict.
+                message = str(exc).lower()
+                if "already exists" not in message and "409" not in message:
+                    raise
         self._manifest_indexes_ready.add(collection_name)
 
     def _zero_vectors(self, collection_name: str) -> Any:
@@ -327,6 +336,37 @@ class MetadataBasedSync:
             wait=True,
         )
 
+    def copy_file_manifest(
+        self,
+        collection_name: str,
+        source_path: str,
+        target_path: str,
+        quick_hash: str,
+        *,
+        delete_source: bool = False,
+        file_size: Optional[int] = None,
+        store_type: Optional[str] = None,
+    ) -> None:
+        """Copy manifest metadata to a duplicate or renamed physical path."""
+        source = self.qdrant.retrieve(
+            collection_name=collection_name,
+            ids=[self.file_manifest_id(collection_name, source_path)],
+            with_payload=True,
+            with_vectors=False,
+        )
+        payload = source[0].payload if source and source[0].payload else {}
+        self.upsert_file_manifest(
+            collection_name,
+            target_path,
+            quick_hash,
+            file_hash=payload.get("file_hash"),
+            chunk_count=payload.get("chunk_count"),
+            file_size=file_size if file_size is not None else payload.get("file_size"),
+            store_type=store_type if store_type is not None else payload.get("store_type"),
+        )
+        if delete_source:
+            self.delete_file_manifest(collection_name, source_path)
+
     def backfill_file_manifests(
         self,
         collection_name: str,
@@ -382,15 +422,18 @@ class MetadataBasedSync:
                         {
                             "quick_hash": quick_hash,
                             "file_hash": payload.get("file_hash"),
-                            "chunk_count": payload.get("chunk_count"),
+                            "chunk_count": None,
+                            "observed_chunks": 0,
                             "file_size": payload.get("file_size"),
                             "store_type": payload.get("store_type"),
                         },
                     )
-                    if current.get("chunk_count") is None:
-                        current["chunk_count"] = 0
-                    if payload.get("chunk_count") is None:
-                        current["chunk_count"] += 1
+                    current["observed_chunks"] += 1
+                    declared_count = payload.get("chunk_count")
+                    if declared_count is not None:
+                        current["chunk_count"] = max(
+                            current.get("chunk_count") or 0, declared_count
+                        )
             if progress_callback:
                 progress_callback(total_chunks)
             if offset is None:
@@ -399,6 +442,8 @@ class MetadataBasedSync:
         vectors = self._zero_vectors(collection_name)
         batch: List[PointStruct] = []
         for path, values in manifests.items():
+            values["chunk_count"] = values.get("chunk_count") or values.pop("observed_chunks")
+            values.pop("observed_chunks", None)
             payload = {
                 METADATA_PAYLOAD_KEY: True,
                 FILE_MANIFEST_PAYLOAD_KEY: FILE_MANIFEST_PAYLOAD_VALUE,
@@ -565,15 +610,22 @@ class MetadataBasedSync:
         """
         chunk_counts: Dict[str, int] = {}
         offset = None
+        manifests_ready = file_manifests_ready(self.qdrant, collection_name)
 
         try:
+            if manifests_ready:
+                self.ensure_file_manifest_payload_index(collection_name)
             while True:
                 points, offset = self.qdrant.scroll(
                     collection_name=collection_name,
-                    scroll_filter=metadata_exclusion_filter(),
+                    scroll_filter=(
+                        self._manifest_filter() if manifests_ready else metadata_exclusion_filter()
+                    ),
                     limit=1000,
                     offset=offset,
-                    with_payload=["file_path"],
+                    with_payload=(
+                        ["file_path", "chunk_count"] if manifests_ready else ["file_path"]
+                    ),
                     with_vectors=False,
                 )
 
@@ -584,7 +636,10 @@ class MetadataBasedSync:
                     if point.payload:
                         path = point.payload.get("file_path")
                         if path:
-                            chunk_counts[path] = chunk_counts.get(path, 0) + 1
+                            if manifests_ready:
+                                chunk_counts[path] = point.payload.get("chunk_count") or 0
+                            else:
+                                chunk_counts[path] = chunk_counts.get(path, 0) + 1
 
                 if offset is None:
                     break

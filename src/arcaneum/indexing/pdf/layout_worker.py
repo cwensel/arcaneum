@@ -41,6 +41,10 @@ class LayoutWorkerCrashed(LayoutWorkerError):
     """The worker exited or disconnected while handling a request."""
 
 
+class LayoutWorkerContainmentError(LayoutWorkerError):
+    """A child could not be proven dead, so in-process fallback is unsafe."""
+
+
 class LayoutConversionError(LayoutWorkerError):
     """PyMuPDF4LLM rejected a document without crashing its worker."""
 
@@ -193,7 +197,14 @@ class PDFLayoutWorker:
             name="arcaneum-pdf-layout",
             daemon=True,
         )
-        process.start()
+        try:
+            process.start()
+        except BaseException:
+            parent_connection.close()
+            child_connection.close()
+            with contextlib.suppress(ValueError):
+                process.close()
+            raise
         child_connection.close()
         self._process = process
         self._connection = parent_connection
@@ -276,7 +287,6 @@ class PDFLayoutWorker:
     def _reap(self, *, force: bool) -> None:
         process = self._process
         connection = self._connection
-        self._process = None
         self._connection = None
         if connection is not None:
             connection.close()
@@ -288,6 +298,16 @@ class PDFLayoutWorker:
         if process.is_alive():
             process.kill()
             process.join(timeout=5.0)
+        if process.is_alive():
+            # Retain the process handle so callers can retry containment. Most
+            # importantly, do not let the extractor mistake this for a completed
+            # reap and begin local PyMuPDF fallback concurrently with the child.
+            self._process = process
+            raise LayoutWorkerContainmentError(
+                f"PDF layout worker pid {process.pid} remained alive after terminate and kill"
+            )
+        process.close()
+        self._process = None
 
     def close(self) -> None:
         """Request a clean shutdown, then guarantee that the child is reaped."""
@@ -300,10 +320,11 @@ class PDFLayoutWorker:
                     self._connection.send({"operation": "shutdown", "request_id": request_id})
                     if self._connection.poll(min(self.timeout_seconds, 5.0)):
                         self._connection.recv()
-                self._reap(force=False)
-            finally:
-                if self._process is not None:
-                    self._reap(force=True)
+            except (BrokenPipeError, EOFError, OSError):
+                # Reaping below is authoritative; a shutdown acknowledgement is
+                # optional once the connection has failed.
+                pass
+            self._reap(force=False)
 
     def __enter__(self) -> PDFLayoutWorker:
         return self

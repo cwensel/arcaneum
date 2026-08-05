@@ -1,8 +1,11 @@
 """Unit tests for PDF extraction metadata and worker fallback."""
 
+import pytest
+
 from arcaneum.indexing.pdf.extractor import PDFExtractor
 from arcaneum.indexing.pdf.layout_worker import (
     LayoutConversionError,
+    LayoutWorkerContainmentError,
     LayoutWorkerCrashed,
 )
 
@@ -128,3 +131,23 @@ def test_crashed_worker_is_contained_before_truthful_fallback(monkeypatch, tmp_p
     assert metadata["extraction_method"] == "pymupdf_normalized"
     assert metadata["layout_fallback_reason"] == "LayoutWorkerCrashed"
     assert "exit code 17" in metadata["layout_fallback_detail"]
+
+
+def test_uncontained_worker_blocks_in_process_fallback(monkeypatch, tmp_path):
+    pdf_path = tmp_path / "document.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    worker = _FakeWorker(error=LayoutWorkerContainmentError("pid 123 remained alive"))
+    fallback_calls = []
+
+    monkeypatch.setattr(PDFExtractor, "_has_type3_fonts", lambda self, path: False)
+
+    def normalized(self, path):
+        fallback_calls.append(path)
+        return "normalized", {"extraction_method": "pymupdf_normalized"}
+
+    monkeypatch.setattr(PDFExtractor, "_extract_with_pymupdf_normalized", normalized)
+
+    with pytest.raises(LayoutWorkerContainmentError, match="remained alive"):
+        PDFExtractor(layout_worker=worker).extract(pdf_path)
+
+    assert fallback_calls == []

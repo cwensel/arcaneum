@@ -214,8 +214,7 @@ class PDFLayoutWorker:
         try:
             response = parent_connection.recv()
         except EOFError as exc:
-            exit_code = process.exitcode
-            self._reap(force=True)
+            exit_code = self._reap(force=True)
             raise LayoutWorkerCrashed(
                 f"PDF layout worker exited during startup (exit code {exit_code})"
             ) from exc
@@ -236,8 +235,7 @@ class PDFLayoutWorker:
         try:
             self._connection.send(message)
         except (BrokenPipeError, EOFError, OSError) as exc:
-            exit_code = self._process.exitcode
-            self._reap(force=True)
+            exit_code = self._reap(force=True)
             raise LayoutWorkerCrashed(
                 f"PDF layout worker disconnected (exit code {exit_code})"
             ) from exc
@@ -250,8 +248,7 @@ class PDFLayoutWorker:
         try:
             response = self._connection.recv()
         except EOFError as exc:
-            exit_code = self._process.exitcode
-            self._reap(force=True)
+            exit_code = self._reap(force=True)
             raise LayoutWorkerCrashed(
                 f"PDF layout worker exited (exit code {exit_code})"
             ) from exc
@@ -284,14 +281,15 @@ class PDFLayoutWorker:
                 raise LayoutWorkerCrashed(f"unexpected PDF layout health response: {response!r}")
             return response
 
-    def _reap(self, *, force: bool) -> None:
+    def _reap(self, *, force: bool) -> int | None:
+        """Reap the worker and return its finalized process exit code."""
         process = self._process
         connection = self._connection
         self._connection = None
         if connection is not None:
             connection.close()
         if process is None:
-            return
+            return None
         if force and process.is_alive():
             process.terminate()
         process.join(timeout=5.0)
@@ -306,8 +304,10 @@ class PDFLayoutWorker:
             raise LayoutWorkerContainmentError(
                 f"PDF layout worker pid {process.pid} remained alive after terminate and kill"
             )
+        exit_code = process.exitcode
         process.close()
         self._process = None
+        return exit_code
 
     def close(self) -> None:
         """Request a clean shutdown, then guarantee that the child is reaped."""

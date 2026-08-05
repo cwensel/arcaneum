@@ -113,6 +113,29 @@ class _FakeConnection:
         self.closed = True
 
 
+class _ExitCodeAfterJoinProcess:
+    """Model platforms where exitcode is unavailable until the child is joined."""
+
+    pid = 424243
+
+    def __init__(self):
+        self.joined = False
+        self.closed = False
+
+    @property
+    def exitcode(self):
+        return 17 if self.joined else None
+
+    def is_alive(self):
+        return False
+
+    def join(self, timeout=None):
+        self.joined = True
+
+    def close(self):
+        self.closed = True
+
+
 def test_worker_is_spawned_healthy_and_reused_across_documents():
     worker = PDFLayoutWorker(process_target=_healthy_target, timeout_seconds=2)
     try:
@@ -155,6 +178,17 @@ def test_crashed_worker_is_reaped_and_replaced_on_next_request():
         assert worker.generation == 2
     finally:
         worker.close()
+
+
+def test_reap_returns_exit_code_observed_after_join():
+    worker = PDFLayoutWorker()
+    process = _ExitCodeAfterJoinProcess()
+    worker._process = process
+    worker._connection = _FakeConnection()
+
+    assert worker._reap(force=True) == 17
+    assert process.closed
+    assert worker._process is None
 
 
 def test_repeated_crash_restart_and_close_leaves_no_children_or_handles():

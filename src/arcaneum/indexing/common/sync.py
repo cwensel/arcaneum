@@ -369,9 +369,29 @@ class MetadataBasedSync:
             with_vectors=False,
         )
         if not source or not source[0].payload:
-            logger.warning("Source file manifest not found, skipping copy: %s", source_path)
-            return
-        payload = source[0].payload
+            logger.warning(
+                "Source file manifest not found, rebuilding from chunks: %s", source_path
+            )
+            points, _ = self.qdrant.scroll(
+                collection_name=collection_name,
+                scroll_filter=metadata_exclusion_filter(
+                    Filter(
+                        should=[
+                            FieldCondition(key="file_path", match=MatchValue(value=source_path)),
+                            FieldCondition(key="file_paths", match=MatchValue(value=source_path)),
+                        ]
+                    )
+                ),
+                limit=1,
+                with_payload=["file_hash", "chunk_count", "file_size", "store_type"],
+                with_vectors=False,
+            )
+            if not points or not points[0].payload:
+                logger.warning("No chunks found for source manifest: %s", source_path)
+                return
+            payload = points[0].payload
+        else:
+            payload = source[0].payload
         self.upsert_file_manifest(
             collection_name,
             target_path,
@@ -621,7 +641,7 @@ class MetadataBasedSync:
         except Exception as e:
             logger.warning(f"Error querying indexed paths: {e}")
             if manifests_ready:
-                raise
+                raise FileManifestScanError(collection_name) from e
             return set()
 
     def get_chunk_counts_by_file(self, collection_name: str) -> Dict[str, int]:

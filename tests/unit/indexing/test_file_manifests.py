@@ -167,13 +167,20 @@ def test_ready_manifest_scan_failure_is_not_treated_as_empty_collection():
         MetadataBasedSync(qdrant)._get_indexed_quick_hashes("code")
 
 
-def test_copy_manifest_skips_missing_source_without_writing_partial_manifest():
+def test_copy_manifest_rebuilds_missing_source_from_existing_chunks():
     qdrant = MagicMock()
     qdrant.retrieve.return_value = []
+    qdrant.scroll.return_value = (
+        [SimpleNamespace(payload={"file_hash": "content", "chunk_count": 3})],
+        None,
+    )
+    qdrant.get_collection.return_value = _collection_info()
 
     MetadataBasedSync(qdrant).copy_file_manifest("code", "/old.py", "/new.py", "q")
 
-    qdrant.upsert.assert_not_called()
+    manifest = qdrant.upsert.call_args.kwargs["points"][0].payload
+    assert manifest["file_hash"] == "content"
+    assert manifest["chunk_count"] == 3
 
 
 def test_get_unindexed_files_propagates_ready_manifest_scan_failure(tmp_path):

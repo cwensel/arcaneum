@@ -230,7 +230,8 @@ def test_non_streaming_index_directory_still_counts_files(md_file):
 
 
 @pytest.mark.parametrize("streaming", [True, False])
-def test_force_reindex_empty_markdown_records_zero_chunk_manifest(tmp_path, streaming):
+@pytest.mark.parametrize("verbose", [True, False])
+def test_force_reindex_empty_markdown_records_zero_chunk_manifest(tmp_path, streaming, verbose):
     """An empty markdown file remains a successful no-chunk index operation."""
     markdown_file = tmp_path / "empty.md"
     markdown_file.write_text("", encoding="utf-8")
@@ -243,6 +244,7 @@ def test_force_reindex_empty_markdown_records_zero_chunk_manifest(tmp_path, stre
         model_config={"vector_name": None, "chunk_size": 512, "chunk_overlap": 50},
         force_reindex=True,
         file_list=[markdown_file],
+        verbose=verbose,
     )
 
     manifests = [point.payload for point in qdrant.upserted if point.payload.get("is_metadata")]
@@ -251,9 +253,8 @@ def test_force_reindex_empty_markdown_records_zero_chunk_manifest(tmp_path, stre
 
 
 def test_full_force_markdown_stamps_manifest_readiness(monkeypatch, md_file):
-    pipeline, _ = _make_pipeline(streaming=True)
+    pipeline, qdrant = _make_pipeline(streaming=True)
     pipeline.discovery.discover_files = Mock(return_value=[md_file])
-    pipeline._process_single_markdown = Mock(return_value=([], 0, None))
     stamp = Mock()
     monkeypatch.setattr("arcaneum.indexing.markdown.pipeline.stamp_file_manifests_ready", stamp)
 
@@ -265,6 +266,7 @@ def test_full_force_markdown_stamps_manifest_readiness(monkeypatch, md_file):
         force_reindex=True,
     )
 
+    assert any(point.payload.get("metadata_type") == "file_manifest" for point in qdrant.upserted)
     stamp.assert_called_once_with(pipeline.qdrant, "md")
 
 

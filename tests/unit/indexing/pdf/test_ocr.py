@@ -245,24 +245,20 @@ def test_full_force_pdf_zero_chunk_result_stamps_readiness(monkeypatch, tmp_path
     pdf_path = tmp_path / "empty.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n")
     qdrant = MagicMock()
-    qdrant.get_collection.return_value = MagicMock(points_count=0)
+    qdrant.scroll.return_value = ([], None)
+    qdrant.get_collection.return_value = MagicMock(
+        points_count=0,
+        payload_schema={},
+        config=MagicMock(params=MagicMock(vectors=MagicMock(size=3))),
+    )
     uploader = PDFBatchUploader(
         qdrant_client=qdrant,
         embedding_client=MagicMock(),
         file_workers=1,
+        ocr_enabled=False,
     )
-    uploader._process_single_pdf = MagicMock(
-        return_value=(
-            [],
-            0,
-            None,
-            {
-                "ocr_pages_processed": 0,
-                "ocr_pages_failed": 0,
-                "ocr_confidence": None,
-            },
-        )
-    )
+    uploader.extractor.extract = MagicMock(return_value=("", {}))
+    uploader._shared_embedding_client.embed_parallel.return_value = []
     stamp = MagicMock()
     monkeypatch.setattr("arcaneum.indexing.uploader.stamp_file_manifests_ready", stamp)
 
@@ -276,6 +272,13 @@ def test_full_force_pdf_zero_chunk_result_stamps_readiness(monkeypatch, tmp_path
 
     assert stats["errors"] == 0
     assert stats["files"] == 0
+    manifest_points = [
+        point
+        for call in qdrant.upsert.call_args_list
+        for point in call.kwargs["points"]
+        if point.payload.get("metadata_type") == "file_manifest"
+    ]
+    assert manifest_points[-1].payload["chunk_count"] == 0
     stamp.assert_called_once_with(qdrant, "docs")
 
 

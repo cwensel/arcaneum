@@ -562,7 +562,7 @@ class MarkdownIndexingPipeline:
                 print("All markdown files up to date")
             else:
                 print(f"{timestamp()} ✅ All markdown files are up to date")
-            if force_reindex and file_list is None:
+            if force_reindex and file_list is None and all_markdown_files:
                 stamp_file_manifests_ready(self.qdrant, collection_name)
             return {"files": 0, "chunks": 0, "errors": 0}
 
@@ -794,7 +794,7 @@ class MarkdownIndexingPipeline:
                 if stats["errors"] > 0:
                     print(f"{stats['errors']} error(s)")
 
-            if force_reindex and file_list is None and stats["errors"] == 0:
+            if force_reindex and file_list is None and all_markdown_files and stats["errors"] == 0:
                 stamp_file_manifests_ready(self.qdrant, collection_name)
             return stats
 

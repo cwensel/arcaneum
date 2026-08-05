@@ -63,7 +63,11 @@ def user_point_count(
     collection_name: str,
     collection_info: Optional[Any] = None,
 ) -> int:
-    """Return chunk points, excluding collection metadata and file manifests."""
+    """Return exact chunk points, excluding metadata and file manifests.
+
+    Qdrant's collection point count includes reserved manifest points, so an
+    exact filtered count is required when the manifest payload index exists.
+    """
     if collection_info is None:
         collection_info = client.get_collection(collection_name)
     total_points = collection_info.points_count

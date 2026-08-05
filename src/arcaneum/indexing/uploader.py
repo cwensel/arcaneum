@@ -736,7 +736,7 @@ class PDFBatchUploader:
                 print("All PDFs up to date")
             else:
                 print(f"{timestamp()} ✅ All PDFs are up to date")
-            if force_reindex and file_list is None:
+            if force_reindex and file_list is None and all_pdf_files:
                 stamp_file_manifests_ready(self.qdrant, collection_name)
             return {
                 "files": 0,
@@ -999,7 +999,7 @@ class PDFBatchUploader:
         del stats["ocr_confidence_sum"]
         del stats["ocr_pdf_count"]
 
-        if force_reindex and file_list is None and stats["errors"] == 0:
+        if force_reindex and file_list is None and all_pdf_files and stats["errors"] == 0:
             stamp_file_manifests_ready(self.qdrant, collection_name)
         return stats
 

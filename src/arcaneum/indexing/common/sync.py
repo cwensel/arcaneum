@@ -4,7 +4,7 @@ import logging
 import multiprocessing as mp
 import os
 from pathlib import Path
-from typing import Callable, Dict, List, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import xxhash
 from qdrant_client import QdrantClient
@@ -211,7 +211,11 @@ class MetadataBasedSync:
         """
         self.qdrant = qdrant_client
 
-    def _get_indexed_quick_hashes(self, collection_name: str) -> set:
+    def _get_indexed_quick_hashes(
+        self,
+        collection_name: str,
+        progress_callback: Optional[Callable[[int], None]] = None,
+    ) -> set:
         """Get all indexed (file_path, quick_hash) pairs for Pass 1 matching.
 
         Used during incremental sync to detect unchanged files without reindexing.
@@ -262,6 +266,9 @@ class MetadataBasedSync:
                             quick_hash = point.payload.get("quick_hash")
                             if path and quick_hash:
                                 indexed_pairs.add((path, quick_hash))
+
+                if progress_callback:
+                    progress_callback(total_chunks)
 
                 if offset is None:
                     break
@@ -361,7 +368,10 @@ class MetadataBasedSync:
             return {}
 
     def get_unindexed_files(
-        self, collection_name: str, file_list: List[Path]
+        self,
+        collection_name: str,
+        file_list: List[Path],
+        progress_callback: Optional[Callable[[int], None]] = None,
     ) -> Tuple[List[Path], List[Path]]:
         """Filter file list using fast metadata check to identify files needing processing.
 
@@ -403,7 +413,9 @@ class MetadataBasedSync:
             quick_hash_time = time.time() - pass1_start
 
             pass1_qdrant_start = time.time()
-            indexed_quick_hashes = self._get_indexed_quick_hashes(collection_name)
+            indexed_quick_hashes = self._get_indexed_quick_hashes(
+                collection_name, progress_callback=progress_callback
+            )
             pass1_qdrant_time = time.time() - pass1_qdrant_start
 
             # Categorize files

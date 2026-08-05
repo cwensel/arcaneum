@@ -2011,6 +2011,14 @@ def sync_directory_command(
         files_renamed = 0
         stale_cleaned = 0
 
+        metadata_scan_progress = None
+        if verbose and not output_json and not force:
+            print_info("Checking existing Qdrant metadata for unchanged files...")
+
+            def metadata_scan_progress(chunks_scanned: int) -> None:
+                if chunks_scanned == 1000 or chunks_scanned % 10000 == 0:
+                    print_info(f"  Scanned {chunks_scanned:,} existing Qdrant chunks...")
+
         if force:
             if not output_json:
                 print_info("Force mode: reindexing all files")
@@ -2179,7 +2187,9 @@ def sync_directory_command(
             truly_unchanged: List[Path] = []
             if unchanged_candidates:
                 modified_files, truly_unchanged = sync_manager.get_unindexed_files(
-                    corpus, unchanged_candidates
+                    corpus,
+                    unchanged_candidates,
+                    progress_callback=metadata_scan_progress,
                 )
 
             modified_file_set = {str(f.absolute()) for f in modified_files}
@@ -2216,7 +2226,9 @@ def sync_directory_command(
             # expensive re-extraction and re-embedding.
             sync_manager = MetadataBasedSync(qdrant)
             files_to_process, already_indexed_files = sync_manager.get_unindexed_files(
-                corpus, files
+                corpus,
+                files,
+                progress_callback=metadata_scan_progress,
             )
 
             candidate_new_paths = _filter_rename_candidate_paths(

@@ -149,3 +149,29 @@ def test_manifest_lifecycle_supports_markdown_and_pdf(tmp_path):
 
     assert manager.upsert_file_manifest.call_count == 2
     assert manager.delete_file_manifest.call_count == 2
+
+
+def test_zero_chunk_file_publishes_manifest(tmp_path):
+    source = tmp_path / "empty.md"
+    source.write_text("")
+    manager = Mock()
+
+    sync_module._upsert_file_manifest(
+        manager,
+        "Docs",
+        "markdown",
+        source,
+        "quick",
+        file_hash="content",
+        chunk_count=0,
+    )
+
+    manager.upsert_file_manifest.assert_called_once_with(
+        "Docs",
+        str(source),
+        "quick",
+        file_hash="content",
+        chunk_count=0,
+        file_size=0,
+        store_type="markdown",
+    )

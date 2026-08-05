@@ -2739,6 +2739,15 @@ def sync_directory_command(
                                 continue
 
                             if not chunks:
+                                _upsert_file_manifest(
+                                    manifest_sync_manager,
+                                    corpus,
+                                    corpus_type,
+                                    file_path,
+                                    compute_quick_hash(file_path),
+                                    file_hash=compute_file_hash(file_path),
+                                    chunk_count=0,
+                                )
                                 if verbose and not output_json:
                                     progress.console.print(
                                         f"[yellow]  No text extracted from {file_path.name}[/yellow]"
@@ -2979,17 +2988,6 @@ def sync_directory_command(
                                     progress.console.print(
                                         f"[green]  ✓ {file_path.name} — {len(chunks)} chunks, {format_size(embedded_size)} embedded[/green]"
                                     )
-                            else:
-                                _upsert_file_manifest(
-                                    manifest_sync_manager,
-                                    corpus,
-                                    corpus_type,
-                                    file_path,
-                                    quick_hash,
-                                    file_hash=file_hash,
-                                    chunk_count=0,
-                                )
-
                             total_indexed += 1
 
                             # Periodically collect parent-owned Python objects.
@@ -3242,6 +3240,7 @@ def sync_directory_command(
                                 file_hash=compute_file_hash(file_path),
                                 chunk_count=0,
                             )
+                            qdrant_backfilled += 1
                             progress.advance(backfill_task)
                             continue
 

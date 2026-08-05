@@ -108,6 +108,7 @@ def _empty_result(manifest_path: Path, model: str, reason: str) -> dict[str, Any
             "failures": 1,
             "fallbacks": 0,
             "restarts": 0,
+            "oom_retries": None,
         },
         "correctness": {
             "reference_backend": "pytorch-cpu-worker",
@@ -132,6 +133,32 @@ def _empty_result(manifest_path: Path, model: str, reason: str) -> dict[str, Any
                 "validated": True,
             },
         },
+    }
+
+
+def _qualification_decision(
+    *, speedup: float, soak_batches: int, soak_target: int, numerical_pass: bool, oom_retries: int
+) -> str:
+    """Promote only a clean run; recovered OOMs are reliability failures."""
+    return (
+        "qualified"
+        if speedup >= 1.25
+        and soak_batches >= soak_target
+        and numerical_pass
+        and oom_retries == 0
+        else "experimental"
+    )
+
+
+def _completed_reliability(*, attempted_batches: int, oom_retries: int) -> dict[str, int]:
+    """Account for completed logical batches and failed recovered native attempts."""
+    return {
+        "attempted_batches": attempted_batches,
+        "completed_batches": attempted_batches,
+        "failures": oom_retries,
+        "fallbacks": 0,
+        "restarts": 0,
+        "oom_retries": oom_retries,
     }
 
 
@@ -176,16 +203,18 @@ def run_mps_qualification(
             cpu_latencies.append(time.perf_counter() - tick)
         cpu.shutdown()
         actual = mps.encode(texts, timeout=timeout, batch_size=batch_size)
+        oom_retries = int(mps.health(timeout=5)["backend"].get("oom_retries", 0))
         latencies = []
         driver_peak = 0
         for _ in range(iterations + soak_batches):
             tick = time.perf_counter()
             actual = mps.encode(texts, timeout=timeout, batch_size=batch_size)
             latencies.append(time.perf_counter() - tick)
+            backend_health = mps.health(timeout=5)["backend"]
             driver_peak = max(
-                driver_peak,
-                int(mps.health(timeout=5)["backend"].get("mps_driver_allocated_bytes", 0)),
+                driver_peak, int(backend_health.get("mps_driver_allocated_bytes", 0))
             )
+            oom_retries = max(oom_retries, int(backend_health.get("oom_retries", 0)))
             peak_rss = max(peak_rss, process.memory_info().rss)
         mps.shutdown()
     except Exception as exc:
@@ -201,10 +230,12 @@ def run_mps_qualification(
     speedup = (sum(cpu_latencies) / len(cpu_latencies)) / (sum(warm) / len(warm))
     passed = bool(np.isfinite(actual).all() and cosine.min() >= 0.999)
     soak_target = 10000
-    decision = (
-        "qualified"
-        if speedup >= 1.25 and soak_batches >= soak_target and passed
-        else "experimental"
+    decision = _qualification_decision(
+        speedup=speedup,
+        soak_batches=soak_batches,
+        soak_target=soak_target,
+        numerical_pass=passed,
+        oom_retries=oom_retries,
     )
     result = _empty_result(manifest_path, model, "qualification gates evaluated")
     result["run"]["status"] = "completed"
@@ -223,13 +254,9 @@ def run_mps_qualification(
             "speedup_over_cpu": speedup,
         }
     )
-    result["reliability"] = {
-        "attempted_batches": iterations + soak_batches + 1,
-        "completed_batches": iterations + soak_batches + 1,
-        "failures": 0,
-        "fallbacks": 0,
-        "restarts": 0,
-    }
+    result["reliability"] = _completed_reliability(
+        attempted_batches=iterations + soak_batches + 1, oom_retries=oom_retries
+    )
     result["correctness"] = {
         "reference_backend": "pytorch-cpu-worker",
         "shape": list(actual.shape),
@@ -243,8 +270,13 @@ def run_mps_qualification(
         {
             "decision": decision,
             "reason": (
-                f"speedup={speedup:.3f}; soak={soak_batches}/{soak_target}; numerical_pass={passed}"
+                f"speedup={speedup:.3f}; soak={soak_batches}/{soak_target}; "
+                f"numerical_pass={passed}; oom_retries={oom_retries}"
             ),
+            "failure_policy": {
+                "promotion_requires_zero_failures": True,
+                "promotion_requires_zero_oom_retries": True,
+            },
         }
     )
     return result

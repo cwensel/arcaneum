@@ -6,15 +6,207 @@
   "required": ["schema_version", "harness_version", "run", "environment", "backend", "fixture", "performance", "reliability", "correctness"],
   "properties": {
     "schema_version": {"const": "1.0.0"},
-    "harness_version": {"type": "string"},
-    "run": {"type": "object", "required": ["id", "recorded_at", "status"]},
-    "environment": {"type": "object", "required": ["os", "os_release", "architecture", "python", "cpu", "logical_cpu_count", "memory_bytes", "dependencies"]},
-    "backend": {"type": "object", "required": ["name", "device", "model", "precision", "dimensions"]},
-    "fixture": {"type": "object", "required": ["manifest_version", "manifest_sha256", "length_classes", "unique_texts", "total_texts"]},
-    "performance": {"type": "object", "required": ["cold_start_seconds", "warm_total_seconds", "warm_iterations", "throughput_texts_per_second", "latency_seconds", "peak_rss_bytes"]},
-    "reliability": {"type": "object", "required": ["attempted_batches", "completed_batches", "failures", "fallbacks", "restarts"]},
-    "correctness": {"type": "object", "required": ["reference_backend", "shape", "finite", "max_absolute_error", "mean_absolute_error", "minimum_cosine_similarity", "passed"]},
-    "qualification": {"type": "object", "required": ["decision", "reason", "speedup_gate", "soak_target_batches"]}
+    "harness_version": {"type": "string", "minLength": 1},
+    "run": {
+      "type": "object",
+      "required": ["id", "recorded_at", "status"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "recorded_at": {"type": "string", "format": "date-time"},
+        "status": {"enum": ["completed", "inconclusive", "example"]}
+      },
+      "additionalProperties": false
+    },
+    "environment": {
+      "type": "object",
+      "required": ["os", "os_release", "architecture", "python", "cpu", "logical_cpu_count", "memory_bytes", "dependencies"],
+      "properties": {
+        "os": {"type": "string", "minLength": 1},
+        "os_release": {"type": "string", "minLength": 1},
+        "architecture": {"type": "string", "minLength": 1},
+        "python": {"type": "string", "minLength": 1},
+        "cpu": {"type": "string", "minLength": 1},
+        "logical_cpu_count": {"type": ["integer", "null"], "minimum": 1},
+        "memory_bytes": {"type": "integer", "minimum": 1},
+        "chip": {"type": "string", "minLength": 1},
+        "model_name": {"type": "string", "minLength": 1},
+        "model_identifier": {"type": "string", "minLength": 1},
+        "nvidia_smi": {"type": ["object", "string", "null"]},
+        "dependencies": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "oneOf": [
+              {"type": "string", "minLength": 1},
+              {
+                "type": "object",
+                "required": ["installed", "version"],
+                "properties": {
+                  "installed": {"type": "boolean"},
+                  "version": {"type": ["string", "null"], "minLength": 1}
+                },
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "backend": {
+      "type": "object",
+      "required": ["name", "device", "model", "precision", "dimensions"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "device": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1},
+        "precision": {"type": "string", "minLength": 1},
+        "dimensions": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "fixture": {
+      "type": "object",
+      "required": ["manifest_version", "manifest_sha256", "length_classes", "unique_texts", "total_texts"],
+      "properties": {
+        "manifest_version": {"type": "string", "minLength": 1},
+        "manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "length_classes": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "unique_texts": {"type": "integer", "minimum": 1},
+        "total_texts": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "performance": {
+      "type": "object",
+      "required": ["cold_start_seconds", "warm_total_seconds", "warm_iterations", "throughput_texts_per_second", "latency_seconds", "peak_rss_bytes"],
+      "properties": {
+        "cold_start_seconds": {"type": "number", "minimum": 0},
+        "warm_total_seconds": {"type": "number", "minimum": 0},
+        "warm_iterations": {"type": "integer", "minimum": 0},
+        "throughput_texts_per_second": {"type": "number", "minimum": 0},
+        "peak_rss_bytes": {"type": "integer", "minimum": 0},
+        "latency_seconds": {
+          "type": "object",
+          "required": ["samples", "p50", "p95"],
+          "properties": {
+            "samples": {"type": "array", "items": {"type": "number", "minimum": 0}},
+            "p50": {"type": "number", "minimum": 0},
+            "p95": {"type": "number", "minimum": 0}
+          },
+          "additionalProperties": false
+        },
+        "mps_peak_driver_allocated_bytes": {"type": ["integer", "null"], "minimum": 0},
+        "cuda_peak_allocated_bytes": {"type": ["integer", "null"], "minimum": 0},
+        "cuda_peak_reserved_bytes": {"type": ["integer", "null"], "minimum": 0},
+        "cpu_cold_start_seconds": {"type": "number", "minimum": 0},
+        "cpu_warm_seconds": {"type": "number", "minimum": 0},
+        "cpu_throughput_texts_per_second": {"type": "number", "minimum": 0},
+        "speedup_over_cpu": {"type": "number", "minimum": 0},
+        "compiled_cache_reused": {"type": "boolean"},
+        "compiled_cache_entries_created": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "reliability": {
+      "type": "object",
+      "required": ["attempted_batches", "completed_batches", "failures", "fallbacks", "restarts"],
+      "properties": {
+        "attempted_batches": {"type": "integer", "minimum": 0},
+        "completed_batches": {"type": "integer", "minimum": 0},
+        "failures": {"type": "integer", "minimum": 0},
+        "fallbacks": {"type": "integer", "minimum": 0},
+        "restarts": {"type": "integer", "minimum": 0},
+        "oom_retries": {"type": ["integer", "null"], "minimum": 0},
+        "completed_soak_texts": {"type": "integer", "minimum": 0},
+        "soak_seconds": {"type": "number", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "correctness": {
+      "type": "object",
+      "required": ["reference_backend", "shape", "finite", "max_absolute_error", "mean_absolute_error", "minimum_cosine_similarity", "passed"],
+      "properties": {
+        "reference_backend": {"type": "string", "minLength": 1},
+        "shape": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "integer", "minimum": 0}},
+        "finite": {"type": "boolean"},
+        "max_absolute_error": {"type": "number", "minimum": 0},
+        "mean_absolute_error": {"type": "number", "minimum": 0},
+        "minimum_cosine_similarity": {"type": "number", "minimum": -1, "maximum": 1},
+        "passed": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "qualification": {
+      "type": "object",
+      "required": ["decision", "reason", "speedup_gate", "soak_target_batches"],
+      "properties": {
+        "decision": {"enum": ["qualified", "experimental", "defer", "rejected"]},
+        "reason": {"type": "string", "minLength": 1},
+        "speedup_gate": {"type": "number", "minimum": 1},
+        "soak_target_batches": {"type": ["integer", "null"], "minimum": 0},
+        "soak_target_texts": {"type": "integer", "minimum": 0},
+        "soak_target_seconds": {"type": "number", "minimum": 0},
+        "exact_rerun": {"type": "string", "minLength": 1},
+        "static_shape_scope": {"type": "string", "minLength": 1},
+        "provider_placement": {"type": "string", "minLength": 1},
+        "providers_reported": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "buckets_used": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+        "runnable_models": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "network_access": {"type": "string", "minLength": 1},
+        "provider_options": {"type": "object", "additionalProperties": {"type": "string"}},
+        "watermarks": {"type": "object", "required": ["low", "high"], "properties": {"low": {"type": "string"}, "high": {"type": "string"}}, "additionalProperties": false},
+        "containment_evidence": {"type": "object", "additionalProperties": {"type": ["string", "boolean"]}},
+        "failure_policy": {"type": "object", "additionalProperties": {"type": ["integer", "boolean"]}},
+        "token_budget": {"type": "object", "additionalProperties": {"type": ["integer", "string"]}},
+        "inventory": {
+          "type": "object",
+          "required": ["cache_root", "packages", "models"],
+          "properties": {
+            "cache_root": {"type": "string", "minLength": 1},
+            "packages": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "type": "object",
+                "required": ["installed", "version"],
+                "properties": {
+                  "installed": {"type": "boolean"},
+                  "version": {"type": ["string", "null"], "minLength": 1}
+                },
+                "additionalProperties": false
+              }
+            },
+            "models": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["alias", "repository", "revision", "architecture", "tokenizer", "pooling", "prompt_policy", "source_precision", "dimensions", "conversion_assessment", "source_snapshot_cached", "converted_mlx_assets", "ready_for_offline_probe"],
+                "properties": {
+                  "alias": {"type": "string", "minLength": 1},
+                  "repository": {"type": "string", "minLength": 1},
+                  "revision": {"type": "string", "minLength": 1},
+                  "architecture": {"type": "string", "minLength": 1},
+                  "tokenizer": {"type": "string", "minLength": 1},
+                  "pooling": {"type": "string", "minLength": 1},
+                  "prompt_policy": {"type": "string", "minLength": 1},
+                  "source_precision": {"type": "string", "minLength": 1},
+                  "dimensions": {"type": "integer", "minimum": 1},
+                  "conversion_assessment": {"type": "string", "minLength": 1},
+                  "source_snapshot_cached": {"type": "boolean"},
+                  "converted_mlx_assets": {"type": "array", "items": {"type": "string", "minLength": 1}},
+                  "ready_for_offline_probe": {"type": "boolean"}
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }

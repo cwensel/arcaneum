@@ -82,7 +82,8 @@
     "completed_batches": 0,
     "failures": 1,
     "fallbacks": 0,
-    "restarts": 0
+    "restarts": 0,
+    "oom_retries": null
   },
   "run": {
     "id": "20260804T225912Z-mps",

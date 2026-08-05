@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator, FormatChecker
 
 from arcaneum.benchmarks.accelerator import (
     SCHEMA_VERSION,
@@ -54,6 +55,28 @@ def test_reference_cpu_result_covers_schema_and_is_correct():
     }
     assert result["correctness"]["passed"] is True
     assert "Warm throughput:" in render_summary(result)
+
+
+def test_schema_is_valid_and_accepts_every_checked_in_result():
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    Draft202012Validator.check_schema(schema)
+    validator = Draft202012Validator(schema, format_checker=FormatChecker())
+
+    result_paths = sorted((ROOT / "benchmarks" / "results").glob("*.json"))
+    assert result_paths
+    for path in result_paths:
+        result = json.loads(path.read_text(encoding="utf-8"))
+        errors = sorted(validator.iter_errors(result), key=lambda error: list(error.path))
+        assert not errors, f"{path.name}: " + "; ".join(error.message for error in errors)
+
+
+def test_schema_rejects_invalid_nested_result_data():
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    validator = Draft202012Validator(schema, format_checker=FormatChecker())
+    result = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+    result["reliability"]["failures"] = -1
+
+    assert list(validator.iter_errors(result))
 
 
 def test_example_accelerator_result_is_comparable():

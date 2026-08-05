@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 
 from arcaneum.embeddings.client import EmbeddingClient
 from arcaneum.embeddings.worker_protocol import WorkerTimeoutError
@@ -49,7 +50,7 @@ def test_persistent_worker_is_reused_and_prompt_is_applied_in_parent():
 def test_timeout_reaps_worker_before_cpu_fallback():
     value = client()
     events = []
-    worker = MagicMock(is_alive=True)
+    worker = MagicMock(is_alive=False)
     worker.encode.side_effect = WorkerTimeoutError("hung")
     worker.shutdown.side_effect = lambda: events.append("reaped")
     value._accelerator_workers["jina-code-st"] = worker
@@ -58,8 +59,8 @@ def test_timeout_reaps_worker_before_cpu_fallback():
 
     with patch.object(value, "_get_cpu_fallback_model", return_value=cpu_model):
         with patch.object(value, "_encode_on_cpu_fallback") as fallback:
-            fallback.side_effect = lambda *args: events.append("cpu") or np.ones(
-                (1, 768), dtype=np.float32
+            fallback.side_effect = lambda *args: (
+                events.append("cpu") or np.ones((1, 768), dtype=np.float32)
             )
             result = value._encode_with_oom_recovery(
                 value.get_model("jina-code-st"),
@@ -78,7 +79,7 @@ def test_timeout_reaps_worker_before_cpu_fallback():
 
 def test_timeout_poison_is_sticky_and_next_encode_stays_on_cpu():
     value = client()
-    worker = MagicMock(is_alive=True)
+    worker = MagicMock(is_alive=False)
     worker.encode.side_effect = WorkerTimeoutError("hung")
     value._accelerator_workers["jina-code-st"] = worker
     cpu_model = SimpleNamespace(_backend="sentence-transformers")
@@ -101,7 +102,7 @@ def test_timeout_poison_is_sticky_and_next_encode_stays_on_cpu():
 
 def test_close_reaps_all_workers_and_is_idempotent():
     value = client()
-    worker = MagicMock(is_alive=True)
+    worker = MagicMock(is_alive=False)
     value._accelerator_workers["jina-code-st"] = worker
 
     value.close()
@@ -109,3 +110,21 @@ def test_close_reaps_all_workers_and_is_idempotent():
 
     worker.shutdown.assert_called_once_with()
     assert value._accelerator_workers == {}
+
+
+def test_close_attempts_all_workers_and_retains_uncontained_worker():
+    value = client()
+    failed = MagicMock(is_alive=True)
+    failed.shutdown.side_effect = RuntimeError("not contained")
+    healthy = MagicMock(is_alive=False)
+    value._accelerator_workers = {"failed": failed, "healthy": healthy}
+
+    with pytest.raises(RuntimeError, match="not contained"):
+        value.close()
+
+    failed.shutdown.assert_called_once_with()
+    healthy.shutdown.assert_called_once_with()
+    assert value._accelerator_workers == {"failed": failed}
+    failed.shutdown.side_effect = None
+    failed.is_alive = False
+    value.close()

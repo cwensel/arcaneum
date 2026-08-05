@@ -949,9 +949,19 @@ class EmbeddingClient:
 
     def close(self) -> None:
         """Shut down and reap every accelerator child; safe to call repeatedly."""
-        for worker in list(self._accelerator_workers.values()):
-            worker.shutdown()
-        self._accelerator_workers.clear()
+        first_error: BaseException | None = None
+        workers = list(self._accelerator_workers.items())
+        for model_name, worker in workers:
+            try:
+                worker.shutdown()
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+            finally:
+                if not worker.is_alive:
+                    self._accelerator_workers.pop(model_name, None)
+        if first_error is not None:
+            raise first_error
 
     def __enter__(self) -> "EmbeddingClient":
         return self
@@ -1618,6 +1628,24 @@ class EmbeddingClient:
                 return []
             max_batch = min(batch_size, 100)
             max_sequence = int(model_config.get("max_seq_length", 512))
+            backend_model = model.model
+            if getattr(backend_model, "tokenizer", None) is None:
+                backend_model.load_onnx_model()
+            tokenizer = backend_model.tokenizer
+
+            def count_tokens(text: str) -> int:
+                encoding = tokenizer.encode(text, add_special_tokens=True)
+                return sum(encoding.attention_mask)
+
+            def truncate_tokens(text: str, limit: int) -> str:
+                encoding = tokenizer.encode(text, add_special_tokens=False)
+                token_ids = list(encoding.ids[: max(0, limit - 2)])
+                candidate = tokenizer.decode(token_ids, skip_special_tokens=True)
+                while token_ids and count_tokens(candidate) > limit:
+                    token_ids.pop()
+                    candidate = tokenizer.decode(token_ids, skip_special_tokens=True)
+                return candidate
+
             budget = BatchBudget(
                 max_actual_tokens=max_sequence * max_batch,
                 max_padded_tokens=max_sequence * max_batch,
@@ -1628,8 +1656,8 @@ class EmbeddingClient:
             batches = schedule_batches(
                 texts,
                 budget=budget,
-                count_tokens=lambda text: max(1, (len(text.encode("utf-8")) + 3) // 4),
-                truncate=lambda text, limit: text[:limit],
+                count_tokens=count_tokens,
+                truncate=truncate_tokens,
             )
             collector = BatchResultCollector(len(texts))
             for scheduled in batches:
@@ -1695,30 +1723,14 @@ class EmbeddingClient:
             token_budget = int(
                 model_config.get("accelerator_token_budget", max_sequence * internal_batch_size)
             )
-            budget = BatchBudget(
-                max_actual_tokens=token_budget,
-                max_padded_tokens=token_budget,
-                max_sequence_tokens=max_sequence,
-                max_batch_size=internal_batch_size,
-                oversize_policy=OversizePolicy.TRUNCATE,
-            )
-            batches = schedule_batches(
+            result = worker.encode(
                 texts,
-                budget=budget,
-                count_tokens=lambda text: max(1, (len(text.encode("utf-8")) + 3) // 4),
-                truncate=lambda text, limit: text[:limit],
+                timeout=encode_timeout,
+                batch_size=internal_batch_size,
+                max_sequence_tokens=max_sequence,
+                token_budget=token_budget,
+                **_sentence_transformer_encode_kwargs(model_name, prompt_type),
             )
-            collector = BatchResultCollector(len(texts))
-            encode_policy = _sentence_transformer_encode_kwargs(model_name, prompt_type)
-            for scheduled in batches:
-                rows = worker.encode(
-                    scheduled.texts,
-                    timeout=encode_timeout,
-                    batch_size=len(scheduled.items),
-                    **encode_policy,
-                )
-                collector.add(scheduled, rows)
-            result = collector.finalize()
             if not self._validate_embeddings(result, len(texts), model_name):
                 # Malformed/corrupt native output invalidates this worker just as a
                 # crash does. Reap it before constructing any CPU model.

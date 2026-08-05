@@ -50,6 +50,10 @@ class WorkerCrashedError(RuntimeError):
     """The worker exited before replying."""
 
 
+class WorkerContainmentError(RuntimeError):
+    """The worker survived terminate and kill; its ownership handle is retained."""
+
+
 class WorkerBackend(Protocol):
     def encode(self, texts: list[str], **options: Any) -> np.ndarray: ...
 
@@ -210,6 +214,7 @@ class AcceleratorWorkerSession:
         self._process: BaseProcess | None = None
         self._in_flight = False
         self._request_lock = threading.RLock()
+        self._queues_closed = False
 
     @property
     def pid(self) -> int | None:
@@ -224,6 +229,7 @@ class AcceleratorWorkerSession:
             raise RuntimeError("worker session has already been started")
         self._commands = self._context.Queue(maxsize=self.config.queue_size)
         self._replies = self._context.Queue(maxsize=self.config.queue_size)
+        self._queues_closed = False
         self._process = self._context.Process(
             target=_worker_main,
             args=(self._commands, self._replies, self.config),
@@ -323,14 +329,32 @@ class AcceleratorWorkerSession:
             if process.is_alive():
                 process.kill()
                 process.join(timeout=2.0)
+            if process.is_alive():
+                self._close_queues(forced=True)
+                raise WorkerContainmentError(
+                    f"accelerator worker pid={process.pid} survived terminate and kill"
+                )
             process.close()
-        for channel in (self._commands, self._replies):
-            if channel is not None:
-                channel.close()
-                channel.join_thread()
+        self._close_queues(forced=not graceful)
         self._process = None
         self._commands = None
         self._replies = None
+
+    def _close_queues(self, *, forced: bool) -> None:
+        """Close queue endpoints without waiting on feeders after forced teardown."""
+        if self._queues_closed:
+            return
+        for channel in (self._commands, self._replies):
+            if channel is not None:
+                try:
+                    if forced:
+                        channel.cancel_join_thread()
+                    channel.close()
+                    if not forced:
+                        channel.join_thread()
+                except (OSError, ValueError):
+                    pass
+        self._queues_closed = True
 
     def __enter__(self) -> "AcceleratorWorkerSession":
         return self.start()

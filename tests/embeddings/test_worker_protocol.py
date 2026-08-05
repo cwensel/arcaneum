@@ -1,6 +1,7 @@
 import multiprocessing as mp
 import time
 from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -8,6 +9,7 @@ import pytest
 from arcaneum.embeddings.worker_protocol import (
     AcceleratorWorkerSession,
     WorkerConfig,
+    WorkerContainmentError,
     WorkerCrashedError,
     WorkerProtocolError,
     WorkerTimeoutError,
@@ -127,3 +129,49 @@ def test_concurrent_callers_are_serialized_without_crossed_replies():
             results = list(pool.map(lambda value: worker.encode(value, timeout=2), inputs))
         assert [row[0, 0] for row in results] == [len(value[0]) for value in inputs]
         assert worker.health(timeout=2)["backend"]["encodes"] == len(inputs)
+
+
+def test_unkillable_process_retains_handle_and_never_closes_it():
+    worker = session()
+    process = MagicMock()
+    process.is_alive.return_value = True
+    process.pid = 42
+    commands, replies = MagicMock(), MagicMock()
+    worker._process, worker._commands, worker._replies = process, commands, replies
+
+    with pytest.raises(WorkerContainmentError, match="survived terminate and kill"):
+        worker._reap()
+
+    process.terminate.assert_called_once_with()
+    process.kill.assert_called_once_with()
+    process.close.assert_not_called()
+    assert worker._process is process
+    for channel in (commands, replies):
+        channel.cancel_join_thread.assert_called_once_with()
+        channel.close.assert_called_once_with()
+        channel.join_thread.assert_not_called()
+
+
+def test_forced_reap_does_not_join_blocked_queue_feeders():
+    worker = session()
+    process = MagicMock()
+    process.is_alive.side_effect = [True, False, False]
+    commands, replies = MagicMock(), MagicMock()
+    worker._process, worker._commands, worker._replies = process, commands, replies
+
+    worker._reap()
+
+    for channel in (commands, replies):
+        channel.cancel_join_thread.assert_called_once_with()
+        channel.join_thread.assert_not_called()
+
+
+def test_repeated_timeouts_and_crashes_leave_no_children():
+    for _ in range(2):
+        timed = session(delay=0.2).start()
+        with pytest.raises(WorkerTimeoutError):
+            timed.encode(["slow"], timeout=0.01)
+        crashed = session(crash=True).start()
+        with pytest.raises(WorkerCrashedError):
+            crashed.encode(["boom"], timeout=1)
+    assert not [child for child in mp.active_children() if child.name == "arcaneum-accelerator"]

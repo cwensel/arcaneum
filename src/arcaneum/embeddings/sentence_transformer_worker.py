@@ -14,6 +14,13 @@ from typing import Any
 
 import numpy as np
 
+from arcaneum.embeddings.batch_scheduler import (
+    BatchBudget,
+    BatchResultCollector,
+    OversizePolicy,
+    schedule_batches,
+)
+
 
 class SentenceTransformerAcceleratorBackend:
     def __init__(self, config: dict[str, Any]) -> None:
@@ -107,9 +114,43 @@ class SentenceTransformerAcceleratorBackend:
 
     def encode(self, texts: list[str], **options: Any) -> np.ndarray:
         batch_size = max(1, int(options.get("batch_size", 1)))
+        max_sequence = int(options.get("max_sequence_tokens", self.model.max_seq_length))
+        token_budget = int(options.get("token_budget", max_sequence * batch_size))
         policy = {
             key: options[key] for key in ("task", "prompt_name") if options.get(key) is not None
         }
+        tokenizer = self.model.tokenizer
+
+        def count_tokens(text: str) -> int:
+            return len(tokenizer.encode(text, add_special_tokens=True))
+
+        def truncate(text: str, limit: int) -> str:
+            token_ids = tokenizer.encode(text, add_special_tokens=False)[: max(0, limit - 2)]
+            candidate = tokenizer.decode(token_ids, skip_special_tokens=True)
+            while token_ids and count_tokens(candidate) > limit:
+                token_ids.pop()
+                candidate = tokenizer.decode(token_ids, skip_special_tokens=True)
+            return candidate
+
+        budget = BatchBudget(
+            max_actual_tokens=token_budget,
+            max_padded_tokens=token_budget,
+            max_sequence_tokens=max_sequence,
+            max_batch_size=batch_size,
+            oversize_policy=OversizePolicy.TRUNCATE,
+        )
+        batches = schedule_batches(
+            texts, budget=budget, count_tokens=count_tokens, truncate=truncate
+        )
+        collector = BatchResultCollector(len(texts))
+        for batch in batches:
+            collector.add(batch, self._encode_scheduled_batch(batch.texts, batch_size, policy))
+        self._encodes += 1
+        return collector.finalize()
+
+    def _encode_scheduled_batch(
+        self, texts: list[str], batch_size: int, policy: dict[str, Any]
+    ) -> np.ndarray:
         oom_markers = (
             "enough space",
             "mpsgraph",
@@ -123,9 +164,7 @@ class SentenceTransformerAcceleratorBackend:
         last_error: BaseException | None = None
         for index, attempt_size in enumerate(attempts):
             try:
-                result = self._encode_once(texts, attempt_size, **policy)
-                self._encodes += 1
-                return result
+                return self._encode_once(texts, attempt_size, **policy)
             except BaseException as exc:
                 last_error = exc
                 if not any(marker in str(exc).lower() for marker in oom_markers):

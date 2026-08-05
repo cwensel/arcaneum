@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import numpy as np
 
@@ -25,9 +26,7 @@ def test_inconclusive_cuda_result_has_zero_measurements_and_exact_reason():
 
     assert set(schema["required"]) <= result.keys()
     assert result["schema_version"] == schema["properties"]["schema_version"]["const"]
-    assert set(schema["properties"]["qualification"]["required"]) <= result[
-        "qualification"
-    ].keys()
+    assert set(schema["properties"]["qualification"]["required"]) <= result["qualification"].keys()
     assert result["run"]["status"] == "inconclusive"
     assert result["qualification"]["decision"] == "experimental"
     assert result["qualification"]["reason"] == reason
@@ -57,6 +56,8 @@ def test_cuda_oom_retry_is_bounded_to_two_retries():
     backend._encodes = 0
     backend._oom_retries = 0
     backend._clear = lambda: None
+    backend.model = MagicMock(max_seq_length=512)
+    backend.model.tokenizer.encode.return_value = [1, 2]
     attempts = []
 
     def fail(_texts, batch_size):

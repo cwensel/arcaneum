@@ -1,4 +1,6 @@
-from arcaneum.cli.sync import _report_embedding_backend
+import pytest
+
+from arcaneum.cli.sync import _finalize_embedding_clients, _report_embedding_backend
 
 
 class Client:
@@ -28,3 +30,18 @@ def test_json_mode_suppresses_human_diagnostics(monkeypatch):
     monkeypatch.setattr("arcaneum.cli.sync.console.print", lines.append)
     _report_embedding_backend(Client(), ["arctic-m"], True, True)
     assert lines == []
+
+
+def test_cleanup_attempts_every_close_when_diagnostics_and_close_fail(monkeypatch):
+    first = Client()
+    second = Client()
+    first.close = lambda: (_ for _ in ()).throw(RuntimeError("close failed"))
+    second.closed = False
+    second.close = lambda: setattr(second, "closed", True)
+    monkeypatch.setattr(
+        "arcaneum.cli.sync._report_embedding_backend",
+        lambda client, *args: (_ for _ in ()).throw(ValueError("diagnostic failed")),
+    )
+    with pytest.raises(ValueError, match="diagnostic failed"):
+        _finalize_embedding_clients([first, second], ["model"], True, False)
+    assert second.closed

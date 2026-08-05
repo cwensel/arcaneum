@@ -189,6 +189,22 @@ def _report_embedding_backend(embedding_client, model_names, verbose, output_jso
         console.print(f"[dim]{detail}[/dim]")
 
 
+def _finalize_embedding_clients(clients, model_names, verbose, output_json):
+    """Report and close every client; one diagnostic/close error cannot skip another."""
+    first_error = None
+    for client in clients:
+        try:
+            _report_embedding_backend(client, model_names, verbose, output_json)
+        except BaseException as exc:
+            first_error = first_error or exc
+        try:
+            client.close()
+        except BaseException as exc:
+            first_error = first_error or exc
+    if first_error is not None:
+        raise first_error
+
+
 logger = logging.getLogger(__name__)
 MEILI_RENAME_UPDATE_TIMEOUT_MS = 300000
 
@@ -3371,11 +3387,9 @@ def sync_directory_command(
         print_error(f"Failed to sync directory: {e}", output_json)
         sys.exit(1)
     finally:
-        for owned_client in embedding_clients:
-            _report_embedding_backend(
-                owned_client, locals().get("model_list", []), verbose, output_json
-            )
-            owned_client.close()
+        _finalize_embedding_clients(
+            embedding_clients, locals().get("model_list", []), verbose, output_json
+        )
 
 
 def _fetch_chunks_for_files_bulk(
@@ -5238,10 +5252,9 @@ def _parity_single_corpus(
         raise
     finally:
         if embedding_client is not None:
-            _report_embedding_backend(
-                embedding_client, locals().get("model_list", []), verbose, output_json
+            _finalize_embedding_clients(
+                [embedding_client], locals().get("model_list", []), verbose, output_json
             )
-            embedding_client.close()
 
 
 def parity_command(

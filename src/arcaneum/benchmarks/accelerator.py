@@ -18,21 +18,16 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import psutil
-from jsonschema import Draft202012Validator, FormatChecker
 
 SCHEMA_VERSION = "1.0.0"
 HARNESS_VERSION = "1.0.0"
-RESULT_SCHEMA_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "benchmarks"
-    / "schema"
-    / "accelerator-result-v1.schema.json"
-)
+RESULT_SCHEMA_RESOURCE = "schemas/accelerator-result-v1.schema.json"
 
 
 @dataclass(frozen=True)
@@ -46,13 +41,31 @@ class Fixture:
 @lru_cache(maxsize=1)
 def load_result_schema() -> dict[str, Any]:
     """Load and meta-validate the canonical Draft 2020-12 result schema."""
-    schema = json.loads(RESULT_SCHEMA_PATH.read_text(encoding="utf-8"))
+    schema = json.loads(
+        resources.files("arcaneum.benchmarks")
+        .joinpath(RESULT_SCHEMA_RESOURCE)
+        .read_text(encoding="utf-8")
+    )
+    Draft202012Validator, _ = _jsonschema_types()
     Draft202012Validator.check_schema(schema)
     return schema
 
 
 @lru_cache(maxsize=1)
-def _result_validator() -> Draft202012Validator:
+def _jsonschema_types() -> tuple[Any, Any]:
+    try:
+        from jsonschema import Draft202012Validator, FormatChecker
+    except ImportError as exc:  # pragma: no cover - exercised in an isolated subprocess
+        raise RuntimeError(
+            "Accelerator result validation requires the benchmark dependencies; "
+            "install arcaneum[benchmarks] or run 'uv sync --extra benchmarks'."
+        ) from exc
+    return Draft202012Validator, FormatChecker
+
+
+@lru_cache(maxsize=1)
+def _result_validator() -> Any:
+    Draft202012Validator, FormatChecker = _jsonschema_types()
     return Draft202012Validator(load_result_schema(), format_checker=FormatChecker())
 
 

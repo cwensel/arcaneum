@@ -2,10 +2,11 @@
 
 This guide explains how to benchmark the indexing pipeline performance and measure the impact of the optimizations applied.
 
-The accelerator harness is development tooling and validates every result with
-the Draft 2020-12 schema before writing or comparing it. Prepare its dependencies
-with `uv sync --extra dev` (or install the equivalent `.[dev]` extra) before
-running the commands below.
+The accelerator harness is optional development tooling and validates every
+result with its packaged Draft 2020-12 schema before writing or comparing it.
+Prepare its runtime with `uv sync --extra benchmarks` (or install the equivalent
+`.[benchmarks]` extra). Contributors using `uv sync --extra dev` also receive the
+validator through the development extra.
 
 > [!IMPORTANT]
 > Historical speedups, "Expected Output," recommendations, and utilization figures
@@ -37,8 +38,8 @@ PYTHONPATH="$PWD/src" python scripts/benchmark_accelerators.py --compare \
   baseline.json candidate.json
 ```
 
-The schema is
-`benchmarks/schema/accelerator-result-v1.schema.json`; the input manifest is
+The canonical schema is packaged at
+`arcaneum/benchmarks/schemas/accelerator-result-v1.schema.json`; the input manifest is
 `benchmarks/fixtures/accelerator-v1/manifest.json`. Ordinary CI runs only the CPU
 contract baseline. CUDA, MPS, and CoreML measurements are deliberately opt-in.
 MLX currently runs an offline feasibility inventory rather than inference. A

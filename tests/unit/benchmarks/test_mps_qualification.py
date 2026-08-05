@@ -1,6 +1,6 @@
-import json
 from pathlib import Path
 
+from arcaneum.benchmarks.accelerator import load_result_schema
 from arcaneum.benchmarks.mps import (
     _completed_reliability,
     _empty_result,
@@ -10,12 +10,11 @@ from arcaneum.benchmarks.mps import (
 
 ROOT = Path(__file__).resolve().parents[3]
 MANIFEST = ROOT / "benchmarks" / "fixtures" / "accelerator-v1" / "manifest.json"
-SCHEMA = ROOT / "benchmarks" / "schema" / "accelerator-result-v1.schema.json"
 
 
 def test_inconclusive_result_is_truthful_and_captures_environment():
     result = _empty_result(MANIFEST, "jina-code-st", "torch unavailable")
-    schema = json.loads(SCHEMA.read_text())
+    schema = load_result_schema()
     assert set(schema["required"]) <= result.keys()
     assert result["run"]["status"] == "inconclusive"
     assert result["qualification"]["decision"] == "experimental"

@@ -1,6 +1,7 @@
 import json
 import subprocess
 import sys
+import zipfile
 from copy import deepcopy
 from pathlib import Path
 
@@ -21,7 +22,6 @@ from arcaneum.benchmarks.accelerator import (
 ROOT = Path(__file__).resolve().parents[3]
 MANIFEST = ROOT / "benchmarks" / "fixtures" / "accelerator-v1" / "manifest.json"
 EXAMPLE = ROOT / "benchmarks" / "results" / "example-accelerator-v1.json"
-SCHEMA = ROOT / "benchmarks" / "schema" / "accelerator-result-v1.schema.json"
 
 
 def test_manifest_has_representative_length_classes_and_stable_digest():
@@ -40,7 +40,7 @@ def test_manifest_has_representative_length_classes_and_stable_digest():
 
 def test_reference_cpu_result_covers_schema_and_is_correct():
     result = run_reference_benchmark(MANIFEST, iterations=2)
-    schema = json.loads(SCHEMA.read_text())
+    schema = load_result_schema()
 
     assert result["schema_version"] == SCHEMA_VERSION
     assert set(schema["required"]) <= result.keys()
@@ -68,6 +68,78 @@ def test_schema_is_valid_and_accepts_every_checked_in_result():
     for path in result_paths:
         result = json.loads(path.read_text(encoding="utf-8"))
         validate_result(result, label=path.name)
+
+
+def test_benchmark_module_import_does_not_require_optional_validator():
+    script = """
+import importlib.abc
+import sys
+
+class BlockJsonschema(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'jsonschema' or fullname.startswith('jsonschema.'):
+            raise ModuleNotFoundError(fullname)
+        return None
+
+sys.meta_path.insert(0, BlockJsonschema())
+import arcaneum.benchmarks.accelerator as accelerator
+try:
+    accelerator.load_result_schema()
+except RuntimeError as exc:
+    assert 'arcaneum[benchmarks]' in str(exc)
+else:
+    raise AssertionError('validation unexpectedly succeeded without jsonschema')
+"""
+    subprocess.run([sys.executable, "-c", script], check=True, cwd=ROOT)
+
+
+def test_built_wheel_contains_canonical_result_schema(tmp_path):
+    wheel_dir = tmp_path / "wheel"
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "build",
+            "--wheel",
+            "--no-isolation",
+            "--outdir",
+            str(wheel_dir),
+        ],
+        check=True,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    wheel = next(wheel_dir.glob("*.whl"))
+
+    installed = tmp_path / "installed"
+    with zipfile.ZipFile(wheel) as archive:
+        names = archive.namelist()
+        metadata_name = next(name for name in names if name.endswith(".dist-info/METADATA"))
+        metadata = archive.read(metadata_name).decode("utf-8")
+        archive.extractall(installed)
+
+    assert names.count("arcaneum/benchmarks/schemas/accelerator-result-v1.schema.json") == 1
+    assert "Provides-Extra: benchmarks" in metadata
+    assert 'Requires-Dist: jsonschema[format]' in metadata
+    probe = """
+import json
+import sys
+from importlib import resources
+
+sys.path.insert(0, sys.argv[1])
+schema = json.loads(
+    resources.files('arcaneum.benchmarks')
+    .joinpath('schemas/accelerator-result-v1.schema.json')
+    .read_text(encoding='utf-8')
+)
+assert schema['properties']['schema_version']['const'] == '1.0.0'
+"""
+    subprocess.run(
+        [sys.executable, "-I", "-c", probe, str(installed)],
+        check=True,
+        cwd=tmp_path,
+    )
 
 
 def test_schema_rejects_invalid_nested_result_data():

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/cwensel/arcaneum/benchmarks/schema/accelerator-result-v1.schema.json",
+  "$id": "https://github.com/cwensel/arcaneum/src/arcaneum/benchmarks/schemas/accelerator-result-v1.schema.json",
   "title": "Arcaneum accelerator benchmark result v1",
   "type": "object",
   "required": ["schema_version", "harness_version", "run", "environment", "backend", "fixture", "performance", "reliability", "correctness"],

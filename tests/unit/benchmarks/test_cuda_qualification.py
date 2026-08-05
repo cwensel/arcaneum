@@ -1,9 +1,9 @@
-import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import numpy as np
 
+from arcaneum.benchmarks.accelerator import load_result_schema
 from arcaneum.benchmarks.cuda import (
     SOAK_TARGET_SECONDS,
     SOAK_TARGET_TEXTS,
@@ -16,13 +16,12 @@ from arcaneum.embeddings.sentence_transformer_worker import (
 
 ROOT = Path(__file__).resolve().parents[3]
 MANIFEST = ROOT / "benchmarks" / "fixtures" / "accelerator-v1" / "manifest.json"
-SCHEMA = ROOT / "benchmarks" / "schema" / "accelerator-result-v1.schema.json"
 
 
 def test_inconclusive_cuda_result_has_zero_measurements_and_exact_reason():
     reason = "PyTorch CUDA is not available; qualification cannot run"
     result = _empty_result(MANIFEST, "jina-code-st", reason, token_budget=4096, batch_size=4)
-    schema = json.loads(SCHEMA.read_text())
+    schema = load_result_schema()
 
     assert set(schema["required"]) <= result.keys()
     assert result["schema_version"] == schema["properties"]["schema_version"]["const"]

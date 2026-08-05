@@ -88,6 +88,10 @@ dev = [
     "pip-audit>=2.9.0",
     "ruff>=0.14.2",
     "twine>=6.2.0",
+    "wheel>=0.45.0",
+]
+benchmarks = [
+    "jsonschema[format]>=4.23.0,<5.0",
 ]
 ocr = [
     "easyocr>=1.7.2",
@@ -125,7 +129,7 @@ Changelog = "https://github.com/cwensel/arcaneum/releases"
 where = ["src"]
 
 [tool.setuptools.package-data]
-arcaneum = ["embeddings/*.json"]
+arcaneum = ["embeddings/*.json", "benchmarks/schemas/*.json"]
 
 [tool.black]
 line-length = 100

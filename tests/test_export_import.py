@@ -2,7 +2,6 @@
 
 import gzip
 import json
-import os
 import struct
 import tempfile
 import uuid
@@ -35,10 +34,9 @@ from arcaneum.cli.export_import import (
 )
 from arcaneum.indexing.collection_metadata import (
     METADATA_POINT_ID,
-    set_collection_metadata,
     get_collection_metadata,
+    set_collection_metadata,
 )
-
 
 QDRANT_URL = "http://localhost:6333"
 
@@ -531,6 +529,27 @@ class TestLegacyImportSchemaStamping:
         assert point.payload["schema_version"] == 1
         assert point.payload["app_version"]
         assert point.payload["file_path"] == "/docs/report.pdf"
+
+    @pytest.mark.parametrize("importer_type", [BinaryImporter, JsonlImporter])
+    def test_imported_metadata_clears_manifest_readiness(self, importer_type):
+        importer = importer_type(client=None)
+        point_data = {
+            "id": METADATA_POINT_ID,
+            "payload": {
+                "is_metadata": True,
+                "file_manifest_ready": True,
+                "file_manifest_schema_version": 1,
+            },
+        }
+        if importer_type is BinaryImporter:
+            point_data["vectors"] = {"stella": np.array([0.0, 0.0], dtype=np.float32).tobytes()}
+        else:
+            point_data["vector"] = {"stella": [0.0, 0.0]}
+
+        point = importer._deserialize_point(point_data, self._header())
+
+        assert "file_manifest_ready" not in point.payload
+        assert "file_manifest_schema_version" not in point.payload
 
 
 class TestDetachedExport:

@@ -2,7 +2,7 @@ services:
   # Qdrant vector database (RDR-002)
   qdrant:
     # Keep the named volume identifiers below stable across image upgrades.
-    image: qdrant/qdrant:v1.18.0
+    image: qdrant/qdrant:v1.18.2
     container_name: qdrant-arcaneum
     restart: unless-stopped
 

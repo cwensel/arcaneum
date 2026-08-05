@@ -30,6 +30,61 @@ logger = logging.getLogger(__name__)
 # Using a fixed UUID so we can always find it
 METADATA_POINT_ID = "00000000-0000-0000-0000-000000000001"
 METADATA_PAYLOAD_KEY = "is_metadata"
+FILE_MANIFEST_PAYLOAD_KEY = "metadata_type"
+FILE_MANIFEST_PAYLOAD_VALUE = "file_manifest"
+FILE_MANIFEST_SCHEMA_VERSION = 1
+FILE_MANIFEST_SCHEMA_FIELD = "file_manifest_schema_version"
+FILE_MANIFEST_READY_FIELD = "file_manifest_ready"
+
+
+def file_manifests_ready(client: QdrantClient, collection_name: str) -> bool:
+    """Return whether a complete file-manifest snapshot is authoritative."""
+    metadata = get_collection_metadata(client, collection_name)
+    return (
+        metadata.get(FILE_MANIFEST_READY_FIELD) is True
+        and metadata.get(FILE_MANIFEST_SCHEMA_FIELD) == FILE_MANIFEST_SCHEMA_VERSION
+    )
+
+
+def stamp_file_manifests_ready(client: QdrantClient, collection_name: str) -> None:
+    """Mark a fully-written file-manifest snapshot as authoritative."""
+    update_collection_metadata(
+        client,
+        collection_name,
+        **{
+            FILE_MANIFEST_READY_FIELD: True,
+            FILE_MANIFEST_SCHEMA_FIELD: FILE_MANIFEST_SCHEMA_VERSION,
+        },
+    )
+
+
+def user_point_count(
+    client: QdrantClient,
+    collection_name: str,
+    total_points: Optional[int] = None,
+) -> int:
+    """Return chunk points, excluding collection metadata and file manifests."""
+    if total_points is None:
+        total_points = client.get_collection(collection_name).points_count
+    if total_points <= 0:
+        return 0
+
+    reserved_points = 1  # The fixed collection metadata point.
+    if file_manifests_ready(client, collection_name):
+        manifest_filter = Filter(
+            must=[
+                FieldCondition(
+                    key=FILE_MANIFEST_PAYLOAD_KEY,
+                    match=MatchValue(value=FILE_MANIFEST_PAYLOAD_VALUE),
+                )
+            ]
+        )
+        reserved_points += client.count(
+            collection_name=collection_name,
+            count_filter=manifest_filter,
+            exact=True,
+        ).count
+    return max(0, total_points - reserved_points)
 
 
 def persisted_schema_defaults() -> Dict[str, Any]:

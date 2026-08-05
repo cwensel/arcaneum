@@ -10,20 +10,22 @@ This module orchestrates the complete markdown indexing workflow:
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import xxhash
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
-import xxhash
 
+from ...cli.output import timestamp
 from ...embeddings.client import EMBEDDING_MODELS, EmbeddingClient
 from ...schema.document import persisted_metadata_fields
 from ...utils.formatting import format_duration
+from ..collection_metadata import file_manifests_ready
 from ..common.sync import MetadataBasedSync, compute_file_hash, compute_quick_hash
-from .discovery import MarkdownDiscovery
 from .chunker import SemanticMarkdownChunker
-from ...cli.output import timestamp
+from .discovery import MarkdownDiscovery
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +154,16 @@ class MarkdownIndexingPipeline:
                     result = self.sync.handle_renames(
                         collection_name, [(old_path, new_path, new_metadata)]
                     )
+                    if result > 0:
+                        self.sync.delete_file_manifest(collection_name, old_path)
+                        self.sync.upsert_file_manifest(
+                            collection_name,
+                            new_path,
+                            quick_hash,
+                            file_hash=file_hash,
+                            file_size=file_metadata.file_size,
+                            store_type="markdown",
+                        )
 
                     if verbose:
                         print(f"{timestamp()}   ↪ File renamed/moved")
@@ -172,6 +184,15 @@ class MarkdownIndexingPipeline:
                 result = self.sync.add_alternate_path(
                     collection_name, file_hash, new_path, quick_hash
                 )
+                if path_already_tracked or result > 0:
+                    self.sync.upsert_file_manifest(
+                        collection_name,
+                        new_path,
+                        quick_hash,
+                        file_hash=file_hash,
+                        file_size=file_metadata.file_size,
+                        store_type="markdown",
+                    )
 
                 if verbose:
                     if not path_already_tracked:
@@ -207,6 +228,7 @@ class MarkdownIndexingPipeline:
                 self.sync.delete_chunks_by_file_path(collection_name, str(file_path.absolute()))
             else:
                 self.sync.delete_chunks_by_file_hash(collection_name, file_hash)
+            self.sync.delete_file_manifest(collection_name, str(file_path.absolute()))
 
             # Build base metadata
             file_path_abs = str(file_path.absolute())
@@ -351,6 +373,21 @@ class MarkdownIndexingPipeline:
                 )
                 embedding_elapsed = time.time() - embedding_start
 
+                if uploaded_count != file_chunk_count or file_chunk_count == 0:
+                    raise RuntimeError(
+                        f"Incomplete markdown upload: {uploaded_count}/{file_chunk_count} chunks"
+                    )
+
+                self.sync.upsert_file_manifest(
+                    collection_name,
+                    file_path_abs,
+                    quick_hash,
+                    file_hash=file_hash,
+                    chunk_count=file_chunk_count,
+                    file_size=file_metadata.file_size,
+                    store_type="markdown",
+                )
+
                 if verbose:
                     # Show final batch count, then newline and summary
                     print(
@@ -466,9 +503,13 @@ class MarkdownIndexingPipeline:
             all_markdown_files = self.discovery.discover_files(markdown_dir, recursive=recursive)
             logger.info(f"Found {len(all_markdown_files)} total markdown files")
 
-        # Filter to unindexed files (unless force_reindex)
+        # Filter to unindexed files (unless force_reindex). Legacy collections
+        # pay for one full chunk scan, then later syncs read file manifests.
         if verbose:
             print(f"{timestamp()} 🔍 Scanning collection for existing files...")
+
+        if not force_reindex and not file_manifests_ready(self.qdrant, collection_name):
+            self.sync.backfill_file_manifests(collection_name)
 
         if force_reindex:
             markdown_files = all_markdown_files
@@ -597,6 +638,16 @@ class MarkdownIndexingPipeline:
                                     )
 
                                 self.qdrant.upsert(collection_name=collection_name, points=points)
+                                manifest = points[0].payload
+                                self.sync.upsert_file_manifest(
+                                    collection_name,
+                                    manifest["file_path"],
+                                    manifest["quick_hash"],
+                                    file_hash=manifest.get("file_hash"),
+                                    chunk_count=file_chunk_count,
+                                    file_size=manifest.get("file_size"),
+                                    store_type="markdown",
+                                )
                                 stats["chunks"] += len(points)
                                 stats["files"] += 1
 
@@ -665,6 +716,16 @@ class MarkdownIndexingPipeline:
                                 )
 
                             self.qdrant.upsert(collection_name=collection_name, points=points)
+                            manifest = points[0].payload
+                            self.sync.upsert_file_manifest(
+                                collection_name,
+                                manifest["file_path"],
+                                manifest["quick_hash"],
+                                file_hash=manifest.get("file_hash"),
+                                chunk_count=file_chunk_count,
+                                file_size=manifest.get("file_size"),
+                                store_type="markdown",
+                            )
                             stats["chunks"] += len(points)
                             stats["files"] += 1
                             point_id += len(points)

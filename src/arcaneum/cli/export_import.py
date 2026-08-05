@@ -42,6 +42,8 @@ from qdrant_client.models import (
 )
 
 from arcaneum.indexing.collection_metadata import (
+    FILE_MANIFEST_READY_FIELD,
+    FILE_MANIFEST_SCHEMA_FIELD,
     METADATA_POINT_ID,
     get_collection_metadata,
     metadata_exclusion_filter,
@@ -53,6 +55,15 @@ logger = logging.getLogger(__name__)
 
 # Binary format constants
 MAGIC = b"ARCE"  # Arcaneum Export
+
+
+def _clear_imported_manifest_readiness(point_id: Any, payload: Dict[str, Any]) -> None:
+    """Force imports to rebuild manifests omitted from exported user points."""
+    if str(point_id) == METADATA_POINT_ID:
+        payload.pop(FILE_MANIFEST_READY_FIELD, None)
+        payload.pop(FILE_MANIFEST_SCHEMA_FIELD, None)
+
+
 VERSION = 1
 EOF_MARKER = None
 
@@ -696,6 +707,7 @@ class BinaryImporter:
             **persisted_metadata_fields(),
             **point_data.get("payload", {}),
         }
+        _clear_imported_manifest_readiness(point_data["id"], payload)
 
         # Apply path transformations
         if header.detached and attach_root:
@@ -986,6 +998,7 @@ class JsonlImporter:
             **persisted_metadata_fields(),
             **point_data.get("payload", {}),
         }
+        _clear_imported_manifest_readiness(point_data["id"], payload)
 
         # Apply path transformations
         if header.detached and attach_root:

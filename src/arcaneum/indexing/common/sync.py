@@ -3,16 +3,36 @@
 import logging
 import multiprocessing as mp
 import os
+import uuid
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import xxhash
 from qdrant_client import QdrantClient
-from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchValue
+from qdrant_client.models import (
+    FieldCondition,
+    Filter,
+    FilterSelector,
+    MatchValue,
+    PayloadSchemaType,
+    PointIdsList,
+    PointStruct,
+)
 
+from ..collection_metadata import (
+    FILE_MANIFEST_PAYLOAD_KEY,
+    FILE_MANIFEST_PAYLOAD_VALUE,
+    METADATA_PAYLOAD_KEY,
+    file_manifests_ready,
+    metadata_exclusion_filter,
+    stamp_file_manifests_ready,
+)
 from .multiprocessing import get_mp_context, worker_init
 
 logger = logging.getLogger(__name__)
+
+FILE_MANIFEST_POINT_SCHEMA_VERSION = 1
+_FILE_MANIFEST_NAMESPACE = uuid.UUID("2f63291c-85b8-4f5b-9178-f9fd31982b56")
 
 
 class ChunkDeleteError(Exception):
@@ -210,6 +230,197 @@ class MetadataBasedSync:
             qdrant_client: Qdrant client instance
         """
         self.qdrant = qdrant_client
+        self._manifest_indexes_ready: set[str] = set()
+
+    @staticmethod
+    def file_manifest_id(collection_name: str, file_path: str) -> str:
+        """Return the stable point ID for one physical source path."""
+        absolute_path = str(Path(file_path).absolute())
+        return str(uuid.uuid5(_FILE_MANIFEST_NAMESPACE, f"{collection_name}\0{absolute_path}"))
+
+    @staticmethod
+    def _manifest_filter() -> Filter:
+        return Filter(
+            must=[
+                FieldCondition(
+                    key=FILE_MANIFEST_PAYLOAD_KEY,
+                    match=MatchValue(value=FILE_MANIFEST_PAYLOAD_VALUE),
+                )
+            ]
+        )
+
+    def ensure_file_manifest_payload_index(self, collection_name: str) -> None:
+        """Create the keyword index required for efficient manifest scans."""
+        if collection_name in self._manifest_indexes_ready:
+            return
+        self.qdrant.create_payload_index(
+            collection_name=collection_name,
+            field_name=FILE_MANIFEST_PAYLOAD_KEY,
+            field_schema=PayloadSchemaType.KEYWORD,
+            wait=True,
+        )
+        self._manifest_indexes_ready.add(collection_name)
+
+    def _zero_vectors(self, collection_name: str) -> Any:
+        info = self.qdrant.get_collection(collection_name)
+        vectors_config = info.config.params.vectors
+        if isinstance(vectors_config, dict):
+            # Qdrant permits a point to carry only a subset of named vectors.
+            # Manifests are filtered from every search, so one placeholder is
+            # sufficient and avoids multiplying storage by the model count.
+            name, params = next(iter(vectors_config.items()))
+            return {name: [0.0] * params.size}
+        return [0.0] * vectors_config.size
+
+    def build_file_manifest_point(
+        self,
+        collection_name: str,
+        file_path: str,
+        quick_hash: str,
+        *,
+        file_hash: Optional[str] = None,
+        chunk_count: Optional[int] = None,
+        file_size: Optional[int] = None,
+        store_type: Optional[str] = None,
+    ) -> PointStruct:
+        """Build a reserved manifest point for one physical source path."""
+        absolute_path = str(Path(file_path).absolute())
+        payload: Dict[str, Any] = {
+            METADATA_PAYLOAD_KEY: True,
+            FILE_MANIFEST_PAYLOAD_KEY: FILE_MANIFEST_PAYLOAD_VALUE,
+            "manifest_schema_version": FILE_MANIFEST_POINT_SCHEMA_VERSION,
+            "file_path": absolute_path,
+            "quick_hash": quick_hash,
+        }
+        optional = {
+            "file_hash": file_hash,
+            "chunk_count": chunk_count,
+            "file_size": file_size,
+            "store_type": store_type,
+        }
+        payload.update({key: value for key, value in optional.items() if value is not None})
+        return PointStruct(
+            id=self.file_manifest_id(collection_name, absolute_path),
+            vector=self._zero_vectors(collection_name),
+            payload=payload,
+        )
+
+    def upsert_file_manifest(
+        self,
+        collection_name: str,
+        file_path: str,
+        quick_hash: str,
+        **metadata: Any,
+    ) -> None:
+        """Persist one manifest. Call only after its chunks are durable."""
+        self.ensure_file_manifest_payload_index(collection_name)
+        point = self.build_file_manifest_point(collection_name, file_path, quick_hash, **metadata)
+        self.qdrant.upsert(collection_name=collection_name, points=[point], wait=True)
+
+    def delete_file_manifest(self, collection_name: str, file_path: str) -> None:
+        """Delete the manifest for one physical source path."""
+        self.qdrant.delete(
+            collection_name=collection_name,
+            points_selector=PointIdsList(
+                points=[self.file_manifest_id(collection_name, file_path)]
+            ),
+            wait=True,
+        )
+
+    def backfill_file_manifests(
+        self,
+        collection_name: str,
+        progress_callback: Optional[Callable[[int], None]] = None,
+    ) -> int:
+        """Build manifests from legacy chunks and stamp readiness on full success.
+
+        The readiness stamp is deliberately the final operation. An exception
+        leaves a partial set non-authoritative, so legacy scanning remains safe
+        and a later run can resume by deterministically overwriting points.
+        """
+        self.ensure_file_manifest_payload_index(collection_name)
+        manifests: Dict[str, Dict[str, Any]] = {}
+        offset = None
+        total_chunks = 0
+        while True:
+            points, offset = self.qdrant.scroll(
+                collection_name=collection_name,
+                scroll_filter=metadata_exclusion_filter(),
+                # Keep legacy migration pages deliberately small. Some large,
+                # fragmented collections make later 1,000-point scroll pages
+                # monopolize Qdrant CPU for minutes.
+                limit=100,
+                offset=offset,
+                with_payload=[
+                    "file_path",
+                    "file_paths",
+                    "quick_hash",
+                    "file_quick_hashes",
+                    "file_hash",
+                    "chunk_count",
+                    "file_size",
+                    "store_type",
+                ],
+                with_vectors=False,
+            )
+            if not points:
+                break
+            for point in points:
+                total_chunks += 1
+                payload = point.payload or {}
+                path_hashes = payload.get("file_quick_hashes")
+                if isinstance(path_hashes, dict):
+                    candidates = path_hashes.items()
+                else:
+                    candidates = [(payload.get("file_path"), payload.get("quick_hash"))]
+                for path, quick_hash in candidates:
+                    if not path or not quick_hash:
+                        continue
+                    absolute_path = str(Path(path).absolute())
+                    current = manifests.setdefault(
+                        absolute_path,
+                        {
+                            "quick_hash": quick_hash,
+                            "file_hash": payload.get("file_hash"),
+                            "chunk_count": payload.get("chunk_count"),
+                            "file_size": payload.get("file_size"),
+                            "store_type": payload.get("store_type"),
+                        },
+                    )
+                    if current.get("chunk_count") is None:
+                        current["chunk_count"] = 0
+                    if payload.get("chunk_count") is None:
+                        current["chunk_count"] += 1
+            if progress_callback:
+                progress_callback(total_chunks)
+            if offset is None:
+                break
+
+        vectors = self._zero_vectors(collection_name)
+        batch: List[PointStruct] = []
+        for path, values in manifests.items():
+            payload = {
+                METADATA_PAYLOAD_KEY: True,
+                FILE_MANIFEST_PAYLOAD_KEY: FILE_MANIFEST_PAYLOAD_VALUE,
+                "manifest_schema_version": FILE_MANIFEST_POINT_SCHEMA_VERSION,
+                "file_path": path,
+                **{key: value for key, value in values.items() if value is not None},
+            }
+            batch.append(
+                PointStruct(
+                    id=self.file_manifest_id(collection_name, path),
+                    vector=vectors,
+                    payload=payload,
+                )
+            )
+            if len(batch) == 100:
+                self.qdrant.upsert(collection_name=collection_name, points=batch, wait=True)
+                batch = []
+        if batch:
+            self.qdrant.upsert(collection_name=collection_name, points=batch, wait=True)
+
+        stamp_file_manifests_ready(self.qdrant, collection_name)
+        return len(manifests)
 
     def _get_indexed_quick_hashes(
         self,
@@ -234,14 +445,24 @@ class MetadataBasedSync:
         offset = None
         chunks_with_dict = 0
         total_chunks = 0
+        manifests_ready = file_manifests_ready(self.qdrant, collection_name)
 
         try:
+            if manifests_ready:
+                self.ensure_file_manifest_payload_index(collection_name)
             while True:
                 points, offset = self.qdrant.scroll(
                     collection_name=collection_name,
+                    scroll_filter=(
+                        self._manifest_filter() if manifests_ready else metadata_exclusion_filter()
+                    ),
                     limit=1000,
                     offset=offset,
-                    with_payload=["file_path", "quick_hash", "file_quick_hashes"],
+                    with_payload=(
+                        ["file_path", "quick_hash"]
+                        if manifests_ready
+                        else ["file_path", "quick_hash", "file_quick_hashes"]
+                    ),
                     with_vectors=False,
                 )
 
@@ -298,11 +519,17 @@ class MetadataBasedSync:
         """
         indexed_paths = set()
         offset = None
+        manifests_ready = file_manifests_ready(self.qdrant, collection_name)
 
         try:
+            if manifests_ready:
+                self.ensure_file_manifest_payload_index(collection_name)
             while True:
                 points, offset = self.qdrant.scroll(
                     collection_name=collection_name,
+                    scroll_filter=(
+                        self._manifest_filter() if manifests_ready else metadata_exclusion_filter()
+                    ),
                     limit=1000,
                     offset=offset,
                     with_payload=["file_path"],
@@ -343,6 +570,7 @@ class MetadataBasedSync:
             while True:
                 points, offset = self.qdrant.scroll(
                     collection_name=collection_name,
+                    scroll_filter=metadata_exclusion_filter(),
                     limit=1000,
                     offset=offset,
                     with_payload=["file_path"],
@@ -480,8 +708,10 @@ class MetadataBasedSync:
             # Count chunks before deletion
             points_before, _ = self.qdrant.scroll(
                 collection_name=collection_name,
-                scroll_filter=Filter(
-                    must=[FieldCondition(key="file_hash", match=MatchValue(value=file_hash))]
+                scroll_filter=metadata_exclusion_filter(
+                    Filter(
+                        must=[FieldCondition(key="file_hash", match=MatchValue(value=file_hash))]
+                    )
                 ),
                 limit=1,
                 with_payload=False,
@@ -495,8 +725,12 @@ class MetadataBasedSync:
             self.qdrant.delete(
                 collection_name=collection_name,
                 points_selector=FilterSelector(
-                    filter=Filter(
-                        must=[FieldCondition(key="file_hash", match=MatchValue(value=file_hash))]
+                    filter=metadata_exclusion_filter(
+                        Filter(
+                            must=[
+                                FieldCondition(key="file_hash", match=MatchValue(value=file_hash))
+                            ]
+                        )
                     )
                 ),
             )
@@ -528,8 +762,8 @@ class MetadataBasedSync:
         Returns:
             Number of points deleted (0 if no chunks found)
         """
-        path_filter = Filter(
-            must=[FieldCondition(key="file_path", match=MatchValue(value=file_path))]
+        path_filter = metadata_exclusion_filter(
+            Filter(must=[FieldCondition(key="file_path", match=MatchValue(value=file_path))])
         )
         try:
             # Count chunks before deletion by scrolling all matching points.
@@ -586,13 +820,15 @@ class MetadataBasedSync:
             True if at least one chunk for the path remains, False otherwise.
             On query error, returns True (conservative: cannot certify cleanliness).
         """
-        path_filter = Filter(
-            must=[
-                FieldCondition(
-                    key="file_path",
-                    match=MatchValue(value=file_path),
-                )
-            ]
+        path_filter = metadata_exclusion_filter(
+            Filter(
+                must=[
+                    FieldCondition(
+                        key="file_path",
+                        match=MatchValue(value=file_path),
+                    )
+                ]
+            )
         )
         try:
             points, _ = self.qdrant.scroll(
@@ -634,8 +870,12 @@ class MetadataBasedSync:
             while True:
                 points, offset = self.qdrant.scroll(
                     collection_name=collection_name,
-                    scroll_filter=Filter(
-                        must=[FieldCondition(key="file_hash", match=MatchValue(value=file_hash))]
+                    scroll_filter=metadata_exclusion_filter(
+                        Filter(
+                            must=[
+                                FieldCondition(key="file_hash", match=MatchValue(value=file_hash))
+                            ]
+                        )
                     ),
                     limit=100,
                     offset=offset,
@@ -732,8 +972,10 @@ class MetadataBasedSync:
 
                 points, _ = self.qdrant.scroll(
                     collection_name=collection_name,
-                    scroll_filter=Filter(
-                        must=[FieldCondition(key="file_path", match=MatchValue(value=old_path))]
+                    scroll_filter=metadata_exclusion_filter(
+                        Filter(
+                            must=[FieldCondition(key="file_path", match=MatchValue(value=old_path))]
+                        )
                     ),
                     limit=1,
                     with_payload=["file_paths", "file_quick_hashes", "quick_hash"],
@@ -763,8 +1005,14 @@ class MetadataBasedSync:
                     collection_name=collection_name,
                     payload=payload,
                     points=FilterSelector(
-                        filter=Filter(
-                            must=[FieldCondition(key="file_path", match=MatchValue(value=old_path))]
+                        filter=metadata_exclusion_filter(
+                            Filter(
+                                must=[
+                                    FieldCondition(
+                                        key="file_path", match=MatchValue(value=old_path)
+                                    )
+                                ]
+                            )
                         )
                     ),
                 )
@@ -806,8 +1054,10 @@ class MetadataBasedSync:
             # First, get one chunk to see current file_paths state
             points, _ = self.qdrant.scroll(
                 collection_name=collection_name,
-                scroll_filter=Filter(
-                    must=[FieldCondition(key="file_hash", match=MatchValue(value=file_hash))]
+                scroll_filter=metadata_exclusion_filter(
+                    Filter(
+                        must=[FieldCondition(key="file_hash", match=MatchValue(value=file_hash))]
+                    )
                 ),
                 limit=1,
                 with_payload=True,
@@ -879,8 +1129,12 @@ class MetadataBasedSync:
                 collection_name=collection_name,
                 payload=update_payload,
                 points=FilterSelector(
-                    filter=Filter(
-                        must=[FieldCondition(key="file_hash", match=MatchValue(value=file_hash))]
+                    filter=metadata_exclusion_filter(
+                        Filter(
+                            must=[
+                                FieldCondition(key="file_hash", match=MatchValue(value=file_hash))
+                            ]
+                        )
                     )
                 ),
             )

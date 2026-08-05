@@ -1,27 +1,29 @@
 """Batch upload orchestrator for PDF indexing (RDR-004)."""
 
-from qdrant_client import QdrantClient
-from qdrant_client.models import PointStruct
-from pathlib import Path
-from typing import List, Dict, Optional, Tuple
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_not_exception_type
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 import gc
 import logging
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
+from qdrant_client import QdrantClient
+from qdrant_client.models import PointStruct
+from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_exponential
+
+from ..cli.output import timestamp
 from ..embeddings.client import EmbeddingClient
-from .common.sync import MetadataBasedSync, compute_file_hash, compute_quick_hash
-from .pdf.extractor import PDFExtractor
-from .pdf.ocr import OCREngine, merge_extracted_text_with_ocr
-from .pdf.chunker import PDFChunker
 from ..monitoring.cpu_stats import create_monitor
 from ..schema.document import persisted_metadata_fields
-from ..utils.memory import calculate_safe_workers, log_memory_stats
 from ..utils.formatting import format_duration
-from ..cli.output import timestamp
+from ..utils.memory import calculate_safe_workers, log_memory_stats
+from .collection_metadata import file_manifests_ready
+from .common.sync import MetadataBasedSync, compute_file_hash, compute_quick_hash
+from .pdf.chunker import PDFChunker
+from .pdf.extractor import PDFExtractor
+from .pdf.ocr import OCREngine, merge_extracted_text_with_ocr
 
 logger = logging.getLogger(__name__)
 
@@ -202,6 +204,16 @@ class PDFBatchUploader:
                     result = self.sync.handle_renames(
                         collection_name, [(old_path, new_path, new_metadata)]
                     )
+                    if result > 0:
+                        self.sync.delete_file_manifest(collection_name, old_path)
+                        self.sync.upsert_file_manifest(
+                            collection_name,
+                            new_path,
+                            quick_hash,
+                            file_hash=file_hash,
+                            file_size=pdf_path.stat().st_size,
+                            store_type="pdf",
+                        )
 
                     if verbose:
                         print(f"{timestamp()}   ↪ File renamed/moved")
@@ -222,6 +234,15 @@ class PDFBatchUploader:
                 result = self.sync.add_alternate_path(
                     collection_name, file_hash, new_path, quick_hash
                 )
+                if path_already_tracked or result > 0:
+                    self.sync.upsert_file_manifest(
+                        collection_name,
+                        new_path,
+                        quick_hash,
+                        file_hash=file_hash,
+                        file_size=pdf_path.stat().st_size,
+                        store_type="pdf",
+                    )
 
                 if verbose:
                     if not path_already_tracked:
@@ -255,6 +276,7 @@ class PDFBatchUploader:
                 self.sync.delete_chunks_by_file_path(collection_name, str(pdf_path.absolute()))
             else:
                 self.sync.delete_chunks_by_file_hash(collection_name, file_hash)
+            self.sync.delete_file_manifest(collection_name, str(pdf_path.absolute()))
 
             # Stage 1: Extract text
             if not verbose:
@@ -571,6 +593,21 @@ class PDFBatchUploader:
                 # Clear GPU cache if using GPU to prevent memory buildup across PDFs
                 # Native accelerator cache is child-owned and cleared on worker teardown.
 
+            if uploaded_count != file_chunk_count or file_chunk_count == 0:
+                raise RuntimeError(
+                    f"Incomplete PDF upload: {uploaded_count}/{file_chunk_count} chunks"
+                )
+
+            self.sync.upsert_file_manifest(
+                collection_name,
+                file_path_abs,
+                quick_hash,
+                file_hash=file_hash,
+                chunk_count=file_chunk_count,
+                file_size=base_metadata["file_size"],
+                store_type="pdf",
+            )
+
             # Return empty list since we already uploaded
             # uploaded_count is used for stats
             return ([], uploaded_count, None, ocr_stats)
@@ -650,6 +687,9 @@ class PDFBatchUploader:
 
         # Filter to unindexed files via metadata queries (unless force_reindex)
         logger.debug(f"force_reindex={force_reindex}")
+
+        if not force_reindex and not file_manifests_ready(self.qdrant, collection_name):
+            self.sync.backfill_file_manifests(collection_name)
 
         if force_reindex:
             if verbose:
@@ -995,7 +1035,8 @@ class PDFBatchUploader:
             # This ensures chunks are actually indexed and queryable, not just uploaded
             if points and points[0].payload:
                 import time
-                from qdrant_client.models import Filter, FieldCondition, MatchValue
+
+                from qdrant_client.models import FieldCondition, Filter, MatchValue
 
                 time.sleep(0.2)  # Wait for Qdrant to index
                 file_path = points[0].payload.get("file_path")

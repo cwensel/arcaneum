@@ -154,11 +154,13 @@ from ..embeddings.client import (
 from ..fulltext.client import FullTextClient
 from ..indexing.collection_metadata import (
     backfill_embedding_prompt_policy,
+    file_manifests_ready,
     get_collection_metadata,
     get_collection_type,
     prompt_policy_can_be_backfilled,
     prompt_policy_issues,
     update_collection_metadata,
+    user_point_count,
 )
 from ..indexing.common.multiprocessing import create_process_pool
 from ..indexing.common.sync import MetadataBasedSync, compute_quick_hash
@@ -207,6 +209,89 @@ def _finalize_embedding_clients(clients, model_names, verbose, output_json):
 
 logger = logging.getLogger(__name__)
 MEILI_RENAME_UPDATE_TIMEOUT_MS = 300000
+
+
+def _ensure_file_manifests(
+    sync_manager: MetadataBasedSync,
+    corpus: str,
+    corpus_type: str,
+    *,
+    dry_run: bool,
+    verbose: bool,
+    output_json: bool,
+) -> int:
+    """Backfill the authoritative file manifest before incremental sync."""
+    if dry_run or file_manifests_ready(sync_manager.qdrant, corpus):
+        return 0
+
+    if verbose and not output_json:
+        print_info(f"Migrating legacy {corpus_type} metadata to file manifests...")
+
+    def report_progress(chunks_scanned: int) -> None:
+        if verbose and not output_json and (
+            chunks_scanned == 100 or chunks_scanned % 10000 == 0
+        ):
+            print_info(f"  Manifest migration scanned {chunks_scanned:,} legacy chunks...")
+
+    migrated = sync_manager.backfill_file_manifests(
+        corpus,
+        progress_callback=report_progress,
+    )
+    if verbose and not output_json:
+        print_info(f"File manifest migration complete: {migrated:,} files")
+    return migrated
+
+
+def _upsert_file_manifest(
+    sync_manager: MetadataBasedSync,
+    corpus: str,
+    corpus_type: str,
+    file_path: Path,
+    quick_hash: str,
+    *,
+    file_hash: str,
+    chunk_count: int,
+) -> None:
+    """Publish a file manifest only after its chunks are durable."""
+    sync_manager.upsert_file_manifest(
+        corpus,
+        str(file_path.absolute()),
+        quick_hash,
+        file_hash=file_hash,
+        chunk_count=chunk_count,
+        file_size=file_path.stat().st_size,
+        store_type=corpus_type,
+    )
+
+
+def _rename_file_manifests(
+    sync_manager: MetadataBasedSync,
+    corpus: str,
+    corpus_type: str,
+    renames: List[Tuple[str, str]],
+) -> None:
+    """Move deterministic manifests after both indexes confirm a rename."""
+    for old_path, new_path in renames:
+        new_file = Path(new_path)
+        sync_manager.upsert_file_manifest(
+            corpus,
+            new_path,
+            compute_quick_hash(new_file),
+            file_size=new_file.stat().st_size,
+            store_type=corpus_type,
+        )
+        sync_manager.delete_file_manifest(corpus, old_path)
+
+
+def _delete_file_manifests(
+    sync_manager: MetadataBasedSync,
+    corpus: str,
+    corpus_type: str,
+    paths: List[str],
+) -> None:
+    """Remove manifests alongside their chunk lifecycle."""
+    for path in paths:
+        sync_manager.delete_file_manifest(corpus, path)
 
 
 def _stamp_last_sync_metadata(qdrant, corpus: str) -> None:
@@ -1665,6 +1750,15 @@ def sync_directory_command(
             metadata,
             output_json,
         )
+        manifest_sync_manager = MetadataBasedSync(qdrant)
+        _ensure_file_manifests(
+            manifest_sync_manager,
+            corpus,
+            corpus_type,
+            dry_run=dry_run,
+            verbose=verbose,
+            output_json=output_json,
+        )
         # Old quality scores map: populated during repair for garbled file comparison
         old_quality_scores = {}
 
@@ -2121,6 +2215,7 @@ def sync_directory_command(
                     sync_manager.handle_renames(
                         corpus, _rename_tuples_with_metadata(confirmed_renames)
                     )
+                    _rename_file_manifests(sync_manager, corpus, corpus_type, confirmed_renames)
                     files_renamed = len(confirmed_renames)
                     renamed_new_paths = {new for old, new in confirmed_renames}
 
@@ -2169,6 +2264,7 @@ def sync_directory_command(
                                 )
                             ),
                         )
+                    _delete_file_manifests(sync_manager, corpus, corpus_type, stale_paths)
                     stale_cleaned = len(stale_paths)
 
                     if not output_json:
@@ -2259,6 +2355,7 @@ def sync_directory_command(
                     sync_manager.handle_renames(
                         corpus, _rename_tuples_with_metadata(confirmed_renames)
                     )
+                    _rename_file_manifests(sync_manager, corpus, corpus_type, confirmed_renames)
                     files_renamed = len(confirmed_renames)
                     renamed_new_paths = {new for old, new in confirmed_renames}
 
@@ -2570,6 +2667,12 @@ def sync_directory_command(
                                 dual_indexer.delete_by_file_path(file_path_str)
                                 # Delete from MeiliSearch
                                 meili.delete_documents_by_file_paths(corpus, [file_path_str])
+                                _delete_file_manifests(
+                                    manifest_sync_manager,
+                                    corpus,
+                                    corpus_type,
+                                    [file_path_str],
+                                )
 
                             # Chunk file based on corpus type
                             if verbose and not output_json:
@@ -2690,6 +2793,12 @@ def sync_directory_command(
                                     )
                                 dual_indexer.delete_by_file_path(file_path_str)
                                 meili.delete_documents_by_file_paths(corpus, [file_path_str])
+                                _delete_file_manifests(
+                                    manifest_sync_manager,
+                                    corpus,
+                                    corpus_type,
+                                    [file_path_str],
+                                )
 
                             if verbose and not output_json:
                                 progress.console.print(
@@ -2851,6 +2960,15 @@ def sync_directory_command(
 
                                 _set_phase(f"indexing:{file_path.name}")
                                 qdrant_count, meili_count = dual_indexer.index_batch(documents)
+                                _upsert_file_manifest(
+                                    manifest_sync_manager,
+                                    corpus,
+                                    corpus_type,
+                                    file_path,
+                                    quick_hash,
+                                    file_hash=file_hash,
+                                    chunk_count=len(documents),
+                                )
                                 total_chunks += len(documents)
                                 total_qdrant += qdrant_count
                                 total_meili += meili_count
@@ -3191,6 +3309,15 @@ def sync_directory_command(
                         # Upload to Qdrant
                         if points:
                             qdrant.upsert(collection_name=corpus, points=points, wait=True)
+                            _upsert_file_manifest(
+                                manifest_sync_manager,
+                                corpus,
+                                corpus_type,
+                                file_path,
+                                quick_hash,
+                                file_hash=file_hash,
+                                chunk_count=len(points),
+                            )
                             qdrant_backfill_chunks += len(points)
 
                             if verbose and not output_json:
@@ -4442,8 +4569,7 @@ def _discover_corpora_for_parity() -> List[Dict[str, Any]]:
         for col in collections.collections:
             metadata = get_collection_metadata(qdrant, col.name)
             col_info = qdrant.get_collection(col.name)
-            # Subtract 1 for the metadata point
-            chunk_count = col_info.points_count - 1 if col_info.points_count > 0 else 0
+            chunk_count = user_point_count(qdrant, col.name, col_info.points_count)
             qdrant_collections[col.name] = {
                 "type": metadata.get("collection_type"),
                 "model": metadata.get("model"),

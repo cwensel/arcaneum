@@ -30,6 +30,7 @@ from arcaneum.indexing.collection_metadata import (
     get_collection_type,
     metadata_exclusion_filter,
     persisted_schema_issues,
+    user_point_count,
 )
 
 logger = logging.getLogger(__name__)
@@ -217,7 +218,7 @@ class CollectionVerifier:
 
         # Get total point count
         collection_info = self.qdrant.get_collection(collection_name)
-        total_points = collection_info.points_count
+        total_points = user_point_count(self.qdrant, collection_name, collection_info.points_count)
 
         if collection_type == "code":
             result = self._verify_code_collection(

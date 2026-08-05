@@ -41,7 +41,7 @@ docker compose up -d
 ## Configuration
 
 - **Qdrant**: Port 6333 (REST), 6334 (gRPC)
-- **Qdrant image**: `qdrant/qdrant:v1.18.0`
+- **Qdrant image**: `qdrant/qdrant:v1.18.2`
 - **MeiliSearch image**: `getmeili/meilisearch:v1.12`
 - **Storage**: Docker named volumes managed by the `arcaneum` compose project
 - **Snapshots**: Docker named volumes managed by the `arcaneum` compose project

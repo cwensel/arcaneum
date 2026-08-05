@@ -146,6 +146,23 @@ class FakeQdrant:
     def scroll(self, **kwargs):
         return ([], None)
 
+    def create_payload_index(self, **kwargs):
+        return None
+
+    def retrieve(self, **kwargs):
+        return [
+            SimpleNamespace(
+                payload={
+                    "is_metadata": True,
+                    "file_manifest_ready": True,
+                    "file_manifest_schema_version": 1,
+                }
+            )
+        ]
+
+    def delete(self, **kwargs):
+        return None
+
     def upsert(self, collection_name, points, **kwargs):
         self.upserted.extend(points)
 

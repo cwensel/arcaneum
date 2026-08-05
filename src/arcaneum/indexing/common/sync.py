@@ -379,6 +379,8 @@ class MetadataBasedSync:
                         should=[
                             FieldCondition(key="file_path", match=MatchValue(value=source_path)),
                             FieldCondition(key="file_paths", match=MatchValue(value=source_path)),
+                            FieldCondition(key="file_path", match=MatchValue(value=target_path)),
+                            FieldCondition(key="file_paths", match=MatchValue(value=target_path)),
                         ]
                     )
                 ),
@@ -390,6 +392,9 @@ class MetadataBasedSync:
                 logger.warning("No chunks found for source manifest: %s", source_path)
                 return
             payload = points[0].payload
+            if payload.get("file_hash") is None or payload.get("chunk_count") is None:
+                logger.warning("Chunks lack required manifest metadata: %s", target_path)
+                return
         else:
             payload = source[0].payload
         self.upsert_file_manifest(

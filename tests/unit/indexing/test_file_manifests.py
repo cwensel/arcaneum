@@ -183,6 +183,35 @@ def test_copy_manifest_rebuilds_missing_source_from_existing_chunks():
     assert manifest["chunk_count"] == 3
 
 
+def test_rename_rebuilds_missing_manifest_from_already_moved_chunks():
+    qdrant = MagicMock()
+    qdrant.retrieve.return_value = []
+    qdrant.scroll.return_value = (
+        [SimpleNamespace(payload={"file_hash": "content", "chunk_count": 3})],
+        None,
+    )
+    qdrant.get_collection.return_value = _collection_info()
+
+    sync = MetadataBasedSync(qdrant)
+    sync.copy_file_manifest("code", "/old.py", "/new.py", "q", delete_source=True)
+
+    query_filter = qdrant.scroll.call_args.kwargs["scroll_filter"]
+    assert FieldCondition(key="file_path", match=MatchValue(value="/new.py")) in query_filter.should
+    manifest = qdrant.upsert.call_args.kwargs["points"][0].payload
+    assert manifest["file_path"].endswith("/new.py")
+    qdrant.delete.assert_called_once()
+
+
+def test_rebuild_skips_chunks_missing_required_manifest_metadata():
+    qdrant = MagicMock()
+    qdrant.retrieve.return_value = []
+    qdrant.scroll.return_value = ([SimpleNamespace(payload={"chunk_count": 3})], None)
+
+    MetadataBasedSync(qdrant).copy_file_manifest("code", "/old.py", "/new.py", "q")
+
+    qdrant.upsert.assert_not_called()
+
+
 def test_get_unindexed_files_propagates_ready_manifest_scan_failure(tmp_path):
     source = tmp_path / "a.py"
     source.write_text("pass\n")

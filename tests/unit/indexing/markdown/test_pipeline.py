@@ -229,11 +229,12 @@ def test_non_streaming_index_directory_still_counts_files(md_file):
     assert stats["errors"] == 0
 
 
-def test_force_reindex_empty_markdown_records_zero_chunk_manifest(tmp_path):
+@pytest.mark.parametrize("streaming", [True, False])
+def test_force_reindex_empty_markdown_records_zero_chunk_manifest(tmp_path, streaming):
     """An empty markdown file remains a successful no-chunk index operation."""
     markdown_file = tmp_path / "empty.md"
     markdown_file.write_text("", encoding="utf-8")
-    pipeline, qdrant = _make_pipeline(streaming=True)
+    pipeline, qdrant = _make_pipeline(streaming=streaming)
 
     stats = pipeline.index_directory(
         markdown_dir=tmp_path,

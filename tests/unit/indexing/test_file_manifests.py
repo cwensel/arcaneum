@@ -46,6 +46,17 @@ def test_manifest_id_is_stable_per_collection_and_physical_path(tmp_path):
     assert sync.file_manifest_id("code", str(path)) != sync.file_manifest_id("other", str(path))
 
 
+def test_manifest_vectors_are_cached_per_collection():
+    qdrant = MagicMock()
+    qdrant.get_collection.return_value = _collection_info()
+    sync = MetadataBasedSync(qdrant)
+
+    sync.build_file_manifest_point("code", "/repo/a.py", "a")
+    sync.build_file_manifest_point("code", "/repo/b.py", "b")
+
+    qdrant.get_collection.assert_called_once_with("code")
+
+
 def test_ready_quick_hash_scan_uses_indexed_manifests_only():
     qdrant = MagicMock()
     qdrant.retrieve.return_value = [_ready_metadata_point()]
@@ -144,6 +155,28 @@ def test_existing_manifest_index_conflict_is_idempotent_across_sync_instances():
     assert qdrant.create_payload_index.call_count == 2
 
 
+def test_ready_manifest_scan_failure_is_not_treated_as_empty_collection():
+    qdrant = MagicMock()
+    qdrant.retrieve.return_value = [_ready_metadata_point()]
+    qdrant.get_collection.return_value = _collection_info(
+        {FILE_MANIFEST_PAYLOAD_KEY: SimpleNamespace()}
+    )
+    qdrant.scroll.side_effect = RuntimeError("timeout")
+
+    with pytest.raises(RuntimeError, match="timeout"):
+        MetadataBasedSync(qdrant)._get_indexed_quick_hashes("code")
+
+
+def test_copy_manifest_requires_existing_source():
+    qdrant = MagicMock()
+    qdrant.retrieve.return_value = []
+
+    with pytest.raises(RuntimeError, match="Source file manifest not found"):
+        MetadataBasedSync(qdrant).copy_file_manifest("code", "/old.py", "/new.py", "q")
+
+    qdrant.upsert.assert_not_called()
+
+
 def test_ready_chunk_counts_are_read_from_manifests():
     qdrant = MagicMock()
     qdrant.retrieve.return_value = [_ready_metadata_point()]
@@ -184,3 +217,11 @@ def test_user_point_count_excludes_collection_metadata_and_manifests():
         match=MatchValue(value=FILE_MANIFEST_PAYLOAD_VALUE),
     )
     assert manifest_condition in qdrant.count.call_args.kwargs["count_filter"].must
+
+
+def test_user_point_count_without_manifest_index_excludes_only_metadata():
+    qdrant = MagicMock()
+    collection_info = SimpleNamespace(points_count=113, payload_schema={})
+
+    assert user_point_count(qdrant, "code", collection_info) == 112
+    qdrant.count.assert_not_called()

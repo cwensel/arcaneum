@@ -663,6 +663,16 @@ class MarkdownIndexingPipeline:
                                         f"{timestamp()}   ✓ complete ({file_chunk_count} chunks)",
                                         flush=True,
                                     )
+                            elif not self.streaming:
+                                self.sync.upsert_file_manifest(
+                                    collection_name,
+                                    str(file_path.absolute()),
+                                    compute_quick_hash(file_path),
+                                    file_hash=compute_file_hash(file_path),
+                                    chunk_count=0,
+                                    file_size=file_path.stat().st_size,
+                                    store_type="markdown",
+                                )
                             elif self.streaming and file_chunk_count > 0:
                                 # Streaming mode already uploaded chunks inside the
                                 # embed callback, so points is empty. Count the file
@@ -742,6 +752,16 @@ class MarkdownIndexingPipeline:
                                     f"{timestamp()}   ✓ complete ({file_chunk_count} chunks)",
                                     flush=True,
                                 )
+                        elif not self.streaming:
+                            self.sync.upsert_file_manifest(
+                                collection_name,
+                                str(file_path.absolute()),
+                                compute_quick_hash(file_path),
+                                file_hash=compute_file_hash(file_path),
+                                chunk_count=0,
+                                file_size=file_path.stat().st_size,
+                                store_type="markdown",
+                            )
                         elif self.streaming and file_chunk_count > 0:
                             # Streaming mode already uploaded chunks inside the
                             # embed callback, so points is empty. Count the file

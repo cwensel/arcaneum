@@ -231,6 +231,7 @@ class MetadataBasedSync:
         """
         self.qdrant = qdrant_client
         self._manifest_indexes_ready: set[str] = set()
+        self._zero_vectors_by_collection: Dict[str, Any] = {}
 
     @staticmethod
     def file_manifest_id(collection_name: str, file_path: str) -> str:
@@ -271,6 +272,9 @@ class MetadataBasedSync:
         self._manifest_indexes_ready.add(collection_name)
 
     def _zero_vectors(self, collection_name: str) -> Any:
+        cached = self._zero_vectors_by_collection.get(collection_name)
+        if cached is not None:
+            return cached
         info = self.qdrant.get_collection(collection_name)
         vectors_config = info.config.params.vectors
         if isinstance(vectors_config, dict):
@@ -278,8 +282,11 @@ class MetadataBasedSync:
             # Manifests are filtered from every search, so one placeholder is
             # sufficient and avoids multiplying storage by the model count.
             name, params = next(iter(vectors_config.items()))
-            return {name: [0.0] * params.size}
-        return [0.0] * vectors_config.size
+            vectors = {name: [0.0] * params.size}
+        else:
+            vectors = [0.0] * vectors_config.size
+        self._zero_vectors_by_collection[collection_name] = vectors
+        return vectors
 
     def build_file_manifest_point(
         self,
@@ -354,7 +361,9 @@ class MetadataBasedSync:
             with_payload=True,
             with_vectors=False,
         )
-        payload = source[0].payload if source and source[0].payload else {}
+        if not source or not source[0].payload:
+            raise RuntimeError(f"Source file manifest not found: {source_path}")
+        payload = source[0].payload
         self.upsert_file_manifest(
             collection_name,
             target_path,
@@ -548,6 +557,8 @@ class MetadataBasedSync:
 
         except Exception as e:
             logger.warning(f"Error querying quick_hashes: {e}")
+            if manifests_ready:
+                raise
             return set()
 
     def _get_indexed_file_paths_set(self, collection_name: str) -> set:
@@ -597,6 +608,8 @@ class MetadataBasedSync:
 
         except Exception as e:
             logger.warning(f"Error querying indexed paths: {e}")
+            if manifests_ready:
+                raise
             return set()
 
     def get_chunk_counts_by_file(self, collection_name: str) -> Dict[str, int]:
@@ -637,7 +650,7 @@ class MetadataBasedSync:
                         path = point.payload.get("file_path")
                         if path:
                             if manifests_ready:
-                                chunk_counts[path] = point.payload.get("chunk_count") or 0
+                                chunk_counts[path] = point.payload.get("chunk_count", 0)
                             else:
                                 chunk_counts[path] = chunk_counts.get(path, 0) + 1
 

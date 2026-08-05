@@ -176,7 +176,9 @@ def test_copy_manifest_rebuilds_missing_source_from_existing_chunks():
     )
     qdrant.get_collection.return_value = _collection_info()
 
-    MetadataBasedSync(qdrant).copy_file_manifest("code", "/old.py", "/new.py", "q")
+    MetadataBasedSync(qdrant).copy_file_manifest(
+        "code", "/old.py", "/new.py", "q", file_size=10, store_type="code"
+    )
 
     manifest = qdrant.upsert.call_args.kwargs["points"][0].payload
     assert manifest["file_hash"] == "content"
@@ -193,7 +195,15 @@ def test_rename_rebuilds_missing_manifest_from_already_moved_chunks():
     qdrant.get_collection.return_value = _collection_info()
 
     sync = MetadataBasedSync(qdrant)
-    sync.copy_file_manifest("code", "/old.py", "/new.py", "q", delete_source=True)
+    sync.copy_file_manifest(
+        "code",
+        "/old.py",
+        "/new.py",
+        "q",
+        delete_source=True,
+        file_size=10,
+        store_type="code",
+    )
 
     query_filter = qdrant.scroll.call_args.kwargs["scroll_filter"]
     assert FieldCondition(key="file_path", match=MatchValue(value="/new.py")) in query_filter.should

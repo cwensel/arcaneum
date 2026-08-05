@@ -562,8 +562,6 @@ class MarkdownIndexingPipeline:
                 print("All markdown files up to date")
             else:
                 print(f"{timestamp()} ✅ All markdown files are up to date")
-            if force_reindex and file_list is None and all_markdown_files:
-                stamp_file_manifests_ready(self.qdrant, collection_name)
             return {"files": 0, "chunks": 0, "errors": 0}
 
         # Show count

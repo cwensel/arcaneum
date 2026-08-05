@@ -392,7 +392,19 @@ class MetadataBasedSync:
                 logger.warning("No chunks found for source manifest: %s", source_path)
                 return
             payload = points[0].payload
-            if payload.get("file_hash") is None or payload.get("chunk_count") is None:
+            recovered_file_size = file_size if file_size is not None else payload.get("file_size")
+            recovered_store_type = (
+                store_type if store_type is not None else payload.get("store_type")
+            )
+            if any(
+                value is None
+                for value in (
+                    payload.get("file_hash"),
+                    payload.get("chunk_count"),
+                    recovered_file_size,
+                    recovered_store_type,
+                )
+            ):
                 logger.warning("Chunks lack required manifest metadata: %s", target_path)
                 return
         else:

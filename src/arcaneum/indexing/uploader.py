@@ -736,8 +736,6 @@ class PDFBatchUploader:
                 print("All PDFs up to date")
             else:
                 print(f"{timestamp()} ✅ All PDFs are up to date")
-            if force_reindex and file_list is None and all_pdf_files:
-                stamp_file_manifests_ready(self.qdrant, collection_name)
             return {
                 "files": 0,
                 "chunks": 0,

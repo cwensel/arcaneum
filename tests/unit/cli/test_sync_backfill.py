@@ -236,7 +236,7 @@ def test_backfill_meili_to_qdrant_builds_code_quality_manifest(tmp_path):
     assert chunks_success >= 1
     assert files_failed == 0
     assert skipped == []
-    points = qdrant.upsert.call_args.kwargs["points"]
+    points = qdrant.upsert.call_args_list[0].kwargs["points"]
     manifest = points[0].payload["quality_manifest"]
     assert manifest["extractor"] == "code"
     assert manifest["source_hash"] == points[0].payload["source_hash"]
@@ -286,9 +286,39 @@ def test_backfill_meili_to_qdrant_batches_embeddings_per_file(monkeypatch, tmp_p
         assert call.args[0] == ["first", "second", "third"]
         assert call.kwargs["max_internal_batch"] == 2
 
-    points = qdrant.upsert.call_args.kwargs["points"]
+    points = qdrant.upsert.call_args_list[0].kwargs["points"]
     assert [point.vector["model-a"] for point in points] == [[10], [11], [12]]
     assert [point.vector["model-b"] for point in points] == [[20], [21], [22]]
+
+
+def test_backfill_meili_to_qdrant_writes_manifest_for_zero_chunks(monkeypatch, tmp_path):
+    source = tmp_path / "empty.py"
+    source.write_text("")
+    monkeypatch.setattr(sync_module, "chunk_code_file", lambda *args, **kwargs: [])
+    qdrant = MagicMock()
+    qdrant.get_collection.return_value = SimpleNamespace(
+        payload_schema={},
+        config=SimpleNamespace(params=SimpleNamespace(vectors=SimpleNamespace(size=3))),
+    )
+
+    result = sync_module._backfill_meili_to_qdrant(
+        qdrant=qdrant,
+        embedding_client=MagicMock(),
+        corpus="code-corpus",
+        corpus_type="code",
+        model_list=["model-a"],
+        model_config={"chunk_size": 8000, "chunk_overlap": 20},
+        file_paths=[str(source)],
+        verbose=False,
+        output_json=True,
+        progress=MagicMock(),
+        backfill_task=1,
+    )
+
+    assert result[:3] == (1, 0, 0)
+    manifest = qdrant.upsert.call_args.kwargs["points"][0].payload
+    assert manifest["metadata_type"] == "file_manifest"
+    assert manifest["chunk_count"] == 0
 
 
 def test_repair_meili_version_identifier_stamps_persisted_schema():

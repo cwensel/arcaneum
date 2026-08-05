@@ -228,9 +228,7 @@ def _ensure_file_manifests(
         print_info(f"Migrating legacy {corpus_type} metadata to file manifests...")
 
     def report_progress(chunks_scanned: int) -> None:
-        if verbose and not output_json and (
-            chunks_scanned == 100 or chunks_scanned % 10000 == 0
-        ):
+        if verbose and not output_json and (chunks_scanned == 100 or chunks_scanned % 10000 == 0):
             print_info(f"  Manifest migration scanned {chunks_scanned:,} legacy chunks...")
 
     migrated = sync_manager.backfill_file_manifests(
@@ -2981,6 +2979,16 @@ def sync_directory_command(
                                     progress.console.print(
                                         f"[green]  ✓ {file_path.name} — {len(chunks)} chunks, {format_size(embedded_size)} embedded[/green]"
                                     )
+                            else:
+                                _upsert_file_manifest(
+                                    manifest_sync_manager,
+                                    corpus,
+                                    corpus_type,
+                                    file_path,
+                                    quick_hash,
+                                    file_hash=file_hash,
+                                    chunk_count=0,
+                                )
 
                             total_indexed += 1
 
@@ -3225,6 +3233,15 @@ def sync_directory_command(
                             continue
 
                         if not chunks:
+                            _upsert_file_manifest(
+                                manifest_sync_manager,
+                                corpus,
+                                corpus_type,
+                                file_path,
+                                compute_quick_hash(file_path),
+                                file_hash=compute_file_hash(file_path),
+                                chunk_count=0,
+                            )
                             progress.advance(backfill_task)
                             continue
 
@@ -4278,6 +4295,7 @@ def _backfill_meili_to_qdrant(
     """
     from qdrant_client.models import PointStruct
 
+    manifest_sync_manager = MetadataBasedSync(qdrant)
     files_success = 0
     chunks_success = 0
     files_failed = 0
@@ -4387,6 +4405,16 @@ def _backfill_meili_to_qdrant(
                 continue
 
             if not chunks:
+                _upsert_file_manifest(
+                    manifest_sync_manager,
+                    corpus,
+                    corpus_type,
+                    file_path,
+                    compute_quick_hash(file_path),
+                    file_hash=compute_file_hash(file_path),
+                    chunk_count=0,
+                )
+                files_success += 1
                 progress.advance(backfill_task)
                 continue
 
@@ -4476,6 +4504,16 @@ def _backfill_meili_to_qdrant(
                     progress.console.print(
                         f"[green]  ✓ {file_path.name} — {len(points)} chunks, {format_size(embedded_size)} embedded (Qdrant backfill)[/green]"
                     )
+
+            _upsert_file_manifest(
+                manifest_sync_manager,
+                corpus,
+                corpus_type,
+                file_path,
+                quick_hash,
+                file_hash=file_hash,
+                chunk_count=len(points),
+            )
 
             files_success += 1
 

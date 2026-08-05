@@ -970,9 +970,11 @@ class EmbeddingClient:
         self.close()
 
     def _drop_accelerator_worker(self, model_name: str) -> None:
-        worker = self._accelerator_workers.pop(model_name, None)
+        worker = self._accelerator_workers.get(model_name)
         if worker is not None:
             worker.shutdown()
+            if not worker.is_alive:
+                self._accelerator_workers.pop(model_name, None)
 
     def _get_accelerator_worker(self, model_name: str) -> AcceleratorWorkerSession:
         worker = self._accelerator_workers.get(model_name)

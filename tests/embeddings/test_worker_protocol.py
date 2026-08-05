@@ -152,6 +152,29 @@ def test_unkillable_process_retains_handle_and_never_closes_it():
         channel.join_thread.assert_not_called()
 
 
+def test_shutdown_retries_forced_reap_after_initial_containment_failure():
+    worker = session()
+    process = MagicMock()
+    process.pid = 42
+    # First reap: alive before terminate, after terminate, and after kill.
+    # Retry: alive before terminate, then dead after terminate.
+    process.is_alive.side_effect = [True, True, True, True, False, False]
+    commands, replies = MagicMock(), MagicMock()
+    worker._process, worker._commands, worker._replies = process, commands, replies
+
+    with pytest.raises(WorkerContainmentError):
+        worker._reap()
+    assert worker._process is process
+    assert worker._queues_closed
+
+    worker.shutdown()
+
+    assert worker._process is None
+    process.close.assert_called_once_with()
+    assert process.terminate.call_count == 2
+    process.kill.assert_called_once_with()
+
+
 def test_forced_reap_does_not_join_blocked_queue_feeders():
     worker = session()
     process = MagicMock()

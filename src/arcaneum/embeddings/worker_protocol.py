@@ -268,11 +268,20 @@ class AcceleratorWorkerSession:
         with self._request_lock:
             if self._process is None:
                 return
+            if self._queues_closed:
+                self._reap()
+                return
             if self._process.is_alive():
                 try:
                     request_id = self._send(MessageType.SHUTDOWN)
                     self._receive(request_id, MessageType.SHUTDOWN_COMPLETE, timeout)
-                except (WorkerCrashedError, WorkerProtocolError, WorkerTimeoutError):
+                except (
+                    OSError,
+                    ValueError,
+                    WorkerCrashedError,
+                    WorkerProtocolError,
+                    WorkerTimeoutError,
+                ):
                     pass
             self._reap(graceful=True)
 
@@ -283,7 +292,11 @@ class AcceleratorWorkerSession:
         if self._in_flight:
             raise RuntimeError("only one request may be in flight per worker")
         request_id = uuid.uuid4().hex
-        self._commands.put_nowait(make_message(kind, request_id, **payload))
+        try:
+            self._commands.put_nowait(make_message(kind, request_id, **payload))
+        except (OSError, ValueError) as exc:
+            self._reap()
+            raise WorkerCrashedError("accelerator worker command queue is closed") from exc
         self._in_flight = True
         return request_id
 

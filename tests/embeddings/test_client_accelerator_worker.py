@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from arcaneum.embeddings.client import EmbeddingClient
-from arcaneum.embeddings.worker_protocol import WorkerTimeoutError
+from arcaneum.embeddings.worker_protocol import WorkerContainmentError, WorkerTimeoutError
 
 
 def client():
@@ -128,3 +128,19 @@ def test_close_attempts_all_workers_and_retains_uncontained_worker():
     failed.shutdown.side_effect = None
     failed.is_alive = False
     value.close()
+
+
+def test_drop_retains_worker_until_containment_is_confirmed():
+    value = client()
+    worker = MagicMock(is_alive=True)
+    worker.shutdown.side_effect = WorkerContainmentError("still alive")
+    value._accelerator_workers["jina-code-st"] = worker
+
+    with pytest.raises(WorkerContainmentError):
+        value._drop_accelerator_worker("jina-code-st")
+    assert value._accelerator_workers["jina-code-st"] is worker
+
+    worker.shutdown.side_effect = None
+    worker.is_alive = False
+    value._drop_accelerator_worker("jina-code-st")
+    assert "jina-code-st" not in value._accelerator_workers

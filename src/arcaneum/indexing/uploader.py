@@ -691,7 +691,17 @@ class PDFBatchUploader:
         logger.debug(f"force_reindex={force_reindex}")
 
         if not force_reindex and not file_manifests_ready(self.qdrant, collection_name):
-            self.sync.backfill_file_manifests(collection_name)
+
+            def report_manifest_progress(chunks_scanned: int) -> None:
+                if verbose and (chunks_scanned == 100 or chunks_scanned % 10000 == 0):
+                    print(
+                        f"{timestamp()}   Manifest migration scanned "
+                        f"{chunks_scanned:,} legacy chunks..."
+                    )
+
+            self.sync.backfill_file_manifests(
+                collection_name, progress_callback=report_manifest_progress
+            )
 
         if force_reindex:
             if verbose:

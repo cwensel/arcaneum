@@ -421,10 +421,11 @@ class MarkdownIndexingPipeline:
                     print(
                         f"\r{embedding_ts}   → embedding ({file_chunk_count} chunks) [{total_batches}/{total_batches} batches]    "
                     )
-                    print(
-                        f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed / total_batches:.2f}s/batch)",
-                        flush=True,
-                    )
+                    if total_batches:
+                        print(
+                            f"{timestamp()}      embedded {file_chunk_count} chunks in {embedding_elapsed:.2f}s ({total_batches} batches of {self.embedding_batch_size}, {embedding_elapsed / total_batches:.2f}s/batch)",
+                            flush=True,
+                        )
 
                 # Stage 4: Create points
                 points = []
@@ -448,6 +449,17 @@ class MarkdownIndexingPipeline:
                 # Memory cleanup (non-streaming mode)
                 # Clear GPU cache if using GPU to prevent memory buildup across files
                 # Native accelerator cache is child-owned and cleared on worker teardown.
+
+                if file_chunk_count == 0:
+                    self.sync.upsert_file_manifest(
+                        collection_name,
+                        file_path_abs,
+                        quick_hash,
+                        file_hash=file_hash,
+                        chunk_count=0,
+                        file_size=file_metadata.file_size,
+                        store_type="markdown",
+                    )
 
                 return (points, file_chunk_count, None)
 
@@ -510,7 +522,17 @@ class MarkdownIndexingPipeline:
             print(f"{timestamp()} 🔍 Scanning collection for existing files...")
 
         if not force_reindex and not file_manifests_ready(self.qdrant, collection_name):
-            self.sync.backfill_file_manifests(collection_name)
+
+            def report_manifest_progress(chunks_scanned: int) -> None:
+                if verbose and (chunks_scanned == 100 or chunks_scanned % 10000 == 0):
+                    print(
+                        f"{timestamp()}   Manifest migration scanned "
+                        f"{chunks_scanned:,} legacy chunks..."
+                    )
+
+            self.sync.backfill_file_manifests(
+                collection_name, progress_callback=report_manifest_progress
+            )
 
         if force_reindex:
             markdown_files = all_markdown_files
@@ -663,16 +685,6 @@ class MarkdownIndexingPipeline:
                                         f"{timestamp()}   ✓ complete ({file_chunk_count} chunks)",
                                         flush=True,
                                     )
-                            elif not self.streaming:
-                                self.sync.upsert_file_manifest(
-                                    collection_name,
-                                    str(file_path.absolute()),
-                                    compute_quick_hash(file_path),
-                                    file_hash=compute_file_hash(file_path),
-                                    chunk_count=0,
-                                    file_size=file_path.stat().st_size,
-                                    store_type="markdown",
-                                )
                             elif self.streaming and file_chunk_count > 0:
                                 # Streaming mode already uploaded chunks inside the
                                 # embed callback, so points is empty. Count the file
@@ -752,16 +764,6 @@ class MarkdownIndexingPipeline:
                                     f"{timestamp()}   ✓ complete ({file_chunk_count} chunks)",
                                     flush=True,
                                 )
-                        elif not self.streaming:
-                            self.sync.upsert_file_manifest(
-                                collection_name,
-                                str(file_path.absolute()),
-                                compute_quick_hash(file_path),
-                                file_hash=compute_file_hash(file_path),
-                                chunk_count=0,
-                                file_size=file_path.stat().st_size,
-                                store_type="markdown",
-                            )
                         elif self.streaming and file_chunk_count > 0:
                             # Streaming mode already uploaded chunks inside the
                             # embed callback, so points is empty. Count the file

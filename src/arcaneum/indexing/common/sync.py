@@ -216,6 +216,13 @@ def _compute_quick_hashes(file_list: List[Path]) -> dict:
     return file_hashes
 
 
+class FileManifestScanError(RuntimeError):
+    """Raised when an authoritative manifest snapshot cannot be read."""
+
+    def __init__(self, collection_name: str):
+        super().__init__(f"Failed to scan file manifests for collection '{collection_name}'")
+
+
 class MetadataBasedSync:
     """Check indexing status using Qdrant metadata queries.
 
@@ -362,7 +369,8 @@ class MetadataBasedSync:
             with_vectors=False,
         )
         if not source or not source[0].payload:
-            raise RuntimeError(f"Source file manifest not found: {source_path}")
+            logger.warning("Source file manifest not found, skipping copy: %s", source_path)
+            return
         payload = source[0].payload
         self.upsert_file_manifest(
             collection_name,
@@ -451,7 +459,11 @@ class MetadataBasedSync:
         vectors = self._zero_vectors(collection_name)
         batch: List[PointStruct] = []
         for path, values in manifests.items():
-            values["chunk_count"] = values.get("chunk_count") or values.pop("observed_chunks")
+            values["chunk_count"] = (
+                values["chunk_count"]
+                if values.get("chunk_count") is not None
+                else values.pop("observed_chunks")
+            )
             values.pop("observed_chunks", None)
             payload = {
                 METADATA_PAYLOAD_KEY: True,
@@ -558,7 +570,7 @@ class MetadataBasedSync:
         except Exception as e:
             logger.warning(f"Error querying quick_hashes: {e}")
             if manifests_ready:
-                raise
+                raise FileManifestScanError(collection_name) from e
             return set()
 
     def _get_indexed_file_paths_set(self, collection_name: str) -> set:
@@ -755,6 +767,8 @@ class MetadataBasedSync:
             )
             return (needs_processing, already_indexed)
 
+        except FileManifestScanError:
+            raise
         except Exception as e:
             logger.warning(f"Error querying collection: {e}, processing all files")
             return (file_list, [])

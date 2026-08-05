@@ -163,18 +163,31 @@ def test_ready_manifest_scan_failure_is_not_treated_as_empty_collection():
     )
     qdrant.scroll.side_effect = RuntimeError("timeout")
 
-    with pytest.raises(RuntimeError, match="timeout"):
+    with pytest.raises(RuntimeError, match="Failed to scan file manifests"):
         MetadataBasedSync(qdrant)._get_indexed_quick_hashes("code")
 
 
-def test_copy_manifest_requires_existing_source():
+def test_copy_manifest_skips_missing_source_without_writing_partial_manifest():
     qdrant = MagicMock()
     qdrant.retrieve.return_value = []
 
-    with pytest.raises(RuntimeError, match="Source file manifest not found"):
-        MetadataBasedSync(qdrant).copy_file_manifest("code", "/old.py", "/new.py", "q")
+    MetadataBasedSync(qdrant).copy_file_manifest("code", "/old.py", "/new.py", "q")
 
     qdrant.upsert.assert_not_called()
+
+
+def test_get_unindexed_files_propagates_ready_manifest_scan_failure(tmp_path):
+    source = tmp_path / "a.py"
+    source.write_text("pass\n")
+    qdrant = MagicMock()
+    qdrant.retrieve.return_value = [_ready_metadata_point()]
+    qdrant.get_collection.return_value = _collection_info(
+        {FILE_MANIFEST_PAYLOAD_KEY: SimpleNamespace()}
+    )
+    qdrant.scroll.side_effect = RuntimeError("timeout")
+
+    with pytest.raises(RuntimeError, match="Failed to scan file manifests"):
+        MetadataBasedSync(qdrant).get_unindexed_files("code", [source])
 
 
 def test_ready_chunk_counts_are_read_from_manifests():

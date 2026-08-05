@@ -11,7 +11,7 @@ from arcaneum.benchmarks.accelerator import (
     compare_results,
     render_summary,
     run_reference_benchmark,
-    write_json,
+    write_result,
 )
 from arcaneum.benchmarks.coreml import run_coreml_qualification
 from arcaneum.benchmarks.cuda import run_cuda_qualification
@@ -97,7 +97,7 @@ def main() -> int:
         result = run_reference_benchmark(args.manifest, iterations=args.iterations)
     summary = render_summary(result)
     if args.output:
-        write_json(args.output, result)
+        write_result(args.output, result)
     if args.summary:
         args.summary.parent.mkdir(parents=True, exist_ok=True)
         args.summary.write_text(summary + "\n", encoding="utf-8")

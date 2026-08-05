@@ -1,18 +1,21 @@
 import json
 import subprocess
 import sys
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
-from jsonschema import Draft202012Validator, FormatChecker
 
 from arcaneum.benchmarks.accelerator import (
     SCHEMA_VERSION,
     compare_results,
     load_manifest,
+    load_result_schema,
     manifest_digest,
     render_summary,
     run_reference_benchmark,
+    validate_result,
+    write_result,
 )
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -58,25 +61,57 @@ def test_reference_cpu_result_covers_schema_and_is_correct():
 
 
 def test_schema_is_valid_and_accepts_every_checked_in_result():
-    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
-    Draft202012Validator.check_schema(schema)
-    validator = Draft202012Validator(schema, format_checker=FormatChecker())
+    assert load_result_schema()["$schema"].endswith("draft/2020-12/schema")
 
     result_paths = sorted((ROOT / "benchmarks" / "results").glob("*.json"))
     assert result_paths
     for path in result_paths:
         result = json.loads(path.read_text(encoding="utf-8"))
-        errors = sorted(validator.iter_errors(result), key=lambda error: list(error.path))
-        assert not errors, f"{path.name}: " + "; ".join(error.message for error in errors)
+        validate_result(result, label=path.name)
 
 
 def test_schema_rejects_invalid_nested_result_data():
-    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
-    validator = Draft202012Validator(schema, format_checker=FormatChecker())
     result = json.loads(EXAMPLE.read_text(encoding="utf-8"))
     result["reliability"]["failures"] = -1
 
-    assert list(validator.iter_errors(result))
+    with pytest.raises(ValueError, match=r"\$\.reliability\.failures"):
+        validate_result(result)
+
+
+def test_write_result_validates_before_creating_output(tmp_path):
+    result = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+    output = tmp_path / "missing-parent" / "result.json"
+    result["performance"]["latency_seconds"]["p95"] = -1
+
+    with pytest.raises(ValueError, match=r"\$\.performance\.latency_seconds\.p95"):
+        write_result(output, result)
+
+    assert not output.exists()
+    assert not output.parent.exists()
+
+
+def test_write_result_accepts_valid_result(tmp_path):
+    result = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+    output = tmp_path / "result.json"
+
+    write_result(output, result)
+
+    assert json.loads(output.read_text(encoding="utf-8")) == result
+
+
+@pytest.mark.parametrize("side", ["baseline", "candidate"])
+def test_comparison_validates_both_inputs_before_comparing(side):
+    baseline = run_reference_benchmark(MANIFEST, iterations=1)
+    candidate = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+    invalid = deepcopy(baseline if side == "baseline" else candidate)
+    invalid["run"]["recorded_at"] = "not-a-date"
+    if side == "baseline":
+        baseline = invalid
+    else:
+        candidate = invalid
+
+    with pytest.raises(ValueError, match=rf"{side}.*\$\.run\.recorded_at"):
+        compare_results(baseline, candidate)
 
 
 def test_example_accelerator_result_is_comparable():
@@ -93,7 +128,7 @@ def test_example_accelerator_result_is_comparable():
 def test_comparison_rejects_fixture_drift():
     baseline = run_reference_benchmark(MANIFEST, iterations=1)
     candidate = json.loads(EXAMPLE.read_text())
-    candidate["fixture"]["manifest_sha256"] = "different"
+    candidate["fixture"]["manifest_sha256"] = "0" * 64
 
     with pytest.raises(ValueError, match="fixture manifests differ"):
         compare_results(baseline, candidate)

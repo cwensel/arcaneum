@@ -2,6 +2,11 @@
 
 This guide explains how to benchmark the indexing pipeline performance and measure the impact of the optimizations applied.
 
+The accelerator harness is development tooling and validates every result with
+the Draft 2020-12 schema before writing or comparing it. Prepare its dependencies
+with `uv sync --extra dev` (or install the equivalent `.[dev]` extra) before
+running the commands below.
+
 > [!IMPORTANT]
 > Historical speedups, "Expected Output," recommendations, and utilization figures
 > in this guide are illustrative examples, not checked-in measurements. They must

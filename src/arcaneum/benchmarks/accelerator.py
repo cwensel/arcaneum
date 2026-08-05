@@ -1,4 +1,4 @@
-"""Versioned, dependency-free accelerator benchmark baseline.
+"""Versioned accelerator benchmark baseline and validated result contract.
 
 The reference backend deliberately performs a deterministic CPU workload instead
 of downloading a model.  It exercises the result contract in ordinary CI; real
@@ -13,17 +13,26 @@ import math
 import os
 import platform
 import statistics
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import psutil
+from jsonschema import Draft202012Validator, FormatChecker
 
 SCHEMA_VERSION = "1.0.0"
 HARNESS_VERSION = "1.0.0"
+RESULT_SCHEMA_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "benchmarks"
+    / "schema"
+    / "accelerator-result-v1.schema.json"
+)
 
 
 @dataclass(frozen=True)
@@ -32,6 +41,39 @@ class Fixture:
     length_class: str
     text: str
     repetitions: int
+
+
+@lru_cache(maxsize=1)
+def load_result_schema() -> dict[str, Any]:
+    """Load and meta-validate the canonical Draft 2020-12 result schema."""
+    schema = json.loads(RESULT_SCHEMA_PATH.read_text(encoding="utf-8"))
+    Draft202012Validator.check_schema(schema)
+    return schema
+
+
+@lru_cache(maxsize=1)
+def _result_validator() -> Draft202012Validator:
+    return Draft202012Validator(load_result_schema(), format_checker=FormatChecker())
+
+
+def _json_path(parts: Any) -> str:
+    path = "$"
+    for part in parts:
+        path += f"[{part}]" if isinstance(part, int) else f".{part}"
+    return path
+
+
+def validate_result(value: dict[str, Any], *, label: str = "result") -> None:
+    """Raise a path-qualified error when a benchmark result violates the schema."""
+    errors = sorted(
+        _result_validator().iter_errors(value),
+        key=lambda error: tuple(str(part) for part in error.absolute_path),
+    )
+    if errors:
+        details = "; ".join(
+            f"{_json_path(error.absolute_path)}: {error.message}" for error in errors
+        )
+        raise ValueError(f"{label} failed accelerator result schema validation: {details}")
 
 
 def load_manifest(path: Path) -> tuple[dict[str, Any], list[Fixture]]:
@@ -168,6 +210,8 @@ def run_reference_benchmark(
 
 
 def compare_results(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
+    validate_result(baseline, label="baseline")
+    validate_result(candidate, label="candidate")
     if baseline["schema_version"] != candidate["schema_version"]:
         raise ValueError("result schema versions differ")
     if baseline["fixture"]["manifest_sha256"] != candidate["fixture"]["manifest_sha256"]:
@@ -212,6 +256,24 @@ def render_summary(result: dict[str, Any]) -> str:
     )
 
 
-def write_json(path: Path, value: dict[str, Any]) -> None:
+def write_result(path: Path, value: dict[str, Any]) -> None:
+    """Atomically persist one schema-valid result; invalid data never touches disk."""
+    validate_result(value)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    serialized = json.dumps(value, indent=2, sort_keys=True) + "\n"
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False
+        ) as handle:
+            temporary_path = Path(handle.name)
+            handle.write(serialized)
+        temporary_path.replace(path)
+    finally:
+        if temporary_path is not None and temporary_path.exists():
+            temporary_path.unlink()
+
+
+def write_json(path: Path, value: dict[str, Any]) -> None:
+    """Backward-compatible name for :func:`write_result`."""
+    write_result(path, value)

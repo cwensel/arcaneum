@@ -237,6 +237,21 @@ Create a backup before upgrades, machine moves, or destructive maintenance:
 arc container backup
 ```
 
+By default, backups are stored under the XDG data directory. To choose a
+persistent backup root, add this to `~/.config/arcaneum/config.yaml`:
+
+```yaml
+backup:
+  path: /mnt/backups/arcaneum
+```
+
+Each run creates a UTC timestamped directory beneath that path. Use `--output`
+to override the configured root and name a backup directory explicitly:
+
+```bash
+arc container backup --output ./arcaneum-backup
+```
+
 The backup directory contains Qdrant collection snapshots and MeiliSearch index
 settings plus JSONL document exports, including Arcaneum corpus metadata stored
 in those systems. It does not include source files, cached embedding models,

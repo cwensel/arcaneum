@@ -12,6 +12,8 @@ import requests
 
 from arcaneum.cli.errors import HelpfulGroup
 from arcaneum.cli.output import print_error, print_info, print_json, print_success, print_warning
+from arcaneum.cli.utils import resolve_config_path
+from arcaneum.config import load_config
 from arcaneum.paths import get_data_dir
 from arcaneum.utils.formatting import format_size
 
@@ -20,6 +22,28 @@ _TASK_UID_UNSET = object()
 
 def _exit_on_error(code: int = 1):
     raise SystemExit(code)
+
+
+def _resolve_backup_path(output: str | None, timestamp: str) -> Path:
+    """Resolve the directory for a full backup.
+
+    An explicit output path names the backup directory exactly. A configured
+    backup path is a root under which timestamped backup directories are
+    created. Relative configured paths are resolved from the config directory.
+    """
+    if output:
+        return Path(output).expanduser()
+
+    config_path = resolve_config_path()
+    if config_path.exists():
+        configured_path = load_config(config_path).backup.path
+        if configured_path is not None:
+            backup_root = configured_path.expanduser()
+            if not backup_root.is_absolute():
+                backup_root = (config_path.parent / backup_root).resolve()
+            return backup_root / timestamp
+
+    return get_data_dir() / "backups" / timestamp
 
 
 def check_docker_available(output_json: bool = False):
@@ -827,7 +851,12 @@ def _restore_meilisearch(
 
 
 @container_group.command("backup")
-@click.option("--output", "-o", type=click.Path(), help="Backup directory to create")
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(),
+    help="Backup directory to create (overrides configured backup.path)",
+)
 @click.option("--qdrant-url", default="http://localhost:6333", help="Qdrant URL")
 @click.option("--meilisearch-url", default="http://localhost:7700", help="MeiliSearch URL")
 @click.option("--qdrant-container", default="qdrant-arcaneum", help="Qdrant container name")
@@ -853,7 +882,7 @@ def backup_command(
         _exit_on_error()
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    backup_path = Path(output).expanduser() if output else get_data_dir() / "backups" / timestamp
+    backup_path = _resolve_backup_path(output, timestamp)
     backup_path.mkdir(parents=True, exist_ok=False)
 
     manifest = {

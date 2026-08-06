@@ -37,6 +37,12 @@ class CacheConfig(BaseModel):
     max_size_gb: int = 10
 
 
+class BackupConfig(BaseModel):
+    """Full backup configuration."""
+
+    path: Optional[Path] = None
+
+
 class CollectionTemplate(BaseModel):
     """Template for collection creation."""
 
@@ -52,6 +58,7 @@ class ArcaneumConfig(BaseModel):
 
     qdrant: QdrantConfig = Field(default_factory=QdrantConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
+    backup: BackupConfig = Field(default_factory=BackupConfig)
     models: Dict[str, ModelConfig]
     collections: Dict[str, CollectionTemplate] = Field(default_factory=dict)
 

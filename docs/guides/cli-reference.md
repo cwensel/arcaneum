@@ -1492,6 +1492,17 @@ arc container reset --confirm
 
 - Qdrant and MeiliSearch use Docker named volumes for persistence
 - Survives container restarts
+- Without `--output`, `arc container backup` creates a UTC timestamped directory
+  under `backup.path` from `~/.config/arcaneum/config.yaml`, or under the XDG data
+  directory when that setting is absent:
+
+  ```yaml
+  backup:
+    path: /mnt/backups/arcaneum
+  ```
+
+- Relative configured backup paths are resolved from the configuration directory;
+  `--output` overrides the setting and names the backup directory exactly
 - `arc container backup` protects Qdrant collection snapshots and MeiliSearch
   index settings plus JSONL document exports, including Arcaneum corpus metadata
   stored there

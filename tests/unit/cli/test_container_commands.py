@@ -462,6 +462,71 @@ class TestContainerLogs:
 class TestContainerBackupRestore:
     """Test 'arc container backup' and 'arc container restore' commands."""
 
+    def test_backup_path_uses_xdg_fallback(self, tmp_path, monkeypatch):
+        from arcaneum.cli.docker import _resolve_backup_path
+
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+        path = _resolve_backup_path(None, "20260806T120000Z")
+
+        assert path == tmp_path / "data" / "arcaneum" / "backups" / "20260806T120000Z"
+
+    def test_backup_path_uses_configured_root(self, tmp_path, monkeypatch):
+        from arcaneum.cli.docker import _resolve_backup_path
+
+        config_dir = tmp_path / "config" / "arcaneum"
+        config_dir.mkdir(parents=True)
+        (config_dir / "config.yaml").write_text("""
+models:
+  test-model:
+    name: test/model
+    dimensions: 768
+    chunk_size: 512
+    chunk_overlap: 64
+backup:
+  path: ../../backups
+""")
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        path = _resolve_backup_path(None, "20260806T120000Z")
+
+        assert path == tmp_path / "backups" / "20260806T120000Z"
+
+    def test_backup_path_expands_home_directory(self, tmp_path, monkeypatch):
+        from arcaneum.cli.docker import _resolve_backup_path
+
+        config_dir = tmp_path / "config" / "arcaneum"
+        config_dir.mkdir(parents=True)
+        (config_dir / "config.yaml").write_text("""
+models:
+  test-model:
+    name: test/model
+    dimensions: 768
+    chunk_size: 512
+    chunk_overlap: 64
+backup:
+  path: ~/arcaneum-backups
+""")
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+        path = _resolve_backup_path(None, "20260806T120000Z")
+
+        assert path == tmp_path / "home" / "arcaneum-backups" / "20260806T120000Z"
+
+    def test_output_overrides_configured_backup_path(self, tmp_path, monkeypatch):
+        from arcaneum.cli.docker import _resolve_backup_path
+
+        config_dir = tmp_path / "config" / "arcaneum"
+        config_dir.mkdir(parents=True)
+        (config_dir / "config.yaml").write_text("invalid: [")
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+        path = _resolve_backup_path(str(tmp_path / "explicit"), "20260806T120000Z")
+
+        assert path == tmp_path / "explicit"
+
     def test_backup_writes_manifest_and_exports_services(self, temp_dir):
         """Test that backup snapshots Qdrant and exports MeiliSearch metadata."""
         from arcaneum.cli.docker import backup_command

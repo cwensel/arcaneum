@@ -208,8 +208,8 @@ def set_process_priority(priority: str, disable_worker_nice: bool = False) -> No
         logger.warning(f"Process priority not supported on platform: {sys.platform}")
 
 
-def _resolve_qdrant_config_path() -> Path:
-    """Resolve the default Qdrant config path, migrating legacy config if needed."""
+def resolve_config_path() -> Path:
+    """Resolve the default Arcaneum config path, migrating legacy config if needed."""
     config_home = os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))
     config_path = Path(config_home) / "arcaneum" / "config.yaml"
     temp_config_path = config_path.with_name(f".{config_path.name}.{os.getpid()}.tmp")
@@ -283,7 +283,7 @@ def create_qdrant_client(
     # Try to load config, but don't fail if it doesn't exist
     qdrant_config = None
     if config_path is None:
-        config_path = _resolve_qdrant_config_path()
+        config_path = resolve_config_path()
 
     if config_path.exists():
         try:

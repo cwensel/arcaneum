@@ -1,11 +1,14 @@
 """Unit tests for arcaneum.config — load/save config and Pydantic models."""
 
+from pathlib import Path
+
 import pytest
 import yaml
 from pydantic import ValidationError
 
 from arcaneum.config import (
     ArcaneumConfig,
+    BackupConfig,
     CacheConfig,
     ModelConfig,
     QdrantConfig,
@@ -113,7 +116,17 @@ class TestArcaneumConfig:
         assert "test-model" in cfg.models
         assert isinstance(cfg.qdrant, QdrantConfig)
         assert isinstance(cfg.cache, CacheConfig)
+        assert isinstance(cfg.backup, BackupConfig)
+        assert cfg.backup.path is None
         assert cfg.collections == {}
+
+    def test_backup_path(self):
+        data = dict(MINIMAL_CONFIG_DATA)
+        data["backup"] = {"path": "/mnt/backups/arcaneum"}
+
+        cfg = ArcaneumConfig(**data)
+
+        assert cfg.backup.path == Path("/mnt/backups/arcaneum")
 
     def test_missing_models_rejected(self):
         with pytest.raises(ValidationError):
@@ -174,13 +187,16 @@ class TestSaveConfig:
         assert "test-model" in data["models"]
 
     def test_round_trip(self, tmp_path):
-        cfg = ArcaneumConfig(**MINIMAL_CONFIG_DATA)
+        data = dict(MINIMAL_CONFIG_DATA)
+        data["backup"] = {"path": "/mnt/backups/arcaneum"}
+        cfg = ArcaneumConfig(**data)
         path = tmp_path / "config.yaml"
         save_config(cfg, path)
         loaded = load_config(path)
         assert loaded.models["test-model"].name == cfg.models["test-model"].name
         assert loaded.models["test-model"].dimensions == cfg.models["test-model"].dimensions
         assert loaded.qdrant.url == cfg.qdrant.url
+        assert loaded.backup.path == cfg.backup.path
 
     def test_round_trip_with_collection(self, tmp_path):
         data = dict(MINIMAL_CONFIG_DATA)

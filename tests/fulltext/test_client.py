@@ -304,6 +304,15 @@ class TestDocumentWaitRetries:
 
         assert client.client.wait_for_task.call_count == 3
 
+    def test_wait_rejects_zero_attempts(self):
+        client = FullTextClient.__new__(FullTextClient)
+        client.client = Mock()
+
+        with pytest.raises(ValueError, match="attempts must be at least 1"):
+            client._wait_for_task_with_retries(42, timeout_ms=60000, attempts=0)
+
+        client.client.wait_for_task.assert_not_called()
+
     def test_delete_documents_by_file_paths_retries_task_wait(self, no_retry_sleep):
         client = FullTextClient.__new__(FullTextClient)
         client.client = Mock()

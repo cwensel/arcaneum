@@ -95,8 +95,11 @@ def load_backup_config(config_path: Path) -> BackupConfig:
     if not config_path.exists():
         raise FileNotFoundError(f"Config file not found: {config_path}")
 
-    with open(config_path) as f:
-        data = yaml.safe_load(f) or {}
+    try:
+        with open(config_path) as f:
+            data = yaml.safe_load(f) or {}
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Invalid YAML in configuration file: {config_path}") from exc
 
     if not isinstance(data, dict):
         raise ValueError("Configuration must be a YAML mapping")

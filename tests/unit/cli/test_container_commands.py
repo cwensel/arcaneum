@@ -521,6 +521,33 @@ backup:
 
         assert path == tmp_path / "explicit"
 
+    def test_invalid_config_uses_xdg_fallback(self, tmp_path, monkeypatch, capsys):
+        from arcaneum.cli.docker import _resolve_backup_path
+
+        config_dir = tmp_path / "config" / "arcaneum"
+        config_dir.mkdir(parents=True)
+        (config_dir / "config.yaml").write_text("backup: [")
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+        path = _resolve_backup_path(None, "20260806T120000Z")
+
+        assert path == tmp_path / "data" / "arcaneum" / "backups" / "20260806T120000Z"
+        assert "Ignoring invalid backup configuration" in capsys.readouterr().err
+
+    def test_malformed_backup_section_uses_xdg_fallback(self, tmp_path, monkeypatch):
+        from arcaneum.cli.docker import _resolve_backup_path
+
+        config_dir = tmp_path / "config" / "arcaneum"
+        config_dir.mkdir(parents=True)
+        (config_dir / "config.yaml").write_text("backup: invalid\n")
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+        path = _resolve_backup_path(None, "20260806T120000Z")
+
+        assert path == tmp_path / "data" / "arcaneum" / "backups" / "20260806T120000Z"
+
     def test_backup_writes_manifest_and_exports_services(self, temp_dir, capsys):
         """Test that backup snapshots Qdrant and exports MeiliSearch metadata."""
         from arcaneum.cli.docker import backup_command

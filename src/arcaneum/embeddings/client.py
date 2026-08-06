@@ -43,9 +43,15 @@ class _AcceleratorModelProxy:
     _backend = "sentence-transformers"
 
 
-def _coreml_sentinel_path():
-    """Path of the crash sentinel marking an in-flight CoreML session."""
-    return get_state_dir() / "coreml-session.json"
+def _coreml_sentinel_path(pid: Optional[int] = None) -> Path:
+    """Path of one process-scoped in-flight CoreML session sentinel."""
+    return get_state_dir() / f"coreml-session-{pid or os.getpid()}.json"
+
+
+def _coreml_sentinel_paths() -> list[Path]:
+    """Return current and legacy CoreML crash sentinels."""
+    state_dir = get_state_dir()
+    return [state_dir / "coreml-session.json", *state_dir.glob("coreml-session-*.json")]
 
 
 def _pid_is_alive(pid: int) -> bool:
@@ -87,14 +93,8 @@ def _write_coreml_sentinel(model_name: str) -> None:
 
 def _remove_coreml_sentinel() -> None:
     """Remove this process's CoreML sentinel (clean-exit path)."""
-    import json
-
     try:
-        sentinel = _coreml_sentinel_path()
-        if not sentinel.exists():
-            return
-        if json.loads(sentinel.read_text()).get("pid") == os.getpid():
-            sentinel.unlink()
+        _coreml_sentinel_path().unlink(missing_ok=True)
     except Exception:
         logger.debug("Could not remove CoreML crash sentinel", exc_info=True)
 
@@ -617,25 +617,26 @@ class EmbeddingClient:
         """
         import json
 
-        try:
-            sentinel = _coreml_sentinel_path()
-            if not sentinel.exists():
-                return
-            data = json.loads(sentinel.read_text())
-            pid = data.get("pid")
-            if pid is not None and _pid_is_alive(pid):
-                return
-            message = (
-                f"A previous run using experimental CoreML "
-                f"(model '{data.get('model', 'unknown')}', started {data.get('started', 'unknown')}) "
-                "did not exit cleanly — likely killed by the OS due to memory exhaustion. "
-                "Re-run without --gpu for stable CPU embedding."
-            )
-            logger.info(message)
-            print(f"⚠ {message}", file=sys.stderr, flush=True)
-            sentinel.unlink()
-        except Exception:
-            logger.debug("CoreML crash sentinel check failed", exc_info=True)
+        for sentinel in _coreml_sentinel_paths():
+            try:
+                if not sentinel.exists():
+                    continue
+                data = json.loads(sentinel.read_text())
+                pid = data.get("pid")
+                if pid is not None and _pid_is_alive(pid):
+                    continue
+                message = (
+                    f"A previous run using experimental CoreML "
+                    f"(model '{data.get('model', 'unknown')}', "
+                    f"started {data.get('started', 'unknown')}) "
+                    "did not exit cleanly — likely killed by the OS due to memory exhaustion. "
+                    "Re-run without --gpu for stable CPU embedding."
+                )
+                logger.info(message)
+                print(f"⚠ {message}", file=sys.stderr, flush=True)
+                sentinel.unlink()
+            except Exception:
+                logger.debug("CoreML crash sentinel check failed for %s", sentinel, exc_info=True)
 
     def _gated_model_hint(self, model_name: str, config: Dict, error: Exception) -> Optional[str]:
         """Explain the license/auth steps when a gated HF repo refuses a download.
@@ -2479,12 +2480,14 @@ class EmbeddingClient:
         """
         repo_name = dir_name.split("--")[-1]
 
-        def _tokens(value: str) -> set:
+        def _tokens(value: str) -> tuple[str, ...]:
             normalized = value.lower().replace("-", "_").replace(".", "_")
-            return {part for part in normalized.split("_") if len(part) > 2}
+            return tuple(part for part in normalized.split("_") if part)
 
         model_tokens = _tokens(model_path.split("/")[-1])
-        dir_tokens = _tokens(repo_name) - {"onnx"}
+        dir_tokens = _tokens(repo_name)
+        if dir_tokens[-1:] == ("onnx",):
+            dir_tokens = dir_tokens[:-1]
         return bool(model_tokens) and dir_tokens == model_tokens
 
     @staticmethod

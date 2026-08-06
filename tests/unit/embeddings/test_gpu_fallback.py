@@ -16,16 +16,17 @@ def _install_fake_sentence_transformers(monkeypatch, side_effect=None, return_va
 
 
 @pytest.fixture
-def embedding_client():
+def embedding_client(tmp_path):
     """Create an EmbeddingClient with GPU enabled but mocked internals."""
-    with patch("arcaneum.embeddings.client.get_models_dir", return_value="/tmp/models"):
-        from arcaneum.embeddings.client import EmbeddingClient
+    with patch("arcaneum.embeddings.client.get_state_dir", return_value=tmp_path):
+        with patch("arcaneum.embeddings.client.get_models_dir", return_value="/tmp/models"):
+            from arcaneum.embeddings.client import EmbeddingClient
 
-        client = EmbeddingClient(cache_dir="/tmp/models", use_gpu=True)
-        # Override device detection for tests
-        client._device = "mps"
-        yield client
-        client.close()
+            client = EmbeddingClient(cache_dir="/tmp/models", use_gpu=True)
+            # Override device detection for tests
+            client._device = "mps"
+            yield client
+            client.close()
 
 
 class TestGetModelReturnsCPUWhenPoisoned:
@@ -167,17 +168,18 @@ class TestFastEmbedCoreMLPolicy:
         assert "GPU requested, but FastEmbed/CoreML is experimental" in captured.err
         assert "ARC_EXPERIMENTAL_COREML=1" in captured.err
 
-    def test_fastembed_uses_coreml_when_gpu_flag_authorizes_it(self, monkeypatch):
+    def test_fastembed_uses_coreml_when_gpu_flag_authorizes_it(self, tmp_path, monkeypatch):
         """--gpu is an explicit opt-in; no additional env var should be needed."""
         monkeypatch.delenv("ARC_EXPERIMENTAL_COREML", raising=False)
 
-        with patch("arcaneum.embeddings.client.get_models_dir", return_value="/tmp/models"):
-            from arcaneum.embeddings.client import EmbeddingClient
+        with patch("arcaneum.embeddings.client.get_state_dir", return_value=tmp_path):
+            with patch("arcaneum.embeddings.client.get_models_dir", return_value="/tmp/models"):
+                from arcaneum.embeddings.client import EmbeddingClient
 
-            client = EmbeddingClient(
-                cache_dir="/tmp/models", use_gpu=True, allow_experimental_coreml=True
-            )
-            client._device = "mps"
+                client = EmbeddingClient(
+                    cache_dir="/tmp/models", use_gpu=True, allow_experimental_coreml=True
+                )
+                client._device = "mps"
 
         mock_ort = MagicMock()
         mock_ort.get_available_providers.return_value = [
@@ -185,10 +187,11 @@ class TestFastEmbedCoreMLPolicy:
             "CPUExecutionProvider",
         ]
 
-        with patch("arcaneum.embeddings.client.sys.platform", "darwin"):
-            with patch("arcaneum.embeddings.client.platform.machine", return_value="arm64"):
-                with patch.dict("sys.modules", {"onnxruntime": mock_ort}):
-                    providers = client._resolve_fastembed_providers("arctic-m")
+        with patch("arcaneum.embeddings.client.get_state_dir", return_value=tmp_path):
+            with patch("arcaneum.embeddings.client.sys.platform", "darwin"):
+                with patch("arcaneum.embeddings.client.platform.machine", return_value="arm64"):
+                    with patch.dict("sys.modules", {"onnxruntime": mock_ort}):
+                        providers = client._resolve_fastembed_providers("arctic-m")
 
         assert providers[0][0] == "CoreMLExecutionProvider"
         assert providers[0][1]["ModelFormat"] == "MLProgram"
@@ -236,9 +239,11 @@ class TestCoreMLCrashSentinel:
     """CoreML sessions leave a sentinel so an OS kill is reported on the next run."""
 
     def _client_with_coreml(self, tmp_path, monkeypatch):
+        import os
+
         monkeypatch.delenv("ARC_EXPERIMENTAL_COREML", raising=False)
-        sentinel = tmp_path / "coreml-session.json"
-        with patch("arcaneum.embeddings.client._coreml_sentinel_path", return_value=sentinel):
+        sentinel = tmp_path / f"coreml-session-{os.getpid()}.json"
+        with patch("arcaneum.embeddings.client.get_state_dir", return_value=tmp_path):
             with patch("arcaneum.embeddings.client.get_models_dir", return_value="/tmp/models"):
                 from arcaneum.embeddings.client import EmbeddingClient
 
@@ -257,7 +262,7 @@ class TestCoreMLCrashSentinel:
             "CPUExecutionProvider",
         ]
 
-        with patch("arcaneum.embeddings.client._coreml_sentinel_path", return_value=sentinel):
+        with patch("arcaneum.embeddings.client.get_state_dir", return_value=tmp_path):
             with patch("arcaneum.embeddings.client.sys.platform", "darwin"):
                 with patch("arcaneum.embeddings.client.platform.machine", return_value="arm64"):
                     with patch.dict("sys.modules", {"onnxruntime": mock_ort}):
@@ -280,11 +285,11 @@ class TestCoreMLCrashSentinel:
     def test_stale_sentinel_warns_about_killed_run_and_clears(self, tmp_path, monkeypatch, capsys):
         import json
 
-        sentinel = tmp_path / "coreml-session.json"
+        sentinel = tmp_path / "coreml-session-999999.json"
         sentinel.write_text(json.dumps({"pid": 999999, "model": "arctic-m", "started": "x"}))
 
         monkeypatch.delenv("ARC_EXPERIMENTAL_COREML", raising=False)
-        with patch("arcaneum.embeddings.client._coreml_sentinel_path", return_value=sentinel):
+        with patch("arcaneum.embeddings.client.get_state_dir", return_value=tmp_path):
             with patch("arcaneum.embeddings.client._pid_is_alive", return_value=False):
                 with patch("arcaneum.embeddings.client.get_models_dir", return_value="/tmp/models"):
                     from arcaneum.embeddings.client import EmbeddingClient
@@ -299,11 +304,11 @@ class TestCoreMLCrashSentinel:
     def test_sentinel_for_live_process_is_left_alone(self, tmp_path, monkeypatch, capsys):
         import json
 
-        sentinel = tmp_path / "coreml-session.json"
+        sentinel = tmp_path / "coreml-session-12345.json"
         sentinel.write_text(json.dumps({"pid": 12345, "model": "arctic-m", "started": "x"}))
 
         monkeypatch.delenv("ARC_EXPERIMENTAL_COREML", raising=False)
-        with patch("arcaneum.embeddings.client._coreml_sentinel_path", return_value=sentinel):
+        with patch("arcaneum.embeddings.client.get_state_dir", return_value=tmp_path):
             with patch("arcaneum.embeddings.client._pid_is_alive", return_value=True):
                 with patch("arcaneum.embeddings.client.get_models_dir", return_value="/tmp/models"):
                     from arcaneum.embeddings.client import EmbeddingClient
@@ -320,17 +325,43 @@ class TestCoreMLCrashSentinel:
 
         from arcaneum.embeddings import client as client_module
 
-        sentinel = tmp_path / "coreml-session.json"
+        sentinel = tmp_path / f"coreml-session-{os.getpid()}.json"
 
         sentinel.write_text(json.dumps({"pid": os.getpid(), "model": "arctic-m"}))
-        with patch("arcaneum.embeddings.client._coreml_sentinel_path", return_value=sentinel):
+        with patch("arcaneum.embeddings.client.get_state_dir", return_value=tmp_path):
             client_module._remove_coreml_sentinel()
         assert not sentinel.exists()
 
-        sentinel.write_text(json.dumps({"pid": 999999, "model": "arctic-m"}))
-        with patch("arcaneum.embeddings.client._coreml_sentinel_path", return_value=sentinel):
+        other_sentinel = tmp_path / "coreml-session-999999.json"
+        other_sentinel.write_text(json.dumps({"pid": 999999, "model": "arctic-m"}))
+        with patch("arcaneum.embeddings.client.get_state_dir", return_value=tmp_path):
             client_module._remove_coreml_sentinel()
-        assert sentinel.exists()
+        assert other_sentinel.exists()
+
+    def test_concurrent_live_sentinel_does_not_hide_stale_session(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        import json
+
+        stale = tmp_path / "coreml-session-111.json"
+        live = tmp_path / "coreml-session-222.json"
+        stale.write_text(json.dumps({"pid": 111, "model": "stale-model", "started": "x"}))
+        live.write_text(json.dumps({"pid": 222, "model": "live-model", "started": "x"}))
+
+        monkeypatch.delenv("ARC_EXPERIMENTAL_COREML", raising=False)
+        with patch("arcaneum.embeddings.client.get_state_dir", return_value=tmp_path):
+            with patch(
+                "arcaneum.embeddings.client._pid_is_alive",
+                side_effect=lambda pid: pid == 222,
+            ):
+                with patch("arcaneum.embeddings.client.get_models_dir", return_value="/tmp/models"):
+                    from arcaneum.embeddings.client import EmbeddingClient
+
+                    EmbeddingClient(cache_dir="/tmp/models")
+
+        assert "stale-model" in capsys.readouterr().err
+        assert not stale.exists()
+        assert live.exists()
 
 
 class TestFastEmbedCacheCompleteness:
@@ -437,6 +468,18 @@ class TestFastEmbedCachePurge:
         embedding_client.cache_dir = str(cache_dir)
 
         assert embedding_client._purge_fastembed_model_cache("jina-code") is True
+        assert not target.exists()
+        assert sibling.exists()
+
+    def test_purge_leaves_sibling_distinguished_by_short_tokens(self, embedding_client, tmp_path):
+        cache_dir = tmp_path / "models"
+        target = cache_dir / "models--BAAI--bge-large-en-v1.5"
+        sibling = cache_dir / "models--BAAI--bge-large-zh-v1.5"
+        for directory in (target, sibling):
+            directory.mkdir(parents=True)
+        embedding_client.cache_dir = str(cache_dir)
+
+        assert embedding_client._purge_fastembed_model_cache("bge-large") is True
         assert not target.exists()
         assert sibling.exists()
 

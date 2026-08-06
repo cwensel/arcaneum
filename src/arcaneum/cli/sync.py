@@ -40,7 +40,7 @@ from datetime import datetime, timezone
 from math import ceil
 from multiprocessing import cpu_count
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from uuid import uuid4
 
 from rich.console import Console
@@ -139,6 +139,22 @@ def _file_progress_weight(path: Path) -> int:
         # Let the normal processing path report inaccessible files. Giving the
         # file a minimal weight still lets the progress task reach completion.
         return 1
+
+
+def _metadata_scan_progress_callback(
+    *, verbose: bool, output_json: bool, force: bool, parity: bool
+) -> Optional[Callable[[int], None]]:
+    """Build user-facing metadata scan progress for incremental sync."""
+    if not verbose or output_json or force or parity:
+        return None
+
+    print_info("Checking existing Qdrant metadata for unchanged files...")
+
+    def report(chunks_scanned: int) -> None:
+        if chunks_scanned == 1000 or chunks_scanned % 10000 == 0:
+            print_info(f"  Scanned {chunks_scanned:,} existing Qdrant chunks...")
+
+    return report
 
 
 from ..cli.errors import InvalidArgumentError, ResourceNotFoundError
@@ -2229,13 +2245,12 @@ def sync_directory_command(
         files_renamed = 0
         stale_cleaned = 0
 
-        metadata_scan_progress = None
-        if verbose and not output_json and not force:
-            print_info("Checking existing Qdrant metadata for unchanged files...")
-
-            def metadata_scan_progress(chunks_scanned: int) -> None:
-                if chunks_scanned == 1000 or chunks_scanned % 10000 == 0:
-                    print_info(f"  Scanned {chunks_scanned:,} existing Qdrant chunks...")
+        metadata_scan_progress = _metadata_scan_progress_callback(
+            verbose=verbose,
+            output_json=output_json,
+            force=force,
+            parity=parity,
+        )
 
         if force:
             if not output_json:
@@ -3538,9 +3553,7 @@ def sync_directory_command(
                     files_failed,
                 )
             if automatic_git_fast_path:
-                _stamp_git_sync_heads(
-                    qdrant, corpus, metadata, all_dir_git_roots, clean_git_heads
-                )
+                _stamp_git_sync_heads(qdrant, corpus, metadata, all_dir_git_roots, clean_git_heads)
             _stamp_last_sync_metadata(qdrant, corpus)
 
         # Output results

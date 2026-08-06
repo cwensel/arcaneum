@@ -35,6 +35,16 @@ FILE_MANIFEST_POINT_SCHEMA_VERSION = 1
 _FILE_MANIFEST_NAMESPACE = uuid.UUID("2f63291c-85b8-4f5b-9178-f9fd31982b56")
 
 
+def _notify_progress(callback: Optional[Callable[[int], None]], count: int) -> None:
+    """Report best-effort progress without coupling display failures to sync."""
+    if callback is None:
+        return
+    try:
+        callback(count)
+    except Exception:
+        logger.warning("Sync progress callback failed", exc_info=True)
+
+
 class ChunkDeleteError(Exception):
     """Raised when a chunk delete operation cannot verify completion."""
 
@@ -299,8 +309,7 @@ class MetadataBasedSync:
                         path = str(Path(point.payload["file_path"]).absolute())
                         snapshot[path] = dict(point.payload)
                 scanned += len(points)
-                if progress_callback:
-                    progress_callback(scanned)
+                _notify_progress(progress_callback, scanned)
                 if not points or offset is None:
                     break
         except Exception as exc:
@@ -310,9 +319,7 @@ class MetadataBasedSync:
         self._manifest_snapshots[collection_name] = snapshot
         return snapshot
 
-    def get_indexed_paths_by_content_hash(
-        self, collection_name: str
-    ) -> Dict[str, List[str]]:
+    def get_indexed_paths_by_content_hash(self, collection_name: str) -> Dict[str, List[str]]:
         """Return content hashes mapped to physical paths from one snapshot."""
         paths_by_hash: Dict[str, List[str]] = {}
         for path, payload in self.get_file_manifest_snapshot(collection_name).items():
@@ -554,8 +561,7 @@ class MetadataBasedSync:
                         current["chunk_count"] = max(
                             current.get("chunk_count") or 0, declared_count
                         )
-            if progress_callback:
-                progress_callback(total_chunks)
+            _notify_progress(progress_callback, total_chunks)
             if offset is None:
                 break
 
@@ -665,8 +671,7 @@ class MetadataBasedSync:
                             if path and quick_hash:
                                 indexed_pairs.add((path, quick_hash))
 
-                if progress_callback:
-                    progress_callback(total_chunks)
+                _notify_progress(progress_callback, total_chunks)
 
                 if offset is None:
                     break
@@ -752,9 +757,7 @@ class MetadataBasedSync:
             if manifests_ready:
                 return {
                     path: payload.get("chunk_count", 0)
-                    for path, payload in self.get_file_manifest_snapshot(
-                        collection_name
-                    ).items()
+                    for path, payload in self.get_file_manifest_snapshot(collection_name).items()
                 }
             while True:
                 points, offset = self.qdrant.scroll(

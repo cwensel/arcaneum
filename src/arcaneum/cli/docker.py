@@ -24,7 +24,7 @@ def _exit_on_error(code: int = 1):
     raise SystemExit(code)
 
 
-def _resolve_backup_path(output: str | None, timestamp: str) -> Path:
+def _resolve_backup_path(output: str | None, timestamp: str, output_json: bool = False) -> Path:
     """Resolve the directory for a full backup.
 
     An explicit output path names the backup directory exactly. A configured
@@ -36,7 +36,14 @@ def _resolve_backup_path(output: str | None, timestamp: str) -> Path:
 
     config_path = resolve_config_path()
     if config_path.exists():
-        configured_path = load_backup_config(config_path).path
+        try:
+            configured_path = load_backup_config(config_path).path
+        except (OSError, ValueError) as exc:
+            print_warning(
+                f"Ignoring invalid backup configuration in {config_path}: {exc}",
+                output_json,
+            )
+            configured_path = None
         if configured_path is not None:
             backup_root = configured_path.expanduser()
             if not backup_root.is_absolute():
@@ -905,7 +912,7 @@ def backup_command(
         _exit_on_error()
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    backup_path = _resolve_backup_path(output, timestamp)
+    backup_path = _resolve_backup_path(output, timestamp, output_json)
     backup_path.mkdir(parents=True, exist_ok=False)
     print_info(f"Backing up to {backup_path}", output_json)
 

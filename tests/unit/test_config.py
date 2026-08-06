@@ -143,6 +143,13 @@ class TestLoadBackupConfig:
 
         assert config.path == Path("/mnt/backups/arcaneum")
 
+    def test_invalid_yaml_raises_value_error(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        path.write_text("backup: [")
+
+        with pytest.raises(ValueError, match="Invalid YAML"):
+            load_backup_config(path)
+
 
 # --- load_config ---
 

@@ -38,6 +38,9 @@ class FullTextClient:
         retry_delay_sec: int = MEILI_TASK_WAIT_RETRY_DELAY_SEC,
     ) -> Any:
         """Wait for a MeiliSearch task, retrying polling without re-enqueueing work."""
+        if attempts < 1:
+            raise ValueError("attempts must be at least 1")
+
         retryable_errors = (
             meilisearch.errors.MeilisearchTimeoutError,
             meilisearch.errors.MeilisearchCommunicationError,

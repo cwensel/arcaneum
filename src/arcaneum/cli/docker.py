@@ -13,7 +13,7 @@ import requests
 from arcaneum.cli.errors import HelpfulGroup
 from arcaneum.cli.output import print_error, print_info, print_json, print_success, print_warning
 from arcaneum.cli.utils import resolve_config_path
-from arcaneum.config import load_config
+from arcaneum.config import load_backup_config
 from arcaneum.paths import get_data_dir
 from arcaneum.utils.formatting import format_size
 
@@ -36,7 +36,7 @@ def _resolve_backup_path(output: str | None, timestamp: str) -> Path:
 
     config_path = resolve_config_path()
     if config_path.exists():
-        configured_path = load_config(config_path).backup.path
+        configured_path = load_backup_config(config_path).path
         if configured_path is not None:
             backup_root = configured_path.expanduser()
             if not backup_root.is_absolute():
@@ -44,6 +44,29 @@ def _resolve_backup_path(output: str | None, timestamp: str) -> Path:
             return backup_root / timestamp
 
     return get_data_dir() / "backups" / timestamp
+
+
+def _backup_corpus_details(backup_path: Path, manifest: dict) -> list[dict]:
+    """Describe each backed-up corpus and the sizes of its artifacts."""
+    corpora: dict[str, dict] = {}
+
+    def add_file(corpus_name: str, label: str, relative_path: str) -> None:
+        size_bytes = (backup_path / relative_path).stat().st_size
+        corpus = corpora.setdefault(
+            corpus_name,
+            {"name": corpus_name, "size_bytes": 0, "files": []},
+        )
+        corpus["size_bytes"] += size_bytes
+        corpus["files"].append({"label": label, "file": relative_path, "size_bytes": size_bytes})
+
+    for snapshot in manifest["qdrant"]:
+        add_file(snapshot["collection"], "Qdrant", snapshot["file"])
+
+    for index in manifest["meilisearch"]:
+        add_file(index["index"], "MeiliSearch metadata", index["metadata_file"])
+        add_file(index["index"], "MeiliSearch documents", index["documents_file"])
+
+    return sorted(corpora.values(), key=lambda corpus: corpus["name"].casefold())
 
 
 def check_docker_available(output_json: bool = False):
@@ -884,6 +907,7 @@ def backup_command(
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup_path = _resolve_backup_path(output, timestamp)
     backup_path.mkdir(parents=True, exist_ok=False)
+    print_info(f"Backing up to {backup_path}", output_json)
 
     manifest = {
         "version": 1,
@@ -911,6 +935,7 @@ def backup_command(
         meili_starting_task_uid = _latest_meilisearch_task_uid(meilisearch_url, meili_headers)
         _ensure_meilisearch_idle(meilisearch_url, meili_headers)
 
+    print_info("Creating Qdrant snapshots...", output_json)
     manifest["qdrant"] = _backup_qdrant(
         backup_path,
         qdrant_url,
@@ -918,6 +943,7 @@ def backup_command(
         timeout=qdrant_timeout,
     )
     if not skip_meilisearch:
+        print_info("Exporting MeiliSearch indexes...", output_json)
         manifest["meilisearch"] = _backup_meilisearch(
             backup_path,
             meilisearch_url,
@@ -926,13 +952,32 @@ def backup_command(
 
     manifest_path = backup_path / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    corpora = _backup_corpus_details(backup_path, manifest)
 
     data = {
         "path": str(backup_path),
         "qdrant_snapshots": len(manifest["qdrant"]),
         "meilisearch_indexes": len(manifest["meilisearch"]),
+        "corpora": corpora,
     }
-    print_success(f"Backup complete: {backup_path}", output_json, data=data)
+    qdrant_count = data["qdrant_snapshots"]
+    meilisearch_count = data["meilisearch_indexes"]
+    summary = (
+        f"{qdrant_count} Qdrant snapshot{'s' if qdrant_count != 1 else ''}, "
+        f"{meilisearch_count} MeiliSearch index{'es' if meilisearch_count != 1 else ''}"
+    )
+    if corpora:
+        print_info("Corpora backed up:", output_json)
+        for corpus in corpora:
+            file_sizes = ", ".join(
+                f"{artifact['label']} {format_size(artifact['size_bytes'])}"
+                for artifact in corpus["files"]
+            )
+            print_info(
+                f"  {corpus['name']}: {file_sizes} ({format_size(corpus['size_bytes'])} total)",
+                output_json,
+            )
+    print_success(f"Backup complete: {backup_path} ({summary})", output_json, data=data)
 
 
 @container_group.command("restore")

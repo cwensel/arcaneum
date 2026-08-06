@@ -13,6 +13,7 @@ from arcaneum.config import (
     ModelConfig,
     QdrantConfig,
     _build_default_models,
+    load_backup_config,
     load_config,
     save_config,
 )
@@ -131,6 +132,16 @@ class TestArcaneumConfig:
     def test_missing_models_rejected(self):
         with pytest.raises(ValidationError):
             ArcaneumConfig()  # models is required
+
+
+class TestLoadBackupConfig:
+    def test_does_not_require_model_configuration(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        path.write_text("backup:\n  path: /mnt/backups/arcaneum\n")
+
+        config = load_backup_config(path)
+
+        assert config.path == Path("/mnt/backups/arcaneum")
 
 
 # --- load_config ---

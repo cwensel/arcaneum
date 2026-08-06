@@ -85,6 +85,25 @@ def load_config(config_path: Path) -> ArcaneumConfig:
     return ArcaneumConfig(**data)
 
 
+def load_backup_config(config_path: Path) -> BackupConfig:
+    """Load only the backup section from a configuration file.
+
+    Container backups do not depend on embedding model configuration, so this
+    loader validates the relevant section without requiring a complete
+    :class:`ArcaneumConfig`.
+    """
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+
+    with open(config_path) as f:
+        data = yaml.safe_load(f) or {}
+
+    if not isinstance(data, dict):
+        raise ValueError("Configuration must be a YAML mapping")
+
+    return BackupConfig.model_validate(data.get("backup", {}))
+
+
 def save_config(config: ArcaneumConfig, config_path: Path):
     """Save configuration to file.
 

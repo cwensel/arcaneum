@@ -478,12 +478,6 @@ class TestContainerBackupRestore:
         config_dir = tmp_path / "config" / "arcaneum"
         config_dir.mkdir(parents=True)
         (config_dir / "config.yaml").write_text("""
-models:
-  test-model:
-    name: test/model
-    dimensions: 768
-    chunk_size: 512
-    chunk_overlap: 64
 backup:
   path: ../../backups
 """)
@@ -527,7 +521,7 @@ backup:
 
         assert path == tmp_path / "explicit"
 
-    def test_backup_writes_manifest_and_exports_services(self, temp_dir):
+    def test_backup_writes_manifest_and_exports_services(self, temp_dir, capsys):
         """Test that backup snapshots Qdrant and exports MeiliSearch metadata."""
         from arcaneum.cli.docker import backup_command
 
@@ -550,11 +544,15 @@ backup:
             response.raise_for_status.return_value = None
             return response
 
+        def fake_subprocess_run(args, **kwargs):
+            if args[:2] == ["docker", "cp"]:
+                Path(args[-1]).write_bytes(b"q" * 2048)
+            return MagicMock(returncode=0)
+
         backup_path = temp_dir / "backup"
 
         with patch("shutil.which", return_value="/usr/bin/docker"):
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(returncode=0)
+            with patch("subprocess.run", side_effect=fake_subprocess_run) as mock_run:
                 with patch("requests.request", side_effect=fake_request):
                     with patch("arcaneum.paths.get_meilisearch_api_key", return_value="secret-key"):
                         backup_command.callback(
@@ -583,6 +581,37 @@ backup:
         docker_cp_calls = [c for c in mock_run.call_args_list if "cp" in c.args[0]]
         assert docker_cp_calls
         assert "qdrant:/qdrant/snapshots/Docs/Docs-123.snapshot" in docker_cp_calls[0].args[0]
+
+        output = capsys.readouterr().out
+        assert f"[INFO] Backing up to {backup_path}" in output
+        assert "[INFO] Creating Qdrant snapshots..." in output
+        assert "[INFO] Exporting MeiliSearch indexes..." in output
+        assert "[INFO] Corpora backed up:" in output
+        assert "Docs: Qdrant 2.0 KB" in output
+        assert "MeiliSearch metadata" in output
+        assert "MeiliSearch documents" in output
+        assert "(1 Qdrant snapshot, 1 MeiliSearch index)" in output
+
+    def test_backup_json_suppresses_progress_messages(self, temp_dir, capsys):
+        from arcaneum.cli.docker import backup_command
+
+        backup_path = temp_dir / "backup"
+        with patch("arcaneum.cli.docker.check_docker_available", return_value=True):
+            with patch("arcaneum.cli.docker._backup_qdrant", return_value=[]):
+                backup_command.callback(
+                    output=str(backup_path),
+                    qdrant_url="http://qdrant",
+                    meilisearch_url="http://meili",
+                    qdrant_container="qdrant",
+                    qdrant_timeout=300,
+                    skip_meilisearch=True,
+                    output_json=True,
+                )
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["status"] == "success"
+        assert payload["data"]["qdrant_snapshots"] == 0
+        assert payload["data"]["corpora"] == []
 
     def test_backup_json_reports_docker_unavailable(self, capsys):
         """Test backup JSON mode uses a structured Docker availability error."""

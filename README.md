@@ -304,12 +304,40 @@ brew install cwensel/arcaneum/arcaneum
 
 # Or install latest from source
 pipx install "git+https://github.com/cwensel/arcaneum.git"
+```
 
-# Development install (from cloned repo)
+### Local Development
+
+To work on Arcaneum from a cloned repository, install it in an isolated virtual
+environment. The Python interpreter used to create the environment must be
+version 3.12 or newer.
+
+```bash
 git clone https://github.com/cwensel/arcaneum
 cd arcaneum
-pip install -e ".[dev]"
+
+python3 -m venv .venv
+source .venv/bin/activate
+
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
+
+arc doctor
 ```
+
+On Ubuntu, install the virtual-environment support package if `venv` is
+unavailable:
+
+```bash
+sudo apt install python3-venv
+```
+
+Ubuntu may mark its system Python as externally managed. Creating a virtual
+environment as shown above avoids that error; do not use
+`--break-system-packages` for a development installation.
+
+Activate the environment again with `source .venv/bin/activate` when returning
+to the repository, and leave it with `deactivate`.
 
 ### Claude Code Plugin
 

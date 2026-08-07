@@ -32,11 +32,30 @@ cd arcaneum
 
 ### 2. Install Arcaneum
 
+Create a virtual environment so Arcaneum and its development tools do not
+modify your system Python installation:
+
 ```bash
-pip install -e .
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
 ```
 
-This installs Arcaneum in development mode and creates the `arc` command.
+This installs Arcaneum in editable development mode, installs the test and
+linting dependencies, and creates the `arc` command. Keep the virtual
+environment active while using the development checkout. In a new shell, run
+`source .venv/bin/activate` again.
+
+On Ubuntu, if creating the environment reports that `venv` is unavailable,
+install the OS package and retry:
+
+```bash
+sudo apt install python3-venv
+```
+
+Do not pass `--break-system-packages` to work around Ubuntu's externally
+managed Python protection.
 
 ### 3. Verify Installation
 

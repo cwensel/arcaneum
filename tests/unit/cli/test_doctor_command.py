@@ -7,8 +7,6 @@ import json
 import sys
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 
 class TestDoctorChecks:
     """Test individual diagnostic checks."""
@@ -60,6 +58,30 @@ class TestDoctorChecks:
 
         assert success is None
         assert "optional extra" in message
+
+    def test_doctor_uses_supported_pymupdf_import(self, capsys):
+        """Test diagnostics avoid PyMuPDF's deprecated fitz import alias."""
+        from arcaneum.cli.doctor import doctor_command
+
+        dependency_check = MagicMock(return_value=(True, "installed"))
+        successful_check = MagicMock(return_value=(True, "available"))
+        optional_check = MagicMock(return_value=(None, "optional"))
+
+        with patch.multiple(
+            "arcaneum.cli.doctor",
+            check_python_version=successful_check,
+            check_dependency=dependency_check,
+            check_optional_dependency=optional_check,
+            check_qdrant_connection=successful_check,
+            check_meilisearch_connection=successful_check,
+            check_embedding_models=successful_check,
+            check_temp_dir_writable=successful_check,
+            check_environment_vars=successful_check,
+        ):
+            doctor_command(output_json=True)
+
+        capsys.readouterr()
+        dependency_check.assert_any_call("PyMuPDF", "pymupdf")
 
     def test_qdrant_connection_success(self):
         """Test Qdrant connection check when server is available."""
@@ -141,8 +163,9 @@ class TestDoctorChecks:
 
     def test_environment_vars_check_with_vars(self, clean_env):
         """Test environment variables check when vars are set."""
-        from arcaneum.cli.doctor import check_environment_vars
         import os
+
+        from arcaneum.cli.doctor import check_environment_vars
 
         os.environ["QDRANT_URL"] = "http://localhost:6333"
 
@@ -153,8 +176,9 @@ class TestDoctorChecks:
 
     def test_environment_vars_check_with_arc_qdrant_vars(self, clean_env):
         """Test prefixed Qdrant environment variables are detected."""
-        from arcaneum.cli.doctor import check_environment_vars
         import os
+
+        from arcaneum.cli.doctor import check_environment_vars
 
         os.environ["ARC_QDRANT_URL"] = "https://qdrant.example"
         os.environ["ARC_QDRANT_API_KEY"] = "secret-token"
@@ -324,7 +348,7 @@ class TestDoctorIntegration:
                 mock_meili_instance.get_indexes.return_value = {"results": []}
                 mock_meili.return_value = mock_meili_instance
 
-                result = doctor_command(verbose=False, output_json=True)
+                doctor_command(verbose=False, output_json=True)
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)

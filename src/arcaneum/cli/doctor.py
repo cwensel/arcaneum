@@ -1,14 +1,15 @@
 """Setup verification and diagnostics command (RDR-006 enhancement)."""
 
-import sys
-import os
 import importlib.util
+import os
+import sys
 from typing import Dict, Tuple
+
 from rich.console import Console
 from rich.table import Table
 
-from arcaneum.cli.output import print_json, print_info, print_error
-from arcaneum.cli.errors import EXIT_SUCCESS, EXIT_ERROR
+from arcaneum.cli.errors import EXIT_ERROR, EXIT_SUCCESS
+from arcaneum.cli.output import print_error, print_info, print_json
 from arcaneum.cli.utils import create_qdrant_client
 
 
@@ -189,7 +190,7 @@ def doctor_command(verbose: bool = False, output_json: bool = False):
             "sentence-transformers",
             "sentence_transformers",
         ),
-        "PyMuPDF": check_dependency("PyMuPDF", "fitz"),
+        "PyMuPDF": check_dependency("PyMuPDF", "pymupdf"),
         "pytesseract": check_dependency("pytesseract"),
         "Qdrant Connection": check_qdrant_connection(verbose),
         "MeiliSearch Connection": check_meilisearch_connection(verbose),

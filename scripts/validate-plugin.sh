@@ -61,15 +61,24 @@ for f in commands/*.md; do
 done
 echo "  - All commands have complete frontmatter"
 
-# Check CLAUDE_PLUGIN_ROOT usage
-echo "✓ Verifying CLAUDE_PLUGIN_ROOT usage..."
-count=$(grep -l "CLAUDE_PLUGIN_ROOT" commands/*.md | wc -l | tr -d ' ')
+# Check command execution. Commands may invoke the installed arc CLI directly or
+# use CLAUDE_PLUGIN_ROOT when they need a bundled executable.
+echo "✓ Verifying command execution..."
 total=$(ls commands/*.md | wc -l | tr -d ' ')
-if [ "$count" -ne "$total" ]; then
-    echo "❌ Not all commands use CLAUDE_PLUGIN_ROOT ($count/$total)"
-    exit 1
-fi
-echo "  - All $total commands use \${CLAUDE_PLUGIN_ROOT}"
+for f in commands/*.md; do
+    if grep -q "CLAUDE_PLUGIN_ROOT" "$f"; then
+        continue
+    fi
+    if ! awk '
+        /^\*\*Execution:\*\*$/ { in_execution = 1; next }
+        in_execution && $1 == "arc" { found = 1; exit }
+        END { exit(found ? 0 : 1) }
+    ' "$f"; then
+        echo "❌ No supported command execution found: $f"
+        exit 1
+    fi
+done
+echo "  - All $total commands declare a supported executable invocation"
 
 # Check $ARGUMENTS usage
 echo "✓ Verifying \$ARGUMENTS usage..."

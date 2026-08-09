@@ -1,11 +1,13 @@
 """Unit tests for the memory probe diagnostics."""
 
 import json
+import os
 import signal
 import time
 from pathlib import Path
 from types import SimpleNamespace
 
+import arcaneum.embeddings.memory_probe as memory_probe
 from arcaneum.embeddings.memory_probe import (
     MemorySnapshot,
     format_snapshot,
@@ -13,6 +15,7 @@ from arcaneum.embeddings.memory_probe import (
     format_snapshot_jsonl,
     get_phase,
     install_dump_handler,
+    resource_warnings,
     set_phase,
     snapshot,
     start_probe_thread,
@@ -26,6 +29,10 @@ def test_snapshot_has_core_fields():
     assert snap.thread_count >= 1
     assert snap.gc_objects > 0
     assert snap.system_total_bytes > 0
+    assert snap.swap_total_bytes >= snap.swap_used_bytes >= 0
+    assert snap.disk_total_bytes > 0
+    assert snap.disk_free_bytes > 0
+    assert snap.disk_path
 
 
 def test_format_snapshot_is_one_line():
@@ -108,10 +115,46 @@ def test_install_dump_handler_registers_sigusr1():
 
 def test_snapshot_accepts_embedding_client_with_pending_cleanup():
     class Stub:
-        _accelerator_workers = {"jina-code": SimpleNamespace(is_alive=True)}
+        _accelerator_workers = {
+            "jina-code": SimpleNamespace(
+                is_alive=True,
+                pid=os.getpid(),
+                last_backend_health={
+                    "mps_current_allocated_bytes": 100,
+                    "mps_driver_allocated_bytes": 200,
+                    "mps_recommended_max_bytes": 1000,
+                },
+            )
+        }
 
     snap = snapshot(embedding_client=Stub())
     assert snap.active_accelerator_workers == 1
+    assert snap.accelerator_worker_pids == (os.getpid(),)
+    assert snap.accelerator_rss_bytes > 0
+    assert snap.mps_current_bytes == 100
+    assert snap.mps_driver_bytes == 200
+    assert snap.mps_recommended_max_bytes == 1000
+
+
+def test_resource_warnings_cover_disk_memory_and_mps_pressure():
+    snap = MemorySnapshot(
+        rss_bytes=1,
+        vsz_bytes=1,
+        thread_count=1,
+        gc_objects=1,
+        mps_driver_bytes=90,
+        mps_recommended_max_bytes=100,
+        system_available_bytes=1024**3,
+        system_total_bytes=32 * 1024**3,
+        disk_free_bytes=512 * 1024**2,
+        disk_total_bytes=500 * 1024**3,
+        disk_path="/tmp",
+    )
+
+    warnings = resource_warnings(snap)
+
+    assert set(warnings) == {"disk_critical", "memory_low", "mps_pressure"}
+    assert "MPSGraph" in warnings["disk_critical"]
 
 
 def test_set_phase_and_get_phase_roundtrip():
@@ -136,12 +179,20 @@ def test_format_snapshot_jsonl_is_parseable_with_expected_keys():
         "vsz",
         "threads",
         "gc_objs",
+        "worker_rss",
         "mps_current",
         "mps_driver",
         "sys_used_pct",
         "sys_available",
         "sys_total",
         "active_accelerator_workers",
+        "accelerator_worker_pids",
+        "swap_used",
+        "swap_total",
+        "disk_free",
+        "disk_total",
+        "disk_used_pct",
+        "disk_path",
     ):
         assert key in obj, f"missing {key} in {obj}"
     assert obj["phase"] == "encoding:test.pdf"
@@ -177,7 +228,7 @@ def test_start_probe_thread_writes_periodically_then_stops(tmp_path):
         stop()
     # Give the thread a moment to drain after stop()
     time.sleep(0.2)
-    lines = [l for l in log_path.read_text().splitlines() if l.strip()]
+    lines = [line for line in log_path.read_text().splitlines() if line.strip()]
     assert len(lines) >= 2, f"expected ≥2 ticks, got {len(lines)}: {lines}"
     # Each line is JSON with the current phase
     for line in lines:
@@ -204,10 +255,38 @@ def test_start_probe_thread_writes_to_stderr_with_dash_sentinel(capsys):
     time.sleep(0.15)
     captured = capsys.readouterr()
     # At least one JSONL line on stderr
-    stderr_lines = [l for l in captured.err.splitlines() if l.strip().startswith("{")]
+    stderr_lines = [line for line in captured.err.splitlines() if line.strip().startswith("{")]
     assert len(stderr_lines) >= 1
     obj = json.loads(stderr_lines[0])
     assert obj["phase"] == "stderr-test"
+
+
+def test_start_probe_thread_emits_each_active_resource_warning_once(monkeypatch, tmp_path, capsys):
+    pressured = MemorySnapshot(
+        rss_bytes=1,
+        vsz_bytes=1,
+        thread_count=1,
+        gc_objects=1,
+        disk_free_bytes=512 * 1024**2,
+        disk_total_bytes=500 * 1024**3,
+        disk_path="/tmp",
+    )
+    monkeypatch.setattr(memory_probe, "snapshot", lambda embedding_client=None: pressured)
+
+    stop = start_probe_thread(interval=0.05, log_path=str(tmp_path / "mem.jsonl"))
+    try:
+        time.sleep(0.18)
+    finally:
+        stop()
+    time.sleep(0.1)
+
+    warning_lines = [
+        line
+        for line in capsys.readouterr().err.splitlines()
+        if line.startswith("resource-warning:")
+    ]
+    assert len(warning_lines) == 1
+    assert "scratch disk critically low" in warning_lines[0]
 
 
 def test_start_probe_thread_default_path_under_arcaneum_logs(monkeypatch, tmp_path):
@@ -230,7 +309,7 @@ def test_start_probe_thread_default_path_under_arcaneum_logs(monkeypatch, tmp_pa
     files = list(log_dir.glob("arc-mem-*.jsonl"))
     assert files, f"expected an arc-mem-*.jsonl in {log_dir}"
     contents = files[0].read_text()
-    lines = [l for l in contents.splitlines() if l.strip()]
+    lines = [line for line in contents.splitlines() if line.strip()]
     assert len(lines) >= 1
     obj = json.loads(lines[0])
     assert obj["phase"] == "default-path-test"

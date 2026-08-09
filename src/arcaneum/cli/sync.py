@@ -2759,6 +2759,9 @@ def sync_directory_command(
                 install_dump_handler as _install_mem_dump,
             )
             from arcaneum.embeddings.memory_probe import (
+                resource_warnings as _resource_warnings,
+            )
+            from arcaneum.embeddings.memory_probe import (
                 set_phase as _set_phase,
             )
             from arcaneum.embeddings.memory_probe import (
@@ -2775,7 +2778,20 @@ def sync_directory_command(
                 log_path=mem_probe_log,
                 embedding_client=embedding_client,
             )
+            _reported_resource_warnings: set[str] = set()
+
+            def _report_resource_warnings(snap) -> None:
+                warnings = _resource_warnings(snap)
+                for key, message in warnings.items():
+                    if key in _reported_resource_warnings:
+                        continue
+                    _reported_resource_warnings.add(key)
+                    logger.warning(message)
+                    if not output_json:
+                        console.print(f"[yellow]  resource-warning: {message}[/yellow]")
+
             _mem_prev = _mem_snapshot(embedding_client)
+            _report_resource_warnings(_mem_prev)
             if verbose and not output_json:
                 console.print(f"[dim]  mem-baseline: {_fmt_snap(_mem_prev)}[/dim]")
 
@@ -3163,6 +3179,7 @@ def sync_directory_command(
                                         f"[dim]    mem: {_fmt_snap(_mem_now)} "
                                         f"({_fmt_snap_delta(_mem_now, _mem_prev)})[/dim]"
                                     )
+                                _report_resource_warnings(_mem_now)
                                 # Skip warn on first file: model load + PyTorch/MPS
                                 # context init always spikes memory, not a leak signal.
                                 if total_indexed > 1 and not output_json:

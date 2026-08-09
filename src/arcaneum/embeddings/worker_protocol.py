@@ -121,6 +121,20 @@ def _error(request_id: str, code: str, exc: BaseException) -> dict[str, Any]:
     )
 
 
+def _backend_health(backend: WorkerBackend) -> dict[str, Any]:
+    """Collect optional telemetry without turning a successful encode into a failure."""
+    try:
+        health = backend.health()
+    except BaseException as exc:
+        return {
+            "telemetry_error": str(exc),
+            "telemetry_exception_type": type(exc).__name__,
+        }
+    if not isinstance(health, dict):
+        return {"telemetry_error": "backend health is not a mapping"}
+    return health
+
+
 def _worker_main(
     commands: mp.Queue[dict[str, Any]], replies: mp.Queue[dict[str, Any]], config: WorkerConfig
 ) -> None:
@@ -136,7 +150,14 @@ def _worker_main(
         except BaseException as exc:
             replies.put(_error(init["request_id"], "initialization_failed", exc))
             return
-        replies.put(make_message(MessageType.INITIALIZED, init["request_id"], pid=os.getpid()))
+        replies.put(
+            make_message(
+                MessageType.INITIALIZED,
+                init["request_id"],
+                pid=os.getpid(),
+                backend=_backend_health(backend),
+            )
+        )
 
         while True:
             command = _validate_message(commands.get())
@@ -161,6 +182,7 @@ def _worker_main(
                             embeddings=result.tolist(),
                             shape=list(result.shape),
                             dtype=str(result.dtype),
+                            backend=_backend_health(backend),
                         )
                     )
                 elif kind is MessageType.HEARTBEAT:
@@ -215,6 +237,7 @@ class AcceleratorWorkerSession:
         self._in_flight = False
         self._request_lock = threading.RLock()
         self._queues_closed = False
+        self._last_backend_health: dict[str, Any] = {}
 
     @property
     def pid(self) -> int | None:
@@ -241,6 +264,7 @@ class AcceleratorWorkerSession:
         if reply["type"] == MessageType.ERROR:
             self._reap()
             raise WorkerCrashedError(reply["payload"].get("message", "worker init failed"))
+        self._cache_backend_health(reply["payload"])
         return self
 
     def encode(self, texts: list[str], *, timeout: float, **options: Any) -> np.ndarray:
@@ -248,6 +272,7 @@ class AcceleratorWorkerSession:
             request_id = self._send(MessageType.ENCODE, texts=texts, options=options)
             reply = self._receive(request_id, MessageType.ENCODED, timeout)
         payload = reply["payload"]
+        self._cache_backend_health(payload)
         try:
             shape = tuple(payload["shape"])
             result = np.array(payload["embeddings"], dtype=np.dtype(payload["dtype"]), copy=True)
@@ -262,7 +287,21 @@ class AcceleratorWorkerSession:
     def health(self, *, timeout: float = 1.0) -> dict[str, Any]:
         with self._request_lock:
             request_id = self._send(MessageType.HEARTBEAT)
-            return self._receive(request_id, MessageType.HEALTH, timeout)["payload"]
+            payload = self._receive(request_id, MessageType.HEALTH, timeout)["payload"]
+        self._cache_backend_health(payload)
+        return payload
+
+    @property
+    def last_backend_health(self) -> dict[str, Any]:
+        """Return the latest child-reported telemetry without blocking on the worker."""
+        return dict(self._last_backend_health)
+
+    def _cache_backend_health(self, payload: dict[str, Any]) -> None:
+        health = payload.get("backend")
+        if isinstance(health, dict):
+            # Publish an immutable-by-convention replacement so lock-free telemetry
+            # readers never observe a partially mutated mapping during an encode.
+            self._last_backend_health = dict(health)
 
     def shutdown(self, *, timeout: float = 5.0) -> None:
         with self._request_lock:
@@ -405,7 +444,13 @@ class DeterministicFakeBackend:
         )[:, : self.dimension]
 
     def health(self) -> dict[str, Any]:
-        return {"model_loads": 1, "encodes": self._encodes}
+        if self.config.get("fail_health"):
+            raise RuntimeError("requested fake telemetry failure")
+        return {
+            "model_loads": 1,
+            "encodes": self._encodes,
+            **self.config.get("health_metrics", {}),
+        }
 
     def close(self) -> None:
         return None

@@ -37,6 +37,35 @@ def test_spawn_worker_loads_model_once_and_returns_owned_numpy_arrays():
         assert worker._context.get_start_method() == "spawn"
 
 
+def test_encode_replies_cache_backend_telemetry_without_an_extra_request():
+    metrics = {
+        "mps_current_allocated_bytes": 10,
+        "mps_driver_allocated_bytes": 20,
+        "mps_recommended_max_bytes": 100,
+    }
+    with session(health_metrics=metrics) as worker:
+        assert worker.last_backend_health["mps_driver_allocated_bytes"] == 20
+
+        worker.encode(["alpha"], timeout=2)
+
+        assert worker.last_backend_health == {
+            "model_loads": 1,
+            "encodes": 1,
+            **metrics,
+        }
+
+
+def test_backend_telemetry_failure_does_not_fail_initialization_or_encode():
+    with session(fail_health=True) as worker:
+        result = worker.encode(["alpha"], timeout=2)
+
+        assert result.shape == (1, 3)
+        assert worker.last_backend_health == {
+            "telemetry_error": "requested fake telemetry failure",
+            "telemetry_exception_type": "RuntimeError",
+        }
+
+
 def test_initialization_failure_is_reported_and_reaped():
     worker = session(fail_init=True)
     with pytest.raises(WorkerCrashedError, match="initialization failure"):

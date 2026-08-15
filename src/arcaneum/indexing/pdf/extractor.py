@@ -246,26 +246,23 @@ class PDFExtractor:
             return md_text, metadata
 
         except LayoutConversionError as e:
-            # Handle PyMuPDF font digest errors (code=4: no font file for digest)
-            # This occurs when TEXT_COLLECT_STYLES flag encounters fonts without embedded data
-            # (Base-14 fonts, system fonts). The error is in fake-bold detection optimization,
-            # not core text extraction. Fallback maintains quality.
-            error_msg = str(e)
-            if e.font_error:
-                logger.debug(
-                    f"Markdown conversion failed for {pdf_path.name} "
-                    f"(font digest error: {error_msg}). This is a known PyMuPDF4LLM "
-                    f"limitation with certain fonts. Falling back to normalized extraction."
-                )
-                # Keep the fallback boundary strict: no native layout worker
-                # remains alive while local normalized extraction proceeds.
-                worker.close()
-                # Fall back to normalized extraction - quality is maintained
-                # (only loses fake-bold deduplication optimization)
-                return self._extract_with_pymupdf_normalized(pdf_path)
-            else:
-                # Re-raise non-font conversion errors.
-                raise
+            # PyMuPDF4LLM rejected the document without crashing its worker: font
+            # digest errors (code=4), malformed cross-reference entries, and other
+            # parser-level complaints all land here. Normalized extraction reads
+            # these files fine, so its viability does not depend on why markdown
+            # conversion failed - never gate the fallback on the error text.
+            logger.warning(
+                "Markdown conversion failed for %s (%s); using normalized extraction",
+                pdf_path.name,
+                e,
+            )
+            # Keep the fallback boundary strict: no native layout worker
+            # remains alive while local normalized extraction proceeds.
+            worker.close()
+            text, metadata = self._extract_with_pymupdf_normalized(pdf_path)
+            metadata["layout_fallback_reason"] = type(e).__name__
+            metadata["layout_fallback_detail"] = str(e)
+            return text, metadata
         except (LayoutWorkerTimeout, LayoutWorkerCrashed) as e:
             # The worker client guarantees the native process is terminated and
             # reaped before raising. It is now safe to continue with local,

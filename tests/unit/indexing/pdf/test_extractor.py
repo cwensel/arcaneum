@@ -99,15 +99,51 @@ def test_markdown_extraction_disables_layout_for_conversion(monkeypatch, tmp_pat
 def test_font_conversion_error_preserves_normalized_fallback(monkeypatch, tmp_path):
     pdf_path = tmp_path / "document.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n")
-    worker = _FakeWorker(error=LayoutConversionError("font code=4", font_error=True))
-    fallback = ("normalized", {"extraction_method": "pymupdf_normalized"})
+    worker = _FakeWorker(error=LayoutConversionError("font code=4"))
 
     monkeypatch.setattr(PDFExtractor, "_has_type3_fonts", lambda self, path: False)
     monkeypatch.setattr(
-        PDFExtractor, "_extract_with_pymupdf_normalized", lambda self, path: fallback
+        PDFExtractor,
+        "_extract_with_pymupdf_normalized",
+        lambda self, path: ("normalized", {"extraction_method": "pymupdf_normalized"}),
     )
 
-    assert PDFExtractor(layout_worker=worker).extract(pdf_path) == fallback
+    text, metadata = PDFExtractor(layout_worker=worker).extract(pdf_path)
+
+    assert text == "normalized"
+    assert metadata["extraction_method"] == "pymupdf_normalized"
+    assert metadata["layout_fallback_reason"] == "LayoutConversionError"
+    assert "font code=4" in metadata["layout_fallback_detail"]
+    assert worker.closed is True
+
+
+def test_non_font_conversion_error_still_falls_back_to_normalized(monkeypatch, tmp_path):
+    """A malformed-PDF conversion error must not strand an extractable file.
+
+    Regression: the fallback used to be gated on a substring match for "font" in
+    the error text, so a malformed xref entry ("invalid literal for int() with
+    base 10: '6842 1 R'") re-raised and failed the file even though normalized
+    extraction reads it fine. Fallback viability does not depend on the cause.
+    """
+    pdf_path = tmp_path / "document.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    worker = _FakeWorker(
+        error=LayoutConversionError("invalid literal for int() with base 10: '6842 1 R'")
+    )
+
+    monkeypatch.setattr(PDFExtractor, "_has_type3_fonts", lambda self, path: False)
+    monkeypatch.setattr(
+        PDFExtractor,
+        "_extract_with_pymupdf_normalized",
+        lambda self, path: ("normalized", {"extraction_method": "pymupdf_normalized"}),
+    )
+
+    text, metadata = PDFExtractor(layout_worker=worker).extract(pdf_path)
+
+    assert text == "normalized"
+    assert metadata["extraction_method"] == "pymupdf_normalized"
+    assert metadata["layout_fallback_reason"] == "LayoutConversionError"
+    assert "6842 1 R" in metadata["layout_fallback_detail"]
     assert worker.closed is True
 
 

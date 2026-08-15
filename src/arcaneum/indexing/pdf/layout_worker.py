@@ -48,10 +48,6 @@ class LayoutWorkerContainmentError(LayoutWorkerError):
 class LayoutConversionError(LayoutWorkerError):
     """PyMuPDF4LLM rejected a document without crashing its worker."""
 
-    def __init__(self, message: str, *, font_error: bool = False):
-        super().__init__(message)
-        self.font_error = font_error
-
 
 def _silence_native_output() -> None:
     """Keep third-party parser chatter and C++ teardown diagnostics in the child."""
@@ -100,7 +96,6 @@ def _worker_main(connection: Connection, silence_output: bool) -> None:
                     "type": "error",
                     "request_id": request_id,
                     "message": f"unknown operation: {operation!r}",
-                    "font_error": False,
                 }
             )
             continue
@@ -122,9 +117,7 @@ def _worker_main(connection: Connection, silence_output: bool) -> None:
             for page_number, page in enumerate(pages, start=1):
                 metadata = dict(page.get("metadata") or {})
                 metadata.setdefault("page_number", page_number)
-                serialized_pages.append(
-                    {"text": str(page.get("text", "")), "metadata": metadata}
-                )
+                serialized_pages.append({"text": str(page.get("text", "")), "metadata": metadata})
             with pymupdf.open(request["pdf_path"]) as document:
                 page_count = len(document)
             connection.send(
@@ -137,13 +130,11 @@ def _worker_main(connection: Connection, silence_output: bool) -> None:
                 }
             )
         except BaseException as exc:
-            error_text = str(exc)
             connection.send(
                 {
                     "type": "error",
                     "request_id": request_id,
-                    "message": error_text,
-                    "font_error": "font" in error_text.lower() or "code=4" in error_text,
+                    "message": str(exc),
                 }
             )
 
@@ -249,9 +240,7 @@ class PDFLayoutWorker:
             response = self._connection.recv()
         except EOFError as exc:
             exit_code = self._reap(force=True)
-            raise LayoutWorkerCrashed(
-                f"PDF layout worker exited (exit code {exit_code})"
-            ) from exc
+            raise LayoutWorkerCrashed(f"PDF layout worker exited (exit code {exit_code})") from exc
         if response.get("request_id") != request_id:
             self._reap(force=True)
             raise LayoutWorkerCrashed("PDF layout worker returned a mismatched response")
@@ -262,10 +251,7 @@ class PDFLayoutWorker:
         with self._lock:
             response = self._exchange("convert", payload={"request": asdict(request)})
             if response.get("type") == "error":
-                raise LayoutConversionError(
-                    response.get("message", "PDF layout conversion failed"),
-                    font_error=bool(response.get("font_error")),
-                )
+                raise LayoutConversionError(response.get("message", "PDF layout conversion failed"))
             if response.get("type") != "result":
                 self._reap(force=True)
                 raise LayoutWorkerCrashed(f"unexpected PDF layout response: {response!r}")

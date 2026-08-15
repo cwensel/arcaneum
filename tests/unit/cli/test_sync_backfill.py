@@ -153,7 +153,11 @@ def test_corpus_sync_rejects_success_when_file_operations_failed():
     assert "1 file(s) failed" in message
     assert "2 MeiliSearch backfill(s) failed" in message
     assert "3 Qdrant backfill(s) failed" in message
-    assert "--force" in message
+    # Extraction failures are deterministic: a plain re-run reprocesses the same
+    # bytes through the same code path and fails identically, so the message must
+    # not advertise --force as a retry. The --git-update caveat is still real.
+    assert "--force" not in message
+    assert "--git-update" in message
 
 
 def test_fetch_chunks_for_files_bulk_preserves_pdf_ocr_metadata():

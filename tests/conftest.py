@@ -1,12 +1,69 @@
 """Shared pytest fixtures for Arcaneum CLI tests."""
 
-import os
 import json
+import os
+import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+# ============================================================================
+# Interpreter shutdown containment
+# ============================================================================
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_unconfigure(config):
+    """Exit before CPython finalization, which segfaults on this dependency set.
+
+    Running the CLI suites alongside the embedding suites loads PyMuPDF's SWIG
+    types and PyTorch into one interpreter. `finalize_modules` then tears their
+    native types down in an order one of them does not survive:
+
+        type_dealloc -> insertdict -> _PyModule_ClearDict -> finalize_modules
+
+    The crash happens strictly at teardown, after every test has run and pytest
+    has reported its results, so it corrupts nothing and hides no failure - but
+    the resulting SIGSEGV (exit 139) fails CI even when the whole suite is green.
+    The same native-lifetime bug surfaces more politely as the `SwigPyObject has
+    no __module__ attribute` warnings and the PyTorch teardown diagnostics in
+    docs/pdf-layout-warning-investigation.md.
+
+    Leaving via `os._exit` skips that finalization while forwarding pytest's real
+    exit status, so a failing run still fails. Output is flushed first, since
+    `os._exit` bypasses buffer flushing too.
+
+    Runs `trylast` at unconfigure - the final hook - so the terminal summary is
+    printed and other plugins (notably pytest-cov, which writes its reports during
+    unconfigure) have already finished. Leaving via `os._exit` then skips the
+    finalization while forwarding pytest's real exit status, so a failing run still
+    fails. Output is flushed first, since `os._exit` bypasses buffer flushing too.
+
+    This is containment, not a resolution: it should be removed once the upstream
+    teardown order is fixed.
+    """
+    status = getattr(config, "_arcaneum_exit_status", None)
+    if status is None:
+        # Never seen a session finish (e.g. a collection error path); let CPython
+        # exit normally rather than invent a status.
+        return
+
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except (ValueError, OSError):
+        # Streams may already be closed under capture plugins.
+        pass
+
+    os._exit(status)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Record the real exit status for the unconfigure-time guard above."""
+    # `exitstatus` is an int-like IntEnum (pytest.ExitCode); os._exit needs an int.
+    session.config._arcaneum_exit_status = int(exitstatus)
 
 
 # ============================================================================

@@ -83,6 +83,28 @@ class AdaptiveProgress(Progress):
         super().advance(*args, **kwargs)
         self.refresh()
 
+    def __enter__(self) -> "AdaptiveProgress":
+        started = super().__enter__()
+        # Rich's own redirect_stderr only wraps sys.stderr, so native runtimes
+        # writing straight to fd 2 (PyTorch's C++ teardown diagnostics during PDF
+        # layout analysis) print inside a rendered frame and mangle the bar.
+        # Owning the relay here covers every call site. A disabled bar renders no
+        # frames, so leave stderr untouched under --json.
+        self._stderr_relay = None if self.disable else relay_native_stderr(self.console)
+        if self._stderr_relay is not None:
+            self._stderr_relay.__enter__()
+        return started
+
+    def __exit__(self, *exc_info) -> None:
+        # Stop the display before restoring stderr so the final frame is flushed
+        # while relayed diagnostics still print above it.
+        try:
+            super().__exit__(*exc_info)
+        finally:
+            relay, self._stderr_relay = getattr(self, "_stderr_relay", None), None
+            if relay is not None:
+                relay.__exit__(*exc_info)
+
 
 class AdaptiveTimeRemainingColumn(TimeRemainingColumn):
     """ETA column that expands its sample window as a task matures."""
@@ -159,6 +181,7 @@ def _metadata_scan_progress_callback(
 
 from ..cli.errors import InvalidArgumentError, ResourceNotFoundError
 from ..cli.interaction_logger import interaction_logger
+from ..cli.native_stderr import relay_native_stderr
 from ..cli.output import print_error, print_info, print_json
 from ..cli.utils import create_qdrant_client
 from ..config import DEFAULT_MODELS

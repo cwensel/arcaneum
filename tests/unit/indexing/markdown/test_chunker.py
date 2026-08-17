@@ -142,22 +142,27 @@ print("[literal markdown](not-a-link)")
         self._assert_non_frontmatter_lines_represented(text, chunks)
 
     def test_nested_headers(self):
-        """Test chunker handles nested header hierarchy correctly."""
-        text = """# Main Title
+        """Test chunker handles nested header hierarchy correctly.
 
-Introduction content.
+        Sections carry enough body text to clear the RDR-023 fragment floor, so
+        each stays its own chunk and retains its own header_path.
+        """
+        filler = "Substantial body text for this section. " * 8
+        text = f"""# Main Title
+
+{filler}
 
 ## Subsection 1
 
-Content for subsection 1.
+{filler}
 
 ## Subsection 2
 
-Content for subsection 2.
+{filler}
 
 ### Deep section
 
-Deep content here."""
+{filler}"""
 
         chunker = SemanticMarkdownChunker(chunk_size=100)
         chunks = chunker.chunk(text, {})
@@ -173,15 +178,18 @@ Deep content here."""
 
     def test_parent_header_context_preservation(self):
         """Test that parent headers are included in sub-section chunks."""
-        text = """# Chapter 1
+        filler = "Detailed explanatory content for this section. " * 8
+        text = f"""# Chapter 1
+
+{filler}
 
 ## Section 1.1
 
-Content for section 1.1.
+{filler}
 
 ### Subsection 1.1.1
 
-Detailed content here."""
+{filler}"""
 
         chunker = SemanticMarkdownChunker(chunk_size=50)
         chunks = chunker.chunk(text, {})
@@ -245,13 +253,13 @@ More text."""
 
     def test_large_section_splitting(self):
         """Test that large sections are split at semantic boundaries."""
-        # Create a large section that exceeds chunk size
-        paragraphs = [f"This is paragraph {i} with some content." for i in range(20)]
-        text = f"""# Large Section
+        # Create a large section that exceeds chunk size. Paragraphs are blank-line
+        # separated so the splitter has semantic boundaries to cut on; run together
+        # they parse as one paragraph token and cannot be split at all.
+        paragraphs = [f"This is paragraph {i} with some content. " * 10 for i in range(20)]
+        text = "# Large Section\n\n" + "\n\n".join(paragraphs)
 
-{chr(10).join(paragraphs)}"""
-
-        chunker = SemanticMarkdownChunker(chunk_size=50)
+        chunker = SemanticMarkdownChunker(chunk_size=200)
         chunks = chunker.chunk(text, {})
 
         # Should create multiple chunks
@@ -442,13 +450,217 @@ Content."""
             assert "Level 1 > Level 2 > Level 3" in deep_chunks[0].metadata.get("header_path", "")
 
 
+class TestFragmentMerging:
+    """Fragment floor merging (RDR-023).
+
+    Chunks below ``min_chunk_chars`` merge forward into their successor. The
+    threshold is 200 characters, selected by retrieval measurement: merging
+    below it is neutral-to-positive, merging above it degrades retrieval.
+    """
+
+    HEADING_DENSE = """# Session
+
+## task · 54
+
+### prompt · 10:00
+
+Short.
+
+### assistant · 10:01
+
+Reply.
+
+### tool-result · 10:02
+
+Output.
+"""
+
+    @staticmethod
+    def _fragment_free(chunks, threshold):
+        """Every chunk except a lone trailing one clears the threshold."""
+        return all(len(chunk.text) >= threshold for chunk in chunks[:-1])
+
+    def test_heading_dense_input_fragments_without_floor(self):
+        """Characterize pre-change behavior: one chunk per heading, all tiny."""
+        chunker = SemanticMarkdownChunker(chunk_size=512, min_chunk_chars=0)
+        chunks = chunker.chunk(self.HEADING_DENSE, {})
+
+        assert len(chunks) == 5
+        assert all(len(chunk.text) < 200 for chunk in chunks)
+        assert any(chunk.text.strip() == "## task · 54" for chunk in chunks)
+
+    def test_fragments_merge_forward(self):
+        """Fragments attach to the chunk that follows them."""
+        chunker = SemanticMarkdownChunker(chunk_size=512, min_chunk_chars=200)
+        chunks = chunker.chunk(self.HEADING_DENSE, {})
+
+        assert len(chunks) == 1
+        merged = chunks[0]
+        assert merged.text.index("# Session") < merged.text.index("## task · 54")
+        assert merged.text.index("## task · 54") < merged.text.index("Output.")
+
+    def test_merge_preserves_all_text(self):
+        """Concatenated output equals concatenated input plus separators."""
+        chunker = SemanticMarkdownChunker(chunk_size=512, min_chunk_chars=200)
+        unmerged = SemanticMarkdownChunker(chunk_size=512, min_chunk_chars=0)
+
+        merged_text = "\n\n".join(c.text for c in chunker.chunk(self.HEADING_DENSE, {}))
+        original_text = "\n\n".join(c.text for c in unmerged.chunk(self.HEADING_DENSE, {}))
+
+        assert merged_text == original_text
+
+    def test_header_only_chunk_merges_into_successor(self):
+        """A header-only section never survives as its own chunk."""
+        body = "Body content. " * 30  # well over the 200-char floor
+        text = f"# Title\n\n## Empty Header\n\n### Content\n\n{body}"
+
+        chunker = SemanticMarkdownChunker(chunk_size=512, min_chunk_chars=200)
+        chunks = chunker.chunk(text, {})
+
+        assert not any(chunk.text.strip() == "## Empty Header" for chunk in chunks)
+        assert any("## Empty Header" in chunk.text for chunk in chunks)
+
+    def test_trailing_fragment_merges_backward(self):
+        """A fragment with no successor attaches to the preceding chunk."""
+        body = "Substantial paragraph text. " * 20
+        text = f"# Title\n\n{body}\n\n## Trailing\n"
+
+        chunker = SemanticMarkdownChunker(chunk_size=512, min_chunk_chars=200)
+        chunks = chunker.chunk(text, {})
+
+        assert chunks[-1].text.rstrip().endswith("## Trailing")
+        assert len(chunks[-1].text) > 200
+
+    def test_merge_refused_when_it_would_exceed_hard_max(self):
+        """A merge that would breach hard_max_chars is refused, not truncated."""
+        # A short fragment followed by a section already at the ceiling: merging
+        # them would exceed hard_max_chars, so the fragment must stand alone.
+        text = "## Frag\n\n# Full\n\n" + ("Y" * 480)
+
+        chunker = SemanticMarkdownChunker(
+            chunk_size=512,
+            chunk_overlap=10,
+            hard_max_chars=490,
+            min_chunk_chars=200,
+        )
+        chunks = chunker.chunk(text, {})
+
+        assert all(len(chunk.text) <= 490 for chunk in chunks)
+        assert any(chunk.text.strip() == "## Frag" for chunk in chunks)
+        assert any("Y" * 480 in chunk.text for chunk in chunks)
+
+    def test_merged_chunk_records_provenance_metadata(self):
+        """Merged chunks carry fragment_merged metadata."""
+        chunker = SemanticMarkdownChunker(chunk_size=512, min_chunk_chars=200)
+        chunks = chunker.chunk(self.HEADING_DENSE, {})
+
+        merged = [c for c in chunks if c.metadata.get("fragment_merged")]
+        assert len(merged) == 1
+        assert merged[0].metadata["fragment_merged_count"] == 4
+
+    def test_merged_chunk_indices_are_sequential(self):
+        """chunk_index is renumbered from 0 after merging."""
+        body = "Substantial paragraph text. " * 20
+        text = f"# A\n\n## frag\n\n{body}\n\n## B\n\n{body}"
+
+        chunker = SemanticMarkdownChunker(chunk_size=512, min_chunk_chars=200)
+        chunks = chunker.chunk(text, {})
+
+        assert [c.chunk_index for c in chunks] == list(range(len(chunks)))
+        assert [c.metadata["chunk_index"] for c in chunks] == list(range(len(chunks)))
+
+    def test_merged_token_count_recomputed(self):
+        """token_count reflects the merged text, not the absorbing chunk alone."""
+        chunker = SemanticMarkdownChunker(chunk_size=512, min_chunk_chars=200)
+        chunks = chunker.chunk(self.HEADING_DENSE, {})
+
+        merged = chunks[0]
+        assert merged.token_count == int(len(merged.text) / 3.3)
+
+    def test_no_merging_when_all_chunks_clear_the_floor(self):
+        """Documents without fragments are untouched."""
+        body = "Substantial paragraph text. " * 20
+        text = f"# A\n\n{body}\n\n# B\n\n{body}"
+
+        floored = SemanticMarkdownChunker(chunk_size=512, min_chunk_chars=200)
+        unfloored = SemanticMarkdownChunker(chunk_size=512, min_chunk_chars=0)
+
+        floored_chunks = floored.chunk(text, {})
+        unfloored_chunks = unfloored.chunk(text, {})
+
+        assert [c.text for c in floored_chunks] == [c.text for c in unfloored_chunks]
+        assert not any(c.metadata.get("fragment_merged") for c in floored_chunks)
+
+    def test_min_chunk_chars_zero_matches_pre_change_behavior(self):
+        """The disable switch reproduces the unmerged chunking exactly."""
+        chunker = SemanticMarkdownChunker(chunk_size=512, min_chunk_chars=0)
+        chunks = chunker.chunk(self.HEADING_DENSE, {})
+
+        assert len(chunks) == 5
+        assert not any(c.metadata.get("fragment_merged") for c in chunks)
+
+    def test_merging_runs_before_hard_max_enforcement(self):
+        """Merged output still passes through hard-max windowing."""
+        text = "## Frag\n\n" + ("Y" * 900)
+
+        chunker = SemanticMarkdownChunker(
+            chunk_size=1000,
+            chunk_overlap=10,
+            hard_max_chars=300,
+            min_chunk_chars=200,
+        )
+        chunks = chunker.chunk(text, {})
+
+        assert all(len(chunk.text) <= 300 for chunk in chunks)
+        assert any(chunk.metadata.get("hard_split") is True for chunk in chunks)
+
+    def test_empty_input_with_floor_enabled(self):
+        """Empty and whitespace-only input still yields no chunks."""
+        chunker = SemanticMarkdownChunker(min_chunk_chars=200)
+
+        assert chunker.chunk("", {}) == []
+        assert chunker.chunk("   \n\n  ", {}) == []
+
+    def test_naive_path_also_merges_fragments(self):
+        """The fallback path gets the floor too."""
+        chunker = SemanticMarkdownChunker(chunk_size=30, chunk_overlap=1, min_chunk_chars=200)
+        original_md = chunker.md
+        chunker.md = None
+
+        try:
+            chunks = chunker.chunk("Word " * 200, {})
+        finally:
+            chunker.md = original_md
+
+        assert self._fragment_free(chunks, 200)
+
+    def test_default_min_chunk_chars_is_200(self):
+        """RDR-023 selects 200 characters by measurement."""
+        assert SemanticMarkdownChunker().min_chunk_chars == 200
+
+    def test_reduces_chunk_count_on_heading_dense_input(self):
+        """The floor materially reduces chunk count on transcript-shaped input."""
+        turns = []
+        for i in range(40):
+            turns.append(f"### assistant · 10:{i:02d}\n\nShort reply {i}.")
+            turns.append(f"### tool-result · 10:{i:02d}\n\nOutput {i}.")
+        text = "# Session\n\n" + "\n\n".join(turns)
+
+        floored = SemanticMarkdownChunker(chunk_size=512, min_chunk_chars=200).chunk(text, {})
+        unfloored = SemanticMarkdownChunker(chunk_size=512, min_chunk_chars=0).chunk(text, {})
+
+        assert len(floored) < len(unfloored) * 0.75
+
+
 class TestChunkMarkdownFunction:
     """Test the convenience function chunk_markdown."""
 
     def test_chunk_markdown_with_params(self):
         """Test chunk_markdown with custom parameters."""
-        text = "# Test\n\n" + ("Content. " * 500)
-        chunks = chunk_markdown(text, chunk_size=100, chunk_overlap=10)
+        # Blank-line separated paragraphs give the splitter boundaries to cut on.
+        body = "\n\n".join("Content. " * 60 for _ in range(20))
+        text = f"# Test\n\n{body}"
+        chunks = chunk_markdown(text, chunk_size=200, chunk_overlap=10)
 
         assert len(chunks) > 1
 
@@ -459,6 +671,15 @@ class TestChunkMarkdownFunction:
         chunks = chunk_markdown(text, metadata=metadata)
 
         assert chunks[0].metadata["file"] == "test.md"
+
+    def test_chunk_markdown_accepts_min_chunk_chars(self):
+        """Convenience wrapper forwards min_chunk_chars."""
+        text = "# A\n\n## frag\n\n### frag2\n\nTiny."
+
+        merged = chunk_markdown(text, chunk_size=512, min_chunk_chars=200)
+        unmerged = chunk_markdown(text, chunk_size=512, min_chunk_chars=0)
+
+        assert len(merged) < len(unmerged)
 
     def test_chunk_markdown_accepts_hard_max_chars(self):
         """Convenience wrapper forwards hard_max_chars."""
@@ -478,15 +699,13 @@ class TestAcceptanceCriteria:
     """Validate acceptance criteria from RDR-014."""
 
     def test_handles_nested_headings(self):
-        """Acceptance: Handles nested headings correctly."""
-        text = """# H1
-## H2
-### H3
-#### H4
-##### H5
-###### H6
+        """Acceptance: Handles nested headings correctly.
 
-Content at each level."""
+        Each level carries body text so it clears the RDR-023 fragment floor and
+        keeps its own header_path rather than merging into a neighbour.
+        """
+        filler = "Content at this heading level with enough text to stand alone. " * 6
+        text = "\n\n".join(f"{'#' * level} H{level}\n\n{filler}" for level in range(1, 7))
 
         chunks = chunk_markdown(text, chunk_size=100)
 
@@ -504,10 +723,12 @@ Content at each level."""
         Uses structured markdown with multiple sections so the chunker has
         semantic boundaries to split on.
         """
-        # Generate markdown with many small sections
+        # Generate markdown with many sections, each holding several blank-line
+        # separated paragraphs so the splitter has boundaries to cut on.
         sections = []
         for i in range(20):
-            sections.append(f"## Section {i}\n\n" + "Word " * 50)
+            body = "\n\n".join("Word " * 50 for _ in range(4))
+            sections.append(f"## Section {i}\n\n{body}")
         text = "\n\n".join(sections)
 
         # Small chunks

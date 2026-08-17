@@ -55,6 +55,7 @@ class SemanticMarkdownChunker:
         max_chars: Optional[int] = None,
         hard_max_chars: Optional[int] = None,
         preserve_code_blocks: bool = True,
+        min_chunk_chars: int = 200,
     ):
         """Initialize semantic markdown chunker.
 
@@ -69,12 +70,18 @@ class SemanticMarkdownChunker:
                 Oversized semantic chunks are split into overlapping windows
                 before embedding so no document tail is silently truncated.
             preserve_code_blocks: Keep code blocks intact (don't split mid-block)
+            min_chunk_chars: Fragment floor (RDR-023). Chunks shorter than this
+                merge into their successor, so heading-dense markdown does not
+                emit one near-empty chunk per heading. 200 was selected by
+                retrieval measurement; merging toward chunk_size measurably
+                degrades retrieval. Set to 0 to disable the pass.
         """
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.max_chars = max_chars or int(chunk_size * self.CHARS_PER_TOKEN)
         self.hard_max_chars = hard_max_chars
         self.preserve_code_blocks = preserve_code_blocks
+        self.min_chunk_chars = min_chunk_chars
 
         if not MARKDOWN_IT_AVAILABLE:
             logger.warning(
@@ -100,13 +107,17 @@ class SemanticMarkdownChunker:
         # Try semantic chunking if available
         if MARKDOWN_IT_AVAILABLE and self.md:
             try:
-                return self._enforce_hard_max(self._semantic_chunking(text, metadata))
+                return self._enforce_hard_max(
+                    self._merge_fragment_chunks(self._semantic_chunking(text, metadata))
+                )
             except Exception as e:
                 logger.warning(f"Semantic chunking failed: {e}, falling back to naive chunking")
                 # Fall through to naive chunking
 
         # Fallback to naive token-based chunking
-        return self._enforce_hard_max(self._naive_chunking(text, metadata))
+        return self._enforce_hard_max(
+            self._merge_fragment_chunks(self._naive_chunking(text, metadata))
+        )
 
     def _hard_max_overlap_chars(self) -> int:
         """Return overlap in chars for hard-max windowing.
@@ -159,6 +170,125 @@ class SemanticMarkdownChunker:
             start = next_start
 
         return windows
+
+    MERGE_SEPARATOR = "\n\n"
+
+    def _merge_fragment_chunks(self, chunks: List[MarkdownChunk]) -> List[MarkdownChunk]:
+        """Merge sub-threshold fragment chunks into their successor (RDR-023).
+
+        Heading-dense markdown yields roughly one chunk per heading, so sections
+        holding a heading and a line of text become chunks too small to retrieve
+        on. This is the floor complementing the ``_enforce_hard_max`` ceiling.
+
+        Merging is forward: a heading names the material that follows it, so a
+        fragment attaches to the chunk after it. A trailing fragment with no
+        successor attaches backward instead so no text is dropped. A merge that
+        would exceed ``hard_max_chars`` is refused and the fragment emitted on
+        its own, so this pass can never create an oversized chunk.
+        """
+        if not self.min_chunk_chars or len(chunks) < 2:
+            return chunks
+
+        # Group each run of fragments with the first following chunk that clears
+        # the floor. A trailing run has no such successor, so it forms its own
+        # group and is folded backward below.
+        groups: List[List[MarkdownChunk]] = []
+        pending: List[MarkdownChunk] = []
+
+        for chunk in chunks:
+            pending.append(chunk)
+            if len(chunk.text) >= self.min_chunk_chars:
+                groups.append(pending)
+                pending = []
+
+        if pending:
+            if groups:
+                groups[-1].extend(pending)
+            else:
+                groups.append(pending)
+
+        merged: List[MarkdownChunk] = []
+        merge_count = 0
+
+        for group in groups:
+            for combined in self._combine_group(group):
+                merge_count += combined.metadata.get("fragment_merged_count", 0)
+                merged.append(self._copy_chunk_with_index(combined, len(merged)))
+
+        if merge_count:
+            logger.info(
+                "Merged %d fragment chunks below %d chars into %d chunks",
+                merge_count,
+                self.min_chunk_chars,
+                len(merged),
+            )
+
+        return merged
+
+    def _combine_group(self, group: List[MarkdownChunk]) -> List[MarkdownChunk]:
+        """Combine one fragment group into as few chunks as hard_max_chars allows.
+
+        The group's anchor — the chunk that cleared the floor, or the first chunk
+        when the whole group is fragments — supplies the surviving metadata and
+        ``header_path``. Fragments are appended in document order. When adding
+        the next fragment would breach ``hard_max_chars`` the accumulated chunk
+        is emitted and a new one started, so a merge never creates an oversized
+        chunk and no text is dropped.
+        """
+        anchor = next(
+            (c for c in group if len(c.text) >= self.min_chunk_chars),
+            group[0],
+        )
+
+        emitted: List[MarkdownChunk] = []
+        parts: List[str] = []
+        absorbed = 0
+
+        def flush(parts: List[str], absorbed: int) -> None:
+            if not parts:
+                return
+            text = self.MERGE_SEPARATOR.join(parts)
+            emitted.append(
+                MarkdownChunk(
+                    text=text,
+                    chunk_index=anchor.chunk_index,
+                    token_count=int(len(text) / self.CHARS_PER_TOKEN),
+                    metadata=(
+                        {
+                            **anchor.metadata,
+                            "fragment_merged": True,
+                            "fragment_merged_count": absorbed,
+                        }
+                        if absorbed
+                        else dict(anchor.metadata)
+                    ),
+                    header_path=anchor.header_path,
+                )
+            )
+
+        for chunk in group:
+            # `_split_large_section` re-emits the section header at the head of
+            # each sub-chunk, so a header-only fragment is frequently already
+            # present verbatim in the anchor. Skip it rather than duplicate it.
+            if chunk is not anchor and anchor.text.startswith(chunk.text):
+                absorbed += 1
+                continue
+
+            candidate = parts + [chunk.text]
+            length = sum(len(part) for part in candidate) + len(self.MERGE_SEPARATOR) * (
+                len(candidate) - 1
+            )
+            if parts and self.hard_max_chars and length > self.hard_max_chars:
+                flush(parts, absorbed)
+                absorbed = 0
+                candidate = [chunk.text]
+
+            parts = candidate
+            if chunk is not anchor:
+                absorbed += 1
+
+        flush(parts, absorbed)
+        return emitted
 
     def _enforce_hard_max(self, chunks: List[MarkdownChunk]) -> List[MarkdownChunk]:
         """Split oversized chunks so embedding never has to truncate content."""
@@ -657,6 +787,7 @@ def chunk_markdown(
     chunk_overlap: int = 50,
     metadata: Optional[Dict] = None,
     hard_max_chars: Optional[int] = None,
+    min_chunk_chars: int = 200,
 ) -> List[MarkdownChunk]:
     """Convenience function to chunk markdown text.
 
@@ -666,6 +797,7 @@ def chunk_markdown(
         chunk_overlap: Overlap between chunks in tokens (default 50)
         metadata: Optional base metadata dict
         hard_max_chars: Absolute maximum characters per emitted chunk
+        min_chunk_chars: Fragment floor in characters (0 disables merging)
 
     Returns:
         List of MarkdownChunk objects
@@ -674,5 +806,6 @@ def chunk_markdown(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         hard_max_chars=hard_max_chars,
+        min_chunk_chars=min_chunk_chars,
     )
     return chunker.chunk(text, metadata or {})

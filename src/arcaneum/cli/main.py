@@ -1165,6 +1165,14 @@ def delete_corpus(name, confirm, output_json):
     help="Also detect renames, remove indexed files no longer on disk, and check cross-system parity (slower than default; default already re-indexes edited files via mtime+size)",
 )
 @click.option(
+    "--order",
+    type=click.Choice(["path", "newest", "oldest"]),
+    default="path",
+    help="Order files are indexed in: path (default, alphabetical), newest "
+    "(most recently modified first), oldest. Affects processing order only, "
+    "not what gets indexed or how results rank.",
+)
+@click.option(
     "--timeout",
     type=int,
     default=None,
@@ -1207,6 +1215,7 @@ def sync_directory(
     skip_dir_prefix,
     no_skip_dir_prefix,
     parity,
+    order,
     timeout,
     mem_probe_interval,
     mem_probe_log,
@@ -1284,6 +1293,7 @@ def sync_directory(
         qdrant_timeout=timeout,
         mem_probe_interval=mem_probe_interval,
         mem_probe_log=mem_probe_log,
+        order=order,
     )
 
 

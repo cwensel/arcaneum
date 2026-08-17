@@ -1085,12 +1085,60 @@ def _filter_excluded_files(
     return filtered_files
 
 
+#: Supported index orderings for ``--order`` / ``order_files``.
+FILE_ORDERS = ("path", "newest", "oldest")
+
+
+def order_files(files: List[Path], order: str = "path") -> List[Path]:
+    """Return ``files`` in the requested index order.
+
+    Ordering controls only *when* a file is indexed within a sync, never
+    whether it is indexed or how it later ranks in search.  ``newest`` is
+    useful when recent content matters most and a long sync may be
+    interrupted: the valuable files land first.
+
+    Every order is total and deterministic.  ``newest``/``oldest`` break
+    mtime ties on path so repeated runs over an unchanged tree produce an
+    identical sequence.  A file that disappears between discovery and
+    ordering sorts last rather than aborting the sync.
+
+    Args:
+        files: Paths to order (not mutated)
+        order: One of ``FILE_ORDERS`` — ``path`` (lexicographic, the
+               default), ``newest`` (most recently modified first), or
+               ``oldest`` (least recently modified first)
+
+    Returns:
+        A new list of Paths in the requested order
+
+    Raises:
+        ValueError: If ``order`` is not one of ``FILE_ORDERS``
+    """
+    if order not in FILE_ORDERS:
+        raise ValueError(f"Unknown file order {order!r}; expected one of {', '.join(FILE_ORDERS)}")
+
+    if order == "path":
+        return sorted(files)
+
+    def mtime_key(path: Path) -> float:
+        """mtime, with vanished files sorted last in either direction."""
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return float("-inf") if order == "newest" else float("inf")
+
+    # Sort on path first so the stable mtime sort leaves ties in path order.
+    by_path = sorted(files)
+    return sorted(by_path, key=mtime_key, reverse=(order == "newest"))
+
+
 def discover_files(
     directory: Path,
     file_types: Optional[str],
     corpus_type: str,
     skip_dir_prefixes: Tuple[str, ...] = ("_",),
     skip_git_roots: Optional[Set[str]] = None,
+    order: str = "path",
 ) -> Tuple[List[Path], List[str]]:
     """Discover files to index based on corpus type and file filters.
 
@@ -1120,10 +1168,12 @@ def discover_files(
         skip_git_roots: Set of git-root paths (str) to exclude entirely (used
                        by --git-update / --git-version).  Only meaningful for
                        code corpora.
+        order: Index order for the returned files — see ``order_files``.
+               Defaults to ``path`` (lexicographic).
 
     Returns:
         Tuple of (files, git_roots) where:
-        - files: sorted list of Path objects to index
+        - files: list of Path objects to index, in ``order``
         - git_roots: list of git root paths (str) discovered; empty for non-code
     """
     # Determine extensions to look for. For git-backed code corpora, the
@@ -1243,8 +1293,7 @@ def discover_files(
             git_tracked_files = [p for p in git_tracked_files if _is_probably_text_file(p)]
         files.extend(git_tracked_files)
 
-    files.sort()
-    return files, git_roots
+    return order_files(files, order), git_roots
 
 
 def compute_file_hash(file_path: Path) -> str:
@@ -1730,6 +1779,7 @@ def sync_directory_command(
     qdrant_timeout: Optional[int] = None,
     mem_probe_interval: float = 0.0,
     mem_probe_log: Optional[str] = None,
+    order: str = "path",
 ):
     """Sync directories or files to both Qdrant and MeiliSearch.
 
@@ -1757,6 +1807,9 @@ def sync_directory_command(
                           Empty tuple disables prefix-based skipping. Default: ('_',)
         dry_run: If True, show what would be synced without making changes
         repair: If True, verify collection integrity and re-index only incomplete files
+        order: Index order for discovered files ('path', 'newest', 'oldest').
+               Affects only processing order within the sync, not what is
+               indexed or how results later rank.
     """
     # Calculate effective text workers
     if text_workers is None:
@@ -2213,6 +2266,7 @@ def sync_directory_command(
                 corpus_type,
                 skip_dir_prefixes=skip_dir_prefixes,
                 skip_git_roots=skip_git_roots,
+                order=order,
             )
             files.extend(dir_files)
             discovered_git_roots.extend(dir_roots)
@@ -2222,6 +2276,12 @@ def sync_directory_command(
             if file_git_root in skip_git_roots:
                 continue
             files.append(single_file)
+
+        # Re-order across the combined set: per-directory ordering above only
+        # sorts within each directory, so multiple paths (and explicitly listed
+        # single files) would otherwise stay grouped by source rather than
+        # interleaved into one global order.
+        files = order_files(files, order)
 
         if not files:
             if not dry_run:

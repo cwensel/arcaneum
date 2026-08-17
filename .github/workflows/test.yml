@@ -87,16 +87,6 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Cache ML models
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cache/arcaneum/models
-            ~/.cache/fastembed
-          key: ml-models-${{ runner.os }}-py${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            ml-models-${{ runner.os }}-py${{ matrix.python-version }}-
-
       - name: Install system dependencies
         run: |
           sudo apt-get update -q
@@ -197,16 +187,6 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y tesseract-ocr poppler-utils
 
-      - name: Cache ML models
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cache/arcaneum/models
-            ~/.cache/fastembed
-          key: ml-models-${{ runner.os }}-py${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            ml-models-${{ runner.os }}-py${{ matrix.python-version }}-
-
       - name: Install package
         run: pip install -e ".[dev]"
 
@@ -291,16 +271,6 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y tesseract-ocr poppler-utils
-
-      - name: Cache ML models
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cache/arcaneum/models
-            ~/.cache/fastembed
-          key: ml-models-${{ runner.os }}-py${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            ml-models-${{ runner.os }}-py${{ matrix.python-version }}-
 
       - name: Install package
         run: pip install -e ".[dev]"

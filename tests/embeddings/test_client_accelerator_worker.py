@@ -50,9 +50,18 @@ def test_persistent_worker_is_reused_and_prompt_is_applied_in_parent():
 def test_timeout_reaps_worker_before_cpu_fallback():
     value = client()
     events = []
-    worker = MagicMock(is_alive=False)
+    # Alive, so the staged worker is reused and its timeout drives the reap
+    # rather than _get_accelerator_worker evicting it and spawning a real one.
+    worker = MagicMock(is_alive=True)
     worker.encode.side_effect = WorkerTimeoutError("hung")
-    worker.shutdown.side_effect = lambda: events.append("reaped")
+
+    def reap():
+        # The real session joins the process, so is_alive goes False; the drop
+        # helper only evicts the entry once the worker is confirmed dead.
+        events.append("reaped")
+        worker.is_alive = False
+
+    worker.shutdown.side_effect = reap
     value._accelerator_workers["jina-code-st"] = worker
     value._models["jina-code-st"] = object()
     cpu_model = SimpleNamespace(_backend="sentence-transformers")
@@ -79,7 +88,10 @@ def test_timeout_reaps_worker_before_cpu_fallback():
 
 def test_timeout_poison_is_sticky_and_next_encode_stays_on_cpu():
     value = client()
-    worker = MagicMock(is_alive=False)
+    # A hung worker is still alive; _get_accelerator_worker only reuses a staged
+    # worker when is_alive is True. With is_alive=False it discards the mock and
+    # spawns a real accelerator subprocess, so the staged timeout never fires.
+    worker = MagicMock(is_alive=True)
     worker.encode.side_effect = WorkerTimeoutError("hung")
     value._accelerator_workers["jina-code-st"] = worker
     cpu_model = SimpleNamespace(_backend="sentence-transformers")

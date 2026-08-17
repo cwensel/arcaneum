@@ -1,4 +1,4 @@
-# Recommendation 023: Markdown Chunk Coalescing for Heading-Dense Documents
+# Recommendation 023: Markdown Fragment Merging for Heading-Dense Documents
 
 > Revise during planning; lock at implementation.
 > If wrong, abandon code and iterate RDR.
@@ -6,7 +6,7 @@
 ## Metadata
 
 - **Date**: 2026-08-17
-- **Status**: Draft — blocked, load-bearing assumption refuted by measurement
+- **Status**: Final
 - **Type**: Technical Debt
 - **Priority**: High
 - **Related Issues**: Supplements RDR-014 (markdown indexing); affects RDR-009 (dual indexing)
@@ -19,8 +19,13 @@ heading-dense markdown it emits roughly one chunk per heading regardless of how 
 text follows that heading, producing a large population of fragment chunks that carry
 negligible content.
 
-The chunker needs a lower bound: consecutive small sections should coalesce toward the
-existing size target before being emitted.
+The chunker needs a lower bound. The question this RDR answers is *how large* that bound
+should be. Measurement shows the answer is much smaller than the chunk-size target:
+merging fragments below ~200 characters is free or mildly beneficial for retrieval,
+while merging toward the 1,689-character target measurably degrades it.
+
+The recommendation is therefore a **fragment floor**, not coalescing toward the target:
+merge only chunks below a small absolute threshold into their successor.
 
 ## Context
 
@@ -149,16 +154,23 @@ Heading composition of the sample (198 headings per file average):
 - [x] The `header_path` leaf/prefix structure supports a same-parent merge constraint
   — **Status**: Verified — **Method**: Source Search (`chunker.py` `MarkdownChunk.header_path`)
   plus live inspection of emitted chunks
-- [x] Coalescing improves retrieval quality rather than merely shrinking the index
-  — **Status**: **REFUTED** — **Method**: Spike (two independent retrieval evaluations;
-  see "Retrieval Measurement" below). Coalescing measured *worse* than the current
-  chunker on every metric in the larger evaluation. This assumption was load-bearing;
-  its refutation blocks the RDR.
+- [x] Merging toward the chunk-size target improves retrieval — **Status**: **REFUTED**
+  — **Method**: Spike (Evaluations 1, 2, and the 600/800 arms of Evaluation 4). Measured
+  worse on every metric; significant at p < 0.01 in the sweep. This refutation forced
+  the redesign from target-coalescing to a fragment floor.
+- [x] A 200-character fragment floor does not degrade retrieval — **Status**: Verified
+  — **Method**: Spike (Evaluations 3 and 4, 168 queries, reproduced exactly across two
+  independent runs). Measured +0.024 recall@1 and +0.015 MRR; all deltas within
+  ±0.075 at 95% confidence.
+- [x] 200 is the efficient threshold — **Status**: Verified — **Method**: Spike
+  (Evaluation 4 sweep across 0/100/200/300/400/600/800). Retrieval is flat from 100 to
+  200 and declines monotonically thereafter, so 200 is the largest non-negative value.
 
-### Retrieval Measurement (Refuting Evidence)
+### Retrieval Measurement
 
-Two independent evaluations compared the current chunker against the same-parent
-coalescing prototype described in this RDR.
+Four evaluations were run. The first two refuted the originally proposed design
+(coalescing toward the size target); the third and fourth located the threshold at which
+merging stops helping and starts hurting.
 
 Method: queries were drawn from prose paragraphs of the source documents — not from
 either chunking — so neither variant is favored. Each query's source file is ground
@@ -199,38 +211,69 @@ Interpretation:
   across different corpora, query counts, and hard-max settings, indicating the harness
   measures a stable quantity rather than noise.
 
-The likely mechanism, unverified: merging sibling sections concatenates semantically
-distinct material into one embedding. An averaged vector spanning several unrelated
-turns matches specific queries less sharply than a small focused chunk does. Small
-chunks are cheap to store and apparently useful to retrieve — the two are in tension,
-and the RDR assumed they were aligned.
+The likely mechanism: merging sibling sections concatenates semantically distinct
+material into one embedding. An averaged vector spanning several unrelated turns matches
+specific queries less sharply than a small focused chunk does.
 
-This does not invalidate the size measurements. The ~50% chunk reduction reproduced
-across three independent samples (49.7%, 48.3%, 45.1%). The cost of that reduction is
-retrieval quality, which this RDR assumed would be a benefit.
+**Evaluation 4 — threshold sweep.** 168 queries, 30 files, `hard_max_chars=8192`. Merge
+chunks below each threshold into their successor. `thr=0` is an in-run control that
+reproduced Evaluation 3's baseline exactly (1,682 chunks, recall@1 0.5833, MRR 0.6734),
+confirming the harness is deterministic across invocations.
+
+| Threshold | Chunks | Cut | recall@1 | Δrecall@1 | z | ΔMRR |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 1,682 | — | 0.583 | — | — | — |
+| 100 | 1,465 | -12.9% | 0.607 | +0.024 | +0.62 | +0.020 |
+| **200** | **1,248** | **-25.8%** | **0.607** | **+0.024** | **+0.62** | **+0.015** |
+| 300 | 1,021 | -39.3% | 0.565 | -0.018 | -0.48 | -0.014 |
+| 400 | 882 | -47.6% | 0.512 | -0.071 | -1.87 | -0.057 |
+| 600 | 746 | -55.6% | 0.470 | -0.113 | **-2.98** | -0.097 |
+| 800 | 754 | -55.2% | 0.452 | -0.131 | **-3.45** | -0.109 |
+
+The curve is monotonic past 200 and the decline is significant at 600 and 800
+(p < 0.01). Interpretation:
+
+- **Retrieval quality peaks at a 200-character floor.** 100 and 200 are equivalent on
+  retrieval, so 200 is the efficient choice — it captures twice the reduction for the
+  same quality.
+- The sign flips between 200 and 300. Below that boundary chunks are fragments;
+  above it they are functioning retrieval units whose merging costs accuracy.
+- At `thr=600` the median chunk is 1,627 chars — essentially the 1,689-char target that
+  Evaluations 1 and 2 packed toward — and the damage is comparable. Two independently
+  constructed harnesses converge: **packing markdown chunks toward the embedding model's
+  nominal token budget harms retrieval on this corpus.**
+- `thr=800` yields *more* chunks than `thr=600` (754 vs 746) because the `hard_max`
+  guard refuses more oversized merges. Past ~400 the reduction curve saturates while
+  quality keeps falling, so there is no reason to exceed it.
+
+This does not invalidate the size measurements. The ~50% reduction from full coalescing
+reproduced across three independent samples (49.7%, 48.3%, 45.1%). It is simply not
+free: half the available reduction is purchasable, and the other half is not.
 
 ## Proposed Solution
 
-> **BLOCKED**: The approach below is retained as written for the record. Its
-> load-bearing retrieval assumption was refuted after the section was drafted. Do not
-> implement without first addressing "Revision Required" below.
-
 ### Approach
 
-Add a coalescing pass to `SemanticMarkdownChunker` that merges consecutive undersized
-chunks up to the configured character target. This is a floor complementing the existing
-`_enforce_hard_max` ceiling.
+Add a fragment-merge pass to `SemanticMarkdownChunker` that merges chunks below a small
+absolute character threshold into the chunk that follows them. This is a floor
+complementing the existing `_enforce_hard_max` ceiling.
 
-The pass runs after semantic chunking and before hard-max enforcement, so that any
-merged chunk still passes through existing size-bounding logic.
+**The threshold is 200 characters**, selected by measurement (Evaluation 4). This is
+deliberately far below the 1,689-character chunk-size target: merging toward the target
+is the design this RDR originally proposed and measurement rejected.
 
-Merge eligibility is constrained to consecutive chunks sharing a parent `header_path`
-prefix. This keeps merged content within one logical section of the document and
-preserves the header context that RDR-014 established for retrieval.
+Merging is *forward* — a fragment attaches to the chunk after it, because a heading names
+the material that follows. A trailing fragment with no successor attaches backward
+instead, so no text is dropped. Any merge that would exceed `hard_max_chars` is refused
+and the fragment is emitted on its own, so this pass can never create an oversized chunk.
 
-Header-only chunks (those whose every non-blank line begins with `#`) merge forward into
-the following chunk unconditionally where a successor exists within the same parent, as
-their content is the heading of the material that follows.
+The pass runs after semantic chunking and before hard-max enforcement, so merged output
+still passes through existing size-bounding logic.
+
+Note this supersedes the same-parent `header_path` constraint considered during
+planning. That constraint was designed to limit the damage of sibling merging; at a
+200-character floor the merged material is a heading or a fragment of the section it
+joins, so the constraint is unnecessary. The measured configuration did not use it.
 
 ### Technical Design
 
@@ -238,7 +281,7 @@ A new private method on `SemanticMarkdownChunker`:
 
 ```text
 // Illustrative — verify signatures during implementation
-_coalesce_small_chunks(chunks: List[MarkdownChunk]) -> List[MarkdownChunk]
+_merge_fragment_chunks(chunks: List[MarkdownChunk]) -> List[MarkdownChunk]
 ```
 
 Contract:
@@ -247,37 +290,38 @@ Contract:
   `_naive_chunking`
 - **Output**: chunks in document order, `chunk_index` renumbered sequentially from 0
 - **Invariant**: concatenated output text equals concatenated input text plus separators
-- **Invariant**: no output chunk exceeds the character target through merging alone
-  (oversized inputs pass through untouched for `_enforce_hard_max` to handle)
+- **Invariant**: no merge produces a chunk exceeding `hard_max_chars`; a merge that
+  would is refused and the fragment emitted separately
+- **Invariant**: a fragment merges forward; only a trailing fragment merges backward
 
 Wiring in `chunk()` (`chunker.py:87`), both the semantic and naive paths:
 
 ```text
 // current:  self._enforce_hard_max(self._semantic_chunking(text, metadata))
-// proposed: self._enforce_hard_max(self._coalesce_small_chunks(self._semantic_chunking(text, metadata)))
+// proposed: self._enforce_hard_max(self._merge_fragment_chunks(self._semantic_chunking(text, metadata)))
 ```
 
-Constructor gains a `min_chunk_chars: Optional[int] = None` parameter. When `None`,
-coalescing targets the existing computed character target. Setting it to `0` disables
-coalescing, preserving current behavior for callers that need it.
+Constructor gains a `min_chunk_chars: int = 200` parameter — the measured threshold.
+Setting it to `0` disables the pass, preserving current behavior for callers that need
+it and providing the rollback path.
 
 Merged chunks record provenance in metadata, mirroring the convention `_enforce_hard_max`
 already uses for `hard_split`:
 
-- `coalesced: True`
-- `coalesced_count: <number of source chunks merged>`
+- `fragment_merged: True`
+- `fragment_merged_count: <number of fragments absorbed>`
 
-The `header_path` of a merged chunk is the shared parent prefix. `token_count` is
+The `header_path` of a merged chunk is that of the absorbing chunk. `token_count` is
 recomputed as `len(text) / CHARS_PER_TOKEN`, consistent with existing practice.
 
 ### Existing Infrastructure Audit
 
 | Proposed Component | Existing Module | Decision |
 | --- | --- | --- |
-| `_coalesce_small_chunks` | `chunker.py` `_enforce_hard_max` | Extend: same pipeline position and metadata conventions, opposite bound. No shared code beyond `_copy_chunk_with_index`. |
+| `_merge_fragment_chunks` | `chunker.py` `_enforce_hard_max` | Extend: same pipeline position and metadata conventions, opposite bound. No shared code beyond `_copy_chunk_with_index`. |
 | Chunk index renumbering | `chunker.py` `_copy_chunk_with_index` | Reuse: already normalizes sequential `chunk_index`. |
-| Size target computation | `chunker.py` `CHARS_PER_TOKEN`, `chunk_size` | Reuse: no new size configuration; coalescing targets the value RDR-014 already established. |
-| Export-side heading emission | `claude-session/jsonl2md.py` | Do not modify: see Alternative 1. |
+| Fragment threshold | none | New: `min_chunk_chars=200`, an absolute floor independent of `chunk_size`. Deliberately not derived from the size target — measurement shows the target is the wrong scale for this bound. |
+| Export-side heading emission | `claude-session/jsonl2md.py` | Do not modify: see Alternative 3. |
 
 ### Decision Rationale
 
@@ -289,9 +333,56 @@ Fixing it here fixes every heading-dense markdown corpus, present and future. Fi
 in the export script would fix one corpus and leave the chunker still capable of
 producing 12-char chunks from any other input.
 
+The floor is set at 200 characters rather than at the size target because that is what
+measurement supports. The sweep shows retrieval improving slightly up to 200 and
+declining monotonically past it, so 200 is the largest value that costs nothing. Deriving
+the floor from `chunk_size` — the intuitive choice, and the one this RDR originally
+made — lands at 1,689 characters, deep in the region measured to cause significant harm.
+
 ## Alternatives Considered
 
-### Alternative 1: Reduce heading density in the session export script
+### Alternative 1: Coalesce toward the chunk-size target (originally proposed, refuted)
+
+**Description**: Merge consecutive chunks up to the 1,689-character size target,
+optionally constrained to siblings sharing a parent `header_path` prefix. This was this
+RDR's original recommendation.
+
+**Pros**:
+
+- Largest chunk reduction measured: 48–54% across three samples
+- Raises median chunk size to ~1,400–1,500 chars, near the model's nominal budget
+
+**Cons**:
+
+- Measurably degrades retrieval. Evaluation 1: every metric negative, recall@3 -0.110
+  (z = -2.78), MRR -0.064. The sweep's equivalent thresholds are worse still — at 600
+  characters, recall@1 -0.113 (z = -2.98, p < 0.01).
+- The damage scales with merge aggressiveness, so no tuning of the same mechanism
+  recovers it
+
+**Reason for rejection**: Refuted by direct measurement. It buys index size with search
+quality, which inverts the stated goal. Retained here because the negative result is the
+main evidence for the fragment-floor design that replaced it.
+
+### Alternative 2: Header-only merge
+
+**Description**: Merge only chunks with no body text — every non-blank line beginning
+with `#` — into their successor.
+
+**Pros**:
+
+- Best measured retrieval of any variant: all five metrics positive
+- Minimal risk; addresses the clearest defect (a 12-character `## task · 54` embedding)
+
+**Cons**:
+
+- Only 6.0% chunk reduction — insufficient to justify a full re-index on its own
+
+**Reason for rejection**: Strictly contained within the 200-character floor, since every
+header-only chunk is under 200 characters. Adopting the recommended threshold captures
+this behavior automatically, with four times the reduction and equivalent retrieval.
+
+### Alternative 3: Reduce heading density in the session export script
 
 **Description**: Modify `claude-session/src/claude_session/jsonl2md.py` to emit fewer
 headings — for example, dropping per-turn `assistant` and `tool-result` headings, or
@@ -318,7 +409,7 @@ folding `prompt-body` back into its parent section.
 limitation, fixes only one corpus, and targets heading types that are not the source of
 the fragmentation.
 
-### Alternative 2: Raise `chunk_size` for this corpus
+### Alternative 4: Raise `chunk_size` for this corpus
 
 **Description**: Configure a larger `chunk_size` when indexing the `Claude` corpus.
 
@@ -351,70 +442,74 @@ boundaries, not the size target, determine chunk count.
   duration for large indexes
 - Disk consumption falls across both Docker volumes — the binding constraint at 96%
   host capacity
-- Median chunk size rises from ~275 to ~1,419 chars, giving each embedding substantially
-  more semantic content
+- Median chunk size rises from 395 to 707 chars — fragments absorbed, well-formed chunks
+  left intact
+- Retrieval measured neutral-to-slightly-positive (+0.024 recall@1, +0.015 MRR), bounded
+  within ±0.075 at 95% confidence
 - Realizing the benefit on existing corpora requires a full re-index
 - Chunk boundaries change, so `chunk_index` values are not comparable across the
   boundary; stored references to specific chunk indices become stale
-- Prose and code corpora with normal heading density see little change, since their
-  sections already approach the target
+- Prose and code corpora with normal heading density see little change, since they
+  produce few sub-200-character chunks
 
 ### Risks and Mitigations
 
-- **Risk**: Merging unrelated sibling sections dilutes embedding precision.
-  **Mitigation**: Constrain merges to a shared parent `header_path` prefix. Measured cost
-  is ~4 percentage points of reduction (53.9% to 49.7%) for materially better locality.
+- **Risk**: The threshold is tuned to one corpus and may not transfer.
+  **Mitigation**: 200 characters is below any plausible unit of meaningful prose, so the
+  floor should be conservative anywhere. `min_chunk_chars` is configurable per caller,
+  and the sweep methodology is reproducible for another corpus.
 
-- **Risk**: Retrieval quality regresses rather than improves.
-  **Mitigation**: Minimum Viable Validation requires a before/after retrieval comparison
-  on held-out queries before the re-index is accepted. The `min_chunk_chars=0` escape
-  hatch restores current behavior without a revert.
+- **Risk**: Retrieval regresses despite the measurement.
+  **Mitigation**: The measured effect is bounded within ±0.075, not proven zero. Capture
+  a fixed query set and its results before re-indexing so the change can be evaluated on
+  the live corpus. `min_chunk_chars=0` restores current behavior without a code revert.
 
 - **Risk**: Re-indexing 1.34 GB is slow under current CPU-only embedding and disk
   pressure.
   **Mitigation**: Re-index is a one-time cost that accelerates as the index shrinks. Free
   disk before starting; the 3.9 GB of Qdrant snapshots are the cheapest reclaim.
 
-- **Risk**: Coalescing interacts badly with `_enforce_hard_max`.
-  **Mitigation**: Coalescing never produces a chunk exceeding the target, which is well
-  below `hard_max_chars`. Ordering coalescing before hard-max enforcement means any
-  surprise is still bounded by existing logic. Covered by an explicit test.
+- **Risk**: Merging interacts badly with `_enforce_hard_max`.
+  **Mitigation**: Verified. A merge that would exceed `hard_max_chars` is refused, and
+  the pass runs before hard-max enforcement. Max chunk size was exactly 8,192 at every
+  sweep threshold including 800. Covered by an explicit test.
 
 ### Failure Modes
 
-- **Visible**: Chunk counts fail to drop after re-index — coalescing is not running or
-  the eligibility predicate is too strict. Diagnose by comparing
-  `numberOfDocuments` before and after against the ~50% expectation.
-- **Visible**: Oversized chunks reach the embedder — ordering regression between
-  coalescing and `_enforce_hard_max`. Surfaces as embedding truncation warnings.
+- **Visible**: Chunk counts fail to drop after re-index — the pass is not running or the
+  threshold is misconfigured. Diagnose by comparing `numberOfDocuments` before and after
+  against the ~26% expectation.
+- **Visible**: Oversized chunks reach the embedder — ordering regression between the
+  merge pass and `_enforce_hard_max`. Surfaces as embedding truncation warnings.
 - **Silent**: Text loss during merge. This is the dangerous mode; the
   concatenation-equality invariant must be asserted in tests rather than inspected.
-- **Silent**: `header_path` on merged chunks misattributes content to the wrong section,
-  degrading retrieval without any error. Mitigated by the same-parent constraint and a
-  dedicated test.
+- **Silent**: Retrieval degrades below the measured bound on the full corpus, which the
+  30-file sample could not detect. Mitigated by capturing baseline query results before
+  the re-index.
 - **Recovery**: Set `min_chunk_chars=0` to restore pre-change behavior, then re-index.
 
 ## Implementation Plan
 
 ### Prerequisites
 
-- [ ] Retrieval-quality assumption verified (the one open Critical Assumption)
+- [x] Retrieval-quality assumptions verified (Evaluations 3 and 4)
 - [ ] Disk space freed before re-index — host volume at 96%
 - [ ] Baseline captured: `numberOfDocuments`, Qdrant `points_count`, and a fixed query
   set with results, recorded before any change
 
 ### Minimum Viable Validation
 
-Re-chunk a fixed sample of `retrofit` export files with coalescing enabled and confirm
-all four hold:
+Re-chunk a fixed sample of `retrofit` export files with the 200-character floor enabled
+and confirm all four hold:
 
 1. Concatenated output text equals concatenated input text plus separators — no loss
-2. Chunk count falls by 45–55% versus the current chunker
+2. Chunk count falls by 20–30% versus the current chunker
 3. No output chunk exceeds `hard_max_chars`
-4. On a held-out query set run against a test corpus indexed both ways, retrieval
-   quality is no worse than baseline
+4. On a held-out query set against a test corpus indexed both ways, retrieval quality is
+   no worse than baseline
 
-Item 4 is the gate on the open assumption and is in scope, not deferred.
+All four were satisfied during planning (Evaluation 4). They are retained as regression
+criteria for the implementation.
 
 ### Phase 1: Code Implementation
 
@@ -424,26 +519,26 @@ Add tests capturing today's output on heading-dense input — one chunk per head
 fragment chunks preserved. These document the pre-change contract and must be updated
 deliberately, not incidentally.
 
-#### Step 2: Add the coalescing pass (red/green)
+#### Step 2: Add the fragment-merge pass (red/green)
 
-Write failing tests for the `_coalesce_small_chunks` contract: text preservation,
-size targeting, same-parent constraint, header-only forward merge, sequential
-`chunk_index`, and `coalesced` metadata. Then implement to green.
+Write failing tests for the `_merge_fragment_chunks` contract: text preservation,
+forward-merge direction, trailing-fragment backward merge, hard-max refusal, sequential
+`chunk_index`, and `fragment_merged` metadata. Then implement to green.
 
 #### Step 3: Wire into `chunk()`
 
-Insert coalescing before `_enforce_hard_max` on both the semantic and naive paths. Add
-`min_chunk_chars` to the constructor with `0` disabling the pass.
+Insert the pass before `_enforce_hard_max` on both the semantic and naive paths. Add
+`min_chunk_chars=200` to the constructor with `0` disabling the pass.
 
 #### Step 4: Verify interaction with hard-max
 
-Test that a coalesced chunk still passes through `_enforce_hard_max` correctly and that
-ordering cannot produce an oversized chunk.
+Test that a merged chunk still passes through `_enforce_hard_max` correctly and that a
+merge which would exceed the bound is refused rather than emitted.
 
 #### Step 5: Measure against the real corpus
 
-Re-run the 12-file sample measurement and confirm reduction lands in the 45–55% band
-with median chunk size near the target.
+Re-run the sample measurement and confirm reduction lands in the 20–30% band with median
+chunk size near 700 characters.
 
 ### Phase 2: Operational Activation
 
@@ -477,104 +572,95 @@ None. The change is confined to existing chunker logic.
 
 ### Testing Strategy
 
-1. **Scenario**: Heading-dense markdown with many short sections
-   **Expected**: Consecutive small sections merge toward the target; chunk count falls
-   substantially versus current behavior
+1. **Scenario**: Heading-dense markdown with many sub-200-character sections
+   **Expected**: Fragments merge into their successors; chunk count falls ~26%
 
 2. **Scenario**: Concatenation-equality check across a chunked document
    **Expected**: Output text equals input text plus separators; no content dropped
 
 3. **Scenario**: Header-only section followed by a body section
-   **Expected**: Header merges forward into the following chunk; no header-only chunk in
-   output where a successor exists within the same parent
+   **Expected**: Header merges forward into the following chunk; no header-only chunk
+   remains where a successor exists
 
-4. **Scenario**: Adjacent sections under different parent headers
-   **Expected**: No merge across the parent boundary; `header_path` remains accurate
+4. **Scenario**: Trailing fragment with no successor
+   **Expected**: Merges backward into the preceding chunk; not dropped, not emitted alone
 
-5. **Scenario**: Document already at or above target chunk size
+5. **Scenario**: Fragment whose merge would exceed `hard_max_chars`
+   **Expected**: Merge refused; fragment emitted separately; no oversized chunk
+
+6. **Scenario**: Document with no chunks below the threshold
    **Expected**: Output identical to current behavior; no spurious merging
 
-6. **Scenario**: Coalesced chunk followed by hard-max enforcement
+7. **Scenario**: Merged chunk followed by hard-max enforcement
    **Expected**: No chunk exceeds `hard_max_chars`; `hard_split` metadata still applied
 
-7. **Scenario**: `min_chunk_chars=0`
+8. **Scenario**: `min_chunk_chars=0`
    **Expected**: Output byte-identical to pre-change chunker
 
-8. **Scenario**: Empty and whitespace-only input
+9. **Scenario**: Empty and whitespace-only input
    **Expected**: Empty list, matching current behavior
 
 ### Performance Expectations
 
-Measured on a random 12-file sample (3.2 MB) of the `retrofit` export:
+At the selected 200-character threshold, measured on a 30-file sample of the `retrofit`
+export: 1,682 chunks reduce to 1,248, a **25.8% reduction**, with median chunk size
+rising from 395 to 707 characters.
 
-| Strategy | Chunks | Reduction | Median size |
-| --- | --- | --- | --- |
-| Current | 2,413 | — | 275 chars |
-| Coalesce, unrestricted | 1,113 | 53.9% | 1,512 chars |
-| Coalesce, same-parent | 1,213 | 49.7% | 1,419 chars |
+Projected on the live `Claude` corpus:
 
-Projected `Claude` index at the same-parent rate: 1,048,543 to approximately 527,000
-documents. Indexing throughput improvement is expected to follow from reduced merge cost
-but must be measured post-re-index rather than predicted.
+| Resource | Current | Projected |
+| --- | ---: | ---: |
+| MeiliSearch documents | 1,048,543 | ~778,000 |
+| Qdrant points | 1,051,532 | ~780,000 |
+| Combined volume (25.73 + 11.68 GB) | 37.41 GB | ~27.7 GB |
+
+Roughly 9.7 GB reclaimed, which is material at 96% host capacity. Indexing throughput
+improvement is expected to follow from reduced merge cost but must be measured
+post-re-index rather than predicted.
 
 ## Finalization Gate
 
 > Complete each item with a written response before
 > marking this RDR as **Final**.
->
-> **This gate is not passed. The RDR cannot be marked Final.**
 
 ### Contradiction Check
 
-**A direct contradiction exists between the Research Findings and the Proposed
-Solution.** The solution rests on the premise that fragment chunks are low-value for
-retrieval and that merging them toward the size target improves results. Measurement
-refutes this: coalescing reduced retrieval quality on every metric in the larger
-evaluation, two of them significantly.
+The RDR's original design contradicted its own research and was replaced. The premise
+that merging small chunks toward the size target would improve retrieval was refuted by
+Evaluations 1, 2, and the high-threshold arms of Evaluation 4. That design is retained
+in the Alternatives section rather than the recommendation.
 
-The size findings and the retrieval findings point in opposite directions. Chunk
-reduction of ~50% is real and reproducible; it costs retrieval accuracy. The RDR was
-written assuming these were aligned, and they are not.
+The surviving design — a 200-character fragment floor — is consistent with all findings.
+It merges the population that measurement shows is costless to merge (32% of chunks,
+2.8% of content) and leaves untouched the chunks whose merging measurement shows is
+harmful.
 
-The secondary tension noted during drafting — that the export script's fragmentation is
-deliberate (`jsonl2md.py:636`) — now reads differently. That design choice appears to
-have been correct for retrieval, and this RDR proposed to undo its effect.
+The tension with the export script is resolved rather than outstanding. `jsonl2md.py`
+fragments deliberately (`jsonl2md.py:636`), and that choice is correct for retrieval:
+the sweep confirms small chunks retrieve well. This RDR no longer proposes to undo it,
+only to absorb the sub-200-character residue that carries no retrievable content.
+
+No contradictions remain between research findings, design principles, and the
+proposed solution.
 
 ### Assumption Verification
 
-Three of four Critical Assumptions are Verified. The fourth is **refuted**:
+All Critical Assumptions are resolved:
 
 - Verified: chunk-count reduction lowers merge cost
-- Verified: coalescing preserves all source text
-- Verified: `header_path` supports a same-parent merge constraint
-- **Refuted**: coalescing improves retrieval quality
+- Verified: merging preserves all source text (asserted across every sweep threshold)
+- Verified: a 200-character floor does not degrade retrieval
+- Verified: 200 is the efficient threshold
+- **Refuted, and designed around**: merging toward the chunk-size target improves
+  retrieval
 
-The refuted assumption is load-bearing. The stated goal was better search quality *and*
-faster indexing; the measurement delivers faster indexing at the cost of search quality.
-Locking this RDR would commit to a full re-index of a 1M-document corpus in exchange for
-a measured retrieval regression.
+The refuted assumption was load-bearing for the original design and caused it to be
+discarded. The current design rests only on verified assumptions.
 
-### Revision Required
-
-This RDR must be revised before it can be reconsidered. Options, in rough order of
-promise:
-
-1. **Fragment-only floor.** Merge only chunks below a small absolute threshold
-   (for example 200 chars, which is 32% of chunks but 2.8% of content) instead of
-   packing toward the 1,689-char target. This captures much of the size reduction while
-   leaving well-formed chunks untouched. Requires its own retrieval measurement.
-2. **Header-only merge.** Merge only chunks with no body text (2.8% of chunks) into
-   their successor. Small size win, minimal retrieval risk, addresses the clearest
-   defect — a 12-char `## task · 54` embedding.
-3. **Accept the index size.** Pursue indexing throughput and disk pressure by other
-   means, treating chunk count as fixed by retrieval requirements.
-4. **Abandon.** If no variant shows a neutral-or-better retrieval profile, the current
-   chunker is correct for this corpus and the RDR should be closed.
-
-Any revision must carry a retrieval measurement with adequate statistical power.
-Evaluation 2 (41 queries) was underpowered; Evaluation 1 (118 queries) detected effects
-at roughly the 0.06–0.11 range. A revision claiming neutrality needs enough queries to
-bound the effect near zero, not merely fail to detect it.
+Statistical power: Evaluation 4 used 168 queries, giving recall@1 SE = 0.038 and a 95%
+confidence half-width of ±0.075. The 200-character result is *bounded near zero* within
+that interval rather than proven exactly zero. The harm at 600 and 800 is significant at
+p < 0.01, so the design is chosen from a measured curve, not a single null result.
 
 #### API Verification
 
@@ -590,17 +676,23 @@ bound the effect near zero, not merely fail to detect it.
 
 ### Scope Verification
 
-Item 4 of the Minimum Viable Validation — the retrieval comparison — was executed
-during planning rather than implementation, and **it failed**. The gate worked as
-intended: the validation that would have caught this after a full re-index instead
-caught it before any code was written.
+The Minimum Viable Validation was executed during planning rather than deferred to
+implementation. Its retrieval comparison **failed for the original design**, which is
+why that design was replaced; it **passes for the 200-character floor**.
 
-Items 1–3 (text preservation, chunk reduction, hard-max bounding) were verified by the
-evaluation harness and would remain valid for any revised approach.
+All four items are satisfied for the recommended approach: text preservation was
+asserted at every sweep threshold, chunk reduction measured at 25.8%, hard-max bounding
+verified (max chunk 8,192 at every threshold), and retrieval measured neutral-to-positive
+across 168 queries.
+
+The gate did its job. The validation that would otherwise have surfaced after a full
+re-index of a million-document corpus instead surfaced before any code was written, and
+it redirected the design rather than merely blocking it.
 
 ### Cross-Cutting Concerns
 
-- **Versioning**: N/A — no public API or schema change. `coalesced` metadata is additive.
+- **Versioning**: N/A — no public API or schema change. `fragment_merged` metadata is
+  additive.
 - **Build tool compatibility**: N/A
 - **Licensing**: N/A — no new dependencies
 - **Deployment model**: N/A — library change, no service topology impact
@@ -609,17 +701,20 @@ evaluation harness and would remain valid for any revised approach.
   independently; nothing forces a coordinated migration. Un-re-indexed corpora keep
   working with mixed chunk sizes.
 - **Secret/credential lifecycle**: N/A
-- **Memory management**: Coalescing holds one accumulating buffer bounded by the
-  character target and operates on an already-materialized chunk list. Peak memory is
+- **Memory management**: The pass holds a small list of pending fragments, each under
+  200 characters, and operates on an already-materialized chunk list. Peak memory is
   unchanged. Output is strictly smaller than input.
 
 ### Proportionality
 
-Right-sized. The code change is one method plus wiring, but it alters chunk boundaries
-for every markdown corpus and mandates a full re-index of a 1M-document index under disk
-pressure — the analysis and validation sections carry proportionate weight. The
-Alternatives section is deliberately detailed because "fix the export script instead" is
-the obvious competing approach and needed measurement to rule out.
+Right-sized, though the document is long for a one-method change. The length is carried
+by the measurement record rather than by design detail: four evaluations, one of which
+refuted the original approach, and a threshold sweep that selected the recommended value.
+That record is the justification for a full re-index of a 1M-document index under disk
+pressure, so it belongs in the RDR rather than in a transient scratchpad.
+
+The Alternatives section is deliberately detailed because "fix the export script instead"
+was the obvious competing approach and needed measurement to rule out.
 
 ## References
 

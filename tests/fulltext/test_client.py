@@ -313,6 +313,72 @@ class TestDocumentWaitRetries:
 
         client.client.wait_for_task.assert_not_called()
 
+    def test_wait_keeps_polling_while_task_is_processing(self, no_retry_sleep):
+        """A task still `processing` is progress, not failure.
+
+        Regression: a 1M-document index took 352s for a single batch while the
+        client gave up after 3 x 120s. The wait must not abandon a task the
+        server is actively working on.
+        """
+        client = FullTextClient.__new__(FullTextClient)
+        client.client = Mock()
+        client.client.get_task.return_value = SimpleNamespace(status="processing")
+        client.client.wait_for_task.side_effect = [
+            meilisearch.errors.MeilisearchTimeoutError("timed out")
+        ] * 8 + [{"status": "succeeded"}]
+
+        result = client._wait_for_task_with_retries(42, timeout_ms=60000)
+
+        assert result == {"status": "succeeded"}
+        # Far more than the 3-attempt cap, because the task kept progressing.
+        assert client.client.wait_for_task.call_count == 9
+
+    def test_wait_gives_up_when_task_is_not_progressing(self, no_retry_sleep):
+        """A task that is not processing still honors the bounded retry cap."""
+        client = FullTextClient.__new__(FullTextClient)
+        client.client = Mock()
+        client.client.get_task.return_value = SimpleNamespace(status="enqueued")
+        client.client.wait_for_task.side_effect = meilisearch.errors.MeilisearchTimeoutError(
+            "timed out"
+        )
+
+        with pytest.raises(meilisearch.errors.MeilisearchTimeoutError):
+            client._wait_for_task_with_retries(42, timeout_ms=60000)
+
+        assert client.client.wait_for_task.call_count == 3
+
+    def test_wait_polls_the_same_task_without_reenqueueing(self, no_retry_sleep):
+        """Extended polling must never re-submit the work."""
+        client = FullTextClient.__new__(FullTextClient)
+        client.client = Mock()
+        client.client.get_task.return_value = SimpleNamespace(status="processing")
+        client.client.wait_for_task.side_effect = [
+            meilisearch.errors.MeilisearchTimeoutError("timed out"),
+            meilisearch.errors.MeilisearchTimeoutError("timed out"),
+            {"status": "succeeded"},
+        ]
+
+        client._wait_for_task_with_retries(99, timeout_ms=60000)
+
+        for call in client.client.wait_for_task.call_args_list:
+            assert call.args == (99,)
+
+    def test_wait_survives_status_probe_failure(self, no_retry_sleep):
+        """If the progress probe itself errors, fall back to bounded retries."""
+        client = FullTextClient.__new__(FullTextClient)
+        client.client = Mock()
+        client.client.get_task.side_effect = meilisearch.errors.MeilisearchCommunicationError(
+            "connection reset"
+        )
+        client.client.wait_for_task.side_effect = meilisearch.errors.MeilisearchTimeoutError(
+            "timed out"
+        )
+
+        with pytest.raises(meilisearch.errors.MeilisearchTimeoutError):
+            client._wait_for_task_with_retries(42, timeout_ms=60000)
+
+        assert client.client.wait_for_task.call_count == 3
+
     def test_delete_documents_by_file_paths_retries_task_wait(self, no_retry_sleep):
         client = FullTextClient.__new__(FullTextClient)
         client.client = Mock()

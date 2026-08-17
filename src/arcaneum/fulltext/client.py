@@ -11,6 +11,12 @@ logger = logging.getLogger(__name__)
 
 MEILI_TASK_WAIT_ATTEMPTS = 3
 MEILI_TASK_WAIT_RETRY_DELAY_SEC = 2
+# Task states that mean the server is still working. Merge cost scales with
+# total index size, not batch size, so a single batch against a large index can
+# far exceed any fixed client deadline (observed: 352s for 795 documents against
+# a 1M-document index). Polling past the attempt cap while the server reports
+# progress keeps us from abandoning work that is about to succeed.
+MEILI_TASK_IN_PROGRESS_STATUSES = frozenset({"processing"})
 # Matches the meilisearch client's default wait_for_task timeout; used for
 # fast index-management tasks (create/delete index, settings updates).
 MEILI_INDEX_TASK_TIMEOUT_MS = 5000
@@ -37,7 +43,12 @@ class FullTextClient:
         attempts: int = MEILI_TASK_WAIT_ATTEMPTS,
         retry_delay_sec: int = MEILI_TASK_WAIT_RETRY_DELAY_SEC,
     ) -> Any:
-        """Wait for a MeiliSearch task, retrying polling without re-enqueueing work."""
+        """Wait for a MeiliSearch task, retrying polling without re-enqueueing work.
+
+        The attempt cap bounds waiting on a *stalled* task. A task the server
+        reports as in-progress is not stalled, so polling continues past the cap
+        rather than discarding work that is still being indexed.
+        """
         if attempts < 1:
             raise ValueError("attempts must be at least 1")
 
@@ -48,19 +59,49 @@ class FullTextClient:
             ConnectionError,
         )
 
-        for attempt in range(1, attempts + 1):
+        attempt = 0
+        while True:
+            attempt += 1
             try:
                 return self.client.wait_for_task(task_uid, timeout_in_ms=timeout_ms)
             except retryable_errors:
-                if attempt >= attempts:
+                # Only the attempt cap can end this loop; a task that stops
+                # progressing stops resetting it, so this cannot spin forever.
+                if attempt >= attempts and not self._task_is_in_progress(task_uid):
                     raise
-                logger.warning(
-                    "Timed out waiting for MeiliSearch task %s; retrying wait (%s/%s)",
-                    task_uid,
-                    attempt + 1,
-                    attempts,
-                )
+                if attempt >= attempts:
+                    logger.info(
+                        "MeiliSearch task %s still processing after %s waits; continuing to poll",
+                        task_uid,
+                        attempt,
+                    )
+                    # Progress observed: restart the budget so the next stall
+                    # still gets a bounded number of attempts before failing.
+                    attempt = 0
+                else:
+                    logger.warning(
+                        "Timed out waiting for MeiliSearch task %s; retrying wait (%s/%s)",
+                        task_uid,
+                        attempt + 1,
+                        attempts,
+                    )
                 time.sleep(retry_delay_sec)
+
+    def _task_is_in_progress(self, task_uid: int) -> bool:
+        """Report whether the server still considers this task active.
+
+        A probe failure is treated as "not progressing" so that an unreachable
+        server falls back to the bounded retry path instead of polling forever.
+        """
+        try:
+            task = self.client.get_task(task_uid)
+        except Exception:
+            return False
+
+        status = getattr(task, "status", None) or (
+            task.get("status") if isinstance(task, dict) else None
+        )
+        return status in MEILI_TASK_IN_PROGRESS_STATUSES
 
     def create_index(
         self, name: str, primary_key: str = "id", settings: Optional[Dict[str, Any]] = None

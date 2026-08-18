@@ -556,6 +556,7 @@ backup:
             {"results": [{"uid": 42}]},
             {"results": []},
             {"result": {"collections": [{"name": "Docs"}]}},
+            {"result": []},
             {"result": {"name": "Docs-123.snapshot"}},
             {"status": "ok"},
             {"results": [{"uid": "DocsText", "primaryKey": "id"}]},
@@ -808,6 +809,7 @@ backup:
             {"results": []},
             {"results": []},
             {"result": {"collections": [{"name": "Docs"}]}},
+            {"result": []},
             {"result": {"name": "Docs-123.snapshot"}},
             {"status": "ok"},
             {"results": []},
@@ -836,6 +838,189 @@ backup:
                                 skip_meilisearch=False,
                                 output_json=False,
                             )
+
+    def test_backup_deletes_snapshot_when_copy_fails(self, temp_dir):
+        """A failed docker cp must still remove the snapshot from the container."""
+        from arcaneum.cli.docker import _backup_qdrant
+
+        requests_seen = []
+
+        def fake_request(method, url, **kwargs):
+            requests_seen.append((method, url))
+            response = MagicMock()
+            if url.endswith("/collections"):
+                response.json.return_value = {"result": {"collections": [{"name": "Docs"}]}}
+            elif method == "GET" and url.endswith("/snapshots"):
+                response.json.return_value = {"result": []}
+            elif method == "POST":
+                response.json.return_value = {"result": {"name": "Docs-123.snapshot"}}
+            else:
+                response.json.return_value = {"status": "ok"}
+            response.raise_for_status.return_value = None
+            return response
+
+        def failing_run(args, **kwargs):
+            if args[:2] == ["docker", "cp"]:
+                raise subprocess.CalledProcessError(1, args, stderr="no space left on device")
+            return MagicMock(returncode=0)
+
+        with patch("subprocess.run", side_effect=failing_run):
+            with patch("requests.request", side_effect=fake_request):
+                with pytest.raises(subprocess.CalledProcessError):
+                    _backup_qdrant(temp_dir / "backup", "http://qdrant", "qdrant", timeout=300)
+
+        assert (
+            "DELETE",
+            "http://qdrant/collections/Docs/snapshots/Docs-123.snapshot",
+        ) in requests_seen
+
+    def test_backup_warns_about_orphaned_snapshots(self, temp_dir, capsys):
+        """Snapshots left in the container by earlier failures are reported."""
+        from arcaneum.cli.docker import _backup_qdrant
+
+        def fake_request(method, url, **kwargs):
+            response = MagicMock()
+            if url.endswith("/collections"):
+                response.json.return_value = {"result": {"collections": [{"name": "Docs"}]}}
+            elif method == "GET" and url.endswith("/snapshots"):
+                response.json.return_value = {"result": [{"name": "Docs-old.snapshot"}]}
+            elif method == "POST":
+                response.json.return_value = {"result": {"name": "Docs-123.snapshot"}}
+            else:
+                response.json.return_value = {"status": "ok"}
+            response.raise_for_status.return_value = None
+            return response
+
+        def fake_run(args, **kwargs):
+            if args[:2] == ["docker", "cp"]:
+                Path(args[-1]).write_bytes(b"q" * 16)
+            return MagicMock(returncode=0)
+
+        with patch("subprocess.run", side_effect=fake_run):
+            with patch("requests.request", side_effect=fake_request):
+                _backup_qdrant(temp_dir / "backup", "http://qdrant", "qdrant", timeout=300)
+
+        errors = capsys.readouterr().err
+        assert "orphaned snapshot" in errors
+        assert "Docs" in errors
+
+    def test_restore_removes_copied_snapshot_from_container(self, temp_dir):
+        """Restore must not leave the snapshot it copied into the container."""
+        from arcaneum.cli.docker import _restore_qdrant
+
+        backup_path = temp_dir / "backup"
+        (backup_path / "qdrant").mkdir(parents=True)
+        (backup_path / "qdrant" / "Docs-123.snapshot").write_text("snapshot")
+
+        def fake_request(method, url, **kwargs):
+            response = MagicMock()
+            response.json.return_value = {"status": "ok"}
+            response.raise_for_status.return_value = None
+            return response
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            with patch("requests.request", side_effect=fake_request):
+                _restore_qdrant(
+                    backup_path,
+                    "http://qdrant",
+                    "qdrant",
+                    [
+                        {
+                            "collection": "Docs",
+                            "snapshot": "Docs-123.snapshot",
+                            "file": "qdrant/Docs-123.snapshot",
+                        }
+                    ],
+                    timeout=300,
+                )
+
+        docker_calls = [call.args[0] for call in mock_run.call_args_list]
+        assert [
+            "docker",
+            "exec",
+            "qdrant",
+            "rm",
+            "-f",
+            "/qdrant/snapshots/Docs/Docs-123.snapshot",
+        ] in docker_calls
+
+    def test_restore_removes_copied_snapshot_when_recover_fails(self, temp_dir):
+        """A failed recover must still clean up the copied-in snapshot."""
+        import requests
+
+        from arcaneum.cli.docker import _restore_qdrant
+
+        backup_path = temp_dir / "backup"
+        (backup_path / "qdrant").mkdir(parents=True)
+        (backup_path / "qdrant" / "Docs-123.snapshot").write_text("snapshot")
+
+        def fake_request(method, url, **kwargs):
+            if method == "PUT":
+                raise requests.HTTPError("recover failed")
+            response = MagicMock()
+            response.json.return_value = {"status": "ok"}
+            response.raise_for_status.return_value = None
+            return response
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            with patch("requests.request", side_effect=fake_request):
+                with pytest.raises(requests.HTTPError):
+                    _restore_qdrant(
+                        backup_path,
+                        "http://qdrant",
+                        "qdrant",
+                        [
+                            {
+                                "collection": "Docs",
+                                "snapshot": "Docs-123.snapshot",
+                                "file": "qdrant/Docs-123.snapshot",
+                            }
+                        ],
+                        timeout=300,
+                    )
+
+        docker_calls = [call.args[0] for call in mock_run.call_args_list]
+        assert [
+            "docker",
+            "exec",
+            "qdrant",
+            "rm",
+            "-f",
+            "/qdrant/snapshots/Docs/Docs-123.snapshot",
+        ] in docker_calls
+
+    def test_backup_copy_error_survives_failed_snapshot_delete(self, temp_dir, capsys):
+        """Cleanup failure must not mask the error that caused it."""
+        import requests
+
+        from arcaneum.cli.docker import _backup_qdrant
+
+        def fake_request(method, url, **kwargs):
+            if method == "DELETE":
+                raise requests.ConnectionError("qdrant went away")
+            response = MagicMock()
+            if url.endswith("/collections"):
+                response.json.return_value = {"result": {"collections": [{"name": "Docs"}]}}
+            elif method == "GET" and url.endswith("/snapshots"):
+                response.json.return_value = {"result": []}
+            else:
+                response.json.return_value = {"result": {"name": "Docs-123.snapshot"}}
+            response.raise_for_status.return_value = None
+            return response
+
+        def failing_run(args, **kwargs):
+            if args[:2] == ["docker", "cp"]:
+                raise subprocess.CalledProcessError(1, args, stderr="no space left on device")
+            return MagicMock(returncode=0)
+
+        with patch("subprocess.run", side_effect=failing_run):
+            with patch("requests.request", side_effect=fake_request):
+                with pytest.raises(subprocess.CalledProcessError):
+                    _backup_qdrant(temp_dir / "backup", "http://qdrant", "qdrant", timeout=300)
+
+        assert "Could not delete Qdrant snapshot Docs/Docs-123.snapshot" in capsys.readouterr().err
 
 
 class TestContainerReset:

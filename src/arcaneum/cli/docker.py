@@ -526,11 +526,49 @@ def _mkdir_in_container(container_name: str, path: str) -> None:
     )
 
 
+def _remove_from_container(container_name: str, path: str) -> None:
+    subprocess.run(
+        ["docker", "exec", container_name, "rm", "-f", path],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _warn_orphaned_qdrant_snapshots(
+    qdrant_url: str,
+    collection: str,
+    output_json: bool = False,
+) -> None:
+    """Report snapshots an earlier interrupted backup left inside the container.
+
+    Snapshots are full-size copies of the collection, so orphans quietly consume
+    the Qdrant volume until someone deletes them.
+    """
+    try:
+        response = _request_json("GET", f"{qdrant_url}/collections/{collection}/snapshots")
+    except requests.RequestException:
+        return
+
+    orphans = response.get("result", []) or []
+    if not orphans:
+        return
+
+    print_warning(
+        f"{collection}: {len(orphans)} orphaned snapshot"
+        f"{'s' if len(orphans) != 1 else ''} left in the container from an earlier "
+        f"backup; delete with: "
+        f"curl -X DELETE {qdrant_url}/collections/{collection}/snapshots/<name>",
+        output_json,
+    )
+
+
 def _backup_qdrant(
     backup_path: Path,
     qdrant_url: str,
     container_name: str,
     timeout: int,
+    output_json: bool = False,
 ) -> list[dict]:
     qdrant_dir = backup_path / "qdrant"
     qdrant_dir.mkdir(parents=True, exist_ok=True)
@@ -541,6 +579,7 @@ def _backup_qdrant(
 
     for collection in collections:
         name = collection["name"]
+        _warn_orphaned_qdrant_snapshots(qdrant_url, name, output_json)
         snapshot_response = _request_json(
             "POST",
             f"{qdrant_url}/collections/{name}/snapshots",
@@ -548,16 +587,27 @@ def _backup_qdrant(
         )
         snapshot_name = snapshot_response["result"]["name"]
         destination = qdrant_dir / snapshot_name
-        _copy_from_container(
-            container_name,
-            f"/qdrant/snapshots/{name}/{snapshot_name}",
-            destination,
-        )
-        _request_json(
-            "DELETE",
-            f"{qdrant_url}/collections/{name}/snapshots/{snapshot_name}",
-            timeout=timeout,
-        )
+        try:
+            _copy_from_container(
+                container_name,
+                f"/qdrant/snapshots/{name}/{snapshot_name}",
+                destination,
+            )
+        finally:
+            # Always reclaim the in-container snapshot, even when the copy
+            # failed or the process is interrupted mid-backup. A cleanup
+            # failure must not mask the error that caused it.
+            try:
+                _request_json(
+                    "DELETE",
+                    f"{qdrant_url}/collections/{name}/snapshots/{snapshot_name}",
+                    timeout=timeout,
+                )
+            except requests.RequestException as exc:
+                print_warning(
+                    f"Could not delete Qdrant snapshot {name}/{snapshot_name}: {exc}",
+                    output_json,
+                )
         snapshots.append(
             {
                 "collection": name,
@@ -779,6 +829,7 @@ def _restore_qdrant(
     container_name: str,
     snapshots: list[dict],
     timeout: int,
+    output_json: bool = False,
 ) -> None:
     for snapshot in snapshots:
         collection = snapshot["collection"]
@@ -790,13 +841,25 @@ def _restore_qdrant(
         container_path = f"/qdrant/snapshots/{collection}/{snapshot_name}"
         _mkdir_in_container(container_name, f"/qdrant/snapshots/{collection}")
         _copy_to_container(snapshot_file, container_name, container_path)
-        _request_json(
-            "PUT",
-            f"{qdrant_url}/collections/{collection}/snapshots/recover",
-            json={"location": f"file://{container_path}"},
-            params={"wait": "true"},
-            timeout=timeout,
-        )
+        try:
+            _request_json(
+                "PUT",
+                f"{qdrant_url}/collections/{collection}/snapshots/recover",
+                json={"location": f"file://{container_path}"},
+                params={"wait": "true"},
+                timeout=timeout,
+            )
+        finally:
+            # The copied-in snapshot is only needed for recovery; leaving it
+            # behind permanently doubles the collection's disk use. A cleanup
+            # failure must not mask the error that caused it.
+            try:
+                _remove_from_container(container_name, container_path)
+            except subprocess.CalledProcessError as exc:
+                print_warning(
+                    f"Could not remove restored snapshot {container_path}: {exc}",
+                    output_json,
+                )
 
 
 def _load_meilisearch_restore_specs(backup_path: Path, indexes: list[dict]) -> list[dict]:
@@ -948,6 +1011,7 @@ def backup_command(
         qdrant_url,
         qdrant_container,
         timeout=qdrant_timeout,
+        output_json=output_json,
     )
     if not skip_meilisearch:
         print_info("Exporting MeiliSearch indexes...", output_json)
@@ -1033,6 +1097,7 @@ def restore_command(
         qdrant_container,
         manifest.get("qdrant", []),
         timeout=qdrant_timeout,
+        output_json=output_json,
     )
     if not skip_meilisearch:
         _restore_meilisearch(

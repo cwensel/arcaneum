@@ -243,11 +243,19 @@ class SemanticMarkdownChunker:
         emitted: List[MarkdownChunk] = []
         parts: List[str] = []
         absorbed = 0
+        # Fragments removed as verbatim duplicates rather than joined; they are
+        # real absorptions that leave no trace in `parts`.
+        deduped = 0
 
         def flush(parts: List[str], absorbed: int) -> None:
             if not parts:
                 return
             text = self.MERGE_SEPARATOR.join(parts)
+            # `absorbed` counts fragments this chunk actually took in: those
+            # joined as parts, plus those dropped as verbatim duplicates of the
+            # anchor. A chunk emitted alone (a refused append, or a lone
+            # trailing fragment) took in nothing and must not claim a merge.
+            merged_count = absorbed if (len(parts) > 1 or deduped) else 0
             emitted.append(
                 MarkdownChunk(
                     text=text,
@@ -257,9 +265,9 @@ class SemanticMarkdownChunker:
                         {
                             **anchor.metadata,
                             "fragment_merged": True,
-                            "fragment_merged_count": absorbed,
+                            "fragment_merged_count": merged_count,
                         }
-                        if absorbed
+                        if merged_count
                         else dict(anchor.metadata)
                     ),
                     header_path=anchor.header_path,
@@ -270,8 +278,12 @@ class SemanticMarkdownChunker:
             # `_split_large_section` re-emits the section header at the head of
             # each sub-chunk, so a header-only fragment is frequently already
             # present verbatim in the anchor. Skip it rather than duplicate it.
-            if chunk is not anchor and anchor.text.startswith(chunk.text):
+            # Require the separator so the match is a whole leading part: a
+            # heading that merely string-prefixes the anchor ("## task · 5"
+            # against "## task · 54") is a different heading, not a duplicate.
+            if chunk is not anchor and anchor.text.startswith(chunk.text + self.MERGE_SEPARATOR):
                 absorbed += 1
+                deduped += 1
                 continue
 
             candidate = parts + [chunk.text]
@@ -281,6 +293,7 @@ class SemanticMarkdownChunker:
             if parts and self.hard_max_chars and length > self.hard_max_chars:
                 flush(parts, absorbed)
                 absorbed = 0
+                deduped = 0
                 candidate = [chunk.text]
 
             parts = candidate

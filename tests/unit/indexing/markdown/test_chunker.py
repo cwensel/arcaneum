@@ -14,6 +14,7 @@ import pytest
 
 from arcaneum.indexing.markdown.chunker import (
     MARKDOWN_IT_AVAILABLE,
+    MarkdownChunk,
     SemanticMarkdownChunker,
     chunk_markdown,
 )
@@ -475,6 +476,8 @@ Reply.
 Output.
 """
 
+    MERGE_JOIN = "\n"
+
     @staticmethod
     def _fragment_free(chunks, threshold):
         """Every chunk except a lone trailing one clears the threshold."""
@@ -650,6 +653,133 @@ Output.
         unfloored = SemanticMarkdownChunker(chunk_size=512, min_chunk_chars=0).chunk(text, {})
 
         assert len(floored) < len(unfloored) * 0.75
+
+    @staticmethod
+    def _chunk(text):
+        """A minimal chunk standing in for one the section pass emitted."""
+        return MarkdownChunk(
+            text=text,
+            chunk_index=0,
+            token_count=len(text) // 4,
+            metadata={"source": "test"},
+            header_path=[],
+        )
+
+    def test_prefix_colliding_heading_is_not_dropped(self):
+        """A heading that merely string-prefixes the anchor must survive.
+
+        The dedup branch exists for a header `_split_large_section` re-emitted
+        verbatim at the head of the anchor. A distinct heading whose text
+        happens to be a string prefix of the anchor ("## task · 5" against
+        "## task · 54") is not a duplicate, and dropping it violates the pass's
+        no-text-lost invariant.
+        """
+        chunker = SemanticMarkdownChunker(chunk_size=512, min_chunk_chars=200)
+        fragment = self._chunk("## task · 5")
+        anchor = self._chunk("## task · 54\n\n" + "Body sentence. " * 20)
+
+        emitted = chunker._combine_group([fragment, anchor])
+
+        combined = self.MERGE_JOIN.join(chunk.text for chunk in emitted)
+        assert "## task · 5" in combined, "the distinct heading was silently dropped"
+        assert combined.count("## task · 5") == 2, (
+            "expected both the fragment heading and the anchor's own heading"
+        )
+
+    def test_verbatim_duplicate_header_is_still_deduped(self):
+        """The intended dedup case must keep working after the boundary fix."""
+        chunker = SemanticMarkdownChunker(chunk_size=512, min_chunk_chars=200)
+        header = "## task · 54"
+        fragment = self._chunk(header)
+        anchor = self._chunk(header + "\n\n" + "Body sentence. " * 20)
+
+        emitted = chunker._combine_group([fragment, anchor])
+
+        combined = self.MERGE_JOIN.join(chunk.text for chunk in emitted)
+        assert combined.count(header) == 1, "the re-emitted header should be deduped"
+
+    def test_refused_merge_does_not_claim_a_merge(self):
+        """A fragment flushed alone because the anchor did not fit is not merged.
+
+        `hard_max_chars` is always set in production, so a refused append emits
+        the fragment standing alone; labelling it `fragment_merged` misreports
+        provenance and inflates the aggregate merge log.
+        """
+        chunker = SemanticMarkdownChunker(
+            chunk_size=512,
+            min_chunk_chars=200,
+            hard_max_chars=300,
+        )
+        fragment = self._chunk("## tiny heading")
+        anchor = self._chunk("Body sentence that is quite long. " * 12)
+
+        emitted = chunker._combine_group([fragment, anchor])
+
+        assert len(emitted) == 2, "the oversized merge should have been refused"
+        lone = emitted[0]
+        assert lone.text == "## tiny heading"
+        assert not lone.metadata.get("fragment_merged"), (
+            "a refused merge must not be reported as merged"
+        )
+        assert lone.metadata.get("fragment_merged_count", 0) == 0
+
+    def test_lone_trailing_fragment_does_not_claim_a_merge(self):
+        """A trailing fragment too large to fold backward also stands alone.
+
+        This reaches the final flush rather than the refused-append branch, so
+        it is a second route to the same wrong provenance.
+        """
+        chunker = SemanticMarkdownChunker(
+            chunk_size=512,
+            min_chunk_chars=200,
+            hard_max_chars=300,
+        )
+        anchor = self._chunk("Body sentence that is quite long. " * 12)
+        trailing = self._chunk("## trailing")
+
+        emitted = chunker._combine_group([anchor, trailing])
+
+        assert len(emitted) == 2
+        lone = emitted[-1]
+        assert lone.text == "## trailing"
+        assert not lone.metadata.get("fragment_merged"), (
+            "a fragment standing alone must not be reported as merged"
+        )
+        assert lone.metadata.get("fragment_merged_count", 0) == 0
+
+    def test_deduped_fragment_still_counts_as_absorbed(self):
+        """A fragment dropped as a verbatim duplicate was still absorbed.
+
+        It leaves no trace in the joined parts, so provenance cannot be derived
+        from those alone without under-counting the aggregate merge log.
+        """
+        chunker = SemanticMarkdownChunker(chunk_size=512, min_chunk_chars=200)
+        header = "## dup"
+        emitted = chunker._combine_group(
+            [self._chunk(header), self._chunk(header + "\n\n" + "Body. " * 40)]
+        )
+
+        assert len(emitted) == 1
+        assert emitted[0].metadata["fragment_merged"] is True
+        assert emitted[0].metadata["fragment_merged_count"] == 1
+
+    def test_genuine_merge_still_reports_its_count(self):
+        """The fix must not suppress provenance on real merges."""
+        chunker = SemanticMarkdownChunker(
+            chunk_size=512,
+            min_chunk_chars=200,
+            hard_max_chars=300,
+        )
+        emitted = chunker._combine_group(
+            [self._chunk("## a"), self._chunk("## b"), self._chunk("Body. " * 60)]
+        )
+
+        combined = emitted[0]
+        assert chunker.MERGE_SEPARATOR in combined.text
+        assert combined.metadata["fragment_merged"] is True
+        # Both fragments were joined into this chunk before the anchor was
+        # refused, so both count.
+        assert combined.metadata["fragment_merged_count"] == 2
 
 
 class TestChunkMarkdownFunction:

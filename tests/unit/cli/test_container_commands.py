@@ -1022,6 +1022,93 @@ backup:
 
         assert "Could not delete Qdrant snapshot Docs/Docs-123.snapshot" in capsys.readouterr().err
 
+    def test_restore_removes_snapshot_when_copy_into_container_fails(self, temp_dir):
+        """A failed docker cp can leave a partial file; clean it up too."""
+        from arcaneum.cli.docker import _restore_qdrant
+
+        backup_path = temp_dir / "backup"
+        (backup_path / "qdrant").mkdir(parents=True)
+        (backup_path / "qdrant" / "Docs-123.snapshot").write_text("snapshot")
+
+        def fake_request(method, url, **kwargs):
+            response = MagicMock()
+            response.json.return_value = {"status": "ok"}
+            response.raise_for_status.return_value = None
+            return response
+
+        def failing_cp(args, **kwargs):
+            if args[:2] == ["docker", "cp"]:
+                raise subprocess.CalledProcessError(1, args, stderr="no space left on device")
+            return MagicMock(returncode=0)
+
+        with patch("subprocess.run", side_effect=failing_cp) as mock_run:
+            with patch("requests.request", side_effect=fake_request):
+                with pytest.raises(subprocess.CalledProcessError):
+                    _restore_qdrant(
+                        backup_path,
+                        "http://qdrant",
+                        "qdrant",
+                        [
+                            {
+                                "collection": "Docs",
+                                "snapshot": "Docs-123.snapshot",
+                                "file": "qdrant/Docs-123.snapshot",
+                            }
+                        ],
+                        timeout=300,
+                    )
+
+        docker_calls = [call.args[0] for call in mock_run.call_args_list]
+        assert [
+            "docker",
+            "exec",
+            "qdrant",
+            "rm",
+            "-f",
+            "/qdrant/snapshots/Docs/Docs-123.snapshot",
+        ] in docker_calls, "a partial copy must still be reclaimed"
+
+    def test_backup_json_reports_orphaned_snapshots(self, temp_dir, capsys):
+        """JSON consumers must also learn that orphans are consuming disk."""
+        from arcaneum.cli.docker import backup_command
+
+        responses = [
+            {"result": {"collections": [{"name": "Docs"}]}},
+            {"result": [{"name": "Docs-old.snapshot"}]},
+            {"result": {"name": "Docs-123.snapshot"}},
+            {"status": "ok"},
+        ]
+
+        def fake_request(method, url, **kwargs):
+            response = MagicMock()
+            response.json.return_value = responses.pop(0)
+            response.raise_for_status.return_value = None
+            return response
+
+        def fake_run(args, **kwargs):
+            if args[:2] == ["docker", "cp"]:
+                Path(args[-1]).write_bytes(b"q" * 16)
+            return MagicMock(returncode=0)
+
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run", side_effect=fake_run):
+                with patch("requests.request", side_effect=fake_request):
+                    backup_command.callback(
+                        output=str(temp_dir / "backup"),
+                        qdrant_url="http://qdrant",
+                        meilisearch_url="http://meili",
+                        qdrant_container="qdrant",
+                        qdrant_timeout=300,
+                        skip_meilisearch=True,
+                        output_json=True,
+                    )
+
+        payload = json.loads(capsys.readouterr().out)
+        warnings = payload["data"]["warnings"]
+        assert any("orphaned snapshot" in w for w in warnings), (
+            f"orphan report missing from JSON output: {warnings}"
+        )
+
 
 class TestContainerReset:
     """Test 'arc container reset' command."""

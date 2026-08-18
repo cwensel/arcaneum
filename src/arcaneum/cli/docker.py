@@ -535,10 +535,23 @@ def _remove_from_container(container_name: str, path: str) -> None:
     )
 
 
+def _record_warning(message: str, output_json: bool, warnings: list | None = None) -> None:
+    """Surface a non-fatal warning in whichever mode the caller is running.
+
+    `print_warning` is text-only by design, so JSON callers would otherwise lose
+    disk-reclamation signals entirely. Collect them for the final payload
+    instead of printing mid-document, which would corrupt the JSON output.
+    """
+    if warnings is not None:
+        warnings.append(message)
+    print_warning(message, output_json)
+
+
 def _warn_orphaned_qdrant_snapshots(
     qdrant_url: str,
     collection: str,
     output_json: bool = False,
+    warnings: list | None = None,
 ) -> None:
     """Report snapshots an earlier interrupted backup left inside the container.
 
@@ -554,12 +567,13 @@ def _warn_orphaned_qdrant_snapshots(
     if not orphans:
         return
 
-    print_warning(
+    _record_warning(
         f"{collection}: {len(orphans)} orphaned snapshot"
         f"{'s' if len(orphans) != 1 else ''} left in the container from an earlier "
         f"backup; delete with: "
         f"curl -X DELETE {qdrant_url}/collections/{collection}/snapshots/<name>",
         output_json,
+        warnings,
     )
 
 
@@ -569,6 +583,7 @@ def _backup_qdrant(
     container_name: str,
     timeout: int,
     output_json: bool = False,
+    warnings: list | None = None,
 ) -> list[dict]:
     qdrant_dir = backup_path / "qdrant"
     qdrant_dir.mkdir(parents=True, exist_ok=True)
@@ -579,7 +594,7 @@ def _backup_qdrant(
 
     for collection in collections:
         name = collection["name"]
-        _warn_orphaned_qdrant_snapshots(qdrant_url, name, output_json)
+        _warn_orphaned_qdrant_snapshots(qdrant_url, name, output_json, warnings)
         snapshot_response = _request_json(
             "POST",
             f"{qdrant_url}/collections/{name}/snapshots",
@@ -604,9 +619,10 @@ def _backup_qdrant(
                     timeout=timeout,
                 )
             except requests.RequestException as exc:
-                print_warning(
+                _record_warning(
                     f"Could not delete Qdrant snapshot {name}/{snapshot_name}: {exc}",
                     output_json,
+                    warnings,
                 )
         snapshots.append(
             {
@@ -830,6 +846,7 @@ def _restore_qdrant(
     snapshots: list[dict],
     timeout: int,
     output_json: bool = False,
+    warnings: list | None = None,
 ) -> None:
     for snapshot in snapshots:
         collection = snapshot["collection"]
@@ -840,8 +857,10 @@ def _restore_qdrant(
 
         container_path = f"/qdrant/snapshots/{collection}/{snapshot_name}"
         _mkdir_in_container(container_name, f"/qdrant/snapshots/{collection}")
-        _copy_to_container(snapshot_file, container_name, container_path)
         try:
+            # The copy is inside the try: an interrupted `docker cp` can leave a
+            # partial file behind, which leaks exactly like a completed one.
+            _copy_to_container(snapshot_file, container_name, container_path)
             _request_json(
                 "PUT",
                 f"{qdrant_url}/collections/{collection}/snapshots/recover",
@@ -856,9 +875,10 @@ def _restore_qdrant(
             try:
                 _remove_from_container(container_name, container_path)
             except subprocess.CalledProcessError as exc:
-                print_warning(
+                _record_warning(
                     f"Could not remove restored snapshot {container_path}: {exc}",
                     output_json,
+                    warnings,
                 )
 
 
@@ -999,6 +1019,7 @@ def backup_command(
         "meilisearch": [],
     }
 
+    warnings: list[str] = []
     meili_starting_task_uid = None
     if not skip_meilisearch:
         meili_headers = _meilisearch_headers()
@@ -1012,6 +1033,7 @@ def backup_command(
         qdrant_container,
         timeout=qdrant_timeout,
         output_json=output_json,
+        warnings=warnings,
     )
     if not skip_meilisearch:
         print_info("Exporting MeiliSearch indexes...", output_json)
@@ -1030,6 +1052,7 @@ def backup_command(
         "qdrant_snapshots": len(manifest["qdrant"]),
         "meilisearch_indexes": len(manifest["meilisearch"]),
         "corpora": corpora,
+        "warnings": warnings,
     }
     qdrant_count = data["qdrant_snapshots"]
     meilisearch_count = data["meilisearch_indexes"]
@@ -1091,6 +1114,7 @@ def restore_command(
         raise SystemExit(1)
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    warnings: list[str] = []
     _restore_qdrant(
         backup_path,
         qdrant_url,
@@ -1098,6 +1122,7 @@ def restore_command(
         manifest.get("qdrant", []),
         timeout=qdrant_timeout,
         output_json=output_json,
+        warnings=warnings,
     )
     if not skip_meilisearch:
         _restore_meilisearch(
@@ -1111,6 +1136,7 @@ def restore_command(
         "path": str(backup_path),
         "qdrant_snapshots": len(manifest.get("qdrant", [])),
         "meilisearch_indexes": 0 if skip_meilisearch else len(manifest.get("meilisearch", [])),
+        "warnings": warnings,
     }
     print_success(f"Restore complete: {backup_path}", output_json, data=data)
 

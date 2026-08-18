@@ -17,10 +17,18 @@ new on the next run.
 
 import pytest
 
-from arcaneum.indexing.common.batched_flush import (
-    FlushBuffer,
-    adaptive_threshold,
+pytestmark = pytest.mark.rdr_spec
+
+# The module under specification does not exist until RDR-024 Step 2 lands.
+# Skip at collection rather than raising ModuleNotFoundError, so an explicit
+# `-m rdr_spec` run reports "not yet implemented" instead of a collection error.
+batched_flush = pytest.importorskip(
+    "arcaneum.indexing.common.batched_flush",
+    reason="RDR-024 not yet implemented",
 )
+
+FlushBuffer = batched_flush.FlushBuffer
+adaptive_threshold = batched_flush.adaptive_threshold
 
 
 class _Recorder:

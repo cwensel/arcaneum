@@ -154,8 +154,13 @@ markers = [
     "gpu_smoke: Opt-in accelerator smoke tests for CUDA/MPS embedding paths",
     "accelerator: Opt-in hardware-specific accelerator benchmarks",
     "slow: Tests taking >5 seconds",
+    "rdr_spec: Executable RDR specifications; red until their RDR is implemented",
 ]
-addopts = "-v --tb=short"
+# `rdr_spec` tests are the red half of a red/green cycle: they pin an RDR's
+# invariants before the implementation exists and are expected to fail (often
+# at import). Deselected by default so they do not break collection; run them
+# with `-m rdr_spec` to check an RDR's status.
+addopts = "-v --tb=short -m 'not rdr_spec'"
 
 [tool.coverage.run]
 source = ["src/arcaneum"]

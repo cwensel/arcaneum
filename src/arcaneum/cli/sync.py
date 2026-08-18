@@ -37,6 +37,7 @@ import hashlib
 import sys
 from concurrent.futures import as_completed
 from datetime import datetime, timezone
+from enum import Enum
 from math import ceil
 from multiprocessing import cpu_count
 from pathlib import Path
@@ -1130,6 +1131,136 @@ def order_files(files: List[Path], order: str = "path") -> List[Path]:
     # Sort on path first so the stable mtime sort leaves ties in path order.
     by_path = sorted(files)
     return sorted(by_path, key=mtime_key, reverse=(order == "newest"))
+
+
+class PendingPhase(str, Enum):
+    """Why a file is still pending when a ``--order newest`` sync resumes."""
+
+    #: Written after the newest file the last run indexed — it appeared while
+    #: that run was working, or in the time since it stopped.
+    ARRIVED = "arrived"
+    #: Inside the mtime range the last run already covered, but never indexed:
+    #: written mid-run, or skipped when the run died partway through.
+    COVERED = "covered"
+    #: Below everything the last run reached — the true backlog.
+    BACKLOG = "backlog"
+
+
+class PendingSegment:
+    """One contiguous run of pending files sharing a :class:`PendingPhase`."""
+
+    __slots__ = ("files", "phase", "weight")
+
+    def __init__(self, files: List[Path], phase: PendingPhase, weight: int):
+        self.files = files
+        self.phase = phase
+        self.weight = weight
+
+    def __repr__(self) -> str:
+        return f"<PendingSegment {self.phase.value} files={len(self.files)} weight={self.weight}>"
+
+
+def segment_pending_by_phase(
+    pending: List[Path], already_indexed: List[Path]
+) -> List[PendingSegment]:
+    """Group pending files by why they are still pending.
+
+    The already-indexed mtimes span a range: the oldest and newest files the
+    previous run touched.  That range is the useful reference, not any single
+    cutoff.  A pending file above it arrived after the run's newest file; one
+    below it was never reached; one inside it was written or skipped while the
+    run was in flight.
+
+    Classifying against the range — rather than counting every indexed mtime as
+    a stopping point — is what keeps the display honest on a corpus that is
+    being appended to while it syncs.  Such a corpus leaves a heavily
+    non-contiguous indexed set, which per-boundary gap counting shatters into
+    dozens of meaningless segments.
+
+    Segmentation classifies only.  It never reorders ``pending``, and a file
+    that cannot be stat'd stays with the segment in progress rather than
+    aborting the sync.
+
+    Args:
+        pending: Files this sync will index, in index order (not mutated)
+        already_indexed: Files change detection resolved as already indexed
+
+    Returns:
+        Segments covering ``pending`` in order; empty when ``pending`` is empty
+    """
+    if not pending:
+        return []
+
+    def mtime_or_none(path: Path) -> Optional[float]:
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return None
+
+    indexed_mtimes = [m for m in (mtime_or_none(p) for p in already_indexed) if m is not None]
+    newest_indexed = max(indexed_mtimes) if indexed_mtimes else None
+    oldest_indexed = min(indexed_mtimes) if indexed_mtimes else None
+
+    def classify(mtime: float) -> PendingPhase:
+        if newest_indexed is None:
+            # Nothing indexed: there is no prior run to have missed anything.
+            return PendingPhase.ARRIVED
+        if mtime > newest_indexed:
+            return PendingPhase.ARRIVED
+        if mtime >= oldest_indexed:
+            return PendingPhase.COVERED
+        return PendingPhase.BACKLOG
+
+    segments: List[PendingSegment] = []
+    current: List[Path] = []
+    current_weight = 0
+    current_phase: Optional[PendingPhase] = None
+
+    for path in pending:
+        mtime = mtime_or_none(path)
+        # A file with no mtime carries no phase information; keep it with the
+        # run in progress instead of guessing where it belongs.
+        if mtime is not None:
+            phase = classify(mtime)
+            if current_phase is None:
+                current_phase = phase
+            elif phase is not current_phase:
+                segments.append(PendingSegment(current, current_phase, current_weight))
+                current, current_weight = [], 0
+                current_phase = phase
+
+        current.append(path)
+        current_weight += _file_progress_weight(path)
+
+    if current:
+        segments.append(
+            PendingSegment(current, current_phase or PendingPhase.ARRIVED, current_weight)
+        )
+    return segments
+
+
+#: Display wording per phase — states the reason a file is pending, not its age.
+_PHASE_WORDING = {
+    PendingPhase.ARRIVED: "New since last sync",
+    PendingPhase.COVERED: "Missed by last sync",
+    PendingPhase.BACKLOG: "Older backlog",
+}
+
+
+def phase_label(segment: PendingSegment) -> str:
+    """Render a segment as a standalone phase label with its file count."""
+    count = len(segment.files)
+    noun = "file" if count == 1 else "files"
+    return f"{_PHASE_WORDING[segment.phase]} ({count} {noun})"
+
+
+def phase_progress_label(segment: PendingSegment, done: int) -> str:
+    """Render the in-flight phase label, showing position within the phase.
+
+    ``done`` is how many of the segment's files have been started, 1-based, so
+    the reader can see the phase drain toward completion.
+    """
+    return f"{_PHASE_WORDING[segment.phase]} {done}/{len(segment.files)}"
 
 
 def discover_files(
@@ -2320,6 +2451,10 @@ def sync_directory_command(
         # Apply change detection (skip already indexed files) unless --force
         already_indexed_count = 0
         already_indexed_bytes = 0
+        # Files change detection resolved as already indexed. The mtime range
+        # they span is what segment_pending_by_phase classifies against to name
+        # the phase currently in progress.
+        already_indexed_files: List[Path] = []
         total_corpus_files = len(files)  # Default: all discovered files
         total_corpus_bytes = sum(_file_progress_weight(path) for path in files)
         meili_backfill_paths = []  # Files in Qdrant but missing from MeiliSearch
@@ -2520,6 +2655,7 @@ def sync_directory_command(
                 if str(f.absolute()) in new_file_paths or str(f.absolute()) in modified_file_set
             ]
 
+            already_indexed_files = truly_unchanged
             already_indexed_count = len(truly_unchanged)
             already_indexed_bytes = sum(_file_progress_weight(path) for path in truly_unchanged)
 
@@ -2609,6 +2745,29 @@ def sync_directory_command(
                     print_info(f"Processing {len(files_to_process)} new/modified files")
 
             files = files_to_process
+
+        # Segment the pending list into the phases a resumed sync works through.
+        # Only --order newest guarantees the mtime-descending sequence that makes
+        # phase boundaries meaningful; any other order interleaves ages by design.
+        pending_segments: List[PendingSegment] = []
+        if order == "newest" and files:
+            pending_segments = segment_pending_by_phase(files, already_indexed_files)
+            if not output_json and len(pending_segments) > 1:
+                # Lead with what a resumed sync is usually asked: is the new
+                # content in yet? Then how much was missed, then the backlog.
+                totals: Dict[PendingPhase, int] = {}
+                for segment in pending_segments:
+                    totals[segment.phase] = totals.get(segment.phase, 0) + len(segment.files)
+                parts = [
+                    f"{totals[phase]} {_PHASE_WORDING[phase].lower()}"
+                    for phase in (
+                        PendingPhase.ARRIVED,
+                        PendingPhase.COVERED,
+                        PendingPhase.BACKLOG,
+                    )
+                    if phase in totals
+                ]
+                print_info(f"  ↳ {'; '.join(parts)}")
 
         # If no new files but there are files to backfill, continue
         # Also continue if renames or stale cleanup happened (to show summary)
@@ -2896,9 +3055,40 @@ def sync_directory_command(
                     # Track repair results for quality comparison reporting
                     repair_results = []  # (filename, old_score, new_score, action)
 
-                    for file_path in files:
+                    # Phase tracking: which run of the pending list we are in.
+                    # Keyed by position, since identical names can repeat
+                    # across directories but a position never does.
+                    segment_starts = {}
+                    if len(pending_segments) > 1:
+                        position = 0
+                        for segment in pending_segments:
+                            segment_starts[position] = segment
+                            position += len(segment.files)
+                    active_segment: Optional[PendingSegment] = None
+                    phase_done = 0
+
+                    for file_index, file_path in enumerate(files):
+                        entering = segment_starts.get(file_index)
+                        if entering is not None:
+                            if not output_json and active_segment is not None:
+                                # Announce the crossing above the bar so the
+                                # completed phase stays visible in scrollback.
+                                progress.console.print(
+                                    f"[cyan]→ finished {phase_label(active_segment)}; "
+                                    f"now {phase_label(entering)}[/cyan]"
+                                )
+                            active_segment = entering
+                            phase_done = 0
+
                         file_progress_weight = _file_progress_weight(file_path)
-                        progress.update(task, description=f"Processing {file_path.name}...")
+                        if active_segment is not None:
+                            # Position within the phase, so "are the new files
+                            # done?" is answerable at a glance.
+                            phase_done += 1
+                            prefix = f"{phase_progress_label(active_segment, phase_done)} · "
+                        else:
+                            prefix = ""
+                        progress.update(task, description=f"{prefix}Processing {file_path.name}...")
                         _set_phase(f"file:{file_path.name}")
 
                         try:

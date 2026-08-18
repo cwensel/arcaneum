@@ -2397,7 +2397,9 @@ def sync_directory_command(
                 corpus_type,
                 skip_dir_prefixes=skip_dir_prefixes,
                 skip_git_roots=skip_git_roots,
-                order=order,
+                # Discovery order is discarded by the global re-order below, so
+                # sorting by mtime here would stat every file for nothing.
+                order="path",
             )
             files.extend(dir_files)
             discovered_git_roots.extend(dir_roots)
@@ -2408,10 +2410,10 @@ def sync_directory_command(
                 continue
             files.append(single_file)
 
-        # Re-order across the combined set: per-directory ordering above only
-        # sorts within each directory, so multiple paths (and explicitly listed
-        # single files) would otherwise stay grouped by source rather than
-        # interleaved into one global order.
+        # Order the combined set once, here. Per-directory discovery cannot
+        # produce this: multiple paths (and explicitly listed single files)
+        # would otherwise stay grouped by source rather than interleaved into
+        # one global order.
         files = order_files(files, order)
 
         if not files:

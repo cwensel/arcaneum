@@ -109,3 +109,59 @@ class TestDiscoverFilesOrdering:
         by_newest, _ = discover_files(dated_tree, None, "markdown", order="newest")
 
         assert set(by_path) == set(by_newest)
+
+
+class TestOrderingIsComputedOnce:
+    """The global re-order is authoritative, so per-directory sorting is waste.
+
+    `sync_directory_command` re-orders the combined file set after discovery,
+    which discards whatever order each `discover_files` call produced. Sorting
+    by mtime inside discovery therefore buys nothing and costs a full `stat`
+    pass per file.
+    """
+
+    def test_discovery_ordering_is_redundant_when_caller_reorders(self, tmp_path: Path):
+        """Discovery's own order does not survive the caller's global re-order.
+
+        This is why `sync_directory_command` asks discovery for `path` order:
+        whatever discovery sorts is overwritten, so paying for a mtime `stat`
+        pass there buys nothing.
+        """
+        for name, mtime in [("a.md", 3_000), ("b.md", 1_000), ("c.md", 2_000)]:
+            _touch(tmp_path / name, mtime)
+
+        from_path, _ = discover_files(tmp_path, None, "markdown", order="path")
+        from_newest, _ = discover_files(tmp_path, None, "markdown", order="newest")
+
+        assert [f.name for f in from_path] != [f.name for f in from_newest]
+        # After the global re-order both inputs collapse to the same sequence,
+        # so the discovery-time sort was wasted work.
+        assert order_files(from_path, "newest") == order_files(from_newest, "newest")
+        assert order_files(from_path, "oldest") == order_files(from_newest, "oldest")
+
+    def test_global_reorder_interleaves_separate_directories(self, tmp_path: Path):
+        """Files from distinct path arguments interleave by mtime, not by source.
+
+        This is the ordering call `sync_directory_command` applies to the
+        combined set; per-directory discovery cannot produce it.
+        """
+        left = tmp_path / "left"
+        right = tmp_path / "right"
+        _touch(left / "l_old.md", 1_000)
+        _touch(left / "l_new.md", 4_000)
+        _touch(right / "r_mid.md", 2_000)
+        _touch(right / "r_newest.md", 8_000)
+
+        combined = []
+        for directory in (left, right):
+            files, _ = discover_files(directory, None, "markdown", order="path")
+            combined.extend(files)
+
+        ordered = order_files(combined, "newest")
+
+        assert [f.name for f in ordered] == [
+            "r_newest.md",
+            "l_new.md",
+            "r_mid.md",
+            "l_old.md",
+        ]

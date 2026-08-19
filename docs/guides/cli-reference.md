@@ -60,11 +60,48 @@ arc search semantic <query> --corpus <n1> --corpus <n2>     # Multi-corpus searc
 arc search text <query> --corpus <name>                     # Full-text search (MeiliSearch)
 ```
 
+**IMPORTANT:** The subcommand (`semantic` or `text`) must come *before* the query.
+
+**Options common to `semantic` and `text`:**
+
+- `--corpus`: Corpus to search. Repeat the flag to search multiple corpora.
+- `--filter`: Metadata filter (`key=value` or JSON)
+- `--limit`: Number of results to return
+- `--offset`: Number of results to skip (for pagination)
+- `--verbose`, `-v`: Verbose output
+- `--json`: Output JSON format
+
+**`arc search semantic` only:**
+
+- `--vector-name`: Vector name to use (auto-detected if not specified). Needed
+  only for multi-vector collections where the default cannot be inferred.
+- `--score-threshold`: Minimum similarity score; results below it are dropped.
+  Useful to cut weak matches when a query has few good hits.
+- `--collection`: *(Deprecated)* Collection to search — use `--corpus`.
+
+**`arc search text` only:**
+
+- `--index`: *(Deprecated)* MeiliSearch index to search — use `--corpus`.
+
+```bash
+# Drop weak matches and pin an explicit vector
+arc search semantic "query" --corpus MyCorpus --score-threshold 0.5
+arc search semantic "query" --corpus MyCorpus --vector-name dense
+```
+
 ### Log Commands
 
 ```bash
 arc log tail               # Tail the current interaction log
 arc log tail --lines 50    # Print recent log lines, then follow new entries
+```
+
+### Diagnostics, Models & Store
+
+```bash
+arc doctor                                 # Verify setup and prerequisites
+arc models list                            # List available embedding models
+arc store <file> --collection <name>       # Store agent content for long-term memory
 ```
 
 ### Collection Management (Qdrant Only)
@@ -122,6 +159,7 @@ A "corpus" is a paired Qdrant collection and MeiliSearch index with the same nam
 ```bash
 arc corpus create <name> --type <type> --models <model>  # Create both
 arc corpus update <name> --description <text>            # Update metadata
+arc corpus update <name> --clear-description             # Remove the corpus description
 arc corpus delete <name>                                 # Delete both
 arc corpus sync <name> <path> [<path>...]                # Index to both (multiple paths supported)
 arc corpus repair <name>                                 # Re-index incomplete/garbled files
@@ -175,6 +213,9 @@ arc corpus sync MyCorpus /path/to/repo --git-version       # Keep multiple versi
 - `--from-file`: Read paths from a file (one per line), or `-` for stdin
 - `--max-embedding-batch`: Cap embedding batch size (use 8-16 for OOM recovery)
 - `--text-workers`: Parallel workers for code AST chunking (default: auto)
+- `--order`: Order files are indexed in: `path` (default, alphabetical), `newest`
+  (most recently modified first), or `oldest`. Affects processing order only, not
+  what gets indexed or how results rank.
 - `--skip-dir-prefix`: Skip directories starting with PREFIX (default: `_`, repeatable)
 - `--no-skip-dir-prefix`: Disable all directory prefix skipping
 - `--timeout`: Qdrant timeout in seconds (default: 120, increase for very large files)
@@ -299,7 +340,11 @@ arc corpus parity MyCorpus --json
 **Options:**
 
 - `--dry-run`: Show what would be backfilled without making changes
-- `--verify`: Verify chunk counts match between systems (detects partial uploads)
+- `--verify`: Compare per-file chunk counts between systems (detects partial
+  uploads). Without it, only file *paths* are compared, so a file present in
+  both systems with differing chunk counts is not noticed. This counts real
+  Qdrant points rather than reading each file manifest's cached `chunk_count`,
+  so it is slower on large corpora but is not fooled by a stale manifest.
 - `--repair-metadata`: Repair git metadata in MeiliSearch (code corpora only):
   - Backfills missing `git_project_identifier` from Qdrant
   - Computes and repairs `git_version_identifier` for version-aware search
@@ -1055,6 +1100,27 @@ Additional options for `arc index` commands:
 - `--force`: Force reindex all files (skip incremental sync)
 - `--offline`: Use cached models only (no network calls)
 - `--streaming`: Stream embeddings to Qdrant immediately (lower memory usage)
+- `--prune`: Delete indexed entries whose source file no longer exists on disk
+- `--chunk-size N`: Target chunk size in tokens (`arc index code` default: 400)
+- `--chunk-overlap N`: Overlap between chunks in tokens (`arc index code` default: 20)
+
+**Processing Order & Priority:**
+
+- `--randomize`: Randomize file processing order (`arc index markdown`, `arc index pdf`).
+  Useful when running several indexers in parallel so they don't contend on the
+  same files.
+- `--not-nice`: Disable process priority reduction for worker processes. Workers
+  run at reduced priority by default so indexing stays in the background; pass
+  this to let them compete at normal priority.
+
+**Type-Specific Options:**
+
+- `--preserve-images`: Extract images for future multimodal search
+  (`arc index pdf` only; slower processing)
+- `--profile`: Show pipeline performance profiling — stage breakdown and
+  throughput (`arc index code` only)
+- `--no-git`: Disable git-aware mode and use simple file-based indexing
+  (`arc index text code` only)
 
 **Performance Tuning:**
 
@@ -1488,6 +1554,36 @@ arc container restore ./arcaneum-backup
 arc container reset --confirm
 ```
 
+**Backup & Restore Options:**
+
+Both `arc container backup` and `arc container restore` accept:
+
+- `--qdrant-url`: Qdrant URL
+- `--meilisearch-url`: MeiliSearch URL
+- `--qdrant-container`: Qdrant container name
+- `--qdrant-timeout`: Qdrant operation timeout in seconds
+- `--skip-meilisearch`: Operate on Qdrant snapshots only, leaving MeiliSearch
+  untouched. Use when only the vector data matters, or when MeiliSearch is
+  unavailable and would otherwise abort the run.
+- `--json`: Output JSON format
+
+`arc container backup` additionally accepts:
+
+- `--output`, `-o`: Backup directory to create (overrides configured `backup.path`)
+
+`arc container restore` additionally accepts:
+
+- `--meilisearch-timeout`: MeiliSearch task timeout in seconds. Raise this when
+  restoring large indexes whose import tasks exceed the default.
+
+```bash
+# Back up only Qdrant, against a non-default endpoint
+arc container backup -o ./qdrant-only --skip-meilisearch --qdrant-url http://localhost:6333
+
+# Restore a large backup, allowing more time for MeiliSearch tasks
+arc container restore ./arcaneum-backup --meilisearch-timeout 600
+```
+
 **Data Location:**
 
 - Qdrant and MeiliSearch use Docker named volumes for persistence
@@ -1552,6 +1648,70 @@ arc config clear-cache --confirm
 - Shared across all arc commands
 - ~1-2GB per model
 
+## Diagnostics & Models
+
+### Doctor
+
+Verify that Arcaneum's prerequisites and services are set up correctly. Run this
+first when something is not working.
+
+```bash
+arc doctor                # Check setup and prerequisites
+arc doctor --verbose      # Show detailed diagnostic information
+arc doctor --json         # Machine-readable output
+```
+
+**Options:**
+
+- `--verbose`, `-v`: Show detailed diagnostic information
+- `--json`: Output JSON format
+
+### Models
+
+List the embedding models available for `--models` / `--model` flags.
+
+```bash
+arc models list           # List available models
+arc models list --json    # Machine-readable output
+```
+
+**Options:**
+
+- `--json`: Output JSON format
+
+See [Model Selection](#model-selection) for guidance on which model to use.
+
+## Store
+
+Store agent-generated content for long-term memory. Takes a single file and
+indexes it into a Qdrant collection.
+
+For indexing existing markdown directories, use `arc index markdown` instead.
+
+```bash
+arc store notes.md --collection AgentMemory
+arc store notes.md --collection AgentMemory --title "Design notes" --tags "design,api"
+```
+
+**Options:**
+
+- `--collection`: Target collection name (**required**)
+- `--model`: Embedding model (default: `arctic-m` for documents)
+- `--title`: Document title
+- `--category`: Document category
+- `--tags`: Comma-separated tags
+- `--metadata`: Additional metadata as JSON
+- `--chunk-size`: Target chunk size in tokens
+- `--chunk-overlap`: Overlap between chunks in tokens
+- `--verbose`, `-v`: Verbose output
+- `--json`: Output JSON format
+
+```bash
+# Attach structured metadata for later filtering
+arc store summary.md --collection AgentMemory \
+  --category research --metadata '{"source": "session-42"}'
+```
+
 ## Troubleshooting
 
 ### Command Not Found
@@ -1574,6 +1734,36 @@ arc container status
 # Start if needed
 arc container start
 ```
+
+### Corpus Stuck in `chunk_mismatch`
+
+`arc corpus list` shows `chunk_mismatch` when a corpus has a different number of
+chunks in Qdrant than in MeiliSearch. Normally `arc corpus parity <name> --verify`
+resolves it.
+
+If the mismatch survives repeated parity runs, inspect the per-file detail:
+
+```bash
+arc corpus parity MyCorpus --verify --dry-run --verbose
+```
+
+Read the reported ratios:
+
+- **Off by a small amount** — a partial or interrupted upload. `arc corpus parity
+  MyCorpus --verify` repairs it by re-copying those files from Qdrant.
+- **An exact multiple** (MeiliSearch is 2x or 4x Qdrant) — the file's chunks are
+  duplicated *inside Qdrant itself*, usually from being indexed twice before
+  chunk IDs became deterministic. Parity cannot fix this: it only reconciles the
+  two systems, and here it is faithfully copying duplicated source data. Re-index
+  the affected files with `--force`, which deletes existing chunks first:
+
+  ```bash
+  arc corpus sync MyCorpus /path/to/that/file.pdf --force
+  ```
+
+Note that `arc corpus list` compares *totals*, so a corpus can read `synced`
+while individual files still disagree in offsetting directions. Trust
+`--verify` over the summary status.
 
 ### Permission Denied
 

@@ -60,7 +60,12 @@ services:
       # bound by these two values. Keep MEILI_MAX_INDEXING_MEMORY well under the
       # container limit below: it budgets the indexer only, and the process also
       # needs headroom for search and LMDB page cache.
-      - MEILI_MAX_INDEXING_MEMORY=${MEILI_MAX_INDEXING_MEMORY:-8GiB}
+      #
+      # The page cache matters more than this budget. LMDB memory-maps the
+      # index, so merges are fast only while the working set stays cached in
+      # the Docker VM. Size the VM above the index's on-disk size (see
+      # docs/guides/meilisearch-tuning.md) rather than raising this value.
+      - MEILI_MAX_INDEXING_MEMORY=${MEILI_MAX_INDEXING_MEMORY:-6GiB}
       # Meilisearch's own guidance is to stay at or below half the available
       # cores so search latency does not suffer during indexing (12-core host).
       - MEILI_MAX_INDEXING_THREADS=${MEILI_MAX_INDEXING_THREADS:-6}
@@ -76,7 +81,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 12G
+          memory: 8G
           cpus: '8.0'
         reservations:
           memory: 2G

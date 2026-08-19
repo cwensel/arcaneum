@@ -11,6 +11,7 @@
 - **[Claude Code Plugin Guide](guides/claude-code-plugin.md)** - Plugin testing and command reference
 - **[Qdrant Migration Guide](guides/qdrant-migration.md)** - Move legacy bind mounts to Docker named volumes
 - **[Persisted Schema Guide](guides/persisted-schema.md)** - Persisted payload schema policy
+- **[MeiliSearch Tuning](guides/meilisearch-tuning.md)** - Container sizing for slow indexing and sync timeout warnings
 
 ## Testing
 

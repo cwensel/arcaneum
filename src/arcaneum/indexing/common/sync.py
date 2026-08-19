@@ -740,18 +740,24 @@ class MetadataBasedSync:
                 raise FileManifestScanError(collection_name) from e
             return set()
 
-    def get_chunk_counts_by_file(self, collection_name: str) -> Dict[str, int]:
+    def get_chunk_counts_by_file(
+        self, collection_name: str, count_points: bool = False
+    ) -> Dict[str, int]:
         """Get chunk counts per file_path from Qdrant collection.
 
         Args:
             collection_name: Qdrant collection name
+            count_points: Count real chunk points instead of reading the cached
+                ``chunk_count`` recorded in each file manifest. Slower, but the
+                manifest is exactly what drifts when a file gets indexed twice,
+                so cross-system verification must not trust it.
 
         Returns:
             Dict mapping file_path to chunk count
         """
         chunk_counts: Dict[str, int] = {}
         offset = None
-        manifests_ready = file_manifests_ready(self.qdrant, collection_name)
+        manifests_ready = file_manifests_ready(self.qdrant, collection_name) and not count_points
 
         try:
             if manifests_ready:

@@ -193,10 +193,12 @@ from ..embeddings.client import (
 )
 from ..fulltext.client import FullTextClient
 from ..indexing.collection_metadata import (
+    METADATA_PAYLOAD_KEY,
     backfill_embedding_prompt_policy,
     file_manifests_ready,
     get_collection_metadata,
     get_collection_type,
+    metadata_exclusion_filter,
     prompt_policy_can_be_backfilled,
     prompt_policy_issues,
     update_collection_metadata,
@@ -4030,6 +4032,10 @@ def _fetch_chunks_for_files_bulk(
         while True:
             points, offset = qdrant.scroll(
                 collection_name=corpus,
+                # Manifest points carry a file_path but are bookkeeping, not
+                # content. Including them uploads a phantom chunk per file and
+                # leaves parity permanently mismatched.
+                scroll_filter=metadata_exclusion_filter(),
                 limit=1000,  # Large batches for efficiency
                 offset=offset,
                 with_payload=True,
@@ -4040,7 +4046,14 @@ def _fetch_chunks_for_files_bulk(
                 break
 
             for point in points:
-                payload = point.payload
+                payload = point.payload or {}
+
+                # Manifest points are bookkeeping that also carry a file_path.
+                # The scroll filter excludes them server-side; this guard keeps
+                # legacy points without the indexed flag out of MeiliSearch too.
+                if payload.get(METADATA_PAYLOAD_KEY):
+                    continue
+
                 file_path = payload.get("file_path")
 
                 # Only collect for files we need
@@ -4145,6 +4158,7 @@ def _fetch_git_metadata_for_files(
     while True:
         points, offset = qdrant.scroll(
             collection_name=corpus,
+            scroll_filter=metadata_exclusion_filter(),
             limit=1000,
             offset=offset,
             with_payload=[
@@ -5521,7 +5535,10 @@ def _parity_single_corpus(
                 console.print(f"\n[dim]Verifying chunk counts for {len(in_both)} files...[/dim]")
 
             # Get chunk counts from both systems
-            qdrant_chunk_counts = sync_manager.get_chunk_counts_by_file(corpus)
+            # Count real points: the manifest's cached chunk_count is itself
+            # what drifts when a file was indexed twice, so trusting it here
+            # reports a mismatch that backfilling real points can never close.
+            qdrant_chunk_counts = sync_manager.get_chunk_counts_by_file(corpus, count_points=True)
             meili_chunk_counts = meili.get_chunk_counts_by_file(corpus)
 
             # Show diagnostic info

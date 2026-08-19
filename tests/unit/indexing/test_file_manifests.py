@@ -328,3 +328,31 @@ def test_user_point_count_without_manifest_index_excludes_only_metadata():
 
     assert user_point_count(qdrant, "code", collection_info) == 112
     qdrant.count.assert_not_called()
+
+
+def test_chunk_counts_can_bypass_manifests_and_count_real_points():
+    """Parity verification must count points, not trust the cached manifest.
+
+    The manifest's chunk_count is what drifts when a file is indexed twice, so
+    a verifier that reads it compares Qdrant's cached number against
+    MeiliSearch's real document count. That reports a mismatch no backfill can
+    resolve, because the backfill copies the real points.
+    """
+    qdrant = MagicMock()
+    qdrant.retrieve.return_value = [_ready_metadata_point()]
+    qdrant.get_collection.return_value = _collection_info(
+        {FILE_MANIFEST_PAYLOAD_KEY: SimpleNamespace()}
+    )
+    # The manifest claims 1 chunk, but two real chunk points exist.
+    qdrant.scroll.return_value = (
+        [
+            SimpleNamespace(payload={"file_path": "/repo/a.py", "chunk_index": 0}),
+            SimpleNamespace(payload={"file_path": "/repo/a.py", "chunk_index": 1}),
+        ],
+        None,
+    )
+
+    counts = MetadataBasedSync(qdrant).get_chunk_counts_by_file("code", count_points=True)
+
+    assert counts == {"/repo/a.py": 2}
+    assert qdrant.scroll.call_args.kwargs["with_payload"] == ["file_path"]

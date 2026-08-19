@@ -361,3 +361,54 @@ def test_repair_meili_version_identifier_stamps_persisted_schema():
     assert update_doc["schema_version"] == 1
     assert update_doc["app_version"]
     assert update_doc["git_version_identifier"] == "proj#main@abcdef1"
+
+
+def test_fetch_chunks_for_files_bulk_skips_file_manifest_points():
+    """File manifest points are bookkeeping, not content, and must not reach MeiliSearch.
+
+    Manifests carry a file_path, so an unfiltered scroll picks them up and
+    uploads one extra document per file. That leaves MeiliSearch permanently
+    one chunk ahead of Qdrant's manifest chunk_count, so parity reports a
+    chunk_mismatch that re-running parity can never resolve.
+    """
+    qdrant = MagicMock()
+    qdrant.scroll.return_value = (
+        [
+            SimpleNamespace(
+                id="chunk-point",
+                payload={
+                    "text": "Real chunk text",
+                    "file_path": "/docs/paper.pdf",
+                    "filename": "paper.pdf",
+                    "file_extension": ".pdf",
+                    "chunk_index": 0,
+                },
+            ),
+            SimpleNamespace(
+                id="manifest-point",
+                payload={
+                    "is_metadata": True,
+                    "metadata_type": "file_manifest",
+                    "manifest_schema_version": 1,
+                    "file_path": "/docs/paper.pdf",
+                    "chunk_count": 1,
+                    "file_size": 1234,
+                    "store_type": "pdf",
+                },
+            ),
+        ],
+        None,
+    )
+
+    chunks_by_file, error = _fetch_chunks_for_files_bulk(
+        qdrant,
+        "test-corpus",
+        {"/docs/paper.pdf"},
+        verbose=False,
+        output_json=True,
+        console=MagicMock(),
+    )
+
+    assert error is None
+    docs = chunks_by_file["/docs/paper.pdf"]
+    assert [d["id"] for d in docs] == ["chunk-point"]

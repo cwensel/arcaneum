@@ -132,7 +132,7 @@ arc indexes verify <name>                            # Verify index health
 arc indexes export <name> -o <file>                  # Export documents to JSONL
 arc indexes import <file> --into <name>              # Import documents from JSONL
 arc indexes list-projects <name>                     # List git projects in an index
-arc indexes delete-project <name> <project>          # Delete one git project/branch
+arc indexes delete-project <project> --index <name>  # Delete one git project/branch
 arc indexes delete <name>                            # Delete index
 arc indexes update-settings <name> --type <type>    # Update index settings
 ```
@@ -611,6 +611,9 @@ arc collection create pdf-docs --type pdf --hnsw-m 16 --hnsw-ef 100
 arc collection create pdf-docs --type pdf --on-disk
 ```
 
+`--type` is **required**. `arc corpus create` and `arc indexes create` require it
+the same way.
+
 **Model Inference:** If `--model` is not specified, the model is automatically inferred from `--type`:
 
 - `--type pdf` → `arctic-m` (stable FastEmbed document retrieval)
@@ -731,7 +734,8 @@ Shows files with size information:
 
 ### Export Collection
 
-Export a collection to a portable format for migration or backup:
+Export a collection to a portable format for migration or backup. The output
+path `--output` / `-o` is **required** (`arc indexes export` likewise):
 
 ```bash
 # Default: Compressed binary format (.arcexp)
@@ -856,7 +860,27 @@ arc index pdf /path/to/pdfs --collection pdf-docs
 arc index pdf /path/to/scanned-pdfs \
   --collection pdf-docs \
   --ocr-language eng
+
+# Control OCR parallelism (default: cpu_count)
+arc index pdf /path/to/scanned-pdfs \
+  --collection pdf-docs \
+  --ocr-language eng \
+  --ocr-workers 4
 ```
+
+- `--ocr-workers`: Parallel OCR workers for page processing (default: `cpu_count`).
+  Only affects scanned PDFs that actually need OCR; text-native PDFs ignore it.
+
+### Reduce Token Usage
+
+```bash
+# Skip markdown conversion, only normalize whitespace
+arc index pdf /path/to/pdfs --collection pdf-docs --normalize-only
+```
+
+- `--normalize-only`: Skip markdown conversion and only normalize whitespace.
+  Trades markdown structure (headings, lists, tables) for up to 47% fewer tokens
+  per chunk. Use when the structure does not matter for retrieval.
 
 ### Force Reindex
 
@@ -1127,8 +1151,11 @@ Additional options for `arc index` commands:
 
 **Basic Options:**
 
-- `--gpu`: Opt into accelerator embedding (CPU is the stable default)
+- `--gpu` / `--no-gpu`: Opt into accelerator embedding. `--no-gpu` is the default
+  and can be passed explicitly to override a shell alias or script default.
 - `--workers N`: Number of parallel upload workers (default: 4)
+- `--depth N`: Git discovery depth — how far below the given path to search for
+  git repositories (`arc index code`, `arc index text code`)
 - `--force`: Force reindex all files (skip incremental sync)
 - `--offline`: Use cached models only (no network calls)
 - `--streaming`: Stream embeddings to Qdrant immediately (lower memory usage)
@@ -1168,6 +1195,8 @@ Additional options for `arc index` commands:
   - Reduces memory from O(total_chunks × vector_dim) to O(batch_size × vector_dim)
   - Recommended for large files or collections
   - Partial uploads can be recovered with `--verify` flag
+- `--no-streaming`: Disable streaming and accumulate all embeddings before
+  uploading. Uses more memory; use only when a single atomic upload matters.
 
 **Note on Parallelism:** File and embedding worker flags were removed because they provided minimal benefit
 due to the embedding lock (required for GPU thread-safety). The single-threaded embedding approach with
@@ -1405,7 +1434,7 @@ arc indexes import backup.jsonl --json
 
 ### Update Settings
 
-Update index settings from a preset type:
+Update index settings from a preset type. `--type` is **required**:
 
 ```bash
 # Apply source-code settings to existing index

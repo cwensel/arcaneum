@@ -56,8 +56,14 @@ services:
       - MEILI_HTTP_ADDR=0.0.0.0:7700
 
       # Resource management (CRITICAL: Must set manually - MeiliSearch issue #4686)
-      - MEILI_MAX_INDEXING_MEMORY=2.5GiB
-      - MEILI_MAX_INDEXING_THREADS=4
+      # Merge cost scales with total index size, so indexing a large index is
+      # bound by these two values. Keep MEILI_MAX_INDEXING_MEMORY well under the
+      # container limit below: it budgets the indexer only, and the process also
+      # needs headroom for search and LMDB page cache.
+      - MEILI_MAX_INDEXING_MEMORY=${MEILI_MAX_INDEXING_MEMORY:-8GiB}
+      # Meilisearch's own guidance is to stay at or below half the available
+      # cores so search latency does not suffer during indexing (12-core host).
+      - MEILI_MAX_INDEXING_THREADS=${MEILI_MAX_INDEXING_THREADS:-6}
 
       # Payload limits
       - MEILI_HTTP_PAYLOAD_SIZE_LIMIT=100MB
@@ -70,10 +76,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4G
-          cpus: '4.0'
+          memory: 12G
+          cpus: '8.0'
         reservations:
-          memory: 1G
+          memory: 2G
           cpus: '2.0'
 
     healthcheck:

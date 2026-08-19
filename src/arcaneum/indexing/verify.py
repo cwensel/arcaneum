@@ -17,7 +17,7 @@ Usage:
 import hashlib
 import logging
 import os
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -98,6 +98,8 @@ class FileVerificationResult:
     has_garbled_text: bool = False  # chunks contain unreadable garbage text
     avg_quality_score: float = 1.0  # average text quality score (0.0-1.0)
     suspected_dropout: bool = False  # extracted text implausibly small for page count
+    has_duplicate_chunks: bool = False  # same chunk_index stored more than once
+    duplicate_chunk_count: int = 0  # surplus points beyond one per chunk_index
     total_text_chars: int = 0  # sum of chunk text lengths (for dropout detection)
     page_count: Optional[int] = None  # authoritative page count from PDF
     quality_manifest: Optional[dict] = None  # per-file extraction quality summary
@@ -148,6 +150,7 @@ class CollectionVerificationResult:
     garbled_items: int = 0
     dropout_items: int = 0  # files with suspected extraction dropout
     dropout_at_floor: int = 0  # dropout files already marked extraction_floor (skipped)
+    duplicate_items: int = 0  # files holding more than one point per chunk_index
     is_healthy: bool = True
     schema_version: Optional[int] = None
     app_version: Optional[str] = None
@@ -157,14 +160,17 @@ class CollectionVerificationResult:
     errors: List[str] = field(default_factory=list)
 
     def get_items_needing_repair(self) -> List[str]:
-        """Return list of items that need re-indexing (incomplete, garbled, or dropout)."""
+        """Return items needing re-indexing (incomplete, garbled, dropout, or duplicated)."""
         if self.collection_type == "code":
             return [p.identifier for p in self.projects if not p.is_complete]
         else:
             return [
                 f.file_path
                 for f in self.files
-                if not f.is_complete or f.has_garbled_text or f.suspected_dropout
+                if not f.is_complete
+                or f.has_garbled_text
+                or f.suspected_dropout
+                or f.has_duplicate_chunks
             ]
 
 
@@ -421,6 +427,10 @@ class CollectionVerifier:
         file_chunks: Dict[str, Dict[str, any]] = defaultdict(
             lambda: {
                 "indices": set(),
+                # Points seen per chunk_index. `indices` is a set, so a file
+                # indexed twice collapses to one entry and reads as complete;
+                # only a count exposes the surplus copies.
+                "index_counts": Counter(),
                 "chunk_count": 0,
                 "explicit_chunk_counts": set(),
                 "inferred_chunk_count": False,
@@ -488,6 +498,7 @@ class CollectionVerifier:
                 # Track chunk indices for this file
                 if chunk_index is not None:
                     file_chunks[file_path]["indices"].add(chunk_index)
+                    file_chunks[file_path]["index_counts"][chunk_index] += 1
                     # Use explicit chunk_count if available, otherwise infer from max index
                     if chunk_count:
                         file_chunks[file_path]["explicit_chunk_counts"].add(chunk_count)
@@ -567,6 +578,7 @@ class CollectionVerifier:
         garbled_count = 0
         dropout_count = 0
         dropout_at_floor = 0
+        duplicate_count = 0
 
         for file_path, file_data in file_chunks.items():
             indices = file_data["indices"]
@@ -657,8 +669,22 @@ class CollectionVerifier:
                             manifest["quality_warnings"] = sorted(warnings)
                             file_data["quality_manifest"] = manifest
 
+            # Surplus points beyond one per chunk_index. A file re-indexed under
+            # non-deterministic point IDs keeps both copies, so every chunk is
+            # stored twice rather than overwritten.
+            duplicate_chunk_count = sum(
+                seen - 1 for seen in file_data["index_counts"].values() if seen > 1
+            )
+            has_duplicates = duplicate_chunk_count > 0
+            if has_duplicates:
+                duplicate_count += 1
+
             file_is_healthy = (
-                is_complete and not has_garbled and not suspected_dropout and not stale_source
+                is_complete
+                and not has_garbled
+                and not suspected_dropout
+                and not stale_source
+                and not has_duplicates
             )
 
             if file_is_healthy:
@@ -676,6 +702,8 @@ class CollectionVerifier:
                     has_garbled_text=has_garbled,
                     avg_quality_score=round(avg_quality, 3),
                     suspected_dropout=suspected_dropout,
+                    has_duplicate_chunks=has_duplicates,
+                    duplicate_chunk_count=duplicate_chunk_count,
                     total_text_chars=total_text_chars,
                     page_count=page_count,
                     quality_manifest=file_data["quality_manifest"],
@@ -692,6 +720,12 @@ class CollectionVerifier:
             garbled_items=garbled_count,
             dropout_items=dropout_count,
             dropout_at_floor=dropout_at_floor,
-            is_healthy=incomplete_count == 0 and garbled_count == 0 and dropout_count == 0,
+            duplicate_items=duplicate_count,
+            is_healthy=(
+                incomplete_count == 0
+                and garbled_count == 0
+                and dropout_count == 0
+                and duplicate_count == 0
+            ),
             files=file_results,
         )

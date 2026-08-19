@@ -244,7 +244,8 @@ are mutually exclusive. Use `--force` to override either mode.
 
 ### Corpus Repair
 
-Detect and re-index files with incomplete chunks or garbled text extraction:
+Detect and re-index files with incomplete chunks, garbled text extraction, or
+duplicated chunks:
 
 ```bash
 arc corpus repair MyCorpus                            # Detect and fix quality issues
@@ -265,10 +266,41 @@ arc corpus repair MyCorpus --verbose                  # Show per-file quality sc
 **How it works:**
 
 1. Scans all indexed chunks and scores text quality (stop word frequency, replacement characters, ASCII ratio)
-2. Identifies files with incomplete chunk sets or average quality below threshold
+2. Identifies files with incomplete chunk sets, average quality below threshold,
+   or duplicated chunks
 3. Re-extracts affected files (with auto-OCR for garbled text from corrupt fonts)
 4. Compares new quality to old — only replaces if improved
 5. Reports per-file results (improved, skipped, incomplete)
+
+**Duplicated chunks:**
+
+A file re-indexed before chunk IDs became deterministic keeps both copies of
+every chunk — the second pass appended instead of overwriting. Those documents
+are over-represented in search results, and the file's manifest disagrees with
+what is actually stored.
+
+Repair detects this by counting points per `chunk_index` rather than checking
+coverage, and re-indexes affected files with `--force` so the stale copies are
+deleted first:
+
+```bash
+# List affected files and their surplus chunk counts
+arc corpus repair MyCorpus --dry-run
+
+# Repair them
+arc corpus repair MyCorpus
+```
+
+```text
+⚠ Found 4 files with duplicated chunks
+  /path/to/paper.pdf (69 surplus chunks)
+```
+
+`arc corpus verify` reports the same files, with `duplicate_items` and a
+per-file `duplicate_chunk_count` in `--json` output. Note that
+`arc corpus parity` will *not* surface this: once the duplicates have been
+copied to MeiliSearch, both systems agree, which is what a cross-system check
+is measuring.
 
 **GPU and Apple Silicon:**
 
@@ -1754,11 +1786,13 @@ Read the reported ratios:
 - **An exact multiple** (MeiliSearch is 2x or 4x Qdrant) — the file's chunks are
   duplicated *inside Qdrant itself*, usually from being indexed twice before
   chunk IDs became deterministic. Parity cannot fix this: it only reconciles the
-  two systems, and here it is faithfully copying duplicated source data. Re-index
-  the affected files with `--force`, which deletes existing chunks first:
+  two systems, and here it is faithfully copying duplicated source data. Use
+  `arc corpus repair`, which detects duplicated chunks and re-indexes those
+  files with `--force` so the stale copies are deleted first:
 
   ```bash
-  arc corpus sync MyCorpus /path/to/that/file.pdf --force
+  arc corpus repair MyCorpus --dry-run   # List the affected files
+  arc corpus repair MyCorpus             # Repair them
   ```
 
 Note that `arc corpus list` compares *totals*, so a corpus can read `synced`

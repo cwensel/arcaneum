@@ -1878,6 +1878,7 @@ def corpus_verify_command(
                     "total_items": qdrant_result.total_items,
                     "complete_items": qdrant_result.complete_items,
                     "incomplete_items": qdrant_result.incomplete_items,
+                    "duplicate_items": qdrant_result.duplicate_items,
                     "schema_version": qdrant_result.schema_version,
                     "app_version": qdrant_result.app_version,
                     "errors": qdrant_result.errors,
@@ -1887,10 +1888,14 @@ def corpus_verify_command(
                         {
                             "file_path": file.file_path,
                             "is_complete": file.is_complete,
+                            "has_duplicate_chunks": file.has_duplicate_chunks,
+                            "duplicate_chunk_count": file.duplicate_chunk_count,
                             "quality_manifest": file.quality_manifest,
                         }
                         for file in qdrant_result.files
-                        if getattr(file, "quality_manifest", None)
+                        # Duplicated files are reported even without a quality
+                        # manifest; they are otherwise invisible in JSON output.
+                        if getattr(file, "quality_manifest", None) or file.has_duplicate_chunks
                     ]
 
             if meili_result:
@@ -1946,9 +1951,14 @@ def corpus_verify_command(
                     elif verbose:
                         for file in qdrant_result.files[:5]:
                             if not file.is_complete:
-                                console.print(
-                                    f"  [dim]• {file.file_path}: {file.completion_percentage:.1f}% complete[/dim]"
-                                )
+                                # A duplicated file has every chunk present, so
+                                # a completion percentage would read 100% and
+                                # hide the reason it is unhealthy.
+                                if file.has_duplicate_chunks:
+                                    detail = f"{file.duplicate_chunk_count} duplicate chunks"
+                                else:
+                                    detail = f"{file.completion_percentage:.1f}% complete"
+                                console.print(f"  [dim]• {file.file_path}: {detail}[/dim]")
                         if qdrant_result.incomplete_items > 5:
                             console.print(
                                 f"  [dim]... and {qdrant_result.incomplete_items - 5} more[/dim]"

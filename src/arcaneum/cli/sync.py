@@ -2154,6 +2154,21 @@ def sync_directory_command(
                     f"extraction floor — skipped[/dim]"
                 )
 
+            # Report duplicated files: the same chunk stored more than once,
+            # from a re-index that appended instead of overwriting.
+            duplicate_count = verification_result.duplicate_items
+            if duplicate_count > 0 and not output_json:
+                console.print(
+                    f"[yellow]⚠ Found {duplicate_count} files with duplicated chunks[/yellow]"
+                )
+                duplicate_files = [f for f in verification_result.files if f.has_duplicate_chunks]
+                for f in duplicate_files[:5]:
+                    console.print(
+                        f"  [dim]{f.file_path} ({f.duplicate_chunk_count} surplus chunks)[/dim]"
+                    )
+                if len(duplicate_files) > 5:
+                    console.print(f"  [dim]... and {len(duplicate_files) - 5} more[/dim]")
+
             incomplete_paths = verification_result.get_items_needing_repair()
 
             # Filter to files that still exist on disk
@@ -2181,6 +2196,7 @@ def sync_directory_command(
                         data={
                             "incomplete_files": len(incomplete_paths),
                             "garbled_files": garbled_count,
+                            "duplicate_files": duplicate_count,
                             "missing_from_disk": len(missing_from_disk),
                             "repaired": 0,
                         },
@@ -2203,6 +2219,7 @@ def sync_directory_command(
                         data={
                             "would_repair": len(existing_incomplete),
                             "garbled_files": garbled_count,
+                            "duplicate_files": duplicate_count,
                             "files": existing_incomplete,
                         },
                     )

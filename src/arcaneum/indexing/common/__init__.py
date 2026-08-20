@@ -6,7 +6,6 @@ from .text_source import (
     MARKDOWN_EXTENSIONS,
     PLAIN_MARKDOWN_EXTENSIONS,
     is_compressed,
-    logical_name,
     logical_suffix,
     read_text_source,
 )
@@ -19,7 +18,6 @@ __all__ = [
     "MARKDOWN_EXTENSIONS",
     "PLAIN_MARKDOWN_EXTENSIONS",
     "is_compressed",
-    "logical_name",
     "logical_suffix",
     "read_text_source",
 ]

@@ -33,7 +33,15 @@ it the same *file*. Change detection keys on absolute path, so ``doc.md`` and
 ``doc.md.zst`` remain two tracked entries: syncing a directory holding both
 indexes the content twice, and replacing a ``.md`` with its ``.md.zst`` leaves
 the original's chunks orphaned until a ``--parity`` sweep reaps them.
-Unifying twin identity is deliberately out of scope here.
+
+Unifying twin identity was considered and rejected, not deferred. It would
+have to change the sync primary key: ``file_manifest_id`` derives a
+deterministic point id from the absolute path, so a "logical path" identity
+would have to agree across manifests, payload ``file_path``, delete filters,
+rename detection, and parity. The payoff does not justify that - it would only
+help when compressing an already-indexed tree, and even then buys nothing,
+because compressed size replaces raw size in the mtime+size gate and forces a
+re-embed regardless. Run ``--parity`` after a migration to reap the orphans.
 """
 
 import logging
@@ -81,15 +89,6 @@ def logical_suffix(path: Path) -> str:
     inner = Path(path.stem).suffix.lower()
     # `archive.zst` — nothing underneath; keep the physical suffix.
     return inner or suffix
-
-
-def logical_name(path: Path) -> str:
-    """Return the filename with any compression suffix removed.
-
-    ``a.md.zst`` -> ``a.md``. Used where a display or logical filename should
-    not leak the storage codec.
-    """
-    return path.stem if is_compressed(path) else path.name
 
 
 def read_text_source(

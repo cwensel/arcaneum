@@ -593,7 +593,14 @@ def _corpus_extension(path: Path) -> str:
     (kata t88p).
     """
     if is_compressed(path):
-        return f"{logical_suffix(path)}{path.suffix.lower()}"
+        inner = logical_suffix(path)
+        # A bare `archive.zst` has no logical extension underneath, so
+        # logical_suffix returns ".zst" itself.  Concatenating would report
+        # ".zst.zst" in the rejection message - nonsense that obscures the
+        # remedy.  The file is rejected either way; say why in real terms.
+        if inner == path.suffix.lower():
+            return inner
+        return f"{inner}{path.suffix.lower()}"
     return path.suffix.lower()
 
 

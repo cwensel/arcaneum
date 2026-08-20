@@ -47,6 +47,26 @@ class TestExtensionAllowlist:
         assert ".md" in SUPPORTED_EXTENSIONS_BY_TYPE["markdown"]
         assert ".markdown" in SUPPORTED_EXTENSIONS_BY_TYPE["markdown"]
 
+    def test_bare_zst_reports_a_sane_extension(self):
+        """`archive.zst` has no logical extension; do not report '.zst.zst'.
+
+        It is rejected either way, but the rejection message is the user's
+        only signal about what went wrong (roborev 5737).
+        """
+        from arcaneum.cli.sync import _corpus_extension
+
+        assert _corpus_extension(Path("archive.zst")) == ".zst"
+
+    def test_compressed_markdown_reports_double_extension(self):
+        from arcaneum.cli.sync import _corpus_extension
+
+        assert _corpus_extension(Path("a.md.zst")) == ".md.zst"
+
+    def test_plain_file_reports_its_own_extension(self):
+        from arcaneum.cli.sync import _corpus_extension
+
+        assert _corpus_extension(Path("a.md")) == ".md"
+
     def test_single_file_validation_accepts_md_zst(self, tmp_path):
         """The sync.py single-file gate keys off logical suffix, not .suffix."""
         _, comp = _twins(tmp_path)
@@ -150,7 +170,10 @@ class TestTwinIdentityBoundary:
     """Twins match on content, not identity — pinned so a change is deliberate.
 
     Unifying twin identity (so compressing a file is a no-op re-index rather
-    than a new entry) is a separate design call about the change-detection key.
+    than a new entry) was considered and rejected: it would change the sync
+    primary key, and buys nothing, since compressed size replaces raw size in
+    the mtime+size gate and forces a re-embed regardless. Run --parity after a
+    migration to reap orphaned entries.
     """
 
     def test_content_is_equivalent(self, tmp_path):

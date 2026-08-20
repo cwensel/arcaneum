@@ -28,6 +28,7 @@ from ..collection_metadata import (
     stamp_file_manifests_ready,
 )
 from .multiprocessing import get_mp_context, worker_init
+from .text_source import read_text_source
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +120,10 @@ def compute_text_file_hash(file_path: Path) -> str:
     normalizes line endings (CRLF -> LF). This ensures hash matches the
     actual content being indexed after parsing/normalization.
 
+    Compressed sources (.md.zst) are decompressed first, so a file and its
+    compressed twin hash identically - the hash tracks content, not storage
+    codec (kata t88p).
+
     Use this for text files (markdown, source code) where:
     - Line ending normalization is desired
     - Content is parsed/processed before indexing
@@ -130,11 +135,7 @@ def compute_text_file_hash(file_path: Path) -> str:
     Returns:
         xxh3_128 hash (32 hex characters)
     """
-    try:
-        content = file_path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        logger.warning(f"UTF-8 decode failed for {file_path}, trying latin-1")
-        content = file_path.read_text(encoding="latin-1")
+    content = read_text_source(file_path)
 
     return xxhash.xxh3_128(content.encode("utf-8")).hexdigest()
 

@@ -63,6 +63,8 @@ dependencies = [
     "GitPython>=3.1.45",
     # Markdown indexing dependencies (RDR-014)
     "markdown-it-py>=4.0.0",
+    # Transparent .md.zst reads (stdlib compression.zstd needs Python 3.14+)
+    "zstandard>=0.23.0",
     "python-frontmatter>=1.1.0",
     "pygments>=2.19.0",
     # SOCKS proxy support for httpx (required when running in Claude Code sandbox)

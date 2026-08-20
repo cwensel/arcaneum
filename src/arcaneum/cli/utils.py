@@ -12,9 +12,26 @@ from qdrant_client.models import Distance, VectorParams
 
 from ..config import load_config
 from ..embeddings.client import EMBEDDING_MODELS, _unknown_model_error
+from ..indexing.common.text_source import is_compressed, logical_suffix
 from ..paths import get_legacy_arcaneum_dir
 
 logger = logging.getLogger(__name__)
+
+
+def extension_allowed(path: Path, allowed_extensions: Set[str]) -> bool:
+    """True when the path's extension is in the allowlist.
+
+    Handles compressed sources: ``a.md.zst`` matches an allowlist carrying
+    ``.md.zst``, and also matches one carrying only ``.md`` so a caller that
+    allows a format implicitly allows its compressed twin (kata t88p).
+    """
+    suffix = path.suffix.lower()
+    if suffix in allowed_extensions:
+        return True
+    if is_compressed(path):
+        inner = logical_suffix(path)
+        return f"{inner}{suffix}" in allowed_extensions or inner in allowed_extensions
+    return False
 
 
 def resolve_corpora(corpora: tuple, legacy_option: str, option_name: str) -> List[str]:
@@ -126,9 +143,11 @@ def read_file_list(from_file: str, allowed_extensions: Optional[Set[str]] = None
             logger.warning(f"Line {line_num}: Not a file, skipping: {line}")
             continue
 
-        # Check extension if filtering is requested
+        # Check extension if filtering is requested.  Compressed sources are
+        # matched by their full double extension (".md.zst"), which is what
+        # the allowlists carry - Path.suffix alone reports only ".zst".
         if allowed_extensions is not None:
-            if path.suffix.lower() not in allowed_extensions:
+            if not extension_allowed(path, allowed_extensions):
                 logger.warning(
                     f"Line {line_num}: Wrong file type (expected {', '.join(allowed_extensions)}), "
                     f"skipping: {line}"

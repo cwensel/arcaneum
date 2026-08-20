@@ -15,6 +15,8 @@ from typing import List, Dict, Optional
 from dataclasses import dataclass, field
 
 from ..common.sync import compute_text_file_hash
+from ..common.text_source import MARKDOWN_EXTENSIONS as _SHARED_MARKDOWN_EXTENSIONS
+from ..common.text_source import read_text_source
 
 try:
     import frontmatter
@@ -53,8 +55,10 @@ class MarkdownFileMetadata:
 class MarkdownDiscovery:
     """Discover and analyze markdown files with frontmatter support."""
 
-    # Default file extensions to search for
-    MARKDOWN_EXTENSIONS = [".md", ".markdown", ".mdown", ".mkd", ".mkdn"]
+    # Default file extensions to search for, including compressed twins
+    # (.md.zst). Sourced from the shared constant so the five historical
+    # copies of this set cannot drift apart again (kata t88p).
+    MARKDOWN_EXTENSIONS = sorted(_SHARED_MARKDOWN_EXTENSIONS)
 
     def __init__(
         self, extensions: Optional[List[str]] = None, exclude_patterns: Optional[List[str]] = None
@@ -131,13 +135,8 @@ class MarkdownDiscovery:
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
 
-        # Read file content
-        try:
-            content = file_path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            # Try with latin-1 as fallback
-            logger.warning(f"UTF-8 decode failed for {file_path}, trying latin-1")
-            content = file_path.read_text(encoding="latin-1")
+        # Read file content (transparently decompresses .md.zst)
+        content = read_text_source(file_path)
 
         # Compute content hash (using common function for consistency)
         content_hash = compute_text_file_hash(file_path)
@@ -250,10 +249,7 @@ class MarkdownDiscovery:
         Returns:
             Tuple of (content, frontmatter_dict)
         """
-        try:
-            content = file_path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            content = file_path.read_text(encoding="latin-1")
+        content = read_text_source(file_path)
 
         if FRONTMATTER_AVAILABLE:
             try:

@@ -10,6 +10,7 @@ import signal
 
 from .interaction_logger import interaction_logger
 from .logging_config import setup_logging_default, setup_logging_verbose, setup_logging_debug
+from ..indexing.common.text_source import MARKDOWN_EXTENSIONS
 from .utils import create_qdrant_client
 from ..config import DEFAULT_MODELS
 from ..embeddings.model_cache import get_cached_model
@@ -120,10 +121,8 @@ def index_markdown_command(
         if from_file:
             from .utils import read_file_list
 
-            # Markdown supports multiple extensions
-            file_list = read_file_list(
-                from_file, allowed_extensions={".md", ".markdown", ".mdown", ".mkd", ".mkdn"}
-            )
+            # Markdown supports multiple extensions, plus compressed twins
+            file_list = read_file_list(from_file, allowed_extensions=MARKDOWN_EXTENSIONS)
             if not file_list:
                 raise ValueError("No valid markdown files found in the provided list")
             # Use parent directory of first file as base directory for reporting

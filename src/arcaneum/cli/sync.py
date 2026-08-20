@@ -206,6 +206,12 @@ from ..indexing.collection_metadata import (
 )
 from ..indexing.common.multiprocessing import create_process_pool
 from ..indexing.common.sync import MetadataBasedSync, compute_quick_hash
+from ..indexing.common.text_source import (
+    MARKDOWN_EXTENSIONS,
+    is_compressed,
+    logical_suffix,
+    read_text_source,
+)
 from ..indexing.dual_indexer import DualIndexer
 from ..indexing.git_metadata_sync import GitMetadataSync
 from ..indexing.git_operations import GitProjectDiscovery, apply_git_metadata
@@ -576,6 +582,21 @@ DEFAULT_EXCLUDE_FILE_PATTERNS = {
     "generated.js",  # Common generated filename
 }
 
+
+def _corpus_extension(path: Path) -> str:
+    """Return the extension to validate a single file against.
+
+    ``Path("a.md.zst").suffix`` is ``".zst"``, which no corpus allowlist
+    contains.  Compressed sources are allowlisted by their full double
+    extension (".md.zst"), so return that when the file carries a known
+    compression suffix and falls back to the logical extension otherwise
+    (kata t88p).
+    """
+    if is_compressed(path):
+        return f"{logical_suffix(path)}{path.suffix.lower()}"
+    return path.suffix.lower()
+
+
 # Supported file extensions per corpus type.  Used both for discovery defaults
 # (when the user passes no --file-types) and for validating any extensions the
 # user does provide.  Single source of truth so the two paths can't drift —
@@ -583,7 +604,10 @@ DEFAULT_EXCLUDE_FILE_PATTERNS = {
 # dropped tracked YAML/MD/shell files (e.g., .github/workflows/*.yml).
 SUPPORTED_EXTENSIONS_BY_TYPE: Dict[str, Set[str]] = {
     "pdf": {".pdf"},
-    "markdown": {".md", ".markdown"},
+    # Shared constant, not a local copy: this set previously drifted from the
+    # discovery default and silently dropped tracked files.  It now also
+    # carries the compressed twins (.md.zst) (kata t88p).
+    "markdown": set(MARKDOWN_EXTENSIONS),
     "code": {
         ".py",
         ".js",
@@ -1809,7 +1833,7 @@ def chunk_markdown_file(
     """
     from ..indexing.markdown.chunker import SemanticMarkdownChunker
 
-    text = file_path.read_text(encoding="utf-8", errors="replace")
+    text = read_text_source(file_path, errors="replace")
     if not text.strip():
         return []
 
@@ -2242,7 +2266,10 @@ def sync_directory_command(
         if single_files:
             valid_extensions = SUPPORTED_EXTENSIONS_BY_TYPE.get(corpus_type, set())
             for single_file in single_files:
-                ext = single_file.suffix.lower()
+                # Match on the full compressed extension first (".md.zst"),
+                # then the logical one, so `a.md.zst` validates as markdown
+                # even though Path.suffix reports ".zst".
+                ext = _corpus_extension(single_file)
                 if ext not in valid_extensions:
                     raise InvalidArgumentError(
                         f"File type '{ext}' not supported for corpus type '{corpus_type}'. "
@@ -3332,7 +3359,7 @@ def sync_directory_command(
                                         file_path.absolute()
                                     ),  # Use absolute path for change detection
                                     filename=file_path.name,
-                                    file_extension=file_path.suffix,
+                                    file_extension=logical_suffix(file_path),
                                     chunk_index=i,
                                     chunk_count=len(chunks),
                                     file_hash=file_hash,
@@ -3736,7 +3763,7 @@ def sync_directory_command(
                                 "text": chunk["text"],
                                 "file_path": str(file_path.absolute()),
                                 "filename": file_path.name,
-                                "file_extension": file_path.suffix,
+                                "file_extension": logical_suffix(file_path),
                                 "chunk_index": i,
                                 "chunk_count": len(chunks),
                                 "file_hash": file_hash,
@@ -4922,7 +4949,7 @@ def _backfill_meili_to_qdrant(
                     "text": chunk_text,
                     "file_path": str(file_path.absolute()),
                     "filename": file_path.name,
-                    "file_extension": file_path.suffix,
+                    "file_extension": logical_suffix(file_path),
                     "chunk_index": i,
                     "chunk_count": len(chunks),
                     "file_hash": file_hash,

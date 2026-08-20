@@ -22,7 +22,8 @@ from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeEl
 
 from .interaction_logger import interaction_logger
 from .logging_config import setup_logging_default, setup_logging_verbose, setup_logging_debug
-from .utils import set_process_priority
+from ..indexing.common.text_source import MARKDOWN_EXTENSIONS
+from .utils import extension_allowed, set_process_priority
 from .errors import InvalidArgumentError, ResourceNotFoundError
 from ..schema.document import persisted_metadata_fields
 
@@ -832,9 +833,7 @@ def index_text_markdown_command(
         if from_file:
             from .utils import read_file_list
 
-            file_list = read_file_list(
-                from_file, allowed_extensions={".md", ".markdown", ".mdown", ".mkd"}
-            )
+            file_list = read_file_list(from_file, allowed_extensions=MARKDOWN_EXTENSIONS)
             if not file_list:
                 raise ValueError("No valid markdown files found in the provided list")
             markdown_dir = file_list[0].parent
@@ -871,11 +870,11 @@ def index_text_markdown_command(
             if not output_json:
                 console.print(f"[blue]Using existing index '{index_name}'[/blue]")
 
-        # Discover markdown files
-        md_extensions = {".md", ".markdown", ".mdown", ".mkd", ".mkdn"}
+        # Discover markdown files (shared constant, includes .md.zst twins)
+        md_extensions = MARKDOWN_EXTENSIONS
 
         if file_list:
-            md_files = [f for f in file_list if f.suffix.lower() in md_extensions]
+            md_files = [f for f in file_list if extension_allowed(f, md_extensions)]
         else:
             md_files = []
             pattern = "**/*" if recursive else "*"

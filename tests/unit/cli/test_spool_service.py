@@ -130,3 +130,44 @@ def test_uninstall_removes_the_plist_on_darwin(isolated, monkeypatch):
 
     spool_service.uninstall("Docs")
     assert not path.exists()
+
+
+# --- OS-driven drains must be memory-bounded ---------------------------------
+
+
+def test_launchd_plist_caps_the_embedding_batch(isolated):
+    """An unbounded OS drain drove swap to 13GB of 14.3GB on a real burst.
+
+    A single large markdown file added 4.4GB of RSS; nothing capped the batch
+    because the plist ran a bare --drain-spool.
+    """
+    parsed = plistlib.loads(spool_service.render_launchd_plist("Docs", arc_bin="/bin/arc"))
+    args = parsed["ProgramArguments"]
+    assert "--max-embedding-batch" in args
+    assert args[args.index("--max-embedding-batch") + 1] == str(
+        spool_service.DEFAULT_SERVICE_EMBEDDING_BATCH
+    )
+
+
+def test_systemd_service_caps_the_embedding_batch(isolated):
+    unit = spool_service.render_systemd_service_unit("Docs", arc_bin="/bin/arc")
+    assert f"--max-embedding-batch {spool_service.DEFAULT_SERVICE_EMBEDDING_BATCH}" in unit
+
+
+def test_the_cap_is_conservative_enough_to_matter(isolated):
+    """A cap only helps if it is well under the auto-tuned default."""
+    assert 1 <= spool_service.DEFAULT_SERVICE_EMBEDDING_BATCH <= 32
+
+
+def test_the_cap_is_overridable(isolated):
+    body = spool_service.render_launchd_plist("Docs", arc_bin="/bin/arc", embedding_batch=4)
+    args = plistlib.loads(body)["ProgramArguments"]
+    assert args[args.index("--max-embedding-batch") + 1] == "4"
+
+
+def test_the_cap_can_be_disabled(isolated):
+    """Passing None restores the auto-tuned behavior for anyone who wants it."""
+    args = plistlib.loads(
+        spool_service.render_launchd_plist("Docs", arc_bin="/bin/arc", embedding_batch=None)
+    )["ProgramArguments"]
+    assert "--max-embedding-batch" not in args

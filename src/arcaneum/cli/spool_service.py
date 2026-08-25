@@ -32,6 +32,13 @@ logger = logging.getLogger(__name__)
 
 LABEL_PREFIX = "net.arcaneum.spool"
 
+# Cap the embedding batch for OS-driven drains. Interactive syncs auto-tune the
+# batch to the machine, which is right when someone is watching; a background
+# drain is not watched, and an unbounded one drove swap to 13GB of 14.3GB on a
+# real burst -- a single large markdown file added 4.4GB of RSS. Capping trades
+# some throughput for a worker that cannot thrash the machine it runs on.
+DEFAULT_SERVICE_EMBEDDING_BATCH = 16
+
 _UNSAFE_NAME_CHARS = re.compile(r"[^A-Za-z0-9_.-]")
 
 
@@ -55,7 +62,12 @@ def launchd_plist_path(corpus: str) -> Path:
     return Path.home() / "Library" / "LaunchAgents" / f"{service_label(corpus)}.plist"
 
 
-def render_launchd_plist(corpus: str, *, arc_bin: str) -> bytes:
+def render_launchd_plist(
+    corpus: str,
+    *,
+    arc_bin: str,
+    embedding_batch: Optional[int] = DEFAULT_SERVICE_EMBEDDING_BATCH,
+) -> bytes:
     """Render the LaunchAgent that drains this corpus's spool.
 
     plistlib does the escaping, so a corpus name containing quotes or angle
@@ -63,7 +75,7 @@ def render_launchd_plist(corpus: str, *, arc_bin: str) -> bytes:
     """
     job = {
         "Label": service_label(corpus),
-        "ProgramArguments": [arc_bin, "corpus", "sync", corpus, "--drain-spool"],
+        "ProgramArguments": _drain_argv(arc_bin, corpus, embedding_batch),
         # Fire when the hook drops an entry in, not when the agent loads:
         # RunAtLoad would sync on every login for no reason.
         "QueueDirectories": [str(spool.corpus_spool_dir(corpus))],
@@ -76,6 +88,18 @@ def render_launchd_plist(corpus: str, *, arc_bin: str) -> bytes:
         "StandardErrorPath": str(hook_log_path()),
     }
     return plistlib.dumps(job)
+
+
+def _batch_flag(embedding_batch: Optional[int]) -> str:
+    return "" if embedding_batch is None else f" --max-embedding-batch {embedding_batch}"
+
+
+def _drain_argv(arc_bin: str, corpus: str, embedding_batch: Optional[int]) -> List[str]:
+    """Argv for a background drain, with the memory cap unless disabled."""
+    argv = [arc_bin, "corpus", "sync", corpus, "--drain-spool"]
+    if embedding_batch is not None:
+        argv += ["--max-embedding-batch", str(embedding_batch)]
+    return argv
 
 
 def _install_launchd(corpus: str, arc_bin: str) -> Optional[str]:
@@ -139,7 +163,12 @@ WantedBy=default.target
 """
 
 
-def render_systemd_service_unit(corpus: str, *, arc_bin: str) -> str:
+def render_systemd_service_unit(
+    corpus: str,
+    *,
+    arc_bin: str,
+    embedding_batch: Optional[int] = DEFAULT_SERVICE_EMBEDDING_BATCH,
+) -> str:
     # systemd splits ExecStart on whitespace; quote the corpus name so one
     # containing spaces stays a single argument.
     quoted = corpus.replace('"', '\\"').replace("\n", " ").replace("\r", " ")
@@ -151,7 +180,7 @@ Description=Drain the Arcaneum sync spool for corpus {safe}
 Type=oneshot
 Nice=5
 IOSchedulingClass=idle
-ExecStart={arc_bin} corpus sync "{quoted}" --drain-spool
+ExecStart={arc_bin} corpus sync "{quoted}" --drain-spool{_batch_flag(embedding_batch)}
 StandardOutput=append:{hook_log_path()}
 StandardError=append:{hook_log_path()}
 """

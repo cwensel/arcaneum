@@ -340,6 +340,12 @@ is not something that should happen by pressing Enter.
   schedule with `arc corpus sync <name> --drain-spool`, or use `--service`.
 - `--yes` / `-y`: Take the defaults instead of prompting, for scripts and
   agents. Requires at least one corpus to exist.
+- `--service`: Registers the drain with `--max-embedding-batch 16`. An
+  interactive sync auto-tunes the batch to the machine, which is right when
+  someone is watching; a background drain is not, and an uncapped one drove
+  swap to 13GB of 14.3GB on a real burst (a single large markdown file added
+  4.4GB of RSS). The cap trades some throughput for a worker that cannot
+  thrash the machine it runs on.
 - `--service`: Also register an OS watcher on the spool directory —
   launchd `QueueDirectories` on macOS, a systemd `.path` unit with
   `DirectoryNotEmpty=` on Linux. This drains work left over after a reboot or a

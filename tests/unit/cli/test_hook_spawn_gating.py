@@ -211,15 +211,37 @@ def _fake_arc(bin_dir: Path, marker: Path, *, held: bool = False) -> None:
     (bin_dir / "arc").chmod(0o755)
 
 
-def _env_without_flock(tmp_path: Path, bin_dir: Path) -> dict:
-    """PATH containing our fake arc and a real shell, but no flock.
+# Everything the generated hook shells out to, minus flock.
+_HOOK_TOOLS = ("sh", "git", "mkdir", "dirname", "cat", "rm", "sleep", "python3", "setsid")
 
-    Stock macOS ships no flock, so the gate must not depend on it -- that is
-    the platform the 25:1 spawn waste was measured on.
+
+def _flockless_bin(tmp_path: Path) -> Path:
+    """A PATH directory with the hook's tools symlinked, deliberately no flock.
+
+    Stock macOS ships no flock(1) -- the platform the spawn waste was measured
+    on -- but CI runs ubuntu, where /usr/bin/flock exists. Inheriting the real
+    PATH would silently take the flock branch there, so a test claiming to
+    exercise the flock-less gate would prove nothing.
     """
+    shim = tmp_path / "flockless"
+    shim.mkdir(exist_ok=True)
+    for tool in _HOOK_TOOLS:
+        if (shim / tool).exists():
+            continue
+        for root in ("/bin", "/usr/bin"):
+            src = Path(root) / tool
+            if src.exists():
+                (shim / tool).symlink_to(src)
+                break
+    assert not (shim / "flock").exists()
+    return shim
+
+
+def _env_without_flock(tmp_path: Path, bin_dir: Path) -> dict:
+    """Environment whose PATH genuinely contains no flock(1)."""
     env = dict(os.environ)
     env["XDG_DATA_HOME"] = str(tmp_path / "data")
-    env["PATH"] = f"{bin_dir}:/usr/bin:/bin"
+    env["PATH"] = f"{bin_dir}:{_flockless_bin(tmp_path)}"
     env["ARC_HOOK_DEBOUNCE"] = "0.2"
     return env
 
@@ -285,9 +307,12 @@ def test_the_nohup_fallback_path_is_gated_too(isolated, repo, tmp_path):
     # the hook needs must still resolve, or it would fail early and the
     # assertion would pass for the wrong reason.
     env = _env_without_flock(tmp_path, bin_dir)
-    shim = tmp_path / "noshim"
-    shim.mkdir()
-    for tool in ("sh", "git", "mkdir", "dirname", "sleep", "cat", "rm", "python3"):
+    # Drop setsid too, so the fallback spawn branch is the one exercised.
+    shim = tmp_path / "nosetsid"
+    shim.mkdir(exist_ok=True)
+    for tool in _HOOK_TOOLS:
+        if tool == "setsid" or (shim / tool).exists():
+            continue
         for root in ("/bin", "/usr/bin"):
             src = Path(root) / tool
             if src.exists():

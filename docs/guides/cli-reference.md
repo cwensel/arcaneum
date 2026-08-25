@@ -266,6 +266,7 @@ Keep a corpus in sync with a working repo automatically. Without a hook, an
 indexed repo drifts behind its source tree between manual syncs.
 
 ```bash
+arc corpus hook install                               # guided: pick/create a corpus, choose hooks
 arc corpus hook install MyCorpus                      # post-commit hook in the current repo
 arc corpus hook install MyCorpus --hook post-merge    # also stay current after pulls
 arc corpus hook install MyCorpus --service            # plus an OS watcher (see below)
@@ -287,6 +288,18 @@ The hook never blocks or fails a git operation: it runs detached, swallows
 errors, exits 0 on every path, and logs to
 `~/.local/state/arcaneum/hook.log`.
 
+**Guided install:**
+
+Run `arc corpus hook install` with no corpus name to be walked through it. It
+lists existing corpora and lets you pick one — or create one, inferring the type
+from what the repo actually contains (mostly `.py`/`.ts` → `code`, mostly `.md`
+→ `markdown`, mostly `.pdf` → `pdf`). It then suggests which hook points to
+install, adding `post-merge` when the repo has a remote so `git pull` stays
+covered, and offers the initial backfill.
+
+The corpus picker has no default on purpose: wiring a repo into the wrong corpus
+is not something that should happen by pressing Enter.
+
 **Install options:**
 
 - `--repo PATH`: Repository to install into (default: current directory)
@@ -295,6 +308,8 @@ errors, exits 0 on every path, and logs to
   and rebases stay in sync too.
 - `--no-spawn`: Queue touched paths but start no worker. Drain on your own
   schedule with `arc corpus sync <name> --drain-spool`, or use `--service`.
+- `--yes` / `-y`: Take the defaults instead of prompting, for scripts and
+  agents. Requires at least one corpus to exist.
 - `--service`: Also register an OS watcher on the spool directory —
   launchd `QueueDirectories` on macOS, a systemd `.path` unit with
   `DirectoryNotEmpty=` on Linux. This drains work left over after a reboot or a
@@ -310,6 +325,15 @@ errors, exits 0 on every path, and logs to
 hook that already exists, so your own hook keeps working, installing twice does
 not duplicate it, and uninstall removes only its own block. `core.hooksPath` is
 respected. One repo can feed several corpora.
+
+**Backfill:** a hook only sees future commits, so files already committed stay
+unindexed until you run one real sync:
+
+```bash
+arc corpus sync MyCorpus /path/to/repo
+```
+
+The guided install offers to do this for you.
 
 **Ad hoc equivalent:** `--changed-since` does the same diff without a hook:
 

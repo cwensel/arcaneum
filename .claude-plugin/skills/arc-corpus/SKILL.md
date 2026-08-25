@@ -1,6 +1,6 @@
 ---
 name: arc-corpus
-description: Dual-index corpus management for combined semantic and full-text search. Use when user mentions corpus, dual indexing, syncing content to both Qdrant and MeiliSearch, checking parity between systems, deleting corpora, or managing content that needs both search types.
+description: Dual-index corpus management for combined semantic and full-text search. Use when user mentions corpus, dual indexing, syncing content to both Qdrant and MeiliSearch, checking parity between systems, deleting corpora, installing a git hook to keep an indexed repo current automatically, or managing content that needs both search types.
 allowed-tools: Bash(arc:*), Read
 ---
 
@@ -33,6 +33,18 @@ arc corpus sync MyCorpus /path/to/files --force             # Force reindex
 arc corpus sync MyCorpus /path/to/files --verify            # Verify after sync
 arc corpus sync MyCorpus /path/to/files --verbose           # Show progress
 arc corpus sync MyCorpus /path/to/files --no-gpu            # CPU-only mode (stable on Apple Silicon)
+
+# Keep a git repo in sync automatically (installs a git hook)
+arc corpus hook install                               # Guided: pick/create corpus, choose hooks
+arc corpus hook install MyCorpus                      # Auto-sync on every commit
+arc corpus hook install MyCorpus --hook post-merge    # Also stay current after pulls
+arc corpus hook install MyCorpus --service            # Plus an OS watcher for reboot recovery
+arc corpus hook status                                # What is installed in this repo
+arc corpus hook uninstall MyCorpus                    # Remove just this corpus's hook
+
+# Sync only what a commit touched, without installing a hook
+arc corpus sync MyCorpus --changed-since HEAD              # Last commit
+arc corpus sync MyCorpus --changed-since ORIG_HEAD..HEAD   # Since a pull
 
 # Repair incomplete or garbled files
 arc corpus repair MyCorpus                            # Detect and fix quality issues
@@ -99,6 +111,51 @@ Use `--create-missing` to promote single-sided Qdrant collections into full corp
 - Then proceeds with normal parity sync
 
 Note: `meili_only` corpora cannot be auto-created (require `--type` and `--model`).
+
+## Automatic Sync via Git Hook
+
+Without a hook, an indexed repo drifts behind its source tree between manual
+syncs. `arc corpus hook install <corpus>` closes that gap.
+
+How it works:
+
+- On each commit the hook asks git which paths changed (`git diff-tree`, not a
+  tree walk), queues them, and starts a background worker.
+- The worker drains the queue until empty, so a burst of commits pays one
+  embedding-model load instead of one per commit.
+- Deleted and renamed-away files are removed from both Qdrant and MeiliSearch.
+- The hook never blocks or fails a git operation; it logs to
+  `~/.local/state/arcaneum/hook.log`.
+
+Run `arc corpus hook install` with **no corpus name** to be walked through it:
+it lists existing corpora or offers to create one (inferring the type from the
+repo's contents), suggests hook points, and offers the initial backfill. Prefer
+this when the user has not said which corpus to use. Pass `--yes` to take the
+defaults without prompting.
+
+A hook only indexes future commits, so files already committed need one real
+`arc corpus sync <corpus> <repo>` to get in.
+
+Installing is safe and reversible: the hook block is delimited by marker
+comments and appended to any existing hook, so a user's own hook keeps working,
+installing twice does not duplicate it, and `uninstall` removes only its own
+block. `core.hooksPath` is respected, and one repo can feed several corpora.
+
+Use `--hook post-merge` / `post-checkout` / `post-rewrite` so pulls, checkouts,
+and rebases stay in sync too. Use `--service` to also register an OS watcher
+(launchd on macOS, systemd on Linux) that drains work left over after a reboot
+or a failed spawn.
+
+For a one-off equivalent with no hook installed, use
+`arc corpus sync <corpus> --changed-since HEAD`.
+
+## Concurrent Syncs
+
+Syncs of one corpus are serialized by a per-corpus write lock, so two runs
+cannot duplicate entries or drift the two indexes apart. A second sync waits by
+default; `--no-wait` fails immediately instead, and `--lock-timeout <seconds>`
+bounds the wait. Different corpora never block each other, and `--dry-run` takes
+no lock.
 
 ## GPU Acceleration and Apple Silicon
 

@@ -1496,8 +1496,82 @@ def corpus_hook():
     """
 
 
+def _run_backfill_sync(corpus, path, **kwargs):
+    """Index what is already committed. A hook only sees future commits."""
+    from arcaneum.cli.sync import sync_directory_command
+
+    sync_directory_command(
+        corpus,
+        (str(path),),
+        None,
+        models=None,
+        file_types=None,
+        force=False,
+        verify=False,
+        text_workers=None,
+        max_embedding_batch=None,
+        no_gpu=True,
+        cpu_workers=None,
+        verbose=False,
+        output_json=False,
+    )
+
+
+def _resolve_corpus_interactively(repo, assume_yes):
+    """Pick an existing corpus or create one, prompting as needed.
+
+    Reached when `arc corpus hook install` is run with no corpus name -- the
+    natural thing to type before you know the options, so it guides rather
+    than erroring.
+    """
+    from arcaneum.cli import hooks as hook_mod
+
+    existing = hook_mod.list_corpus_names()
+
+    if assume_yes:
+        if not existing:
+            raise click.UsageError(
+                "No corpora exist and --yes cannot name one. "
+                "Create one first: arc corpus create <name> --type <type>"
+            )
+        click.echo(f"Using corpus '{existing[0]}'.")
+        return existing[0]
+
+    if existing:
+        click.echo("Existing corpora:")
+        for position, name in enumerate(existing, start=1):
+            click.echo(f"  {position}. {name}")
+        click.echo(f"  {len(existing) + 1}. Create a new corpus")
+
+        # No default on purpose: which corpus a repo feeds is not a question
+        # with a safe silent answer. A default here means an exhausted or
+        # mistyped stdin quietly wires the repo into an unrelated corpus.
+        choice = click.prompt(
+            "Index this repository into which corpus?",
+            type=click.IntRange(1, len(existing) + 1),
+        )
+        if choice <= len(existing):
+            return existing[choice - 1]
+    else:
+        click.echo("No corpora found. Let's create one.")
+
+    name = click.prompt("Name for the new corpus")
+    inferred = hook_mod.infer_corpus_type(repo)
+    corpus_type = click.prompt(
+        "Corpus type",
+        type=click.Choice(["code", "markdown", "pdf"]),
+        default=inferred,
+        show_default=True,
+    )
+
+    from arcaneum.cli.corpus import create_corpus_command
+
+    create_corpus_command(name, corpus_type, None, None, False)
+    return name
+
+
 @corpus_hook.command("install")
-@click.argument("corpus")
+@click.argument("corpus", required=False)
 @click.option(
     "--repo",
     default=".",
@@ -1523,12 +1597,51 @@ def corpus_hook():
     help="Also register an OS watcher (launchd on macOS, systemd on Linux) that "
     "drains the spool after a reboot or a failed spawn",
 )
+@click.option(
+    "--yes",
+    "-y",
+    "assume_yes",
+    is_flag=True,
+    help="Take the defaults instead of prompting (for scripts and agents)",
+)
 @click.option("--json", "output_json", is_flag=True, help="Output JSON format")
-def corpus_hook_install(corpus, repo, hook_name, no_spawn, service, output_json):
-    """Install the sync hook for CORPUS into a repository."""
+def corpus_hook_install(
+    corpus, repo, hook_name, no_spawn, service, assume_yes, output_json
+):
+    """Install the sync hook for CORPUS into a repository.
+
+    Run without CORPUS to be walked through it: pick or create a corpus,
+    choose which hook points to cover, and backfill what is already committed.
+    """
     from arcaneum.cli.output import print_json
 
-    hook_path = hook_utils.install(corpus, repo, hook_name, spawn=not no_spawn)
+    # Fail on a non-repo before prompting for anything.
+    repo_root = hook_utils.repo_root(repo)
+
+    interactive = corpus is None
+    hook_points = [hook_name]
+
+    if interactive:
+        if output_json:
+            raise click.UsageError("--json requires CORPUS; it cannot prompt.")
+        corpus = _resolve_corpus_interactively(repo_root, assume_yes)
+
+        # --hook was left at its default, so suggest what actually keeps this
+        # repo current: post-commit alone misses `git pull`.
+        suggested = hook_utils.suggested_hooks(repo_root)
+        if assume_yes:
+            hook_points = suggested
+        else:
+            answer = click.prompt(
+                "Hook points to install (comma-separated)",
+                default=",".join(suggested),
+                show_default=True,
+            )
+            hook_points = [part.strip() for part in answer.split(",") if part.strip()]
+
+    hook_path = None
+    for point in hook_points:
+        hook_path = hook_utils.install(corpus, repo, point, spawn=not no_spawn)
 
     service_result = None
     if service:
@@ -1549,13 +1662,34 @@ def corpus_hook_install(corpus, repo, hook_name, no_spawn, service, output_json)
         )
         return
 
-    click.echo(f"Installed {hook_name} hook for corpus '{corpus}': {hook_path}")
+    click.echo(
+        f"Installed {', '.join(hook_points)} hook(s) for corpus '{corpus}': {hook_path}"
+    )
     if service_result:
         click.echo(f"Registered spool watcher: {service_result}")
     if no_spawn:
         click.echo(
             f"Queue-only mode. Drain with: arc corpus sync {corpus} --drain-spool"
         )
+
+    if not interactive:
+        return
+
+    # The hook only sees future commits, so everything already committed stays
+    # unindexed unless we say so. This is the sharpest edge in the whole flow.
+    backfill_cmd = f"arc corpus sync {corpus} {repo_root}"
+    do_backfill = False
+    if not assume_yes:
+        click.echo(
+            "\nThe hook indexes future commits only; files already committed "
+            "are not indexed yet."
+        )
+        do_backfill = click.confirm("Index the existing files now?", default=False)
+
+    if do_backfill:
+        _run_backfill_sync(corpus, repo_root)
+    else:
+        click.echo(f"Run this when ready: {backfill_cmd}")
 
 
 @corpus_hook.command("uninstall")

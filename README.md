@@ -146,6 +146,11 @@ arc corpus items NAME                           # List items with parity status
 arc corpus verify NAME                          # Verify corpus health across both systems
 arc corpus parity NAME                          # Check/restore parity between systems
 arc corpus repair NAME                          # Re-index incomplete or garbled files
+arc corpus sync NAME --changed-since HEAD       # Sync only what the last commit touched
+arc corpus hook install                         # Guided setup: pick/create a corpus, choose hooks
+arc corpus hook install NAME                    # Auto-sync a git repo on every commit
+arc corpus hook status                          # Show hooks installed in this repo
+arc corpus hook uninstall NAME                  # Remove this corpus's hook
 arc corpus update NAME --description "..."      # Update corpus metadata
 arc corpus delete NAME                          # Delete both collection and index
 

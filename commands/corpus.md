@@ -1,6 +1,6 @@
 ---
 description: Manage dual-index corpora (recommended)
-argument-hint: <create|list|update|delete|sync|repair|info|items|parity|verify> <name> [paths...] [options]
+argument-hint: <create|list|update|delete|sync|repair|hook|info|items|parity|verify> <name> [paths...] [options]
 ---
 
 **Recommended for most users.** Manage corpora that combine both vector search (Qdrant) and
@@ -16,6 +16,7 @@ full-text search (MeiliSearch) for the same content.
 - `delete`: Delete both Qdrant collection and MeiliSearch index
 - `sync`: Index directory to both systems simultaneously
 - `repair`: Re-index incomplete or garbled files (text quality detection)
+- `hook`: Install a git hook that auto-syncs a repo on every commit
 - `info`: Show corpus details (both systems)
 - `items`: List indexed items with parity status
 - `parity`: Check and restore parity between systems
@@ -45,6 +46,10 @@ full-text search (MeiliSearch) for the same content.
 - --models: Embedding models (default: use corpus metadata)
 - --file-types: File extensions to index (e.g., .py,.md)
 - --gpu: Opt into accelerator embedding (CPU is the stable default)
+- --changed-since REV: Sync only what a git commit or range touched (e.g. HEAD,
+  ORIG_HEAD..HEAD), removing the files it deleted
+- --no-wait: Fail instead of queueing when another sync of this corpus is running
+- --lock-timeout: Seconds to wait for the corpus write lock (default: 600)
 
 **Repair Options:**
 
@@ -53,6 +58,21 @@ full-text search (MeiliSearch) for the same content.
 - --dry-run: Preview what would be repaired without making changes
 - --gpu: Opt into accelerator embedding (CPU is the stable default)
 - --verbose: Show per-file quality scores and details
+- --json: Output in JSON format
+
+**Hook Options:**
+
+`hook` takes its own subcommand: `install`, `uninstall`, or `status`.
+
+- name: Corpus name. Omit it on `install` to be walked through picking or
+  creating a corpus, choosing hook points, and backfilling.
+- --repo: Repository to act on (default: current directory)
+- --hook: Hook point - post-commit (default), post-merge, post-checkout, or
+  post-rewrite. On uninstall, defaults to all of them.
+- --no-spawn: (install) Queue touched paths but start no background worker
+- --yes/-y: (install) Take the defaults instead of prompting
+- --service: Also register/remove an OS watcher that drains the spool after a
+  reboot or a failed spawn
 - --json: Output in JSON format
 
 **Info/Items Options:**
@@ -83,6 +103,12 @@ full-text search (MeiliSearch) for the same content.
 /corpus repair PapersFast
 /corpus repair PapersFast --dry-run
 /corpus repair PapersFast --quality-threshold 0.5
+/corpus sync CodeBase --changed-since HEAD
+/corpus hook install
+/corpus hook install CodeBase
+/corpus hook install CodeBase --hook post-merge
+/corpus hook status
+/corpus hook uninstall CodeBase
 /corpus info MyDocs
 /corpus items CodeBase
 /corpus parity CodeBase --verify
@@ -137,6 +163,22 @@ This enables hybrid search strategies:
 4. Uploads to Qdrant (vector search)
 5. Indexes to MeiliSearch (full-text search)
 6. Both indexes share same document IDs and metadata
+
+**Keeping a Repo in Sync Automatically:**
+
+`/corpus hook install NAME` installs a git hook so an indexed repo stops
+drifting behind its source tree between manual syncs. On each commit the hook
+asks git which paths changed, queues them, and indexes them in the background —
+so a burst of commits pays one embedding-model load instead of one per commit.
+It never blocks or fails a git operation.
+
+Run `/corpus hook install` with no corpus name for a guided setup: it lists
+existing corpora or offers to create one (inferring the type from the repo's
+contents), suggests hook points, and offers the initial backfill. A hook only
+sees future commits, so already-committed files need one real sync.
+
+`/corpus sync NAME --changed-since HEAD` does the same thing on demand, without
+installing anything.
 
 **Performance:**
 

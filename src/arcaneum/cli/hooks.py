@@ -23,6 +23,7 @@ import stat
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from collections import Counter
 from typing import List, Optional, Union
 
 from .errors import InvalidArgumentError
@@ -56,6 +57,96 @@ class InstalledHook:
     corpus: str
     hook: str
     path: Path
+
+
+# Extensions that decide a repo's corpus type. Not exhaustive -- this only has
+# to be right often enough to make a good default that the user can override.
+_CODE_EXTENSIONS = frozenset(
+    {
+        ".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".java", ".kt", ".scala",
+        ".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".rb", ".php", ".swift", ".m",
+        ".sh", ".bash", ".zsh", ".sql", ".proto", ".ex", ".exs", ".clj", ".hs",
+    }
+)
+_PDF_EXTENSIONS = frozenset({".pdf"})
+
+# Enough files to judge the mix without walking a huge tree.
+_INFERENCE_SAMPLE_LIMIT = 2000
+
+
+def infer_corpus_type(repo: Union[str, Path]) -> str:
+    """Guess whether a tree is best indexed as code, markdown, or pdf.
+
+    Counts file extensions and picks the most common category. Dot-directories
+    are skipped: .git alone holds far more files than most working trees and
+    would otherwise decide every answer.
+
+    Falls back to "code", the type whose chunker degrades most gracefully on
+    unexpected input.
+    """
+    from ..indexing.common.text_source import MARKDOWN_EXTENSIONS
+
+    root = Path(repo)
+    counts: Counter = Counter()
+    seen = 0
+
+    for path in root.rglob("*"):
+        if seen >= _INFERENCE_SAMPLE_LIMIT:
+            break
+        # relative_to is safe: rglob only yields descendants of root.
+        if any(part.startswith(".") for part in path.relative_to(root).parts):
+            continue
+        if not path.is_file():
+            continue
+        seen += 1
+        suffix = path.suffix.lower()
+        if suffix in MARKDOWN_EXTENSIONS:
+            counts["markdown"] += 1
+        elif suffix in _PDF_EXTENSIONS:
+            counts["pdf"] += 1
+        elif suffix in _CODE_EXTENSIONS:
+            counts["code"] += 1
+
+    if not counts:
+        return "code"
+    return counts.most_common(1)[0][0]
+
+
+def has_remote(repo: Union[str, Path]) -> bool:
+    """True when the repo has at least one configured remote."""
+    try:
+        result = _run_git(repo, ["remote"])
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def suggested_hooks(repo: Union[str, Path]) -> List[str]:
+    """Hook points that will actually keep this repo current.
+
+    post-commit alone silently misses everything that arrives by `git pull`,
+    which is the failure people are least likely to notice -- the index just
+    quietly lags. So a repo with a remote gets post-merge as well.
+    """
+    if has_remote(repo):
+        return ["post-commit", "post-merge"]
+    return ["post-commit"]
+
+
+def list_corpus_names() -> List[str]:
+    """Names of corpora that exist in Qdrant, for the interactive picker.
+
+    Returns an empty list when Qdrant is unreachable: the caller offers to
+    create a corpus, which is the right move either way.
+    """
+    try:
+        from .utils import create_qdrant_client
+
+        client = create_qdrant_client()
+        return sorted(c.name for c in client.get_collections().collections)
+    except Exception as exc:
+        logger.debug("Could not list corpora: %s", exc)
+        return []
 
 
 def _run_git(repo: Union[str, Path], args: List[str]) -> subprocess.CompletedProcess:

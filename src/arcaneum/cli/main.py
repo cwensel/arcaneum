@@ -1138,8 +1138,15 @@ def _drain_corpus_spool(corpus, *, max_batches, sync_kwargs):
 
     output_json = sync_kwargs.get("output_json", False)
 
+    from arcaneum.cli import proctitle
+
+    # Name this process before doing anything slow: a rebase burst spawns
+    # several of these, and only one holds the lock.
+    proctitle.set_title(f"drain {corpus} (starting)")
+
     lock_fd = spool.try_acquire_worker_lock(corpus)
     if lock_fd is None:
+        proctitle.set_title(f"drain {corpus} (declined: already running)")
         hook_log.write(f"[{corpus}] skipped: another worker is already draining")
         if not output_json:
             click.echo(f"Another spool worker is already draining '{corpus}'.")
@@ -1159,6 +1166,9 @@ def _drain_corpus_spool(corpus, *, max_batches, sync_kwargs):
                 break
 
             batches += 1
+            proctitle.set_title(
+                f"drain {corpus} (batch {batches}, {len(batch.changed)} files)"
+            )
             # A path can be spooled and then deleted before the worker reaches
             # it; indexing would fail on a file that is no longer there.
             changed = [path for path in batch.changed if os.path.isfile(path)]
@@ -2162,6 +2172,14 @@ def main():
     # later in the CLI flow pick up the settings, while library consumers that
     # import arcaneum.cli.main without invoking main() are not affected.
     configure_ssl_from_env()
+
+    # Rewrite the process title so ps/top show `arc <subcommand> <options>`
+    # rather than the interpreter and script paths. No-op unless the optional
+    # setproctitle extra is installed.
+    from arcaneum.cli import proctitle
+
+    proctitle.set_title_from_argv()
+
     json_mode = "--json" in sys.argv[1:]
     try:
         cli(standalone_mode=False)

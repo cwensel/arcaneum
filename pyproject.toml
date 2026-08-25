@@ -81,6 +81,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Rewrites ps/top titles to `arc <subcommand> <options>`. A small C extension
+# with no runtime dependencies; purely cosmetic, so it stays optional and the
+# code no-ops without it.
+proctitle = [
+    "setproctitle>=1.3.0",
+]
 dev = [
     "pytest>=8.4.2",
     "pytest-cov>=6.0.0",

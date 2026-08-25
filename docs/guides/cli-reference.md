@@ -287,6 +287,19 @@ from both Qdrant and MeiliSearch.
 The hook never blocks or fails a git operation: it runs detached, swallows
 errors, and exits 0 on every path.
 
+**Seeing workers in `ps`/`top`:** background drains otherwise appear as the
+interpreter and script paths, which is unreadable when a commit burst spawns
+several at once. Install the optional extra to have them show what they are
+doing instead:
+
+```bash
+pip install 'arcaneum[proctitle]'
+```
+
+Processes then read `arc corpus sync MyCorpus --drain-spool`, and a running
+drain reports its progress as `arc drain MyCorpus (batch 2, 18 files)`. Without
+the extra, everything behaves exactly as before.
+
 **Logging:** `~/.local/state/arcaneum/hook.log` records what the hook queued and
 one line per drained batch, including failures — a failed batch and a successful
 one both leave an empty spool, so the log is the only way to tell them apart

@@ -334,8 +334,12 @@ is not something that should happen by pressing Enter.
   and rebases stay in sync too. Each reads the range git actually hands it:
   `post-checkout` diffs the old and new SHAs it is passed (skipping
   `git checkout -- <file>`, which moves content with no commit range), and
-  `post-rewrite` reads the old/new SHA pairs from stdin so every commit a
-  rebase rewrote is covered.
+  `post-rewrite` reads the old/new SHA pairs from stdin and collapses them into
+  a single range (first pair's old parent to last pair's new SHA), so a
+  25-commit rebase queues one entry rather than 25. The range is also more
+  complete than the per-commit pairs: a rebase that drops a commit lists only
+  the surviving rewrites, so files touched solely by the dropped commit appear
+  in no pair — but they do appear in the range.
 - `--no-spawn`: Queue touched paths but start no worker. Drain on your own
   schedule with `arc corpus sync <name> --drain-spool`, or use `--service`.
 - `--yes` / `-y`: Take the defaults instead of prompting, for scripts and

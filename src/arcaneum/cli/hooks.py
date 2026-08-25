@@ -216,13 +216,33 @@ def _render_driver(hook: str) -> str:
 """
 
     if hook == "post-rewrite":
-        # Old/new SHA pairs arrive on stdin, one per rewritten commit. Queue
-        # each new SHA: a rebase rewrites several, and ORIG_HEAD points at the
-        # pre-rebase tip rather than at any of them.
-        return """    while read -r _arc_old _arc_new _arc_rest; do
+        # Old/new SHA pairs arrive on stdin, one per rewritten commit. Collapse
+        # them into a single range rather than spooling each: indexing reads the
+        # working tree, so per-commit granularity buys nothing -- only the final
+        # state matters. A real rebase produced 1057 entries for 198 files.
+        #
+        # The range runs from the FIRST pair's old parent to the LAST pair's new
+        # SHA, which is also strictly more correct than the per-commit union:
+        # a rebase that drops a commit lists only the surviving pairs, so files
+        # touched solely by the dropped commit appear in no pair -- but they do
+        # appear in the range, and they are exactly the files whose content just
+        # changed on disk.
+        return """    _arc_first_old=''
+    _arc_last_new=''
+    while read -r _arc_old _arc_new _arc_rest; do
         [ -n "$_arc_new" ] || continue
-        _arc_spool "$_arc_new"
-    done"""
+        [ -n "$_arc_first_old" ] || _arc_first_old="$_arc_old"
+        _arc_last_new="$_arc_new"
+    done
+    [ -n "$_arc_last_new" ] || return 0
+    if [ -n "$_arc_first_old" ] && \\
+       git -C "$_arc_repo" rev-parse --verify --quiet "$_arc_first_old^" >/dev/null 2>&1; then
+        _arc_spool "$_arc_first_old^..$_arc_last_new"
+    else
+        # No parent (the rewrite reached a root commit), so the range has no
+        # lower bound to diff from; fall back to the rewritten commit itself.
+        _arc_spool "$_arc_last_new"
+    fi"""
 
     revision = _HOOK_REVISIONS.get(hook, "HEAD")
     if "ORIG_HEAD" in revision:

@@ -252,15 +252,48 @@ def render_block(corpus: str, hook: str, repo: Path, *, spawn: bool = True) -> s
     repo_sh = str(repo).replace("'", "'\\''")
 
     if spawn:
-        # setsid detaches from the terminal so the worker outlives the commit;
-        # where it is unavailable (macOS lacks it by default) a plain
-        # background nohup is equivalent for our purposes.
-        spawn_lines = """    if command -v setsid >/dev/null 2>&1; then
-        setsid "$_arc_bin" corpus sync "$_arc_corpus" --drain-spool \\
-            >>"$_arc_log" 2>&1 < /dev/null &
+        # Two gates before spawning, both measured against a real rebase that
+        # produced 1299 declined spawns for 51 useful batches:
+        #
+        #   1. If a worker already holds the lock, spawning is pure waste --
+        #      ~1.1s of interpreter startup to discover the lock is taken, run
+        #      concurrently with the worker that is actually embedding. The
+        #      entry is already spooled, so the running worker picks it up on
+        #      its next loop. flock -n is the same primitive the worker takes,
+        #      so the answer is authoritative rather than a guess.
+        #   2. Otherwise debounce: git fires hooks faster than a worker can
+        #      start, so a burst would still stampede. Sleeping briefly in the
+        #      background lets the commits coalesce into one worker.
+        #
+        # The launchd/systemd watcher (`hook install --service`) is the safety
+        # net for the narrow race where a worker exits between our check and
+        # its own final spool read.
+        spawn_lines = """    _arc_lock="$_arc_data/spool/$_arc_corpus/worker.lock"
+    if command -v flock >/dev/null 2>&1 && [ -e "$_arc_lock" ]; then
+        # flock -n exits non-zero when a worker holds it: nothing to do.
+        flock -n "$_arc_lock" true >/dev/null 2>&1 || return 0
+    fi
+
+    _arc_spawn_cmd="sleep $_arc_debounce; \\
+        if command -v flock >/dev/null 2>&1 && [ -e '$_arc_lock' ]; then \\
+            flock -n '$_arc_lock' true >/dev/null 2>&1 || exit 0; \\
+        fi; \\
+        '$_arc_bin' corpus sync '$_arc_corpus' --drain-spool >>'$_arc_log' 2>&1"
+
+    _arc_spawn() {
+        sleep "$_arc_debounce"
+        # Re-check after the debounce: a worker may have started meanwhile,
+        # or another commit's hook may have won the race to spawn one.
+        if command -v flock >/dev/null 2>&1 && [ -e "$_arc_lock" ]; then
+            flock -n "$_arc_lock" true >/dev/null 2>&1 || return 0
+        fi
+        "$_arc_bin" corpus sync "$_arc_corpus" --drain-spool >>"$_arc_log" 2>&1
+    }
+
+    if command -v setsid >/dev/null 2>&1; then
+        setsid sh -c "$_arc_spawn_cmd" >/dev/null 2>&1 < /dev/null &
     else
-        nohup "$_arc_bin" corpus sync "$_arc_corpus" --drain-spool \\
-            >>"$_arc_log" 2>&1 < /dev/null &
+        _arc_spawn >/dev/null 2>&1 < /dev/null &
     fi"""
     else:
         # --no-spawn: queue only. Used by tests and by anyone who prefers to
@@ -276,6 +309,11 @@ def render_block(corpus: str, hook: str, repo: Path, *, spawn: bool = True) -> s
 _arc_corpus='{corpus_sh}'
 _arc_repo='{repo_sh}'
 _arc_log="${{XDG_STATE_HOME:-$HOME/.local/state}}/arcaneum/hook.log"
+_arc_data="${{XDG_DATA_HOME:-$HOME/.local/share}}/arcaneum"
+# Seconds to wait before starting a worker, so a burst of commits (a rebase
+# fires this once per rewritten commit) coalesces into one worker instead of
+# a stampede of processes that each die on the lock.
+_arc_debounce="${{ARC_HOOK_DEBOUNCE:-3}}"
 
 # Queue one revision or range. Called once per range the hook was told about.
 _arc_spool() {{

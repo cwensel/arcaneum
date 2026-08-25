@@ -124,7 +124,7 @@ large-models = [
 ]
 
 [project.scripts]
-arc = "arcaneum.cli.main:main"
+arc = "arcaneum.cli.entrypoint:run"
 
 [project.urls]
 Homepage = "https://github.com/cwensel/arcaneum"

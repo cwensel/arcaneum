@@ -107,3 +107,55 @@ def test_main_sets_the_title_from_argv():
                 main_mod.main()
 
     assert titles == ["set"]
+
+
+# --- the title must land before the heavy imports (not ~700ms in) -------------
+
+
+def test_proctitle_module_does_not_pull_heavy_deps():
+    """Importing proctitle must not drag in qdrant_client/fastembed.
+
+    The whole point of titling early is to beat the ~700ms import chain; if
+    this module joined it, the title would land no sooner than before.
+    """
+    import subprocess
+    import sys
+
+    code = (
+        "import sys\n"
+        "from arcaneum.cli import proctitle\n"
+        "heavy = [m for m in sys.modules if m.split('.')[0] in "
+        "('qdrant_client', 'fastembed', 'torch', 'click')]\n"
+        "print(heavy)\n"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert out.stdout.strip() == "[]", f"proctitle pulled heavy modules: {out.stdout}"
+
+
+def test_entrypoint_titles_before_importing_main():
+    """`arc` should title the process first, then do the expensive import."""
+    from arcaneum.cli import entrypoint
+
+    order = []
+    with patch("arcaneum.cli.proctitle.set_title_from_argv", lambda: order.append("title")):
+        with patch.object(entrypoint, "_load_main", lambda: (order.append("import"), lambda: 0)[1]):
+            entrypoint.run()
+
+    assert order == ["title", "import"], "title must be set before the heavy import"
+
+
+def test_entrypoint_returns_the_exit_code_from_main():
+    from arcaneum.cli import entrypoint
+
+    with patch("arcaneum.cli.proctitle.set_title_from_argv", lambda: None):
+        with patch.object(entrypoint, "_load_main", lambda: (lambda: 42)):
+            assert entrypoint.run() == 42
+
+
+def test_entrypoint_still_works_without_setproctitle():
+    from arcaneum.cli import entrypoint
+    from arcaneum.cli import proctitle as pt
+
+    with patch.object(pt, "_load", return_value=None):
+        with patch.object(entrypoint, "_load_main", lambda: (lambda: 0)):
+            assert entrypoint.run() == 0

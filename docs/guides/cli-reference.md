@@ -287,6 +287,14 @@ from both Qdrant and MeiliSearch.
 The hook never blocks or fails a git operation: it runs detached, swallows
 errors, and exits 0 on every path.
 
+**Spawn gating:** before starting a worker the hook checks the same lock the
+worker takes, and skips the spawn entirely when one is already draining — the
+paths are spooled either way, so the running worker picks them up on its next
+loop. Otherwise it waits briefly (`ARC_HOOK_DEBOUNCE`, default 3s) so a burst
+coalesces into one worker. Measured on a real rebase before this gating: 1299
+spawns died on the lock against 51 useful batches, each costing ~1s of
+interpreter startup alongside the worker actually indexing.
+
 **Seeing workers in `ps`/`top`:** background drains otherwise appear as the
 interpreter and script paths, which is unreadable when a commit burst spawns
 several at once. Install the optional extra to have them show what they are

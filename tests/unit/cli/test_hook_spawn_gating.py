@@ -211,8 +211,10 @@ def _fake_arc(bin_dir: Path, marker: Path, *, held: bool = False) -> None:
     (bin_dir / "arc").chmod(0o755)
 
 
-# Everything the generated hook shells out to, minus flock.
-_HOOK_TOOLS = ("sh", "git", "mkdir", "dirname", "cat", "rm", "sleep", "python3", "setsid")
+# Every external tool the generated hook invokes, minus flock. Keep this in
+# step with render_block: a missing tool makes the hook fail early, which can
+# look like a working gate.
+_HOOK_TOOLS = ("sh", "git", "mkdir", "dirname", "sleep", "python3", "setsid")
 
 
 def _flockless_bin(tmp_path: Path) -> Path:
@@ -306,8 +308,9 @@ def test_the_nohup_fallback_path_is_gated_too(isolated, repo, tmp_path):
     # A PATH without setsid forces the fallback spawn branch. Everything else
     # the hook needs must still resolve, or it would fail early and the
     # assertion would pass for the wrong reason.
+    # Same environment, but a PATH without setsid so the fallback spawn branch
+    # is the one exercised. (flock is absent either way.)
     env = _env_without_flock(tmp_path, bin_dir)
-    # Drop setsid too, so the fallback spawn branch is the one exercised.
     shim = tmp_path / "nosetsid"
     shim.mkdir(exist_ok=True)
     for tool in _HOOK_TOOLS:

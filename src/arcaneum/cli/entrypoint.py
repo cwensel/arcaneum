@@ -6,8 +6,8 @@ short-lived `arc` -- the hook's spool call, or a drain that exits immediately
 on a held lock -- finished before it was ever renamed, so it showed up in
 ps/top as the interpreter and script paths.
 
-This module is the entry point instead. It imports only `proctitle` (which
-pulls `arcaneum.paths` and nothing heavy), sets the title, and only then
+This module is the entry point instead. It imports only `proctitle`, which
+pulls nothing beyond the standard library, sets the title, and only then
 imports `main`. Keep it free of heavy imports: anything added here is paid
 before the title lands, which defeats the point.
 """

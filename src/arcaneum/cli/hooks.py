@@ -279,41 +279,30 @@ def render_block(corpus: str, hook: str, repo: Path, *, spawn: bool = True) -> s
         #      ~1.1s of interpreter startup to discover the lock is taken, run
         #      concurrently with the worker that is actually embedding. The
         #      entry is already spooled, so the running worker picks it up on
-        #      its next loop. flock -n is the same primitive the worker takes,
-        #      so the answer is authoritative rather than a guess.
-        #   2. Otherwise debounce: git fires hooks faster than a worker can
-        #      start, so a burst would still stampede. Sleeping briefly in the
-        #      background lets the commits coalesce into one worker.
+        #      its next loop.
+        #   2. Otherwise debounce: git runs each hook in its own shell, so a
+        #      burst would still stampede past gate 1 if every invocation
+        #      spawned at once. Sleep first, then re-check.
+        #
+        # The probe is `arc corpus hook probe-lock`, not flock(1): stock macOS
+        # ships no flock, and macOS is where this waste was measured. Gating on
+        # `command -v flock` would silently disable both gates there.
         #
         # The launchd/systemd watcher (`hook install --service`) is the safety
-        # net for the narrow race where a worker exits between our check and
+        # net for the narrow race where a worker exits between the probe and
         # its own final spool read.
-        spawn_lines = """    _arc_lock="$_arc_data/spool/$_arc_corpus/worker.lock"
-    if command -v flock >/dev/null 2>&1 && [ -e "$_arc_lock" ]; then
-        # flock -n exits non-zero when a worker holds it: nothing to do.
-        flock -n "$_arc_lock" true >/dev/null 2>&1 || return 0
-    fi
+        spawn_lines = """    "$_arc_bin" corpus hook probe-lock "$_arc_corpus" >/dev/null 2>&1 && return 0
 
-    _arc_spawn_cmd="sleep $_arc_debounce; \\
-        if command -v flock >/dev/null 2>&1 && [ -e '$_arc_lock' ]; then \\
-            flock -n '$_arc_lock' true >/dev/null 2>&1 || exit 0; \\
-        fi; \\
-        '$_arc_bin' corpus sync '$_arc_corpus' --drain-spool >>'$_arc_log' 2>&1"
-
-    _arc_spawn() {
-        sleep "$_arc_debounce"
-        # Re-check after the debounce: a worker may have started meanwhile,
-        # or another commit's hook may have won the race to spawn one.
-        if command -v flock >/dev/null 2>&1 && [ -e "$_arc_lock" ]; then
-            flock -n "$_arc_lock" true >/dev/null 2>&1 || return 0
-        fi
-        "$_arc_bin" corpus sync "$_arc_corpus" --drain-spool >>"$_arc_log" 2>&1
-    }
+    # One body for both branches: setsid gets a fresh shell that inherits no
+    # functions, so it re-runs this script rather than a copy of the logic.
+    _arc_spawn_body="sleep $_arc_debounce; \\
+'$_arc_bin' corpus hook probe-lock '$_arc_corpus' >/dev/null 2>&1 && exit 0; \\
+'$_arc_bin' corpus sync '$_arc_corpus' --drain-spool >>'$_arc_log' 2>&1"
 
     if command -v setsid >/dev/null 2>&1; then
-        setsid sh -c "$_arc_spawn_cmd" >/dev/null 2>&1 < /dev/null &
+        setsid sh -c "$_arc_spawn_body" >/dev/null 2>&1 < /dev/null &
     else
-        _arc_spawn >/dev/null 2>&1 < /dev/null &
+        sh -c "$_arc_spawn_body" >/dev/null 2>&1 < /dev/null &
     fi"""
     else:
         # --no-spawn: queue only. Used by tests and by anyone who prefers to

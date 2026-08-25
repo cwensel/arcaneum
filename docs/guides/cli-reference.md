@@ -305,7 +305,11 @@ is not something that should happen by pressing Enter.
 - `--repo PATH`: Repository to install into (default: current directory)
 - `--hook NAME`: Hook point — `post-commit` (default), `post-merge`,
   `post-checkout`, or `post-rewrite`. Install the others so pulls, checkouts,
-  and rebases stay in sync too.
+  and rebases stay in sync too. Each reads the range git actually hands it:
+  `post-checkout` diffs the old and new SHAs it is passed (skipping
+  `git checkout -- <file>`, which moves content with no commit range), and
+  `post-rewrite` reads the old/new SHA pairs from stdin so every commit a
+  rebase rewrote is covered.
 - `--no-spawn`: Queue touched paths but start no worker. Drain on your own
   schedule with `arc corpus sync <name> --drain-spool`, or use `--service`.
 - `--yes` / `-y`: Take the defaults instead of prompting, for scripts and

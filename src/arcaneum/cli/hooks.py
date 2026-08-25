@@ -40,13 +40,18 @@ SHEBANG = "#!/bin/sh"
 # a failing pre-hook aborts the git operation — which this must never do.
 SUPPORTED_HOOKS = ("post-commit", "post-merge", "post-checkout", "post-rewrite")
 
-# The revision each hook point should diff. post-merge and post-rewrite can
-# move HEAD by several commits, so they span from ORIG_HEAD when it exists.
+# What each hook point should diff. Where git hands the hook the SHAs that
+# moved, use them: guessing with ORIG_HEAD..HEAD under-reports a branch switch
+# spanning several commits and misreports a rebase entirely (ORIG_HEAD there
+# points at the pre-rebase tip, not at what was rewritten).
+#
+#   post-commit    no arguments;        HEAD is the new commit
+#   post-merge     $1=squash flag;      ORIG_HEAD..HEAD is the range that moved
+#   post-checkout  $1=old $2=new $3=branch-flag (0 for `git checkout -- file`)
+#   post-rewrite   $1=reason;           old/new SHA pairs arrive on stdin
 _HOOK_REVISIONS = {
     "post-commit": "HEAD",
     "post-merge": "ORIG_HEAD..HEAD",
-    "post-checkout": "ORIG_HEAD..HEAD",
-    "post-rewrite": "ORIG_HEAD..HEAD",
 }
 
 
@@ -192,6 +197,42 @@ def repo_root(repo: Union[str, Path]) -> Path:
     return Path(result.stdout.strip())
 
 
+def _render_driver(hook: str) -> str:
+    """Shell that turns this hook's arguments into revisions to queue.
+
+    Each hook point learns what moved differently, so each gets its own reader
+    rather than a single guess that is wrong for half of them.
+    """
+    if hook == "post-checkout":
+        # $1=old $2=new $3=1 for a branch switch, 0 for `git checkout -- file`.
+        # A file checkout changes working-tree content with no commit range to
+        # diff, so there is nothing to queue; the next commit picks it up.
+        return """    [ "$3" = "1" ] || return 0
+    [ "$1" != "$2" ] || return 0
+    _arc_spool "$1..$2"
+"""
+
+    if hook == "post-rewrite":
+        # Old/new SHA pairs arrive on stdin, one per rewritten commit. Queue
+        # each new SHA: a rebase rewrites several, and ORIG_HEAD points at the
+        # pre-rebase tip rather than at any of them.
+        return """    while read -r _arc_old _arc_new _arc_rest; do
+        [ -n "$_arc_new" ] || continue
+        _arc_spool "$_arc_new"
+    done"""
+
+    revision = _HOOK_REVISIONS.get(hook, "HEAD")
+    if "ORIG_HEAD" in revision:
+        # ORIG_HEAD is absent on a fresh clone's first merge; fall back to HEAD.
+        return f"""    _arc_rev='{revision}'
+    git -C "$_arc_repo" rev-parse --verify --quiet ORIG_HEAD >/dev/null 2>&1 \\
+        || _arc_rev='HEAD'
+    _arc_spool "$_arc_rev"
+"""
+
+    return f"""    _arc_spool '{revision}'"""
+
+
 def render_block(corpus: str, hook: str, repo: Path, *, spawn: bool = True) -> str:
     """Render the guarded shell block for one corpus in one hook script.
 
@@ -200,7 +241,6 @@ def render_block(corpus: str, hook: str, repo: Path, *, spawn: bool = True) -> s
     returns immediately, and every failure mode is swallowed — a hook that
     exits non-zero would break the user's git workflow.
     """
-    revision = _HOOK_REVISIONS.get(hook, "HEAD")
     start = BLOCK_START.format(corpus=corpus)
     end = BLOCK_END.format(corpus=corpus)
 
@@ -224,34 +264,33 @@ def render_block(corpus: str, hook: str, repo: Path, *, spawn: bool = True) -> s
         # drain on a schedule or via the OS watcher (`--service`).
         spawn_lines = "    : # --no-spawn: leave draining to the service or a manual run"
 
+    driver = _render_driver(hook)
+
     return f"""{start}
 # Managed by `arc corpus hook`. Edit via that command, not by hand.
 # Queues the paths this operation touched, then drains them in the background.
 # Every path exits 0: a hook must never fail the git command that ran it.
 _arc_corpus='{corpus_sh}'
 _arc_repo='{repo_sh}'
-_arc_rev='{revision}'
 _arc_log="${{XDG_STATE_HOME:-$HOME/.local/state}}/arcaneum/hook.log"
+
+# Queue one revision or range. Called once per range the hook was told about.
+_arc_spool() {{
+    [ -n "$1" ] || return 0
+    "$_arc_bin" corpus hook spool "$_arc_corpus" \\
+        --repo "$_arc_repo" --changed-since "$1" >>"$_arc_log" 2>&1 || return 0
+}}
 
 _arc_sync() {{
     _arc_bin=$(command -v arc 2>/dev/null) || return 0
     mkdir -p "$(dirname "$_arc_log")" 2>/dev/null || true
 
-    # ORIG_HEAD is absent on a fresh clone's first merge; fall back to HEAD.
-    case "$_arc_rev" in
-        *ORIG_HEAD*)
-            git -C "$_arc_repo" rev-parse --verify --quiet ORIG_HEAD >/dev/null 2>&1 \\
-                || _arc_rev='HEAD'
-            ;;
-    esac
-
-    "$_arc_bin" corpus hook spool "$_arc_corpus" \\
-        --repo "$_arc_repo" --changed-since "$_arc_rev" >>"$_arc_log" 2>&1 || return 0
+{driver}
 
 {spawn_lines}
 }}
 
-_arc_sync || true
+_arc_sync "$@" || true
 {end}
 """
 

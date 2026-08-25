@@ -200,3 +200,47 @@ def test_worker_lock_is_per_corpus(isolated_spool):
 def test_unsafe_corpus_name_cannot_escape_the_spool_root(isolated_spool):
     target = spool.corpus_spool_dir("../../etc")
     assert spool.spool_root() in target.parents
+
+
+# --- entries survive a failed drain (roborev 6104) ----------------------------
+
+
+def test_drain_batch_can_defer_removing_entries(isolated_spool):
+    """A caller that may fail needs the entries left on disk until it succeeds."""
+    spool.write_entry("Docs", "/repo", changed=["/repo/a.py"], removed=[])
+
+    batch, entries = spool.drain_batch("Docs", consume=False)
+
+    assert batch.changed == ["/repo/a.py"]
+    assert entries, "the caller needs the paths to release later"
+    assert spool.has_pending("Docs"), "entries must survive until explicitly released"
+
+
+def test_release_entries_removes_them(isolated_spool):
+    spool.write_entry("Docs", "/repo", changed=["/repo/a.py"], removed=[])
+    _, entries = spool.drain_batch("Docs", consume=False)
+
+    spool.release_entries(entries)
+
+    assert not spool.has_pending("Docs")
+
+
+def test_release_entries_tolerates_an_already_removed_file(isolated_spool):
+    spool.write_entry("Docs", "/repo", changed=["/repo/a.py"], removed=[])
+    _, entries = spool.drain_batch("Docs", consume=False)
+    entries[0].unlink()
+
+    spool.release_entries(entries)  # must not raise
+
+
+def test_deferred_drain_still_discards_malformed_entries(isolated_spool):
+    """A malformed entry can never succeed; keeping it would loop forever."""
+    bad = spool.corpus_spool_dir("Docs") / "bad.json"
+    bad.parent.mkdir(parents=True, exist_ok=True)
+    bad.write_text("{not json")
+
+    batch, entries = spool.drain_batch("Docs", consume=False)
+
+    assert not batch
+    assert not bad.exists()
+    assert entries == []

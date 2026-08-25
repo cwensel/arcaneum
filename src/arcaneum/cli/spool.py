@@ -127,17 +127,33 @@ def has_pending(corpus: str) -> bool:
     return bool(_entry_paths(corpus))
 
 
-def drain_batch(corpus: str) -> SpoolBatch:
-    """Consume every pending entry for `corpus` and return their union.
+def drain_batch(corpus: str, *, consume: bool = True):
+    """Read every pending entry for `corpus` and return their union.
 
-    Entries are removed as they are read. A path touched by several commits
-    collapses to a single decision, with the newest entry winning — so a file
-    added then deleted is not indexed, and one deleted then restored is.
+    A path touched by several commits collapses to a single decision, with the
+    newest entry winning — so a file added then deleted is not indexed, and one
+    deleted then restored is.
 
-    Entries that cannot be parsed are discarded rather than retried forever;
-    the next commit re-reports the paths anyway.
+    Entries that cannot be parsed are always discarded rather than retried
+    forever: a malformed entry can never succeed, so keeping it would wedge the
+    corpus. The next commit re-reports those paths anyway.
+
+    Args:
+        corpus: Corpus whose spool to read.
+        consume: When True (default) entries are removed as they are read.
+            Pass False when the caller may fail — indexing the batch can throw
+            (services down, model load failure, OOM), and removing the entries
+            up front would drop that work permanently with no retry. The caller
+            then passes the returned entry paths to `release_entries` only once
+            the batch has been indexed successfully.
+
+    Returns:
+        A SpoolBatch when ``consume`` is True; otherwise a
+        ``(SpoolBatch, list[Path])`` pair of the union and the entries still
+        on disk.
     """
     verdicts: Dict[str, bool] = {}  # path -> is_removed
+    pending: List[Path] = []
 
     for entry_path in _entry_paths(corpus):
         try:
@@ -162,12 +178,22 @@ def drain_batch(corpus: str) -> SpoolBatch:
         for path in removed:
             verdicts[str(path)] = True
 
-        _unlink_quietly(entry_path)
+        if consume:
+            _unlink_quietly(entry_path)
+        else:
+            pending.append(entry_path)
 
-    return SpoolBatch(
+    batch = SpoolBatch(
         changed=[p for p, removed in verdicts.items() if not removed],
         removed=[p for p, removed in verdicts.items() if removed],
     )
+    return batch if consume else (batch, pending)
+
+
+def release_entries(entries: Iterable[Path]) -> None:
+    """Remove spool entries a caller has finished with. Never raises."""
+    for entry_path in entries:
+        _unlink_quietly(entry_path)
 
 
 def _unlink_quietly(path: Path) -> None:

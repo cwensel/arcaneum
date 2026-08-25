@@ -83,8 +83,10 @@ def infer_corpus_type(repo: Union[str, Path]) -> str:
     """Guess whether a tree is best indexed as code, markdown, or pdf.
 
     Counts file extensions and picks the most common category. Dot-directories
-    are skipped: .git alone holds far more files than most working trees and
-    would otherwise decide every answer.
+    are pruned from the walk, not merely excluded from the count: .git or a
+    vendored .venv holds far more files than most working trees, and walking
+    one in full would both skew nothing and cost everything — the sample limit
+    would bound counted work while traversal ran on.
 
     Falls back to "code", the type whose chunker degrades most gracefully on
     unexpected input.
@@ -95,22 +97,23 @@ def infer_corpus_type(repo: Union[str, Path]) -> str:
     counts: Counter = Counter()
     seen = 0
 
-    for path in root.rglob("*"):
-        if seen >= _INFERENCE_SAMPLE_LIMIT:
-            break
-        # relative_to is safe: rglob only yields descendants of root.
-        if any(part.startswith(".") for part in path.relative_to(root).parts):
-            continue
-        if not path.is_file():
-            continue
-        seen += 1
-        suffix = path.suffix.lower()
-        if suffix in MARKDOWN_EXTENSIONS:
-            counts["markdown"] += 1
-        elif suffix in _PDF_EXTENSIONS:
-            counts["pdf"] += 1
-        elif suffix in _CODE_EXTENSIONS:
-            counts["code"] += 1
+    for dirpath, dirnames, filenames in os.walk(root):
+        # Mutating dirnames in place is what prunes the walk.
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+
+        for filename in filenames:
+            if seen >= _INFERENCE_SAMPLE_LIMIT:
+                return counts.most_common(1)[0][0] if counts else "code"
+            if filename.startswith("."):
+                continue
+            seen += 1
+            suffix = Path(filename).suffix.lower()
+            if suffix in MARKDOWN_EXTENSIONS:
+                counts["markdown"] += 1
+            elif suffix in _PDF_EXTENSIONS:
+                counts["pdf"] += 1
+            elif suffix in _CODE_EXTENSIONS:
+                counts["code"] += 1
 
     if not counts:
         return "code"

@@ -195,3 +195,52 @@ def test_systemd_service_captures_output_too(isolated):
     # journald captures a systemd unit's output by default; be explicit so the
     # record lands in the same file a user is told to read.
     assert "hook.log" in unit
+
+
+# --- a failed batch must not lose the queued work (roborev 6104) --------------
+
+
+def test_a_failed_batch_leaves_the_work_spooled(isolated, repo):
+    """Transient backend failures must not permanently drop queued paths."""
+    spool.write_entry("Docs", repo, changed=[str(repo / "a.py")], removed=[])
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("qdrant unreachable")
+
+    with pytest.raises(RuntimeError):
+        _run(["corpus", "sync", "Docs", "--drain-spool"], boom)
+
+    assert spool.has_pending("Docs"), "the batch must survive for the next drain"
+
+
+def test_the_retained_work_is_indexed_on_the_next_drain(isolated, repo):
+    spool.write_entry("Docs", repo, changed=[str(repo / "a.py")], removed=[])
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("transient")
+
+    with pytest.raises(RuntimeError):
+        _run(["corpus", "sync", "Docs", "--drain-spool"], boom)
+
+    seen = []
+    _run(["corpus", "sync", "Docs", "--drain-spool"], lambda c, p, *a, **k: seen.append(list(p)))
+
+    assert seen == [[str(repo / "a.py")]]
+    assert not spool.has_pending("Docs")
+
+
+def test_a_batch_that_exits_also_retains_its_work(isolated, repo):
+    spool.write_entry("Docs", repo, changed=[str(repo / "a.py")], removed=[])
+
+    def bail(*args, **kwargs):
+        raise SystemExit(1)
+
+    result = _run(["corpus", "sync", "Docs", "--drain-spool"], bail)
+    assert result.exit_code != 0
+    assert spool.has_pending("Docs")
+
+
+def test_a_successful_batch_still_clears_the_spool(isolated, repo):
+    spool.write_entry("Docs", repo, changed=[str(repo / "a.py")], removed=[])
+    _run(["corpus", "sync", "Docs", "--drain-spool"], lambda *a, **k: None)
+    assert not spool.has_pending("Docs")

@@ -8,6 +8,7 @@ alone would never do.
 
 from __future__ import annotations
 
+import os
 import platform
 import subprocess
 from pathlib import Path
@@ -283,3 +284,95 @@ def test_bare_install_outside_a_repo_errors_before_prompting(tmp_path, monkeypat
     monkeypatch.chdir(tmp_path)
     result = CliRunner().invoke(cli, ["corpus", "hook", "install"], input="1\n")
     assert result.exit_code != 0
+
+
+# --- --yes must not reopen the silent-wrong-corpus hazard (roborev 6105) ------
+
+
+def test_yes_with_many_corpora_refuses_to_guess(repo):
+    """--yes must not pick the alphabetically-first of several unrelated corpora."""
+    with patch("arcaneum.cli.hooks.list_corpus_names", return_value=["Alpha", "Beta"]):
+        result = CliRunner().invoke(cli, ["corpus", "hook", "install", "--yes"])
+
+    assert result.exit_code != 0
+    assert not _hook(repo).exists()
+    # The error should tell the user how to proceed.
+    assert "hook install" in result.output
+
+
+def test_yes_auto_picks_when_exactly_one_corpus_exists(repo):
+    """One corpus is unambiguous, so taking it is a safe default."""
+    with patch("arcaneum.cli.hooks.list_corpus_names", return_value=["Solo"]):
+        result = CliRunner().invoke(cli, ["corpus", "hook", "install", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert hooks.BLOCK_START.format(corpus="Solo") in _hook(repo).read_text()
+
+
+def test_yes_with_no_corpora_errors(repo):
+    with patch("arcaneum.cli.hooks.list_corpus_names", return_value=[]):
+        result = CliRunner().invoke(cli, ["corpus", "hook", "install", "--yes"])
+    assert result.exit_code != 0
+
+
+def test_yes_installs_the_suggested_hook_points(repo):
+    _git(repo, "remote", "add", "origin", "https://example.com/r.git")
+    with patch("arcaneum.cli.hooks.list_corpus_names", return_value=["Solo"]):
+        result = CliRunner().invoke(cli, ["corpus", "hook", "install", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert _hook(repo, "post-commit").exists()
+    assert _hook(repo, "post-merge").exists()
+
+
+# --- interactive hook-point validation (roborev 6105) ------------------------
+
+
+def test_a_typo_in_hook_points_installs_nothing(repo):
+    """Validate before installing, so a bad name cannot half-install the set."""
+    result = _invoke(
+        ["corpus", "hook", "install"],
+        corpora=["Docs"],
+        input_text="1\npost-commit,post-comit\nn\n",
+    )
+
+    assert result.exit_code != 0
+    assert not _hook(repo, "post-commit").exists(), "must fail before writing anything"
+
+
+def test_multi_hook_success_message_lists_every_path(repo):
+    """Reporting one path while claiming several hooks is misleading."""
+    _git(repo, "remote", "add", "origin", "https://example.com/r.git")
+    result = _invoke(["corpus", "hook", "install"], corpora=["Docs"], input_text="1\n\nn\n")
+
+    assert result.exit_code == 0, result.output
+    assert "post-commit" in result.output
+    assert "post-merge" in result.output
+
+
+def test_inference_does_not_walk_into_dot_directories(tmp_path):
+    """Pruning, not filtering: a big .venv must not be traversed at all.
+
+    Filtering only the count still walks every vendored file, so the sample
+    limit bounds counted work rather than total work (roborev 6105).
+    """
+    root = tmp_path / "r"
+    root.mkdir()
+    (root / "a.md").write_text("x\n")
+    heavy = root / ".venv" / "lib"
+    heavy.mkdir(parents=True)
+    for i in range(200):
+        (heavy / f"{i}.py").write_text("x\n")
+
+    visited = []
+    real_walk = os.walk
+
+    def counting_walk(top, *args, **kwargs):
+        for dirpath, dirnames, filenames in real_walk(top, *args, **kwargs):
+            visited.append(dirpath)
+            yield dirpath, dirnames, filenames
+
+    with patch("arcaneum.cli.hooks.os.walk", counting_walk):
+        assert hooks.infer_corpus_type(root) == "markdown"
+
+    assert not any(".venv" in v for v in visited), "dot-dirs must be pruned from the walk"

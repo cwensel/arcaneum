@@ -236,3 +236,51 @@ def test_delete_does_not_hold_the_lock_across_the_confirm_prompt(isolated_locks)
 
     assert result.exit_code == 0, result.output
     qdrant.delete_collection.assert_not_called()
+
+
+# --- delete needs a way out of the wait (roborev 6101) ------------------------
+
+
+def test_delete_no_wait_fails_fast_when_locked(isolated_locks):
+    qdrant = MagicMock()
+    qdrant.get_collection.return_value = object()
+    meili = MagicMock()
+    meili.health_check.return_value = False
+
+    with corpus_lock.acquire_corpus_lock("Docs"):
+        held = dict(corpus_lock._held)
+        corpus_lock._held.clear()
+        try:
+            with patch("arcaneum.cli.corpus.create_qdrant_client", return_value=qdrant):
+                with patch("arcaneum.cli.corpus.create_meili_client", return_value=meili):
+                    result = CliRunner().invoke(
+                        cli, ["corpus", "delete", "Docs", "--confirm", "--no-wait"]
+                    )
+        finally:
+            corpus_lock._held.update(held)
+
+    assert result.exit_code != 0
+    qdrant.delete_collection.assert_not_called()
+
+
+def test_delete_lock_timeout_is_honored(isolated_locks):
+    qdrant = MagicMock()
+    qdrant.get_collection.return_value = object()
+    meili = MagicMock()
+    meili.health_check.return_value = False
+
+    with corpus_lock.acquire_corpus_lock("Docs"):
+        held = dict(corpus_lock._held)
+        corpus_lock._held.clear()
+        try:
+            with patch("arcaneum.cli.corpus.create_qdrant_client", return_value=qdrant):
+                with patch("arcaneum.cli.corpus.create_meili_client", return_value=meili):
+                    result = CliRunner().invoke(
+                        cli,
+                        ["corpus", "delete", "Docs", "--confirm", "--lock-timeout", "0.3"],
+                    )
+        finally:
+            corpus_lock._held.update(held)
+
+    assert result.exit_code != 0
+    qdrant.delete_collection.assert_not_called()

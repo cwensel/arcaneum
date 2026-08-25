@@ -739,13 +739,21 @@ def list_corpora_command(details: bool, output_json: bool):
         sys.exit(1)
 
 
-def delete_corpus_command(name: str, confirm: bool, output_json: bool):
+def delete_corpus_command(
+    name: str,
+    confirm: bool,
+    output_json: bool,
+    lock_wait: bool = True,
+    lock_timeout: float | None = None,
+):
     """Delete both Qdrant collection and MeiliSearch index for a corpus.
 
     Args:
         name: Corpus name (used for both collection and index)
         confirm: Skip confirmation prompt
         output_json: If True, output JSON format
+        lock_wait: If False, fail immediately when the corpus lock is held
+        lock_timeout: Seconds to wait for the lock (None = default)
     """
     import click
 
@@ -799,7 +807,9 @@ def delete_corpus_command(name: str, confirm: bool, output_json: bool):
         # would block a running sync on a human answering y/n. From here on the
         # work is destructive, so an in-flight sync must not interleave with it
         # (kata htmw).
-        with acquire_corpus_lock(name, quiet=output_json):
+        with acquire_corpus_lock(
+            name, wait=lock_wait, timeout=lock_timeout, quiet=output_json
+        ):
             # Delete Qdrant collection
             if qdrant_exists:
                 try:

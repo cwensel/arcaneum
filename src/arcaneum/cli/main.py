@@ -1099,11 +1099,25 @@ def update_corpus(name, description, clear_description, output_json):
 @click.argument("name")
 @click.option("--confirm", is_flag=True, help="Skip confirmation prompt")
 @click.option("--json", "output_json", is_flag=True, help="Output JSON format")
-def delete_corpus(name, confirm, output_json):
+@click.option(
+    "--no-wait",
+    is_flag=True,
+    help="Fail immediately if another sync of this corpus is running, instead "
+    "of queueing behind it",
+)
+@click.option(
+    "--lock-timeout",
+    type=float,
+    default=None,
+    help="Seconds to wait for the corpus write lock before giving up (default: 600)",
+)
+def delete_corpus(name, confirm, output_json, no_wait, lock_timeout):
     """Delete both collection and index for a corpus."""
     from arcaneum.cli.corpus import delete_corpus_command
 
-    delete_corpus_command(name, confirm, output_json)
+    delete_corpus_command(
+        name, confirm, output_json, lock_wait=not no_wait, lock_timeout=lock_timeout
+    )
 
 
 def _drain_corpus_spool(corpus, *, max_batches, sync_kwargs):
@@ -1136,8 +1150,12 @@ def _drain_corpus_spool(corpus, *, max_batches, sync_kwargs):
     total_removed = 0
     try:
         while max_batches is None or batches < max_batches:
-            batch = spool.drain_batch(corpus)
+            # consume=False: indexing can fail (services down, model load
+            # failure, OOM). Removing the entries up front would drop that work
+            # permanently, since only a fresh commit re-reports those paths.
+            batch, entries = spool.drain_batch(corpus, consume=False)
             if not batch:
+                spool.release_entries(entries)
                 break
 
             batches += 1
@@ -1148,6 +1166,7 @@ def _drain_corpus_spool(corpus, *, max_batches, sync_kwargs):
             total_removed += len(batch.removed)
 
             if not changed and not batch.removed:
+                spool.release_entries(entries)
                 continue
 
             # Log per batch, and log failures before they propagate: once the
@@ -1172,6 +1191,8 @@ def _drain_corpus_spool(corpus, *, max_batches, sync_kwargs):
                     f"{type(exc).__name__}: {detail}"
                 )
                 raise
+            # Indexed cleanly: only now is it safe to forget the entries.
+            spool.release_entries(entries)
             hook_log.write(
                 f"[{corpus}] batch {batches} ok: "
                 f"{len(changed)} indexed, {len(batch.removed)} removed"
@@ -1554,6 +1575,14 @@ def _resolve_corpus_interactively(repo, assume_yes):
                 "No corpora exist and --yes cannot name one. "
                 "Create one first: arc corpus create <name> --type <type>"
             )
+        if len(existing) > 1:
+            # Picking the alphabetically-first of several unrelated corpora is
+            # exactly the silent-wrong-corpus hazard the no-default picker
+            # exists to prevent; --yes must not reopen it.
+            raise click.UsageError(
+                f"{len(existing)} corpora exist, so --yes cannot choose one. "
+                "Name it: arc corpus hook install <corpus> --yes"
+            )
         click.echo(f"Using corpus '{existing[0]}'.")
         return existing[0]
 
@@ -1659,9 +1688,19 @@ def corpus_hook_install(
             )
             hook_points = [part.strip() for part in answer.split(",") if part.strip()]
 
-    hook_path = None
-    for point in hook_points:
-        hook_path = hook_utils.install(corpus, repo, point, spawn=not no_spawn)
+        # Validate the whole set first: installing as we go would leave a
+        # partially-installed hook set behind when a later name is a typo.
+        unknown = [p for p in hook_points if p not in hook_utils.SUPPORTED_HOOKS]
+        if unknown:
+            raise click.UsageError(
+                f"Unknown hook point(s): {', '.join(unknown)}. "
+                f"Choose from: {', '.join(hook_utils.SUPPORTED_HOOKS)}"
+            )
+
+    installed_paths = [
+        hook_utils.install(corpus, repo, point, spawn=not no_spawn) for point in hook_points
+    ]
+    hook_path = installed_paths[-1] if installed_paths else None
 
     service_result = None
     if service:
@@ -1682,9 +1721,12 @@ def corpus_hook_install(
         )
         return
 
-    click.echo(
-        f"Installed {', '.join(hook_points)} hook(s) for corpus '{corpus}': {hook_path}"
-    )
+    if len(installed_paths) == 1:
+        click.echo(f"Installed {hook_points[0]} hook for corpus '{corpus}': {hook_path}")
+    else:
+        click.echo(f"Installed {len(installed_paths)} hooks for corpus '{corpus}':")
+        for point, path in zip(hook_points, installed_paths):
+            click.echo(f"  {point}: {path}")
     if service_result:
         click.echo(f"Registered spool watcher: {service_result}")
     if no_spawn:

@@ -705,6 +705,10 @@ arc corpus delete MyCorpus --confirm --json
 - Prompts for confirmation before deleting (unless `--confirm` is passed)
 - Deletes both systems; if one fails, continues with the other
 - Reports partial deletion if only one system was deleted
+- Takes the corpus write lock before deleting (but not across the confirmation
+  prompt, so it never blocks a running sync on a human). `--no-wait` fails
+  immediately when a sync holds the lock, and `--lock-timeout <seconds>` bounds
+  the wait (default: 600).
 
 ## Collection Management Examples
 

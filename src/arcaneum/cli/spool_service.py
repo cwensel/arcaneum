@@ -124,8 +124,11 @@ def systemd_service_unit_path(corpus: str) -> Path:
 
 
 def render_systemd_path_unit(corpus: str) -> str:
+    # Sanitized in the free-text field too: a name carrying a newline could
+    # otherwise inject a directive into the unit file.
+    safe = _safe_name(corpus)
     return f"""[Unit]
-Description=Watch the Arcaneum sync spool for corpus {corpus}
+Description=Watch the Arcaneum sync spool for corpus {safe}
 
 [Path]
 DirectoryNotEmpty={spool.corpus_spool_dir(corpus)}
@@ -139,9 +142,10 @@ WantedBy=default.target
 def render_systemd_service_unit(corpus: str, *, arc_bin: str) -> str:
     # systemd splits ExecStart on whitespace; quote the corpus name so one
     # containing spaces stays a single argument.
-    quoted = corpus.replace('"', '\\"')
+    quoted = corpus.replace('"', '\\"').replace("\n", " ").replace("\r", " ")
+    safe = _safe_name(corpus)
     return f"""[Unit]
-Description=Drain the Arcaneum sync spool for corpus {corpus}
+Description=Drain the Arcaneum sync spool for corpus {safe}
 
 [Service]
 Type=oneshot

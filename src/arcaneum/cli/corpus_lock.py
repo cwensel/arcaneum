@@ -88,7 +88,12 @@ def read_lock_holder(lock_path: Path) -> Optional[Dict[str, Any]]:
     """Read the pid/start-time record the holder wrote, or None if unreadable.
 
     Purely diagnostic: the flock itself is the authority on who holds the lock.
-    The file may be empty if a holder is between `flock` and its write.
+    The record can lag reality in two ways, both harmless because nothing
+    depends on it for correctness:
+
+    - Empty, when a holder is between its `flock` grant and its write.
+    - Stale, naming the *previous* holder: a new holder writes its record only
+      after acquiring, so a waiter reading in that window sees the old pid.
     """
     try:
         raw = lock_path.read_text().strip()

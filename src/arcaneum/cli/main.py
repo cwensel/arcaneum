@@ -1846,25 +1846,6 @@ def corpus_hook_status(repo, output_json):
         click.echo(f"\nCorpora with queued work: {', '.join(pending)}")
 
 
-@corpus_hook.command("probe-lock", hidden=True)
-@click.argument("corpus")
-def corpus_hook_probe_lock(corpus):
-    """Exit 0 if a drain worker holds CORPUS's lock, 1 otherwise.
-
-    The installed hook calls this to decide whether spawning a worker would be
-    wasted. flock(1) would be the obvious tool, but stock macOS does not ship
-    it -- and macOS is where the wasted-spawn problem was measured -- so the
-    check lives here, using the same fcntl lock the worker takes.
-    """
-    from arcaneum.cli import spool
-
-    fd = spool.try_acquire_worker_lock(corpus)
-    if fd is None:
-        raise SystemExit(0)  # held by someone else
-    spool.release_worker_lock(fd)
-    raise SystemExit(1)  # free
-
-
 @corpus_hook.command("spool", hidden=True)
 @click.argument("corpus")
 @click.option("--repo", default=".", type=click.Path(exists=True))

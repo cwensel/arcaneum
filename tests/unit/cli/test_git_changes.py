@@ -26,7 +26,7 @@ def _git(repo: Path, *args: str) -> str:
 def repo(tmp_path):
     root = tmp_path / "repo"
     root.mkdir()
-    _git(root, "init", "-q")
+    _git(root, "init", "-q", "-b", "main")
     _git(root, "config", "user.email", "test@example.com")
     _git(root, "config", "user.name", "Test")
     (root / "a.py").write_text("print('a')\n")

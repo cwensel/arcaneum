@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import platform
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -235,13 +236,19 @@ def test_gate_holds_without_flock(isolated, repo, tmp_path, monkeypatch):
     hook_script = repo / ".git" / "hooks" / "post-commit"
     bin_dir = tmp_path / "bin"
     marker = tmp_path / "calls.txt"
-    _fake_arc(bin_dir, marker, held=True)
+    _fake_arc(bin_dir, marker)
     env = _env_without_flock(tmp_path, bin_dir)
     assert not (bin_dir / "flock").exists()
 
-    result = _run_hook(hook_script, env)
-    # Wait past the debounce so a deferred spawn would have landed.
-    _wait_past_debounce()
+    # Hold the real lock: the gate probes it with the installed probe script,
+    # not through the fake arc.
+    lock = spool.try_acquire_worker_lock("Docs")
+    try:
+        result = _run_hook(hook_script, env)
+        # Wait past the debounce so a deferred spawn would have landed.
+        _wait_past_debounce()
+    finally:
+        spool.release_worker_lock(lock)
 
     assert result.returncode == 0, result.stderr
     calls = marker.read_text() if marker.exists() else ""
@@ -274,14 +281,18 @@ def test_the_nohup_fallback_path_is_gated_too(isolated, repo, tmp_path):
     bin_dir = tmp_path / "bin"
     marker = tmp_path / "calls.txt"
     _fake_arc(bin_dir, marker)
-    # A PATH with neither setsid nor flock forces the fallback spawn path.
+    # A PATH without setsid forces the fallback spawn branch. Everything else
+    # the hook needs must still resolve, or it would fail early and the
+    # assertion would pass for the wrong reason.
     env = _env_without_flock(tmp_path, bin_dir)
     shim = tmp_path / "noshim"
     shim.mkdir()
-    for tool in ("sh", "git", "mkdir", "dirname", "sleep", "command"):
-        src = Path("/bin") / tool
-        if src.exists():
-            (shim / tool).symlink_to(src)
+    for tool in ("sh", "git", "mkdir", "dirname", "sleep", "cat", "rm", "python3"):
+        for root in ("/bin", "/usr/bin"):
+            src = Path(root) / tool
+            if src.exists():
+                (shim / tool).symlink_to(src)
+                break
     env["PATH"] = f"{bin_dir}:{shim}"
 
     lock = spool.try_acquire_worker_lock("Docs")
@@ -298,36 +309,102 @@ def test_the_nohup_fallback_path_is_gated_too(isolated, repo, tmp_path):
 # --- the lock probe must not depend on flock(1) (roborev 6137) ---------------
 
 
-def test_probe_lock_reports_free(isolated):
-    from click.testing import CliRunner
+def test_probe_script_reports_free(isolated, tmp_path):
+    lock = tmp_path / "worker.lock"
+    lock.touch()
+    script = hooks.write_probe_script()
+    r = subprocess.run([sys.executable, str(script), str(lock)], capture_output=True)
+    assert r.returncode == 1, "exit 1 == not held"
 
-    from arcaneum.cli.main import cli
 
-    result = CliRunner().invoke(cli, ["corpus", "hook", "probe-lock", "Docs"])
-    assert result.exit_code == 1, "exit 1 == not held"
-
-
-def test_probe_lock_reports_held(isolated):
-    from click.testing import CliRunner
-
-    from arcaneum.cli.main import cli
-
-    lock = spool.try_acquire_worker_lock("Docs")
+def test_probe_script_reports_held(isolated, tmp_path):
+    """A second flock on a separate fd is denied by the kernel, same process or not."""
+    script = hooks.write_probe_script()
+    lock_path = spool.worker_lock_path("Docs")
+    fd = spool.try_acquire_worker_lock("Docs")
     try:
-        # Clear the in-process record so the probe contends like a real
-        # separate process would; the flock itself is still held.
-        held = dict(spool.__dict__.get("_held", {})) if hasattr(spool, "_held") else None
-        result = CliRunner().invoke(cli, ["corpus", "hook", "probe-lock", "Docs"])
+        r = subprocess.run(
+            [sys.executable, str(script), str(lock_path)], capture_output=True
+        )
     finally:
-        spool.release_worker_lock(lock)
+        spool.release_worker_lock(fd)
+    assert r.returncode == 0, "exit 0 == held by a worker"
 
-    assert result.exit_code == 0, "exit 0 == held by another worker"
+
+def test_probe_script_on_a_missing_lock_reports_free(isolated, tmp_path):
+    script = hooks.write_probe_script()
+    r = subprocess.run(
+        [sys.executable, str(script), str(tmp_path / "nope.lock")], capture_output=True
+    )
+    assert r.returncode == 1
+
+
+def test_install_writes_the_probe_script(isolated, repo):
+    hooks.install("Docs", repo, "post-commit", spawn=True)
+    assert hooks.probe_script_path().exists()
 
 
 def test_the_generated_hook_does_not_require_flock(tmp_path):
     """Stock macOS ships no flock; the gate must not silently vanish there."""
     body = hooks.render_block("Docs", "post-commit", tmp_path, spawn=True)
-    assert "command -v flock" not in body, (
-        "gating must not be conditional on flock(1) being installed"
+    # flock may be *used* when present, but the gate must still work without it.
+    assert "_arc_probe" in body, "a flock-less platform needs a working probe"
+
+
+# --- the probe itself must be cheap (roborev 6166) ---------------------------
+
+
+def test_the_gate_does_not_invoke_the_arc_console_script(tmp_path):
+    """A full `arc` import costs ~700ms; paying that per commit defeats the gate.
+
+    The gate exists to avoid ~1.1s of wasted interpreter startup. Spending
+    ~0.7s to find that out -- synchronously, on every commit -- trades one cost
+    for another and regresses Linux, where flock(1) made the check free.
+    """
+    body = hooks.render_block("Docs", "post-commit", tmp_path, spawn=True)
+    # The gate may run `arc corpus sync` (that is the work) but must not invoke
+    # arc merely to ask whether the lock is held.
+    # Scope to the lock-check function: the block legitimately runs
+    # `arc corpus hook spool` (the queueing that must happen anyway) and
+    # `arc corpus sync` (the work). Only the probe must stay cheap.
+    check = body.split("_arc_locked() {")[1].split("}")[0]
+    assert "$_arc_bin" not in check, "the lock check must not start a full arc"
+    assert "$_arc_py" in check, "it should use the bare interpreter probe"
+
+
+def test_the_gate_prefers_flock_when_available(tmp_path):
+    """flock(1) is a sub-millisecond C binary; use it where it exists."""
+    body = hooks.render_block("Docs", "post-commit", tmp_path, spawn=True)
+    assert "flock" in body
+
+
+def test_the_gate_has_a_python_fallback_for_macos(tmp_path):
+    """Stock macOS ships no flock(1), so the gate cannot depend on it."""
+    body = hooks.render_block("Docs", "post-commit", tmp_path, spawn=True)
+    assert "$_arc_probe" in body, "a flock-less platform still needs a working probe"
+    # And the probe it points at must really answer the lock question.
+    assert "fcntl" in hooks._PROBE_SCRIPT
+
+
+def test_the_probe_is_measurably_cheaper_than_a_spawn(isolated, tmp_path):
+    """Guard the property that motivated the change, not just its shape."""
+    import time
+
+    lock_path = spool.worker_lock_path("Docs")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.touch()
+
+    probe = (
+        "import fcntl,os,sys\n"
+        "try: fd=os.open(sys.argv[1],os.O_RDWR)\n"
+        "except OSError: sys.exit(1)\n"
+        "try: fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)\n"
+        "except BlockingIOError: sys.exit(0)\n"
+        "sys.exit(1)\n"
     )
-    assert "probe-lock" in body
+    start = time.monotonic()
+    subprocess.run([sys.executable, "-c", probe, str(lock_path)], capture_output=True)
+    elapsed = time.monotonic() - start
+
+    # A full `arc` import measured ~0.7s; a bare interpreter probe ~0.03s.
+    assert elapsed < 0.5, f"probe took {elapsed:.2f}s; too close to a real spawn"

@@ -211,3 +211,86 @@ def test_empty_stdin_spools_nothing(isolated, repo):
         cwd=repo, capture_output=True, text=True, env=dict(os.environ), input="",
     )
     assert list(spool.corpus_spool_dir("Docs").rglob("*.json")) == []
+
+
+# --- amend must not use a stale ORIG_HEAD (roborev 6167) ---------------------
+
+
+def test_amend_ignores_a_stale_orig_head(isolated, repo):
+    """`git commit --amend` does not update ORIG_HEAD; a prior merge left it set.
+
+    Using it as the base makes every amend re-index everything changed since
+    that stale ref -- and if the amend reverts a file to its ORIG_HEAD value,
+    the diff reports nothing and the index is left stale.
+    """
+    hooks.install("Docs", repo, "post-rewrite", spawn=False)
+
+    # A merge sets ORIG_HEAD to the pre-merge tip and brings in sidefile.md.
+    _git(repo, "checkout", "-q", "-b", "side")
+    (repo / "sidefile.md").write_text("side\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "side")
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "-q", "side", "-m", "merge")
+    assert _git(repo, "rev-parse", "ORIG_HEAD").strip()
+    spool.drain_batch("Docs")
+
+    # Now amend, touching only newfile.md.
+    (repo / "newfile.md").write_text("new\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "--amend", "-m", "amended")
+
+    names = _drain_names("Docs")
+    assert names == ["newfile.md"], (
+        f"the amend touched one file; a stale ORIG_HEAD base over-reports: {names}"
+    )
+
+
+def test_amend_that_reverts_to_the_orig_head_value_is_still_reported(isolated, repo):
+    """The correctness half: a revert-to-ORIG_HEAD must not vanish from the diff."""
+    hooks.install("Docs", repo, "post-rewrite", spawn=False)
+
+    (repo / "f.md").write_text("v1\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "v1")
+    _git(repo, "checkout", "-q", "-b", "side")
+    (repo / "other.md").write_text("o\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "other")
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "-q", "side", "-m", "merge")
+
+    # A commit changes f.md, then the amend puts it back to its merge-time value.
+    (repo / "f.md").write_text("v2\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "v2")
+    spool.drain_batch("Docs")
+
+    (repo / "f.md").write_text("v1\n")
+    (repo / "marker.md").write_text("marker\n")  # keep the amend non-empty
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "--amend", "-m", "reverted")
+
+    assert "f.md" in _drain_names("Docs"), (
+        "the working tree changed back to v1; the index still holds v2"
+    )
+
+
+def test_rebase_still_uses_the_pre_rewrite_tip(isolated, repo):
+    """rebase does set ORIG_HEAD, and it is the right base there."""
+    hooks.install("Docs", repo, "post-rewrite", spawn=False)
+
+    _git(repo, "checkout", "-q", "-b", "feature")
+    (repo / "feat.md").write_text("feat\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "feat")
+    _git(repo, "checkout", "-q", "main")
+    (repo / "on-main.md").write_text("m\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "mainwork")
+    _git(repo, "checkout", "-q", "feature")
+    spool.drain_batch("Docs")
+
+    _git(repo, "rebase", "main")
+
+    assert "on-main.md" in _drain_names("Docs")

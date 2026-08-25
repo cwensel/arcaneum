@@ -243,8 +243,17 @@ def _render_driver(hook: str) -> str:
     done
     [ -n "$_arc_last_new" ] || return 0
 
+    # Pick the pre-rewrite tree. git passes the reason as $1, and the two
+    # reasons need different bases:
+    #   amend  -- ORIG_HEAD is a sticky ref that amend does NOT update, so on
+    #             any repo with a prior merge/rebase it points somewhere stale.
+    #             The single pair's old SHA *is* the pre-amend tip.
+    #   rebase -- ORIG_HEAD is exactly the pre-rebase tip, and the first pair's
+    #             old SHA is only the first rewritten commit, which would miss
+    #             commits dropped ahead of it.
     _arc_base=''
-    if git -C "$_arc_repo" rev-parse --verify --quiet ORIG_HEAD >/dev/null 2>&1; then
+    if [ "$1" != "amend" ] \\
+       && git -C "$_arc_repo" rev-parse --verify --quiet ORIG_HEAD >/dev/null 2>&1; then
         _arc_base=$(git -C "$_arc_repo" rev-parse ORIG_HEAD 2>/dev/null)
     fi
     [ -n "$_arc_base" ] || _arc_base="$_arc_first_old"
@@ -293,19 +302,40 @@ def render_block(corpus: str, hook: str, repo: Path, *, spawn: bool = True) -> s
         #      burst would still stampede past gate 1 if every invocation
         #      spawned at once. Sleep first, then re-check.
         #
-        # The probe is `arc corpus hook probe-lock`, not flock(1): stock macOS
-        # ships no flock, and macOS is where this waste was measured. Gating on
-        # `command -v flock` would silently disable both gates there.
+        # The probe runs synchronously on every commit, so it must stay far
+        # cheaper than the spawn it prevents. Two tiers:
+        #   - flock(1) where it exists (Linux): a sub-millisecond C binary.
+        #   - otherwise a bare interpreter holding only fcntl (~25ms). Stock
+        #     macOS ships no flock(1), and macOS is where the waste was
+        #     measured, so the gate cannot depend on it.
+        # Deliberately not `arc ...`: a full arc import costs ~700ms, which
+        # would reintroduce per-commit startup at the gate meant to remove it.
         #
         # The launchd/systemd watcher (`hook install --service`) is the safety
         # net for the narrow race where a worker exits between the probe and
         # its own final spool read.
-        spawn_lines = """    "$_arc_bin" corpus hook probe-lock "$_arc_corpus" >/dev/null 2>&1 && return 0
+        spawn_lines = """    _arc_lock="$_arc_data/spool/$_arc_corpus/worker.lock"
+
+    # Exit 0 when a worker holds the lock, 1 otherwise.
+    _arc_locked() {
+        [ -e "$_arc_lock" ] || return 1
+        if command -v flock >/dev/null 2>&1; then
+            flock -n "$_arc_lock" true >/dev/null 2>&1 && return 1
+            return 0
+        fi
+        "$_arc_py" "$_arc_probe" "$_arc_lock" 2>/dev/null
+    }
+
+    _arc_locked && return 0
 
     # One body for both branches: setsid gets a fresh shell that inherits no
-    # functions, so it re-runs this script rather than a copy of the logic.
+    # functions, so it repeats the probe inline rather than a copy of the logic.
     _arc_spawn_body="sleep $_arc_debounce; \\
-'$_arc_bin' corpus hook probe-lock '$_arc_corpus' >/dev/null 2>&1 && exit 0; \\
+if command -v flock >/dev/null 2>&1; then \\
+  flock -n '$_arc_lock' true >/dev/null 2>&1 || exit 0; \\
+else \\
+  '$_arc_py' '$_arc_probe' '$_arc_lock' 2>/dev/null && exit 0; \\
+fi; \\
 '$_arc_bin' corpus sync '$_arc_corpus' --drain-spool >>'$_arc_log' 2>&1"
 
     if command -v setsid >/dev/null 2>&1; then
@@ -332,6 +362,10 @@ _arc_data="${{XDG_DATA_HOME:-$HOME/.local/share}}/arcaneum"
 # fires this once per rewritten commit) coalesces into one worker instead of
 # a stampede of processes that each die on the lock.
 _arc_debounce="${{ARC_HOOK_DEBOUNCE:-3}}"
+# Interpreter and probe script for the lock check on platforms without
+# flock(1). Written next to the spool at install time.
+_arc_py="${{ARC_HOOK_PYTHON:-python3}}"
+_arc_probe="$_arc_data/hook-probe-lock.py"
 
 # Queue one revision or range. Called once per range the hook was told about.
 _arc_spool() {{
@@ -364,6 +398,39 @@ def _block_pattern(corpus: str) -> re.Pattern:
     )
 
 
+# Standalone lock probe for platforms without flock(1). Kept out of the hook
+# script so neither the hook nor setsid has to carry it through nested quoting.
+# Exits 0 when a worker holds the lock, 1 when it is free or absent.
+_PROBE_SCRIPT = """import fcntl
+import os
+import sys
+
+try:
+    fd = os.open(sys.argv[1], os.O_RDWR)
+except OSError:
+    sys.exit(1)
+try:
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    sys.exit(0)
+sys.exit(1)
+"""
+
+
+def probe_script_path() -> Path:
+    from ..paths import get_data_dir
+
+    return get_data_dir() / "hook-probe-lock.py"
+
+
+def write_probe_script() -> Path:
+    """Install the lock probe used by hooks on flock-less platforms."""
+    path = probe_script_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_PROBE_SCRIPT)
+    return path
+
+
 def install(
     corpus: str,
     repo: Union[str, Path],
@@ -381,6 +448,9 @@ def install(
     hooks_dir = resolve_hooks_dir(root)
     hooks_dir.mkdir(parents=True, exist_ok=True)
     hook_path = hooks_dir / hook
+
+    if spawn:
+        write_probe_script()
 
     block = render_block(corpus, hook, root, spawn=spawn)
 

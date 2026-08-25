@@ -285,8 +285,13 @@ cold start instead of one per commit. Deleted and renamed-away paths are removed
 from both Qdrant and MeiliSearch.
 
 The hook never blocks or fails a git operation: it runs detached, swallows
-errors, exits 0 on every path, and logs to
-`~/.local/state/arcaneum/hook.log`.
+errors, and exits 0 on every path.
+
+**Logging:** `~/.local/state/arcaneum/hook.log` records what the hook queued and
+one line per drained batch, including failures — a failed batch and a successful
+one both leave an empty spool, so the log is the only way to tell them apart
+after the fact. Under `--service`, launchd and systemd are configured to append
+the worker's output to the same file.
 
 **Guided install:**
 

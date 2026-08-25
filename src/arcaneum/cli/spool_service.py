@@ -26,6 +26,7 @@ from typing import List, Optional
 
 from ..paths import get_config_dir
 from . import spool
+from .hook_log import hook_log_path
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,10 @@ def render_launchd_plist(corpus: str, *, arc_bin: str) -> bytes:
         "RunAtLoad": False,
         "LowPriorityIO": True,
         "Nice": 5,
+        # Without these, a launchd-driven drain writes nowhere: the worker's
+        # output is discarded and only the hook's own spool lines survive.
+        "StandardOutPath": str(hook_log_path()),
+        "StandardErrorPath": str(hook_log_path()),
     }
     return plistlib.dumps(job)
 
@@ -143,6 +148,8 @@ Type=oneshot
 Nice=5
 IOSchedulingClass=idle
 ExecStart={arc_bin} corpus sync "{quoted}" --drain-spool
+StandardOutput=append:{hook_log_path()}
+StandardError=append:{hook_log_path()}
 """
 
 

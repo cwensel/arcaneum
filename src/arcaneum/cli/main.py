@@ -1118,7 +1118,7 @@ def _drain_corpus_spool(corpus, *, max_batches, sync_kwargs):
     Single-flight per corpus: if another worker already holds the lock, this
     exits quietly and leaves the work for it.
     """
-    from arcaneum.cli import spool
+    from arcaneum.cli import hook_log, spool
     from arcaneum.cli.output import print_json
     from arcaneum.cli.sync import sync_directory_command
 
@@ -1126,6 +1126,7 @@ def _drain_corpus_spool(corpus, *, max_batches, sync_kwargs):
 
     lock_fd = spool.try_acquire_worker_lock(corpus)
     if lock_fd is None:
+        hook_log.write(f"[{corpus}] skipped: another worker is already draining")
         if not output_json:
             click.echo(f"Another spool worker is already draining '{corpus}'.")
         return
@@ -1149,12 +1150,31 @@ def _drain_corpus_spool(corpus, *, max_batches, sync_kwargs):
             if not changed and not batch.removed:
                 continue
 
-            sync_directory_command(
-                corpus,
-                tuple(changed),
-                None,
-                removed_paths=batch.removed,
-                **sync_kwargs,
+            # Log per batch, and log failures before they propagate: once the
+            # batch is consumed the spool looks identical either way.
+            try:
+                sync_directory_command(
+                    corpus,
+                    tuple(changed),
+                    None,
+                    removed_paths=batch.removed,
+                    **sync_kwargs,
+                )
+            except BaseException as exc:
+                # BaseException, not Exception: sync_directory_command reports
+                # failure with sys.exit(1), and a Ctrl-C mid-batch raises
+                # KeyboardInterrupt. Both would otherwise leave an empty spool
+                # and no record of what went wrong.
+                detail = f"exit {exc.code}" if isinstance(exc, SystemExit) else str(exc)
+                hook_log.write(
+                    f"[{corpus}] batch {batches} FAILED after "
+                    f"{len(changed)} changed / {len(batch.removed)} removed: "
+                    f"{type(exc).__name__}: {detail}"
+                )
+                raise
+            hook_log.write(
+                f"[{corpus}] batch {batches} ok: "
+                f"{len(changed)} indexed, {len(batch.removed)} removed"
             )
     finally:
         spool.release_worker_lock(lock_fd)

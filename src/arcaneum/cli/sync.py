@@ -1986,6 +1986,7 @@ def sync_directory_command(
     order: str = "path",
     lock_wait: bool = True,
     lock_timeout: Optional[float] = None,
+    removed_paths: Optional[List[str]] = None,
 ):
     """Sync to a corpus while holding that corpus's write lock (kata htmw).
 
@@ -2034,6 +2035,7 @@ def sync_directory_command(
                 mem_probe_interval=mem_probe_interval,
                 mem_probe_log=mem_probe_log,
                 order=order,
+                removed_paths=removed_paths,
             )
     except CorpusLockUnavailable as e:
         print_error(str(e), output_json)
@@ -2065,6 +2067,7 @@ def _sync_directory_locked(
     mem_probe_interval: float = 0.0,
     mem_probe_log: Optional[str] = None,
     order: str = "path",
+    removed_paths: Optional[List[str]] = None,
 ):
     """Sync directories or files to both Qdrant and MeiliSearch.
 
@@ -2095,6 +2098,9 @@ def _sync_directory_locked(
         order: Index order for discovered files ('path', 'newest', 'oldest').
                Affects only processing order within the sync, not what is
                indexed or how results later rank.
+        removed_paths: Paths known to be deleted (from `--changed-since`, which
+               learns them from git). Dropped from both systems without the
+               full-corpus scan `--parity` needs to infer the same thing.
     """
     # Calculate effective text workers
     if text_workers is None:
@@ -2228,6 +2234,26 @@ def _sync_directory_locked(
             verbose=verbose,
             output_json=output_json,
         )
+        # Paths git already told us are gone (--changed-since). Removing them
+        # here — before change detection — means a commit that only deletes
+        # files still drops them from both systems without a --parity scan.
+        removed_count = 0
+        if removed_paths:
+            if dry_run:
+                if not output_json:
+                    print_info(f"Would remove {len(removed_paths)} deleted paths from both indexes")
+            else:
+                removed_count = _remove_indexed_paths(
+                    qdrant,
+                    meili,
+                    manifest_sync_manager,
+                    corpus,
+                    corpus_type,
+                    list(removed_paths),
+                )
+                if removed_count and not output_json:
+                    print_info(f"Removed {removed_count} deleted paths from both indexes")
+
         # Old quality scores map: populated during repair for garbled file comparison
         old_quality_scores = {}
 

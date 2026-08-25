@@ -5,7 +5,9 @@ from contextlib import redirect_stdout
 import sys
 import click
 import os
+from pathlib import Path
 from arcaneum import __version__
+from arcaneum.cli import hooks as hook_utils
 from arcaneum.cli.errors import (
     EXIT_SUCCESS,
     EXIT_ERROR,
@@ -1104,6 +1106,78 @@ def delete_corpus(name, confirm, output_json):
     delete_corpus_command(name, confirm, output_json)
 
 
+def _drain_corpus_spool(corpus, *, max_batches, sync_kwargs):
+    """Index everything the git hook queued for `corpus`, until the spool empties.
+
+    This is the background half of `arc corpus hook` (kata vq0n). Draining in a
+    loop is what makes the hook cheap: a burst of commits coalesces into one
+    embedding-model load instead of paying the cold start per commit. A commit
+    landing while a batch indexes is picked up by the next pass, so the hook
+    never has to spawn a second worker.
+
+    Single-flight per corpus: if another worker already holds the lock, this
+    exits quietly and leaves the work for it.
+    """
+    from arcaneum.cli import spool
+    from arcaneum.cli.output import print_json
+    from arcaneum.cli.sync import sync_directory_command
+
+    output_json = sync_kwargs.get("output_json", False)
+
+    lock_fd = spool.try_acquire_worker_lock(corpus)
+    if lock_fd is None:
+        if not output_json:
+            click.echo(f"Another spool worker is already draining '{corpus}'.")
+        return
+
+    batches = 0
+    total_changed = 0
+    total_removed = 0
+    try:
+        while max_batches is None or batches < max_batches:
+            batch = spool.drain_batch(corpus)
+            if not batch:
+                break
+
+            batches += 1
+            # A path can be spooled and then deleted before the worker reaches
+            # it; indexing would fail on a file that is no longer there.
+            changed = [path for path in batch.changed if os.path.isfile(path)]
+            total_changed += len(changed)
+            total_removed += len(batch.removed)
+
+            if not changed and not batch.removed:
+                continue
+
+            sync_directory_command(
+                corpus,
+                tuple(changed),
+                None,
+                removed_paths=batch.removed,
+                **sync_kwargs,
+            )
+    finally:
+        spool.release_worker_lock(lock_fd)
+
+    if output_json:
+        print_json(
+            "success",
+            f"Drained spool for '{corpus}'",
+            data={
+                "corpus": corpus,
+                "batches": batches,
+                "changed": total_changed,
+                "removed": total_removed,
+                "pending": spool.has_pending(corpus),
+            },
+        )
+    elif batches:
+        click.echo(
+            f"Drained {batches} batch(es) for '{corpus}': "
+            f"{total_changed} indexed, {total_removed} removed."
+        )
+
+
 @corpus.command("sync")
 @click.argument("corpus")
 @click.argument("paths", nargs=-1, type=click.Path(exists=True), required=False)
@@ -1179,6 +1253,26 @@ def delete_corpus(name, confirm, output_json):
     help="Qdrant timeout in seconds (default: 120, increase for very large files)",
 )
 @click.option(
+    "--drain-spool",
+    is_flag=True,
+    help="Drain this corpus's hook spool: index every path queued by the git "
+    "hook, looping until the spool is empty",
+)
+@click.option(
+    "--max-batches",
+    type=int,
+    default=None,
+    metavar="N",
+    help="With --drain-spool, stop after N batches (default: unlimited)",
+)
+@click.option(
+    "--changed-since",
+    default=None,
+    metavar="REV",
+    help="Sync only the files a git commit or range touched (e.g. HEAD, "
+    "ORIG_HEAD..HEAD), and remove the ones it deleted",
+)
+@click.option(
     "--no-wait",
     is_flag=True,
     help="Fail immediately if another sync of this corpus is running, instead "
@@ -1233,6 +1327,9 @@ def sync_directory(
     mem_probe_log,
     no_wait,
     lock_timeout,
+    changed_since,
+    drain_spool,
+    max_batches,
 ):
     """Index to both vector and full-text.
 
@@ -1245,6 +1342,8 @@ def sync_directory(
         arc corpus sync MyCorpus notes.md /path/to/dir
         arc corpus sync MyCorpus --from-file paths.txt
         find . -name "*.pdf" | arc corpus sync MyCorpus --from-file -
+        arc corpus sync MyCorpus --changed-since HEAD
+        arc corpus sync MyCorpus /repo --changed-since ORIG_HEAD..HEAD
 
     Use --text-workers to parallelize AST chunking for code corpora.
 
@@ -1256,16 +1355,81 @@ def sync_directory(
 
     Use 'arc corpus repair' to re-index incomplete or garbled files.
     """
+    # Resolve skip prefixes: --no-skip-dir-prefix disables all, otherwise use provided prefixes
+    effective_prefixes = () if no_skip_dir_prefix else skip_dir_prefix
+
+    if drain_spool:
+        if paths or from_file or changed_since:
+            raise click.UsageError(
+                "--drain-spool consumes the hook spool and takes no PATH, "
+                "--from-file, or --changed-since"
+            )
+        _drain_corpus_spool(
+            corpus,
+            max_batches=max_batches,
+            sync_kwargs=dict(
+                models=models,
+                file_types=file_types,
+                force=force,
+                verify=verify,
+                text_workers=text_workers,
+                max_embedding_batch=max_embedding_batch,
+                no_gpu=no_gpu,
+                cpu_workers=cpu_workers,
+                verbose=verbose,
+                output_json=output_json,
+                git_update=git_update,
+                git_version=git_version,
+                skip_dir_prefixes=effective_prefixes,
+                qdrant_timeout=timeout,
+                order=order,
+                lock_wait=not no_wait,
+                lock_timeout=lock_timeout,
+            ),
+        )
+        return
+
+    removed_paths = None
+    if changed_since:
+        if from_file:
+            raise click.UsageError("--changed-since and --from-file are mutually exclusive")
+
+        from arcaneum.cli.errors import InvalidArgumentError
+        from arcaneum.cli.git_changes import changes_since
+
+        # Default to the cwd so the installed hook (and an ad hoc run from
+        # inside a repo) needs no path argument.
+        repo_arg = paths[0] if paths else "."
+        try:
+            changes = changes_since(repo_arg, changed_since)
+        except InvalidArgumentError as exc:
+            raise click.UsageError(str(exc)) from exc
+
+        # git reports the tree state at that revision; the working tree may
+        # have moved on since. Only index what is actually readable now.
+        paths = tuple(p for p in changes.changed if os.path.isfile(p))
+        removed_paths = changes.removed
+
+        if not paths and not removed_paths:
+            if output_json:
+                from arcaneum.cli.output import print_json
+
+                print_json(
+                    "success",
+                    f"No files changed in {changed_since}",
+                    data={"corpus": corpus, "changed": 0, "removed": 0},
+                )
+            else:
+                click.echo(f"No files changed in {changed_since}; nothing to sync.")
+            return
+
     # Validate that at least one of paths or from_file is provided
-    if not paths and not from_file:
+    if not paths and not from_file and not changed_since:
         raise click.UsageError("Either PATH(s) or --from-file must be provided")
 
     # Validate mutually exclusive git flags
     if git_update and git_version:
         raise click.UsageError("--git-update and --git-version are mutually exclusive")
-
-    # Resolve skip prefixes: --no-skip-dir-prefix disables all, otherwise use provided prefixes
-    effective_prefixes = () if no_skip_dir_prefix else skip_dir_prefix
 
     # Memory probe: CLI flag takes precedence, then env var, then off.
     if mem_probe_interval is None:
@@ -1310,7 +1474,198 @@ def sync_directory(
         order=order,
         lock_wait=not no_wait,
         lock_timeout=lock_timeout,
+        removed_paths=removed_paths,
     )
+
+
+@corpus.group("hook")
+def corpus_hook():
+    """Keep a corpus in sync with a git repo automatically.
+
+    Installs a git hook that queues the files each commit touches and indexes
+    them in the background, so an indexed repo stops drifting behind its
+    source tree between manual syncs.
+
+    Examples:
+
+    \b
+        arc corpus hook install MyCorpus
+        arc corpus hook install MyCorpus --hook post-merge
+        arc corpus hook status
+        arc corpus hook uninstall MyCorpus
+    """
+
+
+@corpus_hook.command("install")
+@click.argument("corpus")
+@click.option(
+    "--repo",
+    default=".",
+    type=click.Path(exists=True),
+    help="Repository to install into (default: current directory)",
+)
+@click.option(
+    "--hook",
+    "hook_name",
+    type=click.Choice(hook_utils.SUPPORTED_HOOKS),
+    default="post-commit",
+    help="Hook point to install into (default: post-commit)",
+)
+@click.option(
+    "--no-spawn",
+    is_flag=True,
+    help="Queue touched paths but do not start a background worker; drain with "
+    "`arc corpus sync <corpus> --drain-spool` or install --service",
+)
+@click.option(
+    "--service",
+    is_flag=True,
+    help="Also register an OS watcher (launchd on macOS, systemd on Linux) that "
+    "drains the spool after a reboot or a failed spawn",
+)
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
+def corpus_hook_install(corpus, repo, hook_name, no_spawn, service, output_json):
+    """Install the sync hook for CORPUS into a repository."""
+    from arcaneum.cli.output import print_json
+
+    hook_path = hook_utils.install(corpus, repo, hook_name, spawn=not no_spawn)
+
+    service_result = None
+    if service:
+        from arcaneum.cli import spool_service
+
+        service_result = spool_service.install(corpus)
+
+    if output_json:
+        print_json(
+            "success",
+            f"Installed {hook_name} hook for corpus '{corpus}'",
+            data={
+                "corpus": corpus,
+                "hook": hook_name,
+                "path": str(hook_path),
+                "service": service_result,
+            },
+        )
+        return
+
+    click.echo(f"Installed {hook_name} hook for corpus '{corpus}': {hook_path}")
+    if service_result:
+        click.echo(f"Registered spool watcher: {service_result}")
+    if no_spawn:
+        click.echo(
+            f"Queue-only mode. Drain with: arc corpus sync {corpus} --drain-spool"
+        )
+
+
+@corpus_hook.command("uninstall")
+@click.argument("corpus")
+@click.option(
+    "--repo",
+    default=".",
+    type=click.Path(exists=True),
+    help="Repository to uninstall from (default: current directory)",
+)
+@click.option(
+    "--hook",
+    "hook_name",
+    type=click.Choice(hook_utils.SUPPORTED_HOOKS),
+    default=None,
+    help="Only remove from this hook point (default: all)",
+)
+@click.option("--service", is_flag=True, help="Also remove the OS spool watcher")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
+def corpus_hook_uninstall(corpus, repo, hook_name, service, output_json):
+    """Remove the sync hook for CORPUS, leaving other hook content intact."""
+    from arcaneum.cli.output import print_json
+
+    changed = hook_utils.uninstall(corpus, repo, hook_name)
+
+    if service:
+        from arcaneum.cli import spool_service
+
+        spool_service.uninstall(corpus)
+
+    if output_json:
+        print_json(
+            "success",
+            f"Removed {len(changed)} hook block(s) for corpus '{corpus}'",
+            data={"corpus": corpus, "removed": [str(p) for p in changed]},
+        )
+        return
+
+    if not changed:
+        click.echo(f"No hook installed for corpus '{corpus}'.")
+        return
+    for path in changed:
+        click.echo(f"Removed hook block for '{corpus}': {path}")
+
+
+@corpus_hook.command("status")
+@click.option(
+    "--repo",
+    default=".",
+    type=click.Path(exists=True),
+    help="Repository to inspect (default: current directory)",
+)
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
+def corpus_hook_status(repo, output_json):
+    """Show which corpora have sync hooks installed here, and pending work."""
+    from arcaneum.cli import spool
+    from arcaneum.cli.output import print_json
+
+    installed = hook_utils.list_installed(repo)
+    pending = spool.list_corpora_with_pending()
+
+    if output_json:
+        print_json(
+            "success",
+            f"{len(installed)} hook(s) installed",
+            data={
+                "installed": [
+                    {"corpus": h.corpus, "hook": h.hook, "path": str(h.path)}
+                    for h in installed
+                ],
+                "pending_spools": pending,
+            },
+        )
+        return
+
+    if not installed:
+        click.echo("No arcaneum sync hooks installed in this repository.")
+    else:
+        for entry in installed:
+            click.echo(f"{entry.corpus}: {entry.hook} ({entry.path})")
+    if pending:
+        click.echo(f"\nCorpora with queued work: {', '.join(pending)}")
+
+
+@corpus_hook.command("spool", hidden=True)
+@click.argument("corpus")
+@click.option("--repo", default=".", type=click.Path(exists=True))
+@click.option("--changed-since", "changed_since", default="HEAD")
+def corpus_hook_spool(corpus, repo, changed_since):
+    """Queue the paths a revision touched. Invoked by the installed hook."""
+    from arcaneum.cli import spool
+    from arcaneum.cli.errors import InvalidArgumentError
+    from arcaneum.cli.git_changes import changes_since, repo_root
+
+    try:
+        changes = changes_since(repo, changed_since)
+        root = repo_root(repo) or Path(repo).resolve()
+    except InvalidArgumentError as exc:
+        # A hook must never fail the git command that ran it.
+        click.echo(f"arc: skipping spool: {exc}", err=True)
+        return
+
+    entry = spool.write_entry(
+        corpus, root, changed=changes.changed, removed=changes.removed
+    )
+    if entry:
+        click.echo(
+            f"Queued {len(changes.changed)} changed and "
+            f"{len(changes.removed)} removed path(s) for '{corpus}'"
+        )
 
 
 @corpus.command("repair")

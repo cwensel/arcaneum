@@ -167,6 +167,7 @@ arc corpus info <name>                                   # Show corpus details
 arc corpus items <name>                                  # List indexed items with parity status
 arc corpus verify <name>                                 # Verify corpus health across both systems
 arc corpus parity <name>                                 # Restore parity between indexes
+arc corpus hook install <name>                           # Auto-sync a git repo on commit
 ```
 
 **Note:** If you already have a collection and index with the same name, you can
@@ -219,6 +220,17 @@ arc corpus sync MyCorpus /path/to/repo --git-version       # Keep multiple versi
 - `--skip-dir-prefix`: Skip directories starting with PREFIX (default: `_`, repeatable)
 - `--no-skip-dir-prefix`: Disable all directory prefix skipping
 - `--timeout`: Qdrant timeout in seconds (default: 120, increase for very large files)
+- `--changed-since REV`: Sync only the files a git commit or range touched, and
+  remove the ones it deleted. Asks git instead of walking the tree, so it stays
+  cheap on large repos. Accepts a commit (`HEAD`) or a range
+  (`ORIG_HEAD..HEAD`); defaults to the current directory's repo when no PATH is
+  given. Mutually exclusive with `--from-file`.
+- `--drain-spool`: Index every path the git hook queued for this corpus, looping
+  until the spool is empty. This is what `arc corpus hook` runs in the
+  background; a burst of commits coalesces into one embedding-model load.
+  Single-flight per corpus — a second worker exits rather than racing.
+- `--max-batches N`: With `--drain-spool`, stop after N batches (default:
+  unlimited). Leftover work stays spooled for the next run.
 - `--no-wait`: Fail immediately if another sync of this corpus is already running,
   instead of queueing behind it. Syncs of one corpus are serialized by a per-corpus
   write lock so concurrent runs cannot duplicate entries or drift the two indexes
@@ -247,6 +259,68 @@ arc corpus sync MyCorpus /path/to/repo --git-version       # Keep multiple versi
 recognize repos; it is an opt-in commit-hash skip and can skip uncommitted
 working-tree changes when HEAD has not changed. `--git-update` and `--git-version`
 are mutually exclusive. Use `--force` to override either mode.
+
+### Corpus Hook
+
+Keep a corpus in sync with a working repo automatically. Without a hook, an
+indexed repo drifts behind its source tree between manual syncs.
+
+```bash
+arc corpus hook install MyCorpus                      # post-commit hook in the current repo
+arc corpus hook install MyCorpus --hook post-merge    # also stay current after pulls
+arc corpus hook install MyCorpus --service            # plus an OS watcher (see below)
+arc corpus hook status                                # what is installed here
+arc corpus hook uninstall MyCorpus                    # remove just this corpus's block
+```
+
+**How it works:**
+
+The installed hook does only the cheap half inline. It asks git which paths the
+commit touched (`git diff-tree`, not a tree walk), writes them to a spool
+directory, and starts a detached worker that runs
+`arc corpus sync <name> --drain-spool`. The worker holds a per-corpus lock and
+drains until the spool is empty, so a burst of commits pays one embedding-model
+cold start instead of one per commit. Deleted and renamed-away paths are removed
+from both Qdrant and MeiliSearch.
+
+The hook never blocks or fails a git operation: it runs detached, swallows
+errors, exits 0 on every path, and logs to
+`~/.local/state/arcaneum/hook.log`.
+
+**Install options:**
+
+- `--repo PATH`: Repository to install into (default: current directory)
+- `--hook NAME`: Hook point — `post-commit` (default), `post-merge`,
+  `post-checkout`, or `post-rewrite`. Install the others so pulls, checkouts,
+  and rebases stay in sync too.
+- `--no-spawn`: Queue touched paths but start no worker. Drain on your own
+  schedule with `arc corpus sync <name> --drain-spool`, or use `--service`.
+- `--service`: Also register an OS watcher on the spool directory —
+  launchd `QueueDirectories` on macOS, a systemd `.path` unit with
+  `DirectoryNotEmpty=` on Linux. This drains work left over after a reboot or a
+  failed spawn. Best-effort: an unsupported platform is reported, not fatal.
+
+**Uninstall options:**
+
+- `--repo PATH`: Repository to uninstall from (default: current directory)
+- `--hook NAME`: Only remove from this hook point (default: all of them)
+- `--service`: Also remove the OS watcher
+
+**Coexistence:** the block is delimited by marker comments and appended to any
+hook that already exists, so your own hook keeps working, installing twice does
+not duplicate it, and uninstall removes only its own block. `core.hooksPath` is
+respected. One repo can feed several corpora.
+
+**Ad hoc equivalent:** `--changed-since` does the same diff without a hook:
+
+```bash
+arc corpus sync MyCorpus --changed-since HEAD              # last commit
+arc corpus sync MyCorpus --changed-since ORIG_HEAD..HEAD   # since a pull
+```
+
+**Internal:** `arc corpus hook spool <name> --repo PATH --changed-since REV`
+queues paths without indexing them. The installed hook calls it; you should not
+need to.
 
 ### Corpus Repair
 

@@ -189,3 +189,74 @@ def test_repo_root_resolves_from_a_subdirectory(repo):
 
 def test_repo_root_returns_none_outside_a_repo(tmp_path):
     assert git_changes.repo_root(tmp_path) is None
+
+
+# --- endpoint (tree-to-tree) comparison, for rewrites (roborev 6164) ---------
+
+
+def test_endpoint_diff_reports_a_file_only_a_dropped_commit_touched(repo):
+    """A commit walk misses files whose only commit was dropped; a tree diff does not.
+
+    History base -> keep1 -> dropme -> keep2; the rebase drops `dropme`, so
+    dropme.md disappears from the working tree. `A..B` walks the surviving
+    commits and never mentions it, but comparing the two tip trees does.
+    """
+    for name in ("keep1.md", "dropme.md", "keep2.md"):
+        (repo / name).write_text(f"{name}\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", name)
+
+    old_tip = _git(repo, "rev-parse", "HEAD").strip()
+    _git(repo, "rebase", "--onto", "HEAD~2", "HEAD~1", "main")
+    new_tip = _git(repo, "rev-parse", "HEAD").strip()
+
+    changes = git_changes.changes_between(repo, old_tip, new_tip)
+
+    assert [Path(p).name for p in changes.removed] == ["dropme.md"]
+    assert not (repo / "dropme.md").exists(), "the file really is gone from disk"
+
+
+def test_endpoint_diff_reports_a_rewritten_file_as_changed(repo):
+    (repo / "work.md").write_text("v1\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "work")
+    old_tip = _git(repo, "rev-parse", "HEAD").strip()
+
+    (repo / "work.md").write_text("v2\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "--amend", "-m", "work amended")
+    new_tip = _git(repo, "rev-parse", "HEAD").strip()
+
+    changes = git_changes.changes_between(repo, old_tip, new_tip)
+    assert [Path(p).name for p in changes.changed] == ["work.md"]
+
+
+def test_endpoint_diff_of_identical_trees_is_empty(repo):
+    """A pure re-signing rewrites SHAs but no content: nothing to re-index."""
+    old_tip = _git(repo, "rev-parse", "HEAD").strip()
+    _git(repo, "commit", "-q", "--amend", "-m", "same content, new sha")
+    new_tip = _git(repo, "rev-parse", "HEAD").strip()
+
+    changes = git_changes.changes_between(repo, old_tip, new_tip)
+    assert not changes
+
+
+def test_endpoint_diff_returns_absolute_paths(repo):
+    (repo / "x.md").write_text("x\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "x")
+    old_tip = _git(repo, "rev-parse", "HEAD~1").strip()
+    new_tip = _git(repo, "rev-parse", "HEAD").strip()
+
+    changes = git_changes.changes_between(repo, old_tip, new_tip)
+    assert all(Path(p).is_absolute() for p in changes.changed)
+
+
+def test_endpoint_diff_rejects_a_flag_shaped_revision(repo):
+    with pytest.raises(InvalidArgumentError):
+        git_changes.changes_between(repo, "--output=/tmp/x", "HEAD")
+
+
+def test_endpoint_diff_rejects_an_unknown_revision(repo):
+    with pytest.raises(InvalidArgumentError):
+        git_changes.changes_between(repo, "HEAD", "nope-not-a-rev")

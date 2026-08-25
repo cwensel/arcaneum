@@ -79,8 +79,10 @@ def test_post_checkout_block_skips_file_checkouts(tmp_path):
 
 def test_post_rewrite_block_reads_stdin_pairs(tmp_path):
     body = hooks.render_block("Docs", "post-rewrite", tmp_path, spawn=False)
-    assert "ORIG_HEAD" not in body, "post-rewrite gets its SHAs on stdin"
-    assert "read" in body
+    assert "read" in body, "the SHAs arrive on stdin"
+    # It compares two trees rather than walking the commits between them, so a
+    # dropped commit's file is still reported (see test_post_rewrite_range).
+    assert "--between" in body
 
 
 def test_post_merge_still_uses_orig_head(tmp_path):
@@ -181,8 +183,12 @@ def test_amend_reports_the_amended_files(repo):
     assert "extra.md" in changed
 
 
-def test_rebase_reports_files_across_every_rewritten_commit(repo):
-    """A multi-commit rebase rewrites several SHAs; all of them must be covered."""
+def test_rebase_reports_what_changed_on_disk(repo):
+    """A rebase must report the files whose working-tree content actually moved.
+
+    Commits merely replayed onto a new base keep identical blobs, so they need
+    no re-index; the file the rebase brings in from the new base does.
+    """
     hooks.install("Docs", repo, "post-rewrite", spawn=False)
 
     _git(repo, "checkout", "-q", "-b", "feature")
@@ -205,7 +211,7 @@ def test_rebase_reports_files_across_every_rewritten_commit(repo):
     assert result.returncode == 0, result.stderr
 
     changed, removed = _drain_names("Docs")
-    assert "f1.md" in changed and "f2.md" in changed
+    assert "on-main.md" in changed, f"got changed={changed}"
 
 
 def test_hooks_never_break_the_git_command_they_run_under(repo):

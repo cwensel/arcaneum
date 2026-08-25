@@ -57,12 +57,11 @@ def repo(tmp_path):
 # --- the generated shell ------------------------------------------------------
 
 
-def test_post_rewrite_spools_one_range(tmp_path):
+def test_post_rewrite_compares_endpoints_not_a_walked_range(tmp_path):
     body = hooks.render_block("Docs", "post-rewrite", tmp_path, spawn=False)
-    # It must still read stdin (that is where the SHAs are) but collapse to one
-    # spool call rather than one per line.
-    assert "read" in body
-    assert "_arc_first_old" in body and "_arc_last_new" in body
+    # A walked range would miss a dropped commit's file; endpoints do not.
+    assert "--between" in body
+    assert ".." not in body.split("--between")[1].split("\n")[0]
 
 
 def test_post_rewrite_shell_is_valid(tmp_path):
@@ -104,7 +103,7 @@ def test_a_multi_commit_rebase_spools_one_entry(isolated, repo):
     assert len(entries) == 1, f"expected one entry for the whole rebase, got {len(entries)}"
 
 
-def test_the_single_entry_still_covers_every_rewritten_file(isolated, repo):
+def test_the_single_entry_covers_what_actually_changed_on_disk(isolated, repo):
     hooks.install("Docs", repo, "post-rewrite", spawn=False)
 
     _git(repo, "checkout", "-q", "-b", "feature")
@@ -123,8 +122,10 @@ def test_the_single_entry_still_covers_every_rewritten_file(isolated, repo):
     _git(repo, "rebase", "main")
 
     names = _drain_names("Docs")
-    for expected in ("f1.md", "f2.md", "f3.md"):
-        assert expected in names, f"{expected} missing from {names}"
+    # f1-f3 were replayed with identical blobs, so their on-disk content did
+    # not change and re-indexing them would be waste. What did change is the
+    # file the rebase brought in from the new base.
+    assert "on-main.md" in names, f"the rebase's real disk change is missing: {names}"
 
 
 def test_an_amend_still_reports_its_files(isolated, repo):
@@ -142,7 +143,13 @@ def test_an_amend_still_reports_its_files(isolated, repo):
 
 
 def test_a_dropped_commit_is_still_covered(isolated, repo):
-    """Per-commit pairs miss files touched only by a dropped commit; a range does not."""
+    """A file whose only commit was dropped must be de-indexed.
+
+    History base -> keep1 -> dropme -> keep2. The rebase replays only keep2
+    onto keep1, so `dropme` is genuinely dropped and dropme.md disappears from
+    the working tree. A per-commit walk of the surviving rewrites never
+    mentions it; comparing the two tip trees reports it as a deletion.
+    """
     hooks.install("Docs", repo, "post-rewrite", spawn=False)
 
     for name in ("keep1.md", "dropme.md", "keep2.md"):
@@ -151,14 +158,30 @@ def test_a_dropped_commit_is_still_covered(isolated, repo):
         _git(repo, "commit", "-q", "-m", name)
     spool.drain_batch("Docs")
 
-    # Drop the middle commit: HEAD~2 (dropme) is skipped, HEAD~1..HEAD replayed.
-    _git(repo, "rebase", "--onto", "HEAD~3", "HEAD~2", "main")
+    _git(repo, "rebase", "--onto", "HEAD~2", "HEAD~1", "main")
 
-    names = _drain_names("Docs")
-    assert "dropme.md" in names, (
-        "a file removed by the dropped commit must be re-checked; "
-        f"got {names}"
+    assert not (repo / "dropme.md").exists(), "precondition: the file is gone from disk"
+
+    batch = spool.drain_batch("Docs")
+    removed = sorted(Path(p).name for p in batch.removed)
+    assert "dropme.md" in removed, (
+        f"the dropped commit's file must be de-indexed; got removed={removed} "
+        f"changed={sorted(Path(p).name for p in batch.changed)}"
     )
+
+
+def test_a_pure_resign_rewrite_spools_nothing(isolated, repo):
+    """Re-signing rewrites every SHA but no tree: there is nothing to re-index."""
+    hooks.install("Docs", repo, "post-rewrite", spawn=False)
+    (repo / "work.md").write_text("work\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "work")
+    spool.drain_batch("Docs")
+
+    _git(repo, "commit", "-q", "--amend", "-m", "same content, new sha")
+
+    batch = spool.drain_batch("Docs")
+    assert not batch, f"expected no work; got {batch}"
 
 
 def test_post_rewrite_never_fails_the_git_command(isolated, repo):

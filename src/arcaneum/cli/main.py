@@ -1869,14 +1869,24 @@ def corpus_hook_probe_lock(corpus):
 @click.argument("corpus")
 @click.option("--repo", default=".", type=click.Path(exists=True))
 @click.option("--changed-since", "changed_since", default="HEAD")
-def corpus_hook_spool(corpus, repo, changed_since):
+@click.option(
+    "--between",
+    "between",
+    nargs=2,
+    default=None,
+    help="Compare two commits' trees directly (OLD NEW), for history rewrites",
+)
+def corpus_hook_spool(corpus, repo, changed_since, between):
     """Queue the paths a revision touched. Invoked by the installed hook."""
     from arcaneum.cli import spool
     from arcaneum.cli.errors import InvalidArgumentError
-    from arcaneum.cli.git_changes import changes_since, repo_root
+    from arcaneum.cli.git_changes import changes_between, changes_since, repo_root
 
     try:
-        changes = changes_since(repo, changed_since)
+        if between:
+            changes = changes_between(repo, between[0], between[1])
+        else:
+            changes = changes_since(repo, changed_since)
         root = repo_root(repo) or Path(repo).resolve()
     except InvalidArgumentError as exc:
         # A hook must never fail the git command that ran it.

@@ -383,8 +383,15 @@ arc corpus sync MyCorpus --changed-since ORIG_HEAD..HEAD   # since a pull
 ```
 
 **Internal:** `arc corpus hook spool <name> --repo PATH --changed-since REV`
-queues paths without indexing them. The installed hook calls it; you should not
-need to.
+queues paths without indexing them, and `--between OLD NEW` queues the
+difference between two commits' trees instead. The installed hook calls these;
+you should not need to.
+
+`post-rewrite` uses `--between` because a history rewrite is a tree change, not
+a sequence of commit diffs: walking the rewritten commits misses a file whose
+only commit was dropped (it has vanished from the working tree and must be
+de-indexed) while re-reporting commits that were merely replayed with identical
+content.
 
 ### Corpus Repair
 

@@ -216,17 +216,24 @@ def _render_driver(hook: str) -> str:
 """
 
     if hook == "post-rewrite":
-        # Old/new SHA pairs arrive on stdin, one per rewritten commit. Collapse
-        # them into a single range rather than spooling each: indexing reads the
-        # working tree, so per-commit granularity buys nothing -- only the final
-        # state matters. A real rebase produced 1057 entries for 198 files.
+        # Compare the pre-rewrite tip against the new tip as two trees.
         #
-        # The range runs from the FIRST pair's old parent to the LAST pair's new
-        # SHA, which is also strictly more correct than the per-commit union:
-        # a rebase that drops a commit lists only the surviving pairs, so files
-        # touched solely by the dropped commit appear in no pair -- but they do
-        # appear in the range, and they are exactly the files whose content just
-        # changed on disk.
+        # git hands this hook one old/new SHA pair per rewritten commit, but
+        # acting on them per-commit is both wasteful and wrong. Wasteful: a
+        # real rebase produced 1057 spool entries for 198 files, and indexing
+        # reads the working tree, so only the end state matters. Wrong in two
+        # directions:
+        #
+        #   - Walking `A..B` diffs each commit against its own parent, so a
+        #     file whose only commit the rebase *dropped* appears in no diff --
+        #     yet it just vanished from the working tree and must be
+        #     de-indexed. A tree comparison reports it as a deletion.
+        #   - Conversely, a commit that was merely replayed onto a new base
+        #     keeps an identical blob. Re-indexing it produces the same vectors
+        #     from the same bytes; the tree comparison omits it.
+        #
+        # ORIG_HEAD is the pre-rewrite tip, which git sets for rebase; the
+        # first pair's old SHA is the fallback when it is unset (amend).
         return """    _arc_first_old=''
     _arc_last_new=''
     while read -r _arc_old _arc_new _arc_rest; do
@@ -235,14 +242,16 @@ def _render_driver(hook: str) -> str:
         _arc_last_new="$_arc_new"
     done
     [ -n "$_arc_last_new" ] || return 0
-    if [ -n "$_arc_first_old" ] && \\
-       git -C "$_arc_repo" rev-parse --verify --quiet "$_arc_first_old^" >/dev/null 2>&1; then
-        _arc_spool "$_arc_first_old^..$_arc_last_new"
-    else
-        # No parent (the rewrite reached a root commit), so the range has no
-        # lower bound to diff from; fall back to the rewritten commit itself.
-        _arc_spool "$_arc_last_new"
-    fi"""
+
+    _arc_base=''
+    if git -C "$_arc_repo" rev-parse --verify --quiet ORIG_HEAD >/dev/null 2>&1; then
+        _arc_base=$(git -C "$_arc_repo" rev-parse ORIG_HEAD 2>/dev/null)
+    fi
+    [ -n "$_arc_base" ] || _arc_base="$_arc_first_old"
+    [ -n "$_arc_base" ] || return 0
+
+    "$_arc_bin" corpus hook spool "$_arc_corpus" --repo "$_arc_repo" \\
+        --between "$_arc_base" "$_arc_last_new" >>"$_arc_log" 2>&1 || return 0"""
 
     revision = _HOOK_REVISIONS.get(hook, "HEAD")
     if "ORIG_HEAD" in revision:

@@ -219,6 +219,12 @@ arc corpus sync MyCorpus /path/to/repo --git-version       # Keep multiple versi
 - `--skip-dir-prefix`: Skip directories starting with PREFIX (default: `_`, repeatable)
 - `--no-skip-dir-prefix`: Disable all directory prefix skipping
 - `--timeout`: Qdrant timeout in seconds (default: 120, increase for very large files)
+- `--no-wait`: Fail immediately if another sync of this corpus is already running,
+  instead of queueing behind it. Syncs of one corpus are serialized by a per-corpus
+  write lock so concurrent runs cannot duplicate entries or drift the two indexes
+  apart; different corpora never block each other, and `--dry-run` takes no lock.
+- `--lock-timeout`: Seconds to wait for the corpus write lock before giving up
+  (default: 600)
 - `--verbose`: Show detailed progress (files, chunks, indexing)
 - `--json`: Output JSON format for scripting
 - `--git-update`: Commit-hash fast path; skip an entire git repo when its HEAD commit

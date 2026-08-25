@@ -13,6 +13,7 @@ from qdrant_client.models import HnswConfigDiff
 from rich.console import Console
 
 from ..cli.corpus_defaults import DEFAULT_MODELS_BY_CORPUS_TYPE
+from ..cli.corpus_lock import acquire_corpus_lock
 from ..cli.errors import InvalidArgumentError, ResourceNotFoundError
 from ..cli.interaction_logger import interaction_logger
 from ..cli.output import print_error, print_info, print_json
@@ -794,31 +795,36 @@ def delete_corpus_command(name: str, confirm: bool, output_json: bool):
                 print_info("Cancelled.")
                 return
 
-        # Delete Qdrant collection
-        if qdrant_exists:
-            try:
-                qdrant = create_qdrant_client()
-                qdrant.delete_collection(name)
-                qdrant_deleted = True
-                if not output_json:
-                    console.print(f"[green]✅ Deleted Qdrant collection '{name}'[/green]")
-            except Exception as e:
-                errors.append(f"Qdrant: {e}")
-                if not output_json:
-                    print_error(f"Failed to delete Qdrant collection: {e}")
+        # Take the corpus write lock only now: acquiring before the prompt above
+        # would block a running sync on a human answering y/n. From here on the
+        # work is destructive, so an in-flight sync must not interleave with it
+        # (kata htmw).
+        with acquire_corpus_lock(name, quiet=output_json):
+            # Delete Qdrant collection
+            if qdrant_exists:
+                try:
+                    qdrant = create_qdrant_client()
+                    qdrant.delete_collection(name)
+                    qdrant_deleted = True
+                    if not output_json:
+                        console.print(f"[green]✅ Deleted Qdrant collection '{name}'[/green]")
+                except Exception as e:
+                    errors.append(f"Qdrant: {e}")
+                    if not output_json:
+                        print_error(f"Failed to delete Qdrant collection: {e}")
 
-        # Delete MeiliSearch index
-        if meili_exists:
-            try:
-                meili = create_meili_client()
-                meili.delete_index(name)
-                meili_deleted = True
-                if not output_json:
-                    console.print(f"[green]✅ Deleted MeiliSearch index '{name}'[/green]")
-            except Exception as e:
-                errors.append(f"MeiliSearch: {e}")
-                if not output_json:
-                    print_error(f"Failed to delete MeiliSearch index: {e}")
+            # Delete MeiliSearch index
+            if meili_exists:
+                try:
+                    meili = create_meili_client()
+                    meili.delete_index(name)
+                    meili_deleted = True
+                    if not output_json:
+                        console.print(f"[green]✅ Deleted MeiliSearch index '{name}'[/green]")
+                except Exception as e:
+                    errors.append(f"MeiliSearch: {e}")
+                    if not output_json:
+                        print_error(f"Failed to delete MeiliSearch index: {e}")
 
         # Output results
         if output_json:

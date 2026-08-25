@@ -70,6 +70,19 @@ class SearchSlotUnavailable(ArcaneumError):
     exit_code = EXIT_ERROR
 
 
+class CorpusLockUnavailable(ArcaneumError):
+    """Another process holds the write lock for this corpus.
+
+    Raised when `arc corpus sync` cannot take the per-corpus lock within the
+    wait budget, or immediately under `--no-wait`. Concurrent syncs of one
+    corpus interleave their reads of "what is indexed" with their Qdrant and
+    MeiliSearch writes, producing duplicates and parity drift, so we serialize
+    them and surface this instead.
+    """
+
+    exit_code = EXIT_ERROR
+
+
 # Custom Click classes for better error messages
 import click
 

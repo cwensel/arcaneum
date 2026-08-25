@@ -1179,6 +1179,18 @@ def delete_corpus(name, confirm, output_json):
     help="Qdrant timeout in seconds (default: 120, increase for very large files)",
 )
 @click.option(
+    "--no-wait",
+    is_flag=True,
+    help="Fail immediately if another sync of this corpus is running, instead "
+    "of queueing behind it",
+)
+@click.option(
+    "--lock-timeout",
+    type=float,
+    default=None,
+    help="Seconds to wait for the corpus write lock before giving up (default: 600)",
+)
+@click.option(
     "--mem-probe-interval",
     type=float,
     default=None,
@@ -1219,6 +1231,8 @@ def sync_directory(
     timeout,
     mem_probe_interval,
     mem_probe_log,
+    no_wait,
+    lock_timeout,
 ):
     """Index to both vector and full-text.
 
@@ -1294,6 +1308,8 @@ def sync_directory(
         mem_probe_interval=mem_probe_interval,
         mem_probe_log=mem_probe_log,
         order=order,
+        lock_wait=not no_wait,
+        lock_timeout=lock_timeout,
     )
 
 

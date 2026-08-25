@@ -33,6 +33,7 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 os.environ.setdefault("PYTORCH_MPS_LOW_WATERMARK_RATIO", "0.6")
 os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.8")
 
+import contextlib
 import hashlib
 import sys
 from concurrent.futures import as_completed
@@ -180,7 +181,12 @@ def _metadata_scan_progress_callback(
     return report
 
 
-from ..cli.errors import InvalidArgumentError, ResourceNotFoundError
+from ..cli.corpus_lock import acquire_corpus_lock
+from ..cli.errors import (
+    CorpusLockUnavailable,
+    InvalidArgumentError,
+    ResourceNotFoundError,
+)
 from ..cli.interaction_logger import interaction_logger
 from ..cli.native_stderr import relay_native_stderr
 from ..cli.output import print_error, print_info, print_json
@@ -340,6 +346,40 @@ def _delete_file_manifests(
     """Remove manifests alongside their chunk lifecycle."""
     for path in paths:
         sync_manager.delete_file_manifest(corpus, path)
+
+
+def _remove_indexed_paths(
+    qdrant,
+    meili,
+    sync_manager: MetadataBasedSync,
+    corpus: str,
+    corpus_type: str,
+    paths: List[str],
+) -> int:
+    """Drop `paths` from Qdrant, MeiliSearch, and the manifest store.
+
+    Shared by --parity stale cleanup and by --changed-since, which learns
+    about deletions from git rather than by scanning for missing files.
+
+    Returns the number of paths removed.
+    """
+    if not paths:
+        return 0
+
+    from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchValue
+
+    meili.delete_documents_by_file_paths(corpus, paths)
+    for path in paths:
+        qdrant.delete(
+            collection_name=corpus,
+            points_selector=FilterSelector(
+                filter=Filter(
+                    must=[FieldCondition(key="file_path", match=MatchValue(value=path))]
+                )
+            ),
+        )
+    _delete_file_manifests(sync_manager, corpus, corpus_type, paths)
+    return len(paths)
 
 
 def _stamp_last_sync_metadata(qdrant, corpus: str) -> None:
@@ -1944,6 +1984,87 @@ def sync_directory_command(
     mem_probe_interval: float = 0.0,
     mem_probe_log: Optional[str] = None,
     order: str = "path",
+    lock_wait: bool = True,
+    lock_timeout: Optional[float] = None,
+):
+    """Sync to a corpus while holding that corpus's write lock (kata htmw).
+
+    Two concurrent syncs of one corpus interleave their reads of "what is
+    indexed" with their Qdrant/MeiliSearch writes, which duplicates points and
+    documents, loses deletes under --parity, and drifts the two systems apart.
+    The lock serializes them per corpus (and per service endpoint), so
+    different corpora still run in parallel.
+
+    A dry run only reads, so it takes no lock and never queues behind a real
+    sync the user is trying to inspect.
+
+    See `_sync_directory_locked` for the full parameter documentation.
+    """
+    lock_ctx = (
+        contextlib.nullcontext()
+        if dry_run
+        else acquire_corpus_lock(
+            corpus, wait=lock_wait, timeout=lock_timeout, quiet=output_json
+        )
+    )
+    try:
+        with lock_ctx:
+            return _sync_directory_locked(
+                corpus,
+                paths,
+                from_file,
+                models,
+                file_types,
+                force,
+                verify,
+                text_workers,
+                max_embedding_batch,
+                no_gpu,
+                cpu_workers,
+                verbose,
+                output_json,
+                git_update=git_update,
+                git_version=git_version,
+                skip_dir_prefixes=skip_dir_prefixes,
+                dry_run=dry_run,
+                parity=parity,
+                repair=repair,
+                quality_threshold=quality_threshold,
+                qdrant_timeout=qdrant_timeout,
+                mem_probe_interval=mem_probe_interval,
+                mem_probe_log=mem_probe_log,
+                order=order,
+            )
+    except CorpusLockUnavailable as e:
+        print_error(str(e), output_json)
+        sys.exit(e.exit_code)
+
+
+def _sync_directory_locked(
+    corpus: str,
+    paths: tuple,
+    from_file: Optional[str],
+    models: str,
+    file_types: Optional[str],
+    force: bool,
+    verify: bool,
+    text_workers: Optional[int],
+    max_embedding_batch: Optional[int],
+    no_gpu: bool,
+    cpu_workers: Optional[int],
+    verbose: bool,
+    output_json: bool,
+    git_update: bool = False,
+    git_version: bool = False,
+    skip_dir_prefixes: Tuple[str, ...] = ("_",),
+    dry_run: bool = False,
+    parity: bool = False,
+    repair: bool = False,
+    quality_threshold: float = 0.9,
+    qdrant_timeout: Optional[int] = None,
+    mem_probe_interval: float = 0.0,
+    mem_probe_log: Optional[str] = None,
+    order: str = "path",
 ):
     """Sync directories or files to both Qdrant and MeiliSearch.
 
@@ -2656,29 +2777,9 @@ def sync_directory_command(
 
                 if not dry_run:
                     # Clean up stale entries from both indexes
-                    from qdrant_client.models import (
-                        FieldCondition,
-                        Filter,
-                        FilterSelector,
-                        MatchValue,
+                    stale_cleaned = _remove_indexed_paths(
+                        qdrant, meili, sync_manager, corpus, corpus_type, stale_paths
                     )
-
-                    meili.delete_documents_by_file_paths(corpus, stale_paths)
-                    for stale_path in stale_paths:
-                        qdrant.delete(
-                            collection_name=corpus,
-                            points_selector=FilterSelector(
-                                filter=Filter(
-                                    must=[
-                                        FieldCondition(
-                                            key="file_path", match=MatchValue(value=stale_path)
-                                        )
-                                    ]
-                                )
-                            ),
-                        )
-                    _delete_file_manifests(sync_manager, corpus, corpus_type, stale_paths)
-                    stale_cleaned = len(stale_paths)
 
                     if not output_json:
                         print_info(f"Cleaned {stale_cleaned} stale paths from both indexes")

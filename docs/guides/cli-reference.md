@@ -287,14 +287,19 @@ from both Qdrant and MeiliSearch.
 The hook never blocks or fails a git operation: it runs detached, swallows
 errors, and exits 0 on every path.
 
-**Spawn gating:** before starting a worker the hook runs
-`arc corpus hook probe-lock`, which takes the same lock the worker does, and
-skips the spawn entirely when one is already draining — the
+**Spawn gating:** before starting a worker the hook checks whether one already
+holds the drain lock, and skips the spawn entirely when so — the
 paths are spooled either way, so the running worker picks them up on its next
 loop. Otherwise it waits briefly (`ARC_HOOK_DEBOUNCE`, default 3s) so a burst
 coalesces into one worker. Measured on a real rebase before this gating: 1299
 spawns died on the lock against 51 useful batches, each costing ~1s of
 interpreter startup alongside the worker actually indexing.
+
+The check itself has to stay far cheaper than the spawn it prevents, so it
+never invokes `arc`: it uses `flock(1)` where that exists, and otherwise a small
+standalone script (`~/.local/share/arcaneum/hook-probe-lock.py`, written at
+install time and run with `$ARC_HOOK_PYTHON` or `python3`) that holds only
+`fcntl`. Measured at ~21ms against the ~1.1s spawn.
 
 **Seeing workers in `ps`/`top`:** background drains otherwise appear as the
 interpreter and script paths, which is unreadable when a commit burst spawns

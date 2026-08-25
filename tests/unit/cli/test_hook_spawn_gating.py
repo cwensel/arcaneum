@@ -372,18 +372,75 @@ def test_the_gate_does_not_invoke_the_arc_console_script(tmp_path):
     assert "$_arc_py" in check, "it should use the bare interpreter probe"
 
 
-def test_the_gate_prefers_flock_when_available(tmp_path):
-    """flock(1) is a sub-millisecond C binary; use it where it exists."""
-    body = hooks.render_block("Docs", "post-commit", tmp_path, spawn=True)
-    assert "flock" in body
+def test_flock_is_the_fast_path_when_available(isolated, repo, tmp_path):
+    """With flock(1) on PATH the gate must not fall back to the interpreter.
+
+    Asserting the literal word "flock" appears in the script proves nothing --
+    a comment would satisfy it. Observe instead that the python probe is never
+    reached: point ARC_HOOK_PYTHON at a recorder and assert it stays unused.
+    """
+    hooks.install("Docs", repo, "post-commit", spawn=True)
+    hook_script = repo / ".git" / "hooks" / "post-commit"
+    bin_dir = tmp_path / "bin"
+    marker = tmp_path / "calls.txt"
+    _fake_arc(bin_dir, marker)
+
+    py_used = tmp_path / "python-was-used.txt"
+    fake_py = bin_dir / "recording-python"
+    fake_py.write_text(f'#!/bin/sh\ntouch "{py_used}"\nexit 1\n')
+    fake_py.chmod(0o755)
+
+    fake_flock = bin_dir / "flock"
+    fake_flock.write_text("#!/bin/sh\nexit 0\n")  # exit 0 => lock is free
+    fake_flock.chmod(0o755)
+
+    env = dict(os.environ)
+    env["XDG_DATA_HOME"] = str(tmp_path / "data")
+    env["PATH"] = f"{bin_dir}:/usr/bin:/bin"
+    env["ARC_HOOK_DEBOUNCE"] = "0.2"
+    env["ARC_HOOK_PYTHON"] = str(fake_py)
+
+    # Hold the lock so the probe is actually reached: the hook short-circuits
+    # when the lock file does not exist, which would make this vacuous.
+    lock = spool.try_acquire_worker_lock("Docs")
+    try:
+        _run_hook(hook_script, env)
+        _wait_past_debounce()
+    finally:
+        spool.release_worker_lock(lock)
+
+    assert not py_used.exists(), "flock was available; the python probe should be unused"
 
 
-def test_the_gate_has_a_python_fallback_for_macos(tmp_path):
-    """Stock macOS ships no flock(1), so the gate cannot depend on it."""
-    body = hooks.render_block("Docs", "post-commit", tmp_path, spawn=True)
-    assert "$_arc_probe" in body, "a flock-less platform still needs a working probe"
-    # And the probe it points at must really answer the lock question.
-    assert "fcntl" in hooks._PROBE_SCRIPT
+def test_the_flockless_gate_depends_on_the_installed_probe(isolated, repo, tmp_path):
+    """Without flock, the probe script is what makes the gate work.
+
+    Deleting it must make the gate fall through to a spawn rather than silently
+    suppress work -- which also proves the probe is genuinely load-bearing.
+    """
+    hooks.install("Docs", repo, "post-commit", spawn=True)
+    hook_script = repo / ".git" / "hooks" / "post-commit"
+    bin_dir = tmp_path / "bin"
+    marker = tmp_path / "calls.txt"
+    _fake_arc(bin_dir, marker)
+    env = _env_without_flock(tmp_path, bin_dir)
+
+    probe = Path(env["XDG_DATA_HOME"]) / "arcaneum" / "hook-probe-lock.py"
+    if probe.exists():
+        probe.unlink()
+
+    lock = spool.try_acquire_worker_lock("Docs")
+    try:
+        _run_hook(hook_script, env)
+        _wait_past_debounce()
+    finally:
+        spool.release_worker_lock(lock)
+
+    calls = marker.read_text() if marker.exists() else ""
+    assert "--drain-spool" in calls, (
+        "with no probe the gate cannot know the lock is held, so it must not "
+        "suppress the spawn"
+    )
 
 
 def test_the_probe_is_measurably_cheaper_than_a_spawn(isolated, tmp_path):

@@ -159,6 +159,11 @@ def test_hook_spawns_when_no_worker_is_running(isolated, repo, tmp_path):
     (bin_dir / "arc").chmod(0o755)
     env["PATH"] = f"{bin_dir}:{env['PATH']}"
 
+    # The real `corpus hook spool` call creates this directory before the
+    # background worker runs.  Preserve that side effect in the fake so Linux
+    # flock(1) can create worker.lock instead of mistaking ENOENT for a held lock.
+    spool.corpus_spool_dir("Docs").mkdir(parents=True, exist_ok=True)
+
     result = _run_hook(hook_script, env)
     assert result.returncode == 0, result.stderr
 

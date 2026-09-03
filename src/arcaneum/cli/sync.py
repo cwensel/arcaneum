@@ -1778,13 +1778,15 @@ def chunk_pdf_file(
         base_metadata["extraction_floor"] = True
         metadata["extraction_floor"] = True
 
-    base_metadata["quality_manifest"] = _build_quality_manifest(
+    source_hash = compute_file_hash(file_path)
+    quality_manifest = _build_quality_manifest(
         file_path=file_path,
         corpus_type="pdf",
-        source_hash=compute_file_hash(file_path),
+        source_hash=source_hash,
         chunk_count=0,
         metadata={**metadata, **base_metadata},
     )
+    base_metadata["quality_manifest"] = quality_manifest
     chunks = chunker.chunk(text, base_metadata)
     from ..indexing.pdf.quality import (
         REPLACEMENT_HEAVY_DROP_REASON,
@@ -1792,18 +1794,15 @@ def chunk_pdf_file(
     )
 
     chunks, dropped_chunk_count = filter_replacement_heavy_chunks(chunks)
-    manifest_metadata = {**metadata, **base_metadata}
-    manifest_metadata["dropped_chunk_count"] = dropped_chunk_count
-    manifest_metadata["dropped_chunk_reason"] = (
+    quality_manifest["chunk_count"] = len(chunks)
+    quality_manifest["dropped_chunk_count"] = dropped_chunk_count
+    quality_manifest["dropped_chunk_reason"] = (
         REPLACEMENT_HEAVY_DROP_REASON if dropped_chunk_count else None
     )
-    quality_manifest = _build_quality_manifest(
-        file_path=file_path,
-        corpus_type="pdf",
-        source_hash=compute_file_hash(file_path),
-        chunk_count=len(chunks),
-        metadata=manifest_metadata,
-    )
+    if dropped_chunk_count:
+        quality_manifest["quality_warnings"] = sorted(
+            {*quality_manifest["quality_warnings"], "replacement_heavy_chunks_dropped"}
+        )
     for chunk in chunks:
         chunk.metadata["quality_manifest"] = quality_manifest
 

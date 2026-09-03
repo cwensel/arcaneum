@@ -1,8 +1,9 @@
 """PDF chunking with semantic awareness and late chunking support (RDR-004)."""
 
-from typing import List, Dict, Optional
-from dataclasses import dataclass
 import logging
+import re
+from dataclasses import dataclass
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -104,38 +105,35 @@ class PDFChunker:
         char_to_token = self.model_config.get("char_to_token_ratio", 3.3)
 
         # Calculate character limits
-        chunk_chars = int(self.chunk_size * char_to_token)
-        overlap_chars = int(self.chunk_overlap * char_to_token)
+        chunk_chars = max(1, int(self.chunk_size * char_to_token))
+        overlap_chars = max(0, int(self.chunk_overlap * char_to_token))
+        boundary_window = max(1, (chunk_chars + 4) // 5)
 
         start = 0
         chunk_index = 0
 
         while start < len(text):
-            end = start + chunk_chars
-
-            # Try to break at sentence boundary
+            end = min(start + chunk_chars, len(text))
             if end < len(text):
-                # Look for sentence boundary in last 20% of chunk
-                search_start = end - int(chunk_chars * 0.2)
-                sentence_end = text.rfind(". ", search_start, end)
+                end = self._find_end_boundary(text, start, end, boundary_window)
 
-                if sentence_end != -1:
-                    end = sentence_end + 1  # Include the period
-
-            chunk_text = text[start:end].strip()
+            chunk_start, chunk_end = self._trim_span(text, start, end)
+            chunk_text = text[chunk_start:chunk_end]
 
             if chunk_text:
                 # Estimate token count
                 token_count = int(len(chunk_text) / char_to_token)
 
                 # Calculate page number if page boundaries available
-                page_number = self._calculate_page_number(start, metadata.get("page_boundaries"))
+                page_number = self._calculate_page_number(
+                    chunk_start, metadata.get("page_boundaries")
+                )
 
                 chunk_metadata = {
                     **metadata,
                     "chunk_index": chunk_index,
-                    "chunk_start_char": start,
-                    "chunk_end_char": end,
+                    "chunk_start_char": chunk_start,
+                    "chunk_end_char": chunk_end,
                     "late_chunking": False,
                 }
 
@@ -153,8 +151,20 @@ class PDFChunker:
                 chunks.append(chunk)
                 chunk_index += 1
 
+            if end >= len(text):
+                break
+
             # Move start position (with overlap)
-            start = end - overlap_chars
+            overlap_end = chunk_end if chunk_text else end
+            desired_start = max(start + 1, overlap_end - overlap_chars)
+            next_start = self._snap_start_to_whitespace(
+                text,
+                desired_start,
+                boundary_window,
+                minimum=start + 1,
+                maximum=overlap_end,
+            )
+            start = max(start + 1, next_start)
 
         chunk_count = len(chunks)
         for chunk in chunks:
@@ -162,6 +172,70 @@ class PDFChunker:
 
         logger.info(f"Created {chunk_count} chunks")
         return chunks
+
+    @staticmethod
+    def _find_end_boundary(text: str, start: int, end: int, window: int) -> int:
+        """Choose the strongest boundary near the target chunk end."""
+        search_start = max(start + 1, end - window)
+        search_text = text[search_start : end + 1]
+
+        paragraph_matches = list(re.finditer(r"\n[ \t]*\n", search_text))
+        if paragraph_matches:
+            return search_start + paragraph_matches[-1].start()
+
+        sentence_matches = list(re.finditer(r"[.!?](?=\s)", search_text))
+        if sentence_matches:
+            return search_start + sentence_matches[-1].end()
+
+        for boundary in range(end, search_start - 1, -1):
+            if boundary < len(text) and text[boundary].isspace():
+                return boundary
+            if boundary > start and text[boundary - 1].isspace():
+                return boundary
+
+        return end
+
+    @staticmethod
+    def _snap_start_to_whitespace(
+        text: str,
+        desired: int,
+        window: int,
+        *,
+        minimum: int,
+        maximum: int,
+    ) -> int:
+        """Snap an overlap-derived start to the nearest word boundary."""
+        desired = min(desired, len(text))
+        if desired == 0 or (desired > 0 and text[desired - 1].isspace()):
+            return desired
+
+        search_start = max(minimum, desired - window)
+        search_end = min(len(text), maximum + 1, desired + window + 1)
+        candidates = []
+        position = search_start
+        while position < search_end:
+            if not text[position].isspace():
+                position += 1
+                continue
+
+            while position < len(text) and text[position].isspace():
+                position += 1
+            if minimum <= position <= maximum + 1:
+                candidates.append(position)
+
+        if candidates:
+            return min(candidates, key=lambda candidate: (abs(candidate - desired), candidate))
+
+        return desired
+
+    @staticmethod
+    def _trim_span(text: str, start: int, end: int) -> tuple[int, int]:
+        """Return source offsets after removing edge whitespace."""
+        while start < end and text[start].isspace():
+            start += 1
+        while end > start and text[end - 1].isspace():
+            end -= 1
+        return start, end
 
     def _calculate_page_number(
         self, chunk_start_char: int, page_boundaries: List[Dict]

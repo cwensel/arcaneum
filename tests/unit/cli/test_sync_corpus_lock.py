@@ -176,7 +176,9 @@ def test_repair_holds_the_lock(isolated_locks):
 
     runner = CliRunner()
     with patch("arcaneum.cli.sync._sync_directory_locked", impl):
-        with patch("arcaneum.cli.utils.create_qdrant_client", side_effect=RuntimeError("no server")):
+        with patch(
+            "arcaneum.cli.utils.create_qdrant_client", side_effect=RuntimeError("no server")
+        ):
             result = runner.invoke(cli, ["corpus", "repair", "Docs"], catch_exceptions=False)
 
     assert result.exit_code == 0, result.output

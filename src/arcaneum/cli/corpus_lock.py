@@ -69,9 +69,7 @@ def _service_endpoints() -> str:
     contenders — which is exactly when they *should* share a lock.
     """
     qdrant = (
-        os.environ.get("ARC_QDRANT_URL")
-        or os.environ.get("QDRANT_URL")
-        or "http://localhost:6333"
+        os.environ.get("ARC_QDRANT_URL") or os.environ.get("QDRANT_URL") or "http://localhost:6333"
     )
     meili = os.environ.get("MEILISEARCH_URL") or "http://localhost:7700"
     return f"{qdrant}|{meili}"
@@ -194,7 +192,11 @@ def acquire_corpus_lock(
                     "Retry once it finishes, or drop --no-wait to queue behind it."
                 )
 
-            if not quiet and not notice_emitted and (time.monotonic() - started) > _WAIT_NOTICE_THRESHOLD_S:
+            if (
+                not quiet
+                and not notice_emitted
+                and (time.monotonic() - started) > _WAIT_NOTICE_THRESHOLD_S
+            ):
                 print(f"[INFO] {_describe_holder(lock_path, corpus)} Waiting…", file=sys.stderr)
                 notice_emitted = True
 

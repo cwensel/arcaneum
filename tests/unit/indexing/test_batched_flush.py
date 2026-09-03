@@ -146,8 +146,7 @@ def test_abort_mid_batch_publishes_no_manifest_for_that_batch():
     published = [p for p, _ in recorder.manifests]
     assert "a" in published, "a completed flush must publish its manifests"
     assert "b" not in published, (
-        "a file whose flush failed must have no manifest, so the next run "
-        "re-detects it as new"
+        "a file whose flush failed must have no manifest, so the next run re-detects it as new"
     )
 
 

@@ -51,9 +51,7 @@ def test_drain_syncs_the_spooled_paths(isolated, repo):
     )
 
     assert result.exit_code == 0, result.output
-    assert calls == [
-        {"corpus": "Docs", "paths": [str(repo / "a.py")], "removed": []}
-    ]
+    assert calls == [{"corpus": "Docs", "paths": [str(repo / "a.py")], "removed": []}]
 
 
 def test_drain_skips_paths_that_vanished_before_the_worker_ran(isolated, repo):
@@ -155,9 +153,7 @@ def test_drain_forwards_removed_paths(isolated, repo):
 
 
 def test_drain_rejects_explicit_paths(isolated, tmp_path):
-    result = CliRunner().invoke(
-        cli, ["corpus", "sync", "Docs", str(tmp_path), "--drain-spool"]
-    )
+    result = CliRunner().invoke(cli, ["corpus", "sync", "Docs", str(tmp_path), "--drain-spool"])
     assert result.exit_code != 0
     assert "drain-spool" in result.output
 
@@ -170,9 +166,7 @@ def test_drain_stops_after_the_batch_limit(isolated, repo):
     def impl(corpus, paths, *args, **kwargs):
         batches.append(list(paths))
         # Always leave more work behind.
-        spool.write_entry(
-            "Docs", repo, changed=[str(repo / f"{len(batches)}.py")], removed=[]
-        )
+        spool.write_entry("Docs", repo, changed=[str(repo / f"{len(batches)}.py")], removed=[])
 
     result = _run(["corpus", "sync", "Docs", "--drain-spool", "--max-batches", "3"], impl)
 

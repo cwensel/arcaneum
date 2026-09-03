@@ -93,7 +93,10 @@ def test_shell_and_python_agree_on_the_worker_lock_path(isolated, tmp_path):
 def _run_hook(script: Path, env: dict, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["/bin/sh", str(script), *args],
-        capture_output=True, text=True, env=env, input="",
+        capture_output=True,
+        text=True,
+        env=env,
+        input="",
     )
 
 
@@ -148,13 +151,13 @@ def test_hook_spawns_when_no_worker_is_running(isolated, repo, tmp_path):
     # A fake arc that logs calls and answers probe-lock from a sentinel file:
     # present => a worker holds the lock (exit 0), absent => free (exit 1).
     (bin_dir / "arc").write_text(
-        f'#!/bin/sh\n'
+        f"#!/bin/sh\n"
         f'echo "$@" >> "{marker}"\n'
         f'if [ "$2" = "hook" ] && [ "$3" = "probe-lock" ]; then\n'
         f'  [ -e "{bin_dir.parent}/HELD" ] && exit 0\n'
-        f'  exit 1\n'
-        f'fi\n'
-        f'exit 0\n'
+        f"  exit 1\n"
+        f"fi\n"
+        f"exit 0\n"
     )
     (bin_dir / "arc").chmod(0o755)
     env["PATH"] = f"{bin_dir}:{env['PATH']}"
@@ -169,6 +172,7 @@ def test_hook_spawns_when_no_worker_is_running(isolated, repo, tmp_path):
 
     # The spawn is backgrounded after a debounce; give it room to land.
     import time
+
     for _ in range(40):
         if "--drain-spool" in (marker.read_text() if marker.exists() else ""):
             break
@@ -356,9 +360,7 @@ def test_probe_script_reports_held(isolated, tmp_path):
     lock_path = spool.worker_lock_path("Docs")
     fd = spool.try_acquire_worker_lock("Docs")
     try:
-        r = subprocess.run(
-            [sys.executable, str(script), str(lock_path)], capture_output=True
-        )
+        r = subprocess.run([sys.executable, str(script), str(lock_path)], capture_output=True)
     finally:
         spool.release_worker_lock(fd)
     assert r.returncode == 0, "exit 0 == held by a worker"
@@ -471,8 +473,7 @@ def test_the_flockless_gate_depends_on_the_installed_probe(isolated, repo, tmp_p
 
     calls = marker.read_text() if marker.exists() else ""
     assert "--drain-spool" in calls, (
-        "with no probe the gate cannot know the lock is held, so it must not "
-        "suppress the spawn"
+        "with no probe the gate cannot know the lock is held, so it must not suppress the spawn"
     )
 
 

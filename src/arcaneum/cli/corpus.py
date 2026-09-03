@@ -807,9 +807,7 @@ def delete_corpus_command(
         # would block a running sync on a human answering y/n. From here on the
         # work is destructive, so an in-flight sync must not interleave with it
         # (kata htmw).
-        with acquire_corpus_lock(
-            name, wait=lock_wait, timeout=lock_timeout, quiet=output_json
-        ):
+        with acquire_corpus_lock(name, wait=lock_wait, timeout=lock_timeout, quiet=output_json):
             # Delete Qdrant collection
             if qdrant_exists:
                 try:

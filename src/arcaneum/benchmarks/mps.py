@@ -142,10 +142,7 @@ def _qualification_decision(
     """Promote only a clean run; recovered OOMs are reliability failures."""
     return (
         "qualified"
-        if speedup >= 1.25
-        and soak_batches >= soak_target
-        and numerical_pass
-        and oom_retries == 0
+        if speedup >= 1.25 and soak_batches >= soak_target and numerical_pass and oom_retries == 0
         else "experimental"
     )
 
@@ -211,9 +208,7 @@ def run_mps_qualification(
             actual = mps.encode(texts, timeout=timeout, batch_size=batch_size)
             latencies.append(time.perf_counter() - tick)
             backend_health = mps.health(timeout=5)["backend"]
-            driver_peak = max(
-                driver_peak, int(backend_health.get("mps_driver_allocated_bytes", 0))
-            )
+            driver_peak = max(driver_peak, int(backend_health.get("mps_driver_allocated_bytes", 0)))
             oom_retries = max(oom_retries, int(backend_health.get("oom_retries", 0)))
             peak_rss = max(peak_rss, process.memory_info().rss)
         mps.shutdown()

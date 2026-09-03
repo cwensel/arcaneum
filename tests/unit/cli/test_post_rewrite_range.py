@@ -194,7 +194,10 @@ def test_post_rewrite_never_fails_the_git_command(isolated, repo):
     env["HOME"] = str(repo)
     r = subprocess.run(
         ["/bin/sh", str(script), "rebase"],
-        cwd=repo, capture_output=True, text=True, env=env,
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=env,
         input="aaa bbb\nccc ddd\n",
     )
     assert r.returncode == 0, r.stderr
@@ -208,7 +211,11 @@ def test_empty_stdin_spools_nothing(isolated, repo):
 
     subprocess.run(
         ["/bin/sh", str(script), "amend"],
-        cwd=repo, capture_output=True, text=True, env=dict(os.environ), input="",
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=dict(os.environ),
+        input="",
     )
     assert list(spool.corpus_spool_dir("Docs").rglob("*.json")) == []
 

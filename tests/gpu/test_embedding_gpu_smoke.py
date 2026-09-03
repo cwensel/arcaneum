@@ -101,6 +101,7 @@ def test_low_memory_guard_falls_back_to_cached_cpu_model(gpu_client, monkeypatch
     assert model_name in gpu_client._cpu_fallback_models
     _assert_embeddings(embeddings, rows=1, dims=config["dimensions"])
 
+
 def test_fastembed_provider_selection_and_encode_smoke(gpu_client, monkeypatch):
     from arcaneum.embeddings.client import EMBEDDING_MODELS
 

@@ -32,7 +32,12 @@ def test_from_argv_keeps_the_subcommand_and_options():
     """`top` should show what this arc is actually doing, options included."""
     argv = [
         "/Users/x/Library/Python/3.12/bin/arc",
-        "corpus", "sync", "RetrofitRDR", "--drain-spool", "--max-batches", "5",
+        "corpus",
+        "sync",
+        "RetrofitRDR",
+        "--drain-spool",
+        "--max-batches",
+        "5",
     ]
     assert proctitle.title_from_argv(argv) == (
         "arc corpus sync RetrofitRDR --drain-spool --max-batches 5"
@@ -148,7 +153,7 @@ def test_entrypoint_returns_the_exit_code_from_main():
     from arcaneum.cli import entrypoint
 
     with patch("arcaneum.cli.proctitle.set_title_from_argv", lambda: None):
-        with patch.object(entrypoint, "_load_main", lambda: (lambda: 42)):
+        with patch.object(entrypoint, "_load_main", lambda: lambda: 42):
             assert entrypoint.run() == 42
 
 
@@ -157,5 +162,5 @@ def test_entrypoint_still_works_without_setproctitle():
     from arcaneum.cli import proctitle as pt
 
     with patch.object(pt, "_load", return_value=None):
-        with patch.object(entrypoint, "_load_main", lambda: (lambda: 0)):
+        with patch.object(entrypoint, "_load_main", lambda: lambda: 0):
             assert entrypoint.run() == 0

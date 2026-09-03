@@ -156,7 +156,10 @@ def test_file_checkout_queues_nothing(repo):
 
     result = subprocess.run(
         ["git", "checkout", "--", "base.md"],
-        cwd=repo, capture_output=True, text=True, env=_env(repo),
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=_env(repo),
     )
     assert result.returncode == 0, result.stderr
 
@@ -175,7 +178,10 @@ def test_amend_reports_the_amended_files(repo):
     _git(repo, "add", "-A")
     result = subprocess.run(
         ["git", "commit", "--amend", "-m", "work amended"],
-        cwd=repo, capture_output=True, text=True, env=_env(repo),
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=_env(repo),
     )
     assert result.returncode == 0, result.stderr
 
@@ -226,6 +232,10 @@ def test_hooks_never_break_the_git_command_they_run_under(repo):
         script = repo / ".git" / "hooks" / hook
         result = subprocess.run(
             ["/bin/sh", str(script), "arg1", "arg2", "1"],
-            cwd=repo, capture_output=True, text=True, env=env, input="",
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            env=env,
+            input="",
         )
         assert result.returncode == 0, f"{hook}: {result.stderr}"

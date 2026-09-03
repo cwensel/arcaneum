@@ -128,9 +128,7 @@ def _validate_revision(revision: str) -> None:
         )
 
 
-def changes_between(
-    repo: Union[str, Path], old: str, new: str
-) -> GitChanges:
+def changes_between(repo: Union[str, Path], old: str, new: str) -> GitChanges:
     """Compare two commits' trees directly, ignoring the path between them.
 
     This is what a history rewrite needs. `A..B` walks the commits in the range

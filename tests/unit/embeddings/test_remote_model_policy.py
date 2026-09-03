@@ -157,10 +157,11 @@ def test_gated_model_download_failure_explains_license_step():
     assert "hf auth login" in hint
 
     plain_error = OSError("disk full")
-    assert client._gated_model_hint("gemma-embed", EMBEDDING_MODELS["gemma-embed"], plain_error) is None
     assert (
-        client._gated_model_hint("qwen3-embed", EMBEDDING_MODELS["qwen3-embed"], error) is None
+        client._gated_model_hint("gemma-embed", EMBEDDING_MODELS["gemma-embed"], plain_error)
+        is None
     )
+    assert client._gated_model_hint("qwen3-embed", EMBEDDING_MODELS["qwen3-embed"], error) is None
 
 
 def test_gemma_embed_uses_native_backend_without_remote_code():
@@ -215,7 +216,9 @@ def test_gemma_embed_gated_download_error_explains_license_login(monkeypatch):
 
     client = EmbeddingClient(cache_dir="/tmp/models", use_gpu=False)
     with patch.object(client, "is_model_cached", return_value=False):
-        with pytest.raises(RuntimeError, match="(?s)gated.*huggingface.co/google/embeddinggemma-300m"):
+        with pytest.raises(
+            RuntimeError, match="(?s)gated.*huggingface.co/google/embeddinggemma-300m"
+        ):
             client.get_model("gemma-embed")
 
 

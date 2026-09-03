@@ -150,9 +150,7 @@ class TestDetectRenames:
         with patch("arcaneum.cli.sync.compute_file_hash", return_value="new"):
             assert _detect_renames(paths, mock_sync_manager, "test-corpus") == []
 
-        mock_sync_manager.get_indexed_paths_by_content_hash.assert_called_once_with(
-            "test-corpus"
-        )
+        mock_sync_manager.get_indexed_paths_by_content_hash.assert_called_once_with("test-corpus")
 
     def test_filter_rename_candidates_excludes_existing_paths(self, mock_sync_manager):
         """Same-path quick-hash misses are modified files, not rename candidates."""

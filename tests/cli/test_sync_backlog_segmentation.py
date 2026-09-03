@@ -49,9 +49,9 @@ class TestSegmentPendingByPhase:
             _touch(tmp_path / "i_old.md", 3_000),
         ]
         pending = [
-            _touch(tmp_path / "arrived.md", 6_000),   # above the indexed range
-            _touch(tmp_path / "covered.md", 4_000),   # inside the indexed range
-            _touch(tmp_path / "backlog.md", 1_000),   # below the indexed range
+            _touch(tmp_path / "arrived.md", 6_000),  # above the indexed range
+            _touch(tmp_path / "covered.md", 4_000),  # inside the indexed range
+            _touch(tmp_path / "backlog.md", 1_000),  # below the indexed range
         ]
 
         segments = segment_pending_by_phase(pending, indexed)
@@ -70,7 +70,7 @@ class TestSegmentPendingByPhase:
         while it was finishing. Those are the newest content in the tree.
         """
         indexed = [
-            _touch(tmp_path / "i_top.md", 1_755_400_339),   # 08-17 19:52:19
+            _touch(tmp_path / "i_top.md", 1_755_400_339),  # 08-17 19:52:19
             _touch(tmp_path / "i_bottom.md", 1_754_900_187),  # 08-12 10:56
         ]
         pending = [
@@ -93,12 +93,8 @@ class TestSegmentPendingByPhase:
         A non-contiguous indexed set (239 of 246 files sat below the first
         unindexed one) must not shatter the display into dozens of segments.
         """
-        indexed = [
-            _touch(tmp_path / f"i{i}.md", 3_000 + i * 100) for i in range(10)
-        ]
-        pending = [
-            _touch(tmp_path / f"p{i}.md", 3_050 + i * 100) for i in range(9)
-        ]
+        indexed = [_touch(tmp_path / f"i{i}.md", 3_000 + i * 100) for i in range(10)]
+        pending = [_touch(tmp_path / f"p{i}.md", 3_050 + i * 100) for i in range(9)]
 
         segments = segment_pending_by_phase(pending, indexed)
 

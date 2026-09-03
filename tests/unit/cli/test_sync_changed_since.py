@@ -53,9 +53,7 @@ def test_changed_since_passes_only_touched_paths_to_sync(repo, isolated_locks):
     def impl(corpus, paths, *args, **kwargs):
         seen["paths"] = [Path(p).name for p in paths]
 
-    result = _run(
-        ["corpus", "sync", "Docs", str(repo), "--changed-since", "HEAD"], impl
-    )
+    result = _run(["corpus", "sync", "Docs", str(repo), "--changed-since", "HEAD"], impl)
 
     assert result.exit_code == 0, result.output
     assert seen["paths"] == ["b.py"], "unchanged a.py must not be re-synced"
@@ -72,9 +70,7 @@ def test_changed_since_forwards_removed_paths(repo, isolated_locks):
         seen["paths"] = list(paths)
         seen["removed"] = [Path(p).name for p in kwargs.get("removed_paths") or []]
 
-    result = _run(
-        ["corpus", "sync", "Docs", str(repo), "--changed-since", "HEAD"], impl
-    )
+    result = _run(["corpus", "sync", "Docs", str(repo), "--changed-since", "HEAD"], impl)
 
     assert result.exit_code == 0, result.output
     assert seen["removed"] == ["a.py"]
@@ -129,9 +125,7 @@ def test_changed_since_defaults_to_cwd_when_no_path_given(repo, isolated_locks, 
     seen = {}
     result = _run(
         ["corpus", "sync", "Docs", "--changed-since", "HEAD"],
-        lambda corpus, paths, *a, **k: seen.setdefault(
-            "paths", [Path(p).name for p in paths]
-        ),
+        lambda corpus, paths, *a, **k: seen.setdefault("paths", [Path(p).name for p in paths]),
     )
 
     assert result.exit_code == 0, result.output
@@ -165,9 +159,14 @@ def test_changed_since_is_mutually_exclusive_with_from_file(repo, isolated_locks
     result = CliRunner().invoke(
         cli,
         [
-            "corpus", "sync", "Docs", str(repo),
-            "--changed-since", "HEAD",
-            "--from-file", str(listing),
+            "corpus",
+            "sync",
+            "Docs",
+            str(repo),
+            "--changed-since",
+            "HEAD",
+            "--from-file",
+            str(listing),
         ],
     )
     assert result.exit_code != 0

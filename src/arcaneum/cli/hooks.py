@@ -68,9 +68,35 @@ class InstalledHook:
 # to be right often enough to make a good default that the user can override.
 _CODE_EXTENSIONS = frozenset(
     {
-        ".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".java", ".kt", ".scala",
-        ".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".rb", ".php", ".swift", ".m",
-        ".sh", ".bash", ".zsh", ".sql", ".proto", ".ex", ".exs", ".clj", ".hs",
+        ".py",
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".go",
+        ".rs",
+        ".java",
+        ".kt",
+        ".scala",
+        ".c",
+        ".h",
+        ".cc",
+        ".cpp",
+        ".hpp",
+        ".cs",
+        ".rb",
+        ".php",
+        ".swift",
+        ".m",
+        ".sh",
+        ".bash",
+        ".zsh",
+        ".sql",
+        ".proto",
+        ".ex",
+        ".exs",
+        ".clj",
+        ".hs",
     }
 )
 _PDF_EXTENSIONS = frozenset({".pdf"})
@@ -496,9 +522,7 @@ def uninstall(corpus: str, repo: Union[str, Path], hook: Optional[str] = None) -
         # If nothing but a shebang and blank lines is left, the file is ours
         # alone — remove it rather than leaving an inert stub behind.
         meaningful = [
-            line
-            for line in remaining.splitlines()
-            if line.strip() and not line.startswith("#!")
+            line for line in remaining.splitlines() if line.strip() and not line.startswith("#!")
         ]
         if meaningful:
             hook_path.write_text(remaining.rstrip("\n") + "\n")
@@ -534,7 +558,5 @@ def list_installed(repo: Union[str, Path]) -> List[InstalledHook]:
             logger.debug("Could not read %s: %s", hook_path, exc)
             continue
         for match in marker.finditer(body):
-            found.append(
-                InstalledHook(corpus=match.group("corpus"), hook=name, path=hook_path)
-            )
+            found.append(InstalledHook(corpus=match.group("corpus"), hook=name, path=hook_path))
     return found

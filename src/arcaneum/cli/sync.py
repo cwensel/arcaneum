@@ -373,9 +373,7 @@ def _remove_indexed_paths(
         qdrant.delete(
             collection_name=corpus,
             points_selector=FilterSelector(
-                filter=Filter(
-                    must=[FieldCondition(key="file_path", match=MatchValue(value=path))]
-                )
+                filter=Filter(must=[FieldCondition(key="file_path", match=MatchValue(value=path))])
             ),
         )
     _delete_file_manifests(sync_manager, corpus, corpus_type, paths)
@@ -2004,9 +2002,7 @@ def sync_directory_command(
     lock_ctx = (
         contextlib.nullcontext()
         if dry_run
-        else acquire_corpus_lock(
-            corpus, wait=lock_wait, timeout=lock_timeout, quiet=output_json
-        )
+        else acquire_corpus_lock(corpus, wait=lock_wait, timeout=lock_timeout, quiet=output_json)
     )
     try:
         with lock_ctx:

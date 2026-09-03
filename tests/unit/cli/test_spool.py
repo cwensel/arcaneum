@@ -173,7 +173,10 @@ def test_worker_lock_is_single_flight(isolated_spool, tmp_path):
 
     proc = subprocess.Popen(
         [sys.executable, "-c", _HOLDER, "Docs", "5"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
     )
     try:
         assert proc.stdout.readline().strip() == "held"

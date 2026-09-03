@@ -225,7 +225,10 @@ def test_committing_with_the_hook_installed_succeeds_and_spools(repo):
     (repo / "b.py").write_text("b\n")
     _git(repo, "add", "-A")
     commit = subprocess.run(
-        ["git", "commit", "-m", "add b"], cwd=repo, capture_output=True, text=True,
+        ["git", "commit", "-m", "add b"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
         env={**os.environ, "XDG_DATA_HOME": str(repo.parent / "xdg")},
     )
     assert commit.returncode == 0, commit.stderr

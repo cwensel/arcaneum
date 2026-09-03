@@ -121,7 +121,7 @@ def test_built_wheel_contains_canonical_result_schema(tmp_path):
 
     assert names.count("arcaneum/benchmarks/schemas/accelerator-result-v1.schema.json") == 1
     assert "Provides-Extra: benchmarks" in metadata
-    assert 'Requires-Dist: jsonschema[format]' in metadata
+    assert "Requires-Dist: jsonschema[format]" in metadata
     probe = """
 import json
 import sys

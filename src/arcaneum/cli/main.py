@@ -1166,9 +1166,7 @@ def _drain_corpus_spool(corpus, *, max_batches, sync_kwargs):
                 break
 
             batches += 1
-            proctitle.set_title(
-                f"drain {corpus} (batch {batches}, {len(batch.changed)} files)"
-            )
+            proctitle.set_title(f"drain {corpus} (batch {batches}, {len(batch.changed)} files)")
             # A path can be spooled and then deleted before the worker reaches
             # it; indexing would fail on a file that is no longer there.
             changed = [path for path in batch.changed if os.path.isfile(path)]
@@ -1664,9 +1662,7 @@ def _resolve_corpus_interactively(repo, assume_yes):
     help="Take the defaults instead of prompting (for scripts and agents)",
 )
 @click.option("--json", "output_json", is_flag=True, help="Output JSON format")
-def corpus_hook_install(
-    corpus, repo, hook_name, no_spawn, service, assume_yes, output_json
-):
+def corpus_hook_install(corpus, repo, hook_name, no_spawn, service, assume_yes, output_json):
     """Install the sync hook for CORPUS into a repository.
 
     Run without CORPUS to be walked through it: pick or create a corpus,
@@ -1740,9 +1736,7 @@ def corpus_hook_install(
     if service_result:
         click.echo(f"Registered spool watcher: {service_result}")
     if no_spawn:
-        click.echo(
-            f"Queue-only mode. Drain with: arc corpus sync {corpus} --drain-spool"
-        )
+        click.echo(f"Queue-only mode. Drain with: arc corpus sync {corpus} --drain-spool")
 
     if not interactive:
         return
@@ -1753,8 +1747,7 @@ def corpus_hook_install(
     do_backfill = False
     if not assume_yes:
         click.echo(
-            "\nThe hook indexes future commits only; files already committed "
-            "are not indexed yet."
+            "\nThe hook indexes future commits only; files already committed are not indexed yet."
         )
         do_backfill = click.confirm("Index the existing files now?", default=False)
 
@@ -1829,8 +1822,7 @@ def corpus_hook_status(repo, output_json):
             f"{len(installed)} hook(s) installed",
             data={
                 "installed": [
-                    {"corpus": h.corpus, "hook": h.hook, "path": str(h.path)}
-                    for h in installed
+                    {"corpus": h.corpus, "hook": h.hook, "path": str(h.path)} for h in installed
                 ],
                 "pending_spools": pending,
             },
@@ -1874,9 +1866,7 @@ def corpus_hook_spool(corpus, repo, changed_since, between):
         click.echo(f"arc: skipping spool: {exc}", err=True)
         return
 
-    entry = spool.write_entry(
-        corpus, root, changed=changes.changed, removed=changes.removed
-    )
+    entry = spool.write_entry(corpus, root, changed=changes.changed, removed=changes.removed)
     if entry:
         click.echo(
             f"Queued {len(changes.changed)} changed and "

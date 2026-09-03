@@ -1,5 +1,7 @@
 """Regression tests for PDF chunk boundary selection."""
 
+import pytest
+
 from arcaneum.indexing.pdf.chunker import PDFChunker
 
 
@@ -58,6 +60,12 @@ def test_unbroken_token_hard_cuts_and_makes_progress():
     assert [len(chunk.text) for chunk in chunks] == [20, 20, 20, 10]
     assert [chunk.metadata["chunk_start_char"] for chunk in chunks] == [0, 15, 30, 45]
     assert chunks[-1].metadata["chunk_end_char"] == len(text)
+
+
+@pytest.mark.parametrize("overlap_percent", [-0.1, 1])
+def test_out_of_range_overlap_is_rejected(overlap_percent):
+    with pytest.raises(ValueError, match="overlap_percent"):
+        _chunker(chunk_size=20, overlap_percent=overlap_percent)
 
 
 def test_trimmed_span_drives_page_provenance_at_page_boundary():

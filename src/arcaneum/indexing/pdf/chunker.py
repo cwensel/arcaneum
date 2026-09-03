@@ -38,6 +38,9 @@ class PDFChunker:
             min_doc_tokens: Minimum document length for late chunking
             max_doc_tokens: Maximum document length for late chunking
         """
+        if not 0 <= overlap_percent < 1:
+            raise ValueError("overlap_percent must be at least 0 and less than 1")
+
         self.model_config = model_config
         self.overlap_percent = overlap_percent
         self.late_chunking_enabled = late_chunking_enabled

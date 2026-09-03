@@ -9,7 +9,9 @@ import re
 import subprocess
 import sys
 
-KNOWN_AUDIT_VULNS: set[tuple[str, str]] = set()
+# Transitive via llama-index-core; affected file APIs are unreachable and no fix exists:
+# https://github.com/nltk/nltk/security/advisories/GHSA-8mgp-746c-j5xp
+KNOWN_AUDIT_VULNS: set[tuple[str, str]] = {("nltk", "PYSEC-2026-3740")}
 
 
 def run_check(command: list[str]) -> subprocess.CompletedProcess[str]:

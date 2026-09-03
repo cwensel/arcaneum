@@ -145,9 +145,15 @@ def test_reference_fragments_merge_and_recompute_final_chunk_metadata():
 
 
 def test_document_shorter_than_fragment_floor_is_the_only_exception():
-    text = "A. B. Author. Title. Conf., 2001."
+    text = " ".join(
+        [
+            "A. B. Author. Distributed Systems Study.",
+            "C. D. Author. Reliable Storage Study.",
+            "E. F. Author. Network Protocol Study.",
+        ]
+    )
 
-    chunks = _chunker(chunk_size=100, min_chunk_chars=200).chunk(text, {})
+    chunks = _chunker(chunk_size=50, overlap_percent=0, min_chunk_chars=200).chunk(text, {})
 
     assert len(chunks) == 1
     assert chunks[0].text == text

@@ -36,6 +36,93 @@ FILE_MANIFEST_POINT_SCHEMA_VERSION = 1
 _FILE_MANIFEST_NAMESPACE = uuid.UUID("2f63291c-85b8-4f5b-9178-f9fd31982b56")
 
 
+def build_quality_manifest(
+    *,
+    file_path: Path,
+    corpus_type: str,
+    source_hash: Optional[str],
+    chunk_count: int,
+    metadata: Optional[Dict[str, Any]] = None,
+    extraction_method: Optional[str] = None,
+    warnings: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Build per-file extraction quality metadata stored with indexed files."""
+    metadata = metadata or {}
+    warnings = list(warnings or [])
+    page_count = metadata.get("page_count")
+    page_boundaries = metadata.get("page_boundaries") or []
+    covered_pages = [
+        p.get("page_number")
+        for p in page_boundaries
+        if p.get("page_number") is not None and p.get("page_text_length", 0) > 0
+    ]
+    empty_pages = []
+    if page_count:
+        empty_pages = sorted(set(range(1, page_count + 1)) - set(covered_pages))
+    low_text_pages = [
+        p.get("page_number")
+        for p in page_boundaries
+        if p.get("page_number") is not None and 0 < p.get("page_text_length", 0) < 200
+    ]
+
+    if metadata.get("extraction_floor"):
+        warnings.append("extraction_floor")
+    if metadata.get("dropout_recovered"):
+        warnings.append("dropout_recovered")
+    if metadata.get("ocr_pages_failed", 0):
+        warnings.append("ocr_pages_failed")
+    if empty_pages:
+        warnings.append("empty_pages")
+    if low_text_pages:
+        warnings.append("low_text_pages")
+    if metadata.get("dropped_chunk_count", 0):
+        warnings.append("replacement_heavy_chunks_dropped")
+
+    method = extraction_method or metadata.get("extraction_method") or metadata.get("method")
+    if corpus_type == "code":
+        fallback_method = "line_based" if method == "line_based" else None
+    elif metadata.get("dropout_recovered"):
+        fallback_method = metadata.get("extraction_method")
+    elif metadata.get("extraction_floor"):
+        fallback_method = "normalized_bypass_no_improvement"
+    else:
+        fallback_method = None
+    ocr_reason = metadata.get("ocr_triggered_by")
+    if not ocr_reason and method and "ocr" in method:
+        ocr_reason = "forced"
+
+    return {
+        "schema_version": 1,
+        "file_path": str(file_path),
+        "source_hash": source_hash,
+        "extractor": corpus_type,
+        "extractor_version": "arcaneum.quality_manifest.v1",
+        "extraction_method": method,
+        "fallback_method": fallback_method,
+        "chunk_count": chunk_count,
+        "page_coverage": {
+            "page_count": page_count,
+            "covered_pages": sorted(set(covered_pages)),
+            "empty_pages": empty_pages,
+            "low_text_pages": low_text_pages,
+        },
+        "ocr": {
+            "triggered": bool(ocr_reason),
+            "reason": ocr_reason,
+            "pages_processed": metadata.get("ocr_pages_processed"),
+            "confidence": metadata.get("ocr_confidence"),
+            "failures": metadata.get("ocr_pages_failed"),
+        },
+        "table_handling_count": metadata.get("table_count"),
+        "image_handling_count": metadata.get("image_count"),
+        "dropped_chunk_count": metadata.get("dropped_chunk_count", 0),
+        "dropped_chunk_reason": metadata.get("dropped_chunk_reason"),
+        "quality_warnings": sorted(set(warnings)),
+        "repair_command": f"arc corpus sync <corpus> {file_path} --repair",
+        "verify_command": "arc corpus verify <corpus> --json",
+    }
+
+
 def _notify_progress(callback: Optional[Callable[[int], None]], count: int) -> None:
     """Report best-effort progress without coupling display failures to sync."""
     if callback is None:
@@ -302,6 +389,7 @@ class MetadataBasedSync:
                         "chunk_count",
                         "file_size",
                         "store_type",
+                        "quality_manifest",
                     ],
                     with_vectors=False,
                 )
@@ -377,6 +465,7 @@ class MetadataBasedSync:
         chunk_count: Optional[int] = None,
         file_size: Optional[int] = None,
         store_type: Optional[str] = None,
+        quality_manifest: Optional[Dict[str, Any]] = None,
     ) -> PointStruct:
         """Build a reserved manifest point for one physical source path."""
         absolute_path = str(Path(file_path).absolute())
@@ -392,6 +481,7 @@ class MetadataBasedSync:
             "chunk_count": chunk_count,
             "file_size": file_size,
             "store_type": store_type,
+            "quality_manifest": quality_manifest,
         }
         payload.update({key: value for key, value in optional.items() if value is not None})
         return PointStruct(
@@ -483,14 +573,19 @@ class MetadataBasedSync:
                 return
         else:
             payload = source[0].payload
+        manifest_metadata = {
+            "file_hash": payload.get("file_hash"),
+            "chunk_count": payload.get("chunk_count"),
+            "file_size": file_size if file_size is not None else payload.get("file_size"),
+            "store_type": store_type if store_type is not None else payload.get("store_type"),
+        }
+        if payload.get("quality_manifest") is not None:
+            manifest_metadata["quality_manifest"] = payload["quality_manifest"]
         self.upsert_file_manifest(
             collection_name,
             target_path,
             quick_hash,
-            file_hash=payload.get("file_hash"),
-            chunk_count=payload.get("chunk_count"),
-            file_size=file_size if file_size is not None else payload.get("file_size"),
-            store_type=store_type if store_type is not None else payload.get("store_type"),
+            **manifest_metadata,
         )
         if delete_source:
             self.delete_file_manifest(collection_name, source_path)

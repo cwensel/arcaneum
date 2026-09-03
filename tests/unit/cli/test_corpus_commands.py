@@ -173,6 +173,61 @@ def test_full_directory_sync_skips_count_metadata_when_files_failed(monkeypatch)
     assert updates == []
 
 
+def test_corpus_verify_json_exposes_dropped_chunk_manifest(monkeypatch):
+    from arcaneum.cli import corpus
+    from arcaneum.indexing import verify as verify_module
+
+    manifest = {
+        "dropped_chunk_count": 2,
+        "dropped_chunk_reason": "replacement_character_ratio_gt_0.05",
+    }
+    verification = SimpleNamespace(
+        collection_name="Docs",
+        collection_type="pdf",
+        is_healthy=True,
+        total_points=0,
+        total_items=1,
+        complete_items=1,
+        incomplete_items=0,
+        duplicate_items=0,
+        schema_version=1,
+        app_version="test",
+        errors=[],
+        files=[
+            SimpleNamespace(
+                file_path="/tmp/all-garbage.pdf",
+                is_complete=True,
+                has_duplicate_chunks=False,
+                duplicate_chunk_count=0,
+                quality_manifest=manifest,
+            )
+        ],
+    )
+    monkeypatch.setattr(corpus, "create_qdrant_client", lambda: object())
+    monkeypatch.setattr(
+        verify_module.CollectionVerifier,
+        "verify_collection",
+        lambda *_args, **_kwargs: verification,
+    )
+    monkeypatch.setattr(
+        corpus,
+        "create_meili_client",
+        lambda: SimpleNamespace(health_check=lambda: False),
+    )
+    output = {}
+    monkeypatch.setattr(
+        corpus,
+        "print_json",
+        lambda status, message, data: output.update(
+            {"status": status, "message": message, "data": data}
+        ),
+    )
+
+    corpus.corpus_verify_command("Docs", project=None, verbose=False, output_json=True)
+
+    assert output["data"]["qdrant"]["files"][0]["quality_manifest"] == manifest
+
+
 def test_corpus_module_exports_expected_commands():
     """Every documented 'arc corpus' subcommand function is importable."""
     from arcaneum.cli import corpus

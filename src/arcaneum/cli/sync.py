@@ -211,7 +211,13 @@ from ..indexing.collection_metadata import (
     user_point_count,
 )
 from ..indexing.common.multiprocessing import create_process_pool
-from ..indexing.common.sync import MetadataBasedSync, compute_quick_hash
+from ..indexing.common.sync import (
+    MetadataBasedSync,
+    compute_quick_hash,
+)
+from ..indexing.common.sync import (
+    build_quality_manifest as _build_quality_manifest,
+)
 from ..indexing.common.text_source import (
     MARKDOWN_EXTENSIONS,
     is_compressed,
@@ -304,16 +310,22 @@ def _upsert_file_manifest(
     *,
     file_hash: str,
     chunk_count: int,
+    quality_manifest: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Publish a file manifest only after its chunks are durable."""
+    metadata = {
+        "file_hash": file_hash,
+        "chunk_count": chunk_count,
+        "file_size": file_path.stat().st_size,
+        "store_type": corpus_type,
+    }
+    if quality_manifest is not None:
+        metadata["quality_manifest"] = quality_manifest
     sync_manager.upsert_file_manifest(
         corpus,
         str(file_path.absolute()),
         quick_hash,
-        file_hash=file_hash,
-        chunk_count=chunk_count,
-        file_size=file_path.stat().st_size,
-        store_type=corpus_type,
+        **metadata,
     )
 
 
@@ -845,89 +857,6 @@ def _chunk_code_file_worker(
 
     except Exception as e:
         return (file_path, [], str(e))
-
-
-def _build_quality_manifest(
-    *,
-    file_path: Path,
-    corpus_type: str,
-    source_hash: Optional[str],
-    chunk_count: int,
-    metadata: Optional[Dict[str, Any]] = None,
-    extraction_method: Optional[str] = None,
-    warnings: Optional[List[str]] = None,
-) -> Dict[str, Any]:
-    """Build per-file extraction quality metadata stored on each chunk."""
-    metadata = metadata or {}
-    warnings = list(warnings or [])
-    page_count = metadata.get("page_count")
-    page_boundaries = metadata.get("page_boundaries") or []
-    covered_pages = [
-        p.get("page_number")
-        for p in page_boundaries
-        if p.get("page_number") is not None and p.get("page_text_length", 0) > 0
-    ]
-    empty_pages = []
-    if page_count:
-        empty_pages = sorted(set(range(1, page_count + 1)) - set(covered_pages))
-    low_text_pages = [
-        p.get("page_number")
-        for p in page_boundaries
-        if p.get("page_number") is not None and 0 < p.get("page_text_length", 0) < 200
-    ]
-
-    if metadata.get("extraction_floor"):
-        warnings.append("extraction_floor")
-    if metadata.get("dropout_recovered"):
-        warnings.append("dropout_recovered")
-    if metadata.get("ocr_pages_failed", 0):
-        warnings.append("ocr_pages_failed")
-    if empty_pages:
-        warnings.append("empty_pages")
-    if low_text_pages:
-        warnings.append("low_text_pages")
-
-    method = extraction_method or metadata.get("extraction_method") or metadata.get("method")
-    if corpus_type == "code":
-        fallback_method = "line_based" if method == "line_based" else None
-    elif metadata.get("dropout_recovered"):
-        fallback_method = metadata.get("extraction_method")
-    elif metadata.get("extraction_floor"):
-        fallback_method = "normalized_bypass_no_improvement"
-    else:
-        fallback_method = None
-    ocr_reason = metadata.get("ocr_triggered_by")
-    if not ocr_reason and method and "ocr" in method:
-        ocr_reason = "forced"
-
-    return {
-        "schema_version": 1,
-        "file_path": str(file_path),
-        "source_hash": source_hash,
-        "extractor": corpus_type,
-        "extractor_version": "arcaneum.quality_manifest.v1",
-        "extraction_method": method,
-        "fallback_method": fallback_method,
-        "chunk_count": chunk_count,
-        "page_coverage": {
-            "page_count": page_count,
-            "covered_pages": sorted(set(covered_pages)),
-            "empty_pages": empty_pages,
-            "low_text_pages": low_text_pages,
-        },
-        "ocr": {
-            "triggered": bool(ocr_reason),
-            "reason": ocr_reason,
-            "pages_processed": metadata.get("ocr_pages_processed"),
-            "confidence": metadata.get("ocr_confidence"),
-            "failures": metadata.get("ocr_pages_failed"),
-        },
-        "table_handling_count": metadata.get("table_count"),
-        "image_handling_count": metadata.get("image_count"),
-        "quality_warnings": sorted(set(warnings)),
-        "repair_command": f"arc corpus sync <corpus> {file_path} --repair",
-        "verify_command": "arc corpus verify <corpus> --json",
-    }
 
 
 def get_meili_client() -> FullTextClient:
@@ -1576,6 +1505,14 @@ def _filter_rename_candidate_paths(
     return paths - indexed_paths
 
 
+class PDFChunkList(list):
+    """List-compatible PDF chunks carrying a file manifest even when empty."""
+
+    def __init__(self, chunks=(), *, quality_manifest=None):
+        super().__init__(chunks)
+        self.quality_manifest = quality_manifest
+
+
 def _handle_renames_meili(
     renames: List[Tuple[str, str]],
     qdrant,
@@ -1817,7 +1754,7 @@ def chunk_pdf_file(
 
     if not text or not text.strip():
         logger.warning(f"No text extracted from {file_path}")
-        return []
+        return PDFChunkList()
 
     page_count = metadata.get("page_count", page_count)
 
@@ -1848,14 +1785,32 @@ def chunk_pdf_file(
         chunk_count=0,
         metadata={**metadata, **base_metadata},
     )
-
     chunks = chunker.chunk(text, base_metadata)
-    quality_manifest = dict(base_metadata["quality_manifest"])
-    quality_manifest["chunk_count"] = len(chunks)
+    from ..indexing.pdf.quality import (
+        REPLACEMENT_HEAVY_DROP_REASON,
+        filter_replacement_heavy_chunks,
+    )
+
+    chunks, dropped_chunk_count = filter_replacement_heavy_chunks(chunks)
+    manifest_metadata = {**metadata, **base_metadata}
+    manifest_metadata["dropped_chunk_count"] = dropped_chunk_count
+    manifest_metadata["dropped_chunk_reason"] = (
+        REPLACEMENT_HEAVY_DROP_REASON if dropped_chunk_count else None
+    )
+    quality_manifest = _build_quality_manifest(
+        file_path=file_path,
+        corpus_type="pdf",
+        source_hash=compute_file_hash(file_path),
+        chunk_count=len(chunks),
+        metadata=manifest_metadata,
+    )
     for chunk in chunks:
         chunk.metadata["quality_manifest"] = quality_manifest
 
-    return [{"text": c.text, "metadata": c.metadata} for c in chunks]
+    return PDFChunkList(
+        ({"text": c.text, "metadata": c.metadata} for c in chunks),
+        quality_manifest=quality_manifest,
+    )
 
 
 def chunk_markdown_file(
@@ -3363,6 +3318,7 @@ def _sync_directory_locked(
                                     compute_quick_hash(file_path),
                                     file_hash=compute_file_hash(file_path),
                                     chunk_count=0,
+                                    quality_manifest=getattr(chunks, "quality_manifest", None),
                                 )
                                 if verbose and not output_json:
                                     progress.console.print(
@@ -3592,6 +3548,7 @@ def _sync_directory_locked(
                                     quick_hash,
                                     file_hash=file_hash,
                                     chunk_count=len(documents),
+                                    quality_manifest=getattr(chunks, "quality_manifest", None),
                                 )
                                 total_chunks += len(documents)
                                 total_qdrant += qdrant_count
@@ -3856,6 +3813,7 @@ def _sync_directory_locked(
                                 compute_quick_hash(file_path),
                                 file_hash=compute_file_hash(file_path),
                                 chunk_count=0,
+                                quality_manifest=getattr(chunks, "quality_manifest", None),
                             )
                             qdrant_backfilled += 1
                             progress.advance(backfill_task)
@@ -3951,6 +3909,7 @@ def _sync_directory_locked(
                                 quick_hash,
                                 file_hash=file_hash,
                                 chunk_count=len(points),
+                                quality_manifest=getattr(chunks, "quality_manifest", None),
                             )
                             qdrant_backfill_chunks += len(points)
 
@@ -5043,6 +5002,7 @@ def _backfill_meili_to_qdrant(
                     compute_quick_hash(file_path),
                     file_hash=compute_file_hash(file_path),
                     chunk_count=0,
+                    quality_manifest=getattr(chunks, "quality_manifest", None),
                 )
                 files_success += 1
                 progress.advance(backfill_task)
@@ -5143,6 +5103,7 @@ def _backfill_meili_to_qdrant(
                 quick_hash,
                 file_hash=file_hash,
                 chunk_count=len(points),
+                quality_manifest=getattr(chunks, "quality_manifest", None),
             )
 
             files_success += 1

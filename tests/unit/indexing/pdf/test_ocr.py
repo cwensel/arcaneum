@@ -6,6 +6,7 @@ import sys
 from io import BytesIO
 from unittest.mock import MagicMock
 
+import pytest
 from PIL import Image
 
 from arcaneum.indexing.common.sync import MetadataBasedSync
@@ -15,6 +16,17 @@ from arcaneum.indexing.pdf.ocr import (
     merge_extracted_text_with_ocr,
 )
 from arcaneum.indexing.uploader import PDFBatchUploader
+
+
+def _uploader_chunk(text, index, count):
+    from arcaneum.indexing.pdf.chunker import Chunk
+
+    return Chunk(
+        text=text,
+        chunk_index=index,
+        token_count=len(text),
+        metadata={"chunk_index": index, "chunk_count": count},
+    )
 
 
 def test_ocr_module_import_does_not_import_cv2(monkeypatch):
@@ -319,3 +331,96 @@ def test_force_reindex_empty_pdf_records_zero_chunk_manifest(tmp_path):
         if point.payload.get("is_metadata")
     ]
     assert manifest_points[-1].payload["chunk_count"] == 0
+
+
+@pytest.mark.parametrize("streaming", [True, False])
+def test_pdf_uploader_drops_replacement_heavy_chunks_before_embedding(tmp_path, streaming):
+    pdf_path = tmp_path / "mixed.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    qdrant = MagicMock()
+    qdrant.scroll.return_value = ([], None)
+    qdrant.get_collection.return_value = MagicMock(
+        payload_schema={}, config=MagicMock(params=MagicMock(vectors=MagicMock(size=3)))
+    )
+    embeddings = MagicMock()
+    uploader = PDFBatchUploader(
+        qdrant_client=qdrant,
+        embedding_client=embeddings,
+        file_workers=1,
+        ocr_enabled=False,
+        streaming=streaming,
+    )
+    uploader.extractor.extract = MagicMock(
+        return_value=("clean extracted text " * 20, {"page_count": 1})
+    )
+    uploader._upload_batch = MagicMock()
+    uploaded = []
+    uploader._upload_batch.side_effect = lambda _collection, points: uploaded.extend(list(points))
+    chunker = MagicMock()
+    chunker.chunk.return_value = [
+        _uploader_chunk("good first", 0, 3),
+        _uploader_chunk("\ufffd" * 30, 1, 3),
+        _uploader_chunk("good last", 2, 3),
+    ]
+
+    def embed_parallel(texts, _model, **kwargs):
+        assert texts == ["good first", "good last"]
+        vectors = [[0.1, 0.2, 0.3] for _ in texts]
+        callback = kwargs.get("on_batch_complete")
+        if callback:
+            callback(0, 0, vectors)
+            return None
+        return vectors
+
+    embeddings.embed_parallel.side_effect = embed_parallel
+
+    result = uploader._process_single_pdf(
+        pdf_path, "docs", "stella", chunker, 1, False, 1, 1, force_reindex=True
+    )
+
+    assert result[0:3] == ([], 2, None)
+    assert [point.payload["chunk_index"] for point in uploaded] == [0, 1]
+    assert {point.payload["chunk_count"] for point in uploaded} == {2}
+    manifest_points = [
+        point
+        for call in qdrant.upsert.call_args_list
+        for point in call.kwargs["points"]
+        if point.payload.get("metadata_type") == "file_manifest"
+    ]
+    manifest = manifest_points[-1].payload["quality_manifest"]
+    assert manifest["dropped_chunk_count"] == 1
+    assert manifest["dropped_chunk_reason"] == "replacement_character_ratio_gt_0.05"
+
+
+def test_pdf_uploader_all_dropped_skips_embedding_and_records_manifest(tmp_path):
+    pdf_path = tmp_path / "garbage.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    qdrant = MagicMock()
+    qdrant.scroll.return_value = ([], None)
+    qdrant.get_collection.return_value = MagicMock(
+        payload_schema={}, config=MagicMock(params=MagicMock(vectors=MagicMock(size=3)))
+    )
+    embeddings = MagicMock()
+    uploader = PDFBatchUploader(
+        qdrant_client=qdrant,
+        embedding_client=embeddings,
+        file_workers=1,
+        ocr_enabled=False,
+    )
+    uploader.extractor.extract = MagicMock(return_value=("text " * 40, {"page_count": 1}))
+    chunker = MagicMock()
+    chunker.chunk.return_value = [_uploader_chunk("\ufffd" * 30, 0, 1)]
+
+    result = uploader._process_single_pdf(
+        pdf_path, "docs", "stella", chunker, 1, False, 1, 1, force_reindex=True
+    )
+
+    assert result[0:3] == ([], 0, None)
+    embeddings.embed_parallel.assert_not_called()
+    manifest_points = [
+        point
+        for call in qdrant.upsert.call_args_list
+        for point in call.kwargs["points"]
+        if point.payload.get("metadata_type") == "file_manifest"
+    ]
+    assert manifest_points[-1].payload["quality_manifest"]["dropped_chunk_count"] == 1

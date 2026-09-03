@@ -363,6 +363,62 @@ def test_quality_manifest_marks_garbled_text(qdrant_client):
     assert "garbled_text" in result.files[0].quality_manifest["quality_warnings"]
 
 
+def test_all_dropped_file_manifest_is_exposed_by_verify_json_model(qdrant_client):
+    manifest = {
+        "schema_version": 1,
+        "file_path": "/tmp/all-garbage.pdf",
+        "source_hash": None,
+        "extractor": "pdf",
+        "extractor_version": "arcaneum.quality_manifest.v1",
+        "extraction_method": "pymupdf4llm_markdown",
+        "fallback_method": None,
+        "chunk_count": 0,
+        "page_coverage": {
+            "page_count": 1,
+            "covered_pages": [1],
+            "empty_pages": [],
+            "low_text_pages": [],
+        },
+        "ocr": {
+            "triggered": False,
+            "reason": None,
+            "pages_processed": None,
+            "confidence": None,
+            "failures": None,
+        },
+        "dropped_chunk_count": 2,
+        "dropped_chunk_reason": "replacement_character_ratio_gt_0.05",
+        "quality_warnings": ["replacement_heavy_chunks_dropped"],
+        "repair_command": "arc corpus sync <corpus> /tmp/all-garbage.pdf --repair",
+        "verify_command": "arc corpus verify <corpus> --json",
+    }
+    qdrant_client.scroll.return_value = ([], None)
+
+    with (
+        patch.object(verify_mod, "file_manifests_ready", return_value=True),
+        patch.object(
+            verify_mod.MetadataBasedSync,
+            "get_file_manifest_snapshot",
+            return_value={
+                "/tmp/all-garbage.pdf": {
+                    "file_path": "/tmp/all-garbage.pdf",
+                    "chunk_count": 0,
+                    "quality_manifest": manifest,
+                }
+            },
+        ),
+    ):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=0,
+        )
+
+    assert result.total_items == 1
+    assert result.files[0].actual_chunks == 0
+    assert result.files[0].quality_manifest == manifest
+
+
 def test_chunk_count_rejects_sparse_out_of_range_indices(qdrant_client):
     qdrant_client.scroll.side_effect = _scroll_once(
         [

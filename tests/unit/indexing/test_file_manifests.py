@@ -86,6 +86,7 @@ def test_ready_quick_hash_scan_uses_indexed_manifests_only():
         "chunk_count",
         "file_size",
         "store_type",
+        "quality_manifest",
     ]
 
 
@@ -262,6 +263,7 @@ def test_ready_chunk_counts_are_read_from_manifests():
         "chunk_count",
         "file_size",
         "store_type",
+        "quality_manifest",
     ]
 
 

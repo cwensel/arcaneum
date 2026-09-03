@@ -26,12 +26,14 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 
 from arcaneum.indexing.collection_metadata import (
+    file_manifests_ready,
     get_collection_metadata,
     get_collection_type,
     metadata_exclusion_filter,
     persisted_schema_issues,
     user_point_count,
 )
+from arcaneum.indexing.common.sync import MetadataBasedSync
 
 logger = logging.getLogger(__name__)
 
@@ -443,6 +445,18 @@ class CollectionVerifier:
                 "source_hash": None,
             }
         )
+
+        if file_manifests_ready(self.qdrant, collection_name):
+            manifests = MetadataBasedSync(self.qdrant).get_file_manifest_snapshot(collection_name)
+            for file_path, payload in manifests.items():
+                file_data = file_chunks[file_path]
+                file_data["chunk_count"] = payload.get("chunk_count", 0)
+                file_data["source_hash"] = payload.get("file_hash")
+                quality_manifest = payload.get("quality_manifest")
+                if isinstance(quality_manifest, dict):
+                    file_data["quality_manifest"] = quality_manifest
+                    page_coverage = quality_manifest.get("page_coverage") or {}
+                    file_data["page_count"] = page_coverage.get("page_count")
 
         # Scroll through all points
         offset = None

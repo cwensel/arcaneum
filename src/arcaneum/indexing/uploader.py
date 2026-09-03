@@ -20,10 +20,16 @@ from ..schema.document import persisted_metadata_fields
 from ..utils.formatting import format_duration
 from ..utils.memory import calculate_safe_workers, log_memory_stats
 from .collection_metadata import file_manifests_ready, stamp_file_manifests_ready
-from .common.sync import MetadataBasedSync, compute_file_hash, compute_quick_hash
+from .common.sync import (
+    MetadataBasedSync,
+    build_quality_manifest,
+    compute_file_hash,
+    compute_quick_hash,
+)
 from .pdf.chunker import PDFChunker
 from .pdf.extractor import PDFExtractor
 from .pdf.ocr import OCREngine, merge_extracted_text_with_ocr
+from .pdf.quality import REPLACEMENT_HEAVY_DROP_REASON, filter_replacement_heavy_chunks
 
 logger = logging.getLogger(__name__)
 
@@ -390,12 +396,40 @@ class PDFBatchUploader:
                 print(f"{timestamp()}   → chunking ({len(text)} chars)", flush=True)
 
             chunks = chunker.chunk(text, base_metadata)
+            chunks, dropped_chunk_count = filter_replacement_heavy_chunks(chunks)
             file_chunk_count = len(chunks)
+            quality_manifest = build_quality_manifest(
+                file_path=pdf_path,
+                corpus_type="pdf",
+                source_hash=file_hash,
+                chunk_count=file_chunk_count,
+                metadata={
+                    **base_metadata,
+                    "dropped_chunk_count": dropped_chunk_count,
+                    "dropped_chunk_reason": (
+                        REPLACEMENT_HEAVY_DROP_REASON if dropped_chunk_count else None
+                    ),
+                },
+            )
             for chunk in chunks:
                 chunk.metadata["chunk_count"] = file_chunk_count
+                chunk.metadata["quality_manifest"] = quality_manifest
 
             if verbose:
                 print(f"{timestamp()}      created {file_chunk_count} chunks", flush=True)
+
+            if not chunks:
+                self.sync.upsert_file_manifest(
+                    collection_name,
+                    file_path_abs,
+                    quick_hash,
+                    file_hash=file_hash,
+                    chunk_count=0,
+                    file_size=base_metadata["file_size"],
+                    store_type="pdf",
+                    quality_manifest=quality_manifest,
+                )
+                return ([], 0, None, ocr_stats)
 
             # Stage 4: Embedding
             texts = [chunk.text for chunk in chunks]
@@ -608,6 +642,7 @@ class PDFBatchUploader:
                 chunk_count=file_chunk_count,
                 file_size=base_metadata["file_size"],
                 store_type="pdf",
+                quality_manifest=quality_manifest,
             )
 
             # Return empty list since we already uploaded

@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from arcaneum.cli.sync import _build_quality_manifest, chunk_pdf_file
+from arcaneum.indexing.pdf.quality import is_replacement_heavy
 
 
 def _make_chunk(text, metadata):
@@ -28,6 +29,11 @@ _REALISTIC_TEXT = (
     "The method is based on established principles and has been "
     "evaluated in multiple case studies with significant results. "
 ) * 5  # ~400 chars — well above the 100-char minimum
+
+
+def test_replacement_heavy_uses_existing_strict_five_percent_threshold():
+    assert is_replacement_heavy("a" * 95 + "\ufffd" * 5) is False
+    assert is_replacement_heavy("a" * 94 + "\ufffd" * 6) is True
 
 
 @pytest.fixture
@@ -355,3 +361,73 @@ def test_quality_manifest_marks_forced_ocr(tmp_path):
 
     assert manifest["ocr"]["triggered"] is True
     assert manifest["ocr"]["reason"] == "forced"
+
+
+@patch("arcaneum.indexing.pdf.chunker.PDFChunker")
+@patch("arcaneum.indexing.pdf.extractor.PDFExtractor")
+@patch("arcaneum.indexing.pdf.quality.looks_like_dropout", return_value=False)
+@patch("arcaneum.indexing.pdf.quality.score_text", return_value=0.9)
+@patch("arcaneum.indexing.pdf.quality.needs_ocr", return_value=False)
+def test_replacement_heavy_chunks_are_dropped_and_survivors_are_dense(
+    _needs_ocr,
+    _score_text,
+    _dropout,
+    extractor_cls,
+    chunker_cls,
+    fake_pdf,
+    model_config,
+):
+    extractor_cls.return_value.extract.return_value = (
+        _REALISTIC_TEXT,
+        {"page_count": 1, "page_boundaries": []},
+    )
+    metadata = {"file_path": str(fake_pdf), "page_count": 1}
+    chunker_cls.return_value.chunk.return_value = [
+        _make_chunk("good first", dict(metadata)),
+        _make_chunk("\ufffd" * 20, dict(metadata)),
+        _make_chunk("good last", dict(metadata)),
+    ]
+    for index, chunk in enumerate(chunker_cls.return_value.chunk.return_value):
+        chunk.chunk_index = index
+        chunk.metadata["chunk_index"] = index
+        chunk.metadata["chunk_count"] = 3
+
+    result = chunk_pdf_file(fake_pdf, model_config)
+
+    assert [chunk["text"] for chunk in result] == ["good first", "good last"]
+    assert [chunk["metadata"]["chunk_index"] for chunk in result] == [0, 1]
+    assert {chunk["metadata"]["chunk_count"] for chunk in result} == {2}
+    manifest = result.quality_manifest
+    assert manifest["chunk_count"] == 2
+    assert manifest["dropped_chunk_count"] == 1
+    assert manifest["dropped_chunk_reason"] == "replacement_character_ratio_gt_0.05"
+
+
+@patch("arcaneum.indexing.pdf.chunker.PDFChunker")
+@patch("arcaneum.indexing.pdf.extractor.PDFExtractor")
+@patch("arcaneum.indexing.pdf.quality.looks_like_dropout", return_value=False)
+@patch("arcaneum.indexing.pdf.quality.score_text", return_value=0.9)
+@patch("arcaneum.indexing.pdf.quality.needs_ocr", return_value=False)
+def test_all_replacement_heavy_chunks_keep_an_auditable_manifest(
+    _needs_ocr,
+    _score_text,
+    _dropout,
+    extractor_cls,
+    chunker_cls,
+    fake_pdf,
+    model_config,
+):
+    extractor_cls.return_value.extract.return_value = (
+        _REALISTIC_TEXT,
+        {"page_count": 1, "page_boundaries": []},
+    )
+    chunker_cls.return_value.chunk.return_value = [
+        _make_chunk("\ufffd" * 20, {"chunk_index": 0, "chunk_count": 2}),
+        _make_chunk("x\ufffd" * 20, {"chunk_index": 1, "chunk_count": 2}),
+    ]
+
+    result = chunk_pdf_file(fake_pdf, model_config)
+
+    assert result == []
+    assert result.quality_manifest["chunk_count"] == 0
+    assert result.quality_manifest["dropped_chunk_count"] == 2

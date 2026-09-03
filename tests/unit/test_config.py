@@ -49,6 +49,7 @@ class TestModelConfig:
         assert m.distance == "cosine"
         assert m.late_chunking is False
         assert m.char_to_token_ratio == pytest.approx(3.3)
+        assert m.min_chunk_chars == 200
 
     def test_custom_values(self):
         m = ModelConfig(
@@ -58,9 +59,11 @@ class TestModelConfig:
             chunk_overlap=128,
             distance="dot",
             late_chunking=True,
+            min_chunk_chars=240,
         )
         assert m.distance == "dot"
         assert m.late_chunking is True
+        assert m.min_chunk_chars == 240
 
     def test_invalid_distance_rejected(self):
         with pytest.raises(ValidationError):

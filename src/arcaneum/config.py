@@ -19,6 +19,7 @@ class ModelConfig(BaseModel):
     distance: Literal["cosine", "euclid", "dot"] = "cosine"
     late_chunking: bool = False
     char_to_token_ratio: float = 3.3
+    min_chunk_chars: int = Field(default=200, ge=0)
 
 
 class QdrantConfig(BaseModel):

@@ -181,6 +181,7 @@ def index_pdfs_command(
             "chunk_overlap": model_config.chunk_overlap,
             "char_to_token_ratio": model_config.char_to_token_ratio,
             "late_chunking": model_config.late_chunking,
+            "min_chunk_chars": model_config.min_chunk_chars,
         }
 
         # Initialize embedding client with persistent model caching (arcaneum-pwd5)

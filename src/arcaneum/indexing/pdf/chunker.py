@@ -49,6 +49,9 @@ class PDFChunker:
 
         self.chunk_size = model_config["chunk_size"]
         self.chunk_overlap = int(self.chunk_size * overlap_percent)
+        self.min_chunk_chars = model_config.get("min_chunk_chars", 200)
+        if self.min_chunk_chars < 0:
+            raise ValueError("min_chunk_chars must be at least 0")
 
     def chunk(self, text: str, metadata: Dict) -> List[Chunk]:
         """Chunk text using appropriate strategy.
@@ -104,7 +107,7 @@ class PDFChunker:
 
     def _traditional_chunking(self, text: str, metadata: Dict) -> List[Chunk]:
         """Traditional token-aware chunking with overlap."""
-        chunks = []
+        spans = []
         char_to_token = self.model_config.get("char_to_token_ratio", 3.3)
 
         # Calculate character limits
@@ -113,8 +116,6 @@ class PDFChunker:
         boundary_window = max(1, (chunk_chars + 4) // 5)
 
         start = 0
-        chunk_index = 0
-
         while start < len(text):
             end = min(start + chunk_chars, len(text))
             if end < len(text):
@@ -124,35 +125,7 @@ class PDFChunker:
             chunk_text = text[chunk_start:chunk_end]
 
             if chunk_text:
-                # Estimate token count
-                token_count = int(len(chunk_text) / char_to_token)
-
-                # Calculate page number if page boundaries available
-                page_number = self._calculate_page_number(
-                    chunk_start, metadata.get("page_boundaries")
-                )
-
-                chunk_metadata = {
-                    **metadata,
-                    "chunk_index": chunk_index,
-                    "chunk_start_char": chunk_start,
-                    "chunk_end_char": chunk_end,
-                    "late_chunking": False,
-                }
-
-                # Add page_number if calculated
-                if page_number is not None:
-                    chunk_metadata["page_number"] = page_number
-
-                chunk = Chunk(
-                    text=chunk_text,
-                    chunk_index=chunk_index,
-                    token_count=token_count,
-                    metadata=chunk_metadata,
-                )
-
-                chunks.append(chunk)
-                chunk_index += 1
+                spans.append((chunk_start, chunk_end))
 
             if end >= len(text):
                 break
@@ -169,12 +142,68 @@ class PDFChunker:
             )
             start = max(start + 1, next_start)
 
-        chunk_count = len(chunks)
-        for chunk in chunks:
-            chunk.metadata["chunk_count"] = chunk_count
+        spans = self._merge_fragment_spans(spans)
+        chunk_count = len(spans)
+        chunks = []
+        for chunk_index, (chunk_start, chunk_end) in enumerate(spans):
+            chunk_text = text[chunk_start:chunk_end]
+            chunk_metadata = {
+                **metadata,
+                "chunk_index": chunk_index,
+                "chunk_count": chunk_count,
+                "chunk_start_char": chunk_start,
+                "chunk_end_char": chunk_end,
+                "late_chunking": False,
+            }
+            page_number = self._calculate_page_number(chunk_start, metadata.get("page_boundaries"))
+            if page_number is not None:
+                chunk_metadata["page_number"] = page_number
+
+            chunks.append(
+                Chunk(
+                    text=chunk_text,
+                    chunk_index=chunk_index,
+                    token_count=int(len(chunk_text) / char_to_token),
+                    metadata=chunk_metadata,
+                )
+            )
 
         logger.info(f"Created {chunk_count} chunks")
         return chunks
+
+    def _merge_fragment_spans(self, spans: List[tuple[int, int]]) -> List[tuple[int, int]]:
+        """Merge sub-floor source spans into an adjacent chunk.
+
+        Leading and interior fragment runs attach forward. A trailing run
+        attaches backward. If the whole document is shorter than the floor,
+        all spans collapse to the one allowed sub-floor document chunk.
+        """
+        if not self.min_chunk_chars or len(spans) < 2:
+            return spans
+
+        groups: List[List[tuple[int, int]]] = []
+        pending: List[tuple[int, int]] = []
+        for span in spans:
+            pending.append(span)
+            if span[1] - span[0] >= self.min_chunk_chars:
+                groups.append(pending)
+                pending = []
+
+        if pending:
+            if groups:
+                groups[-1].extend(pending)
+            else:
+                groups.append(pending)
+
+        merged = [(group[0][0], max(end for _, end in group)) for group in groups]
+        merged_count = len(spans) - len(merged)
+        if merged_count:
+            logger.info(
+                "Merged %d PDF fragments below %d chars into adjacent chunks",
+                merged_count,
+                self.min_chunk_chars,
+            )
+        return merged
 
     @staticmethod
     def _find_end_boundary(text: str, start: int, end: int, window: int) -> int:

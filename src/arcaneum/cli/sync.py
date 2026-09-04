@@ -2194,6 +2194,22 @@ def chunk_code_file(
     return result
 
 
+def _report_deferred_policy_hint(
+    deferred_policy_paths: List[str],
+    *,
+    include_stale_policy: bool,
+    output_json: bool,
+    dry_run: bool,
+) -> None:
+    """Report deferred policy migration outside structured and dry-run summaries."""
+    if deferred_policy_paths and not include_stale_policy and not output_json and not dry_run:
+        noun = "file" if len(deferred_policy_paths) == 1 else "files"
+        print_info(
+            f"Deferred {len(deferred_policy_paths)} unchanged {noun} with stale indexing "
+            "policy; pass --include-stale-policy to migrate them"
+        )
+
+
 def sync_directory_command(
     corpus: str,
     paths: tuple,
@@ -3244,11 +3260,12 @@ def _sync_directory_locked(
         deferred_policy_paths = sorted(
             set(stale_policy_paths) & {str(path.absolute()) for path in already_indexed_files}
         )
-        if deferred_policy_paths and not include_stale_policy and not output_json:
-            print_info(
-                f"Deferred {len(deferred_policy_paths)} unchanged files with stale indexing "
-                "policy; pass --include-stale-policy to migrate them"
-            )
+        _report_deferred_policy_hint(
+            deferred_policy_paths,
+            include_stale_policy=include_stale_policy,
+            output_json=output_json,
+            dry_run=dry_run,
+        )
 
         # Segment the pending list into the phases a resumed sync works through.
         # Only --order newest guarantees the mtime-descending sequence that makes

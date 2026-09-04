@@ -66,6 +66,42 @@ def test_manifest_migration_supports_all_corpus_types_but_not_dry_run(monkeypatc
     manager.backfill_file_manifests.assert_called_once()
 
 
+def test_deferred_policy_hint_does_not_duplicate_dry_run_summary(monkeypatch):
+    messages = []
+    monkeypatch.setattr(sync_module, "print_info", messages.append)
+
+    sync_module._report_deferred_policy_hint(
+        ["legacy.pdf"],
+        include_stale_policy=False,
+        output_json=False,
+        dry_run=True,
+    )
+    assert messages == []
+
+    sync_module._report_deferred_policy_hint(
+        ["legacy.pdf"],
+        include_stale_policy=False,
+        output_json=False,
+        dry_run=False,
+    )
+    assert messages == [
+        "Deferred 1 unchanged file with stale indexing policy; "
+        "pass --include-stale-policy to migrate them"
+    ]
+
+    messages.clear()
+    sync_module._report_deferred_policy_hint(
+        ["legacy-1.pdf", "legacy-2.pdf"],
+        include_stale_policy=False,
+        output_json=False,
+        dry_run=False,
+    )
+    assert messages == [
+        "Deferred 2 unchanged files with stale indexing policy; "
+        "pass --include-stale-policy to migrate them"
+    ]
+
+
 def test_successful_code_index_publishes_complete_manifest(tmp_path):
     source = tmp_path / "module.py"
     source.write_text("value = 1\n")

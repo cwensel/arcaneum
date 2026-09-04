@@ -116,3 +116,26 @@ def test_repair_breakdown_can_defer_policy_only_files():
     assert breakdown["repairable_paths"] == ["/papers/corrupt.pdf"]
     assert breakdown["policy_only_paths"] == ["/papers/legacy.pdf"]
     assert breakdown["policy_only_files"] == 1
+    legacy_breakdown = index_pdfs._verification_breakdown(
+        _result(policy_only, corrupt_and_stale), include_stale_policy=False
+    )
+    assert legacy_breakdown == breakdown
+
+
+def test_policy_only_report_defers_force_reindex(monkeypatch):
+    policy_only = FileVerificationResult(
+        file_path="/papers/legacy.pdf",
+        expected_chunks=1,
+        actual_chunks=1,
+        is_complete=False,
+        stale_policy=True,
+        repair_recommended=True,
+        policy_only_repair=True,
+    )
+
+    output, breakdown = _capture_report(monkeypatch, _result(policy_only))
+
+    assert breakdown["repairable_files"] == 0
+    assert breakdown["policy_only_files"] == 1
+    assert "policy migration is deferred" in output
+    assert "Re-run with --force" not in output

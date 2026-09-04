@@ -223,6 +223,32 @@ class CollectionVerificationResult:
             ]
 
 
+def file_verification_breakdown(
+    verification_result: CollectionVerificationResult,
+    include_stale_policy: bool = True,
+) -> dict:
+    """Group file verification outcomes into actionable and deferred states."""
+    files = getattr(verification_result, "files", [])
+    repairable = verification_result.get_items_needing_repair(
+        include_stale_policy=include_stale_policy
+    )
+    policy_only = [file.file_path for file in files if getattr(file, "policy_only_repair", False)]
+    degraded = [file.file_path for file in files if getattr(file, "fidelity_degraded", False)]
+    recovery_exhausted = [
+        file.file_path for file in files if getattr(file, "recovery_exhausted", False)
+    ]
+    return {
+        "repairable_paths": repairable,
+        "policy_only_paths": policy_only,
+        "degraded_paths": degraded,
+        "recovery_exhausted_paths": recovery_exhausted,
+        "repairable_files": len(repairable),
+        "policy_only_files": len(policy_only),
+        "degraded_files": len(degraded),
+        "recovery_exhausted_files": len(recovery_exhausted),
+    }
+
+
 class CollectionVerifier:
     """Verify collection integrity by checking chunk completeness.
 

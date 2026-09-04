@@ -15,6 +15,7 @@ from .utils import set_process_priority, create_qdrant_client
 from ..config import DEFAULT_MODELS
 from ..embeddings.model_cache import get_cached_model
 from ..indexing.uploader import PDFBatchUploader
+from ..indexing.verify import file_verification_breakdown as _verification_breakdown
 from ..indexing.collection_metadata import (
     validate_collection_type,
     CollectionType,
@@ -26,28 +27,11 @@ console = Console()
 logger = logging.getLogger(__name__)
 
 
-def _verification_breakdown(verification_result):
-    """Return bounded-count categories for PDF verification reporting."""
-    files = getattr(verification_result, "files", [])
-    repairable = verification_result.get_items_needing_repair()
-    degraded = [file.file_path for file in files if getattr(file, "fidelity_degraded", False)]
-    recovery_exhausted = [
-        file.file_path for file in files if getattr(file, "recovery_exhausted", False)
-    ]
-    return {
-        "repairable_paths": repairable,
-        "degraded_paths": degraded,
-        "recovery_exhausted_paths": recovery_exhausted,
-        "repairable_files": len(repairable),
-        "degraded_files": len(degraded),
-        "recovery_exhausted_files": len(recovery_exhausted),
-    }
-
-
 def _report_pdf_verification_issues(verification_result, *, repair_flag: str):
     """Report unhealthy PDF files without presenting exhausted recovery as actionable."""
-    breakdown = _verification_breakdown(verification_result)
+    breakdown = _verification_breakdown(verification_result, include_stale_policy=False)
     repairable = breakdown["repairable_paths"]
+    policy_only = breakdown["policy_only_paths"]
     exhausted = breakdown["recovery_exhausted_paths"]
 
     console.print(
@@ -69,6 +53,11 @@ def _report_pdf_verification_issues(verification_result, *, repair_flag: str):
             console.print(f"  [dim]{item}[/dim]")
         if len(exhausted) > 5:
             console.print(f"  [dim]... and {len(exhausted) - 5} more[/dim]")
+    if policy_only:
+        console.print(
+            f"[dim]{len(policy_only)} files have policy-only findings; "
+            "policy migration is deferred[/dim]"
+        )
     if repairable:
         console.print(f"[dim]Re-run with {repair_flag} to repair eligible files[/dim]")
 
@@ -487,7 +476,9 @@ def index_pdfs_command(
 
             verifier = CollectionVerifier(qdrant)
             verification_result = verifier.verify_collection(collection, verbose=verbose)
-            verification_breakdown = _verification_breakdown(verification_result)
+            verification_breakdown = _verification_breakdown(
+                verification_result, include_stale_policy=False
+            )
 
             if verification_result.is_healthy:
                 if not output_json:
@@ -507,6 +498,8 @@ def index_pdfs_command(
                 "complete_files": verification_result.complete_items,
                 "incomplete_files": verification_result.incomplete_items,
                 "repairable_files": verification_breakdown["repairable_files"],
+                "policy_only_files": verification_breakdown["policy_only_files"],
+                "policy_migration_deferred": bool(verification_breakdown["policy_only_files"]),
                 "degraded_files": verification_breakdown["degraded_files"],
                 "recovery_exhausted_files": verification_breakdown["recovery_exhausted_files"],
             }

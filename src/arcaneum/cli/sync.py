@@ -1777,26 +1777,13 @@ class PDFChunkList(list):
 
 
 def _file_verification_breakdown(verification_result, include_stale_policy: bool = True):
-    """Group file verification outcomes into actionable and exhausted states."""
-    files = getattr(verification_result, "files", [])
-    repairable = verification_result.get_items_needing_repair(
-        include_stale_policy=include_stale_policy
+    """Compatibility wrapper for the shared file verification breakdown."""
+    from ..indexing.verify import file_verification_breakdown
+
+    return file_verification_breakdown(
+        verification_result,
+        include_stale_policy=include_stale_policy,
     )
-    policy_only = [file.file_path for file in files if getattr(file, "policy_only_repair", False)]
-    degraded = [file.file_path for file in files if getattr(file, "fidelity_degraded", False)]
-    recovery_exhausted = [
-        file.file_path for file in files if getattr(file, "recovery_exhausted", False)
-    ]
-    return {
-        "repairable_paths": repairable,
-        "degraded_paths": degraded,
-        "recovery_exhausted_paths": recovery_exhausted,
-        "repairable_files": len(repairable),
-        "policy_only_paths": policy_only,
-        "policy_only_files": len(policy_only),
-        "degraded_files": len(degraded),
-        "recovery_exhausted_files": len(recovery_exhausted),
-    }
 
 
 def _handle_renames_meili(
@@ -2675,7 +2662,9 @@ def _sync_directory_locked(
                             "incomplete_files": verification_result.incomplete_items,
                             "repairable_files": len(repairable_paths),
                             "policy_only_files": len(policy_only_paths),
-                            "policy_migration_deferred": bool(policy_only_paths),
+                            "policy_migration_deferred": bool(
+                                policy_only_paths and not repair_stale_policy
+                            ),
                             "degraded_files": len(degraded_paths),
                             "recovery_exhausted_files": len(recovery_exhausted_paths),
                             "garbled_files": garbled_count,

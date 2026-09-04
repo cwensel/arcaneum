@@ -139,6 +139,7 @@ def build_quality_manifest(
             "failures": metadata.get("ocr_pages_failed"),
             "attempt_failed": bool(metadata.get("ocr_attempt_failed", False)),
         },
+        "extraction_candidates": metadata.get("extraction_candidates", []),
         "table_handling_count": metadata.get("table_count"),
         "image_handling_count": metadata.get("image_count"),
         # Deprecated v1 fields retained so existing manifest readers keep a

@@ -235,17 +235,17 @@ class TestSoftQualityGate:
 
         # OCR extractor was created with use_ocr=True
         mock_extractor_cls.assert_any_call(use_ocr=True)
-        assert captured["text"].startswith(_REALISTIC_TEXT)
-        assert "clean OCR text with full content" in captured["text"]
-        assert captured["metadata"]["ocr_merge_strategy"] == "append_ocr_to_extracted_text"
+        assert captured["text"] == _REALISTIC_TEXT
+        assert "clean OCR text with full content" not in captured["text"]
+        assert captured["metadata"]["ocr_merge_strategy"] == "page_quality_selection"
         assert captured["metadata"]["ocr_triggered_by"] == "quality"
         manifest = result.quality_manifest
         assert manifest["ocr"]["triggered"] is True
         assert manifest["ocr"]["reason"] == "quality"
         assert manifest["ocr"]["confidence"] == 72.0
+        assert manifest["extraction_candidates"][0]["chosen_source"] == "embedded"
         assert captured["metadata"]["ocr_confidence"] == 72.0
         assert captured["metadata"]["page_boundaries"][0] == original_boundaries[0]
-        assert captured["metadata"]["page_boundaries"][1]["start_char"] > len(_REALISTIC_TEXT)
         assert len(result) == 1
 
     @patch("arcaneum.indexing.pdf.chunker.PDFChunker")

@@ -216,12 +216,7 @@ def merge_extracted_text_with_ocr(
     ocr_text: str,
     ocr_metadata: Dict[str, Any],
 ) -> Tuple[str, Dict[str, Any]]:
-    """Merge OCR fallback output without discarding the original extraction.
-
-    Existing markdown/layout text remains first so chunking still sees the
-    structured extraction. OCR is appended as recall enrichment and the merge
-    strategy is recorded for downstream payloads and JSON reports.
-    """
+    """Select the best extraction for each page without indexing rejected text."""
     original_text = extracted_text or ""
     original_metadata = dict(extracted_metadata or {})
     merged_metadata = dict(original_metadata)
@@ -241,18 +236,108 @@ def merge_extracted_text_with_ocr(
         return original_text, merged_metadata
 
     if original_text.strip():
-        separator = "\n\n[OCR fallback text]\n\n"
-        merged_text = f"{original_text}{separator}{ocr_text}"
-        original_boundaries = original_metadata.get("page_boundaries", [])
-        ocr_boundaries = _offset_page_boundaries(
-            ocr_metadata.get("page_boundaries", []),
-            len(original_text) + len(separator),
-        )
+        from .quality import needs_ocr, score_text
+
+        def page_texts(text: str, metadata: Dict[str, Any]) -> Dict[int, str]:
+            pages: Dict[int, str] = {}
+            for boundary in metadata.get("page_boundaries", []) or []:
+                page_number = boundary.get("page_number")
+                if page_number is None:
+                    continue
+                start = max(0, boundary.get("start_char", 0))
+                length = max(0, boundary.get("page_text_length", 0))
+                pages[int(page_number)] = text[start : start + length]
+            if not pages and text.strip():
+                pages[1] = text
+            return pages
+
+        embedded_pages = page_texts(original_text, original_metadata)
+        ocr_pages = page_texts(ocr_text, ocr_metadata)
+        selected_parts = []
+        selected_boundaries = []
+        decisions = []
+        embedded_selected_pages = []
+        ocr_selected_pages = []
+        current_pos = 0
+
+        for page_number in sorted(set(embedded_pages) | set(ocr_pages)):
+            embedded = embedded_pages.get(page_number, "")
+            ocr = ocr_pages.get(page_number, "")
+            embedded_score = score_text(embedded)
+            ocr_score = score_text(ocr)
+
+            if not embedded.strip():
+                chosen_source, chosen_text, reason = "ocr", ocr, "only_candidate"
+            elif not ocr.strip():
+                chosen_source, chosen_text, reason = "embedded", embedded, "only_candidate"
+            elif ocr_score > embedded_score + 0.05:
+                chosen_source, chosen_text, reason = "ocr", ocr, "higher_quality"
+            else:
+                chosen_source, chosen_text = "embedded", embedded
+                reason = (
+                    "ocr_did_not_clear_corruption"
+                    if needs_ocr(embedded)
+                    else "preserve_embedded_structure"
+                )
+
+            rejected_source = None
+            if embedded.strip() and ocr.strip():
+                rejected_source = "ocr" if chosen_source == "embedded" else "embedded"
+            decisions.append(
+                {
+                    "page_number": page_number,
+                    "candidates": {
+                        "embedded": {
+                            "method": original_method,
+                            "score": embedded_score,
+                            "text_length": len(embedded),
+                        },
+                        "ocr": {
+                            "method": ocr_method,
+                            "score": ocr_score,
+                            "text_length": len(ocr),
+                        },
+                    },
+                    "chosen_source": chosen_source,
+                    "rejected_source": rejected_source,
+                    "reason": reason,
+                }
+            )
+
+            if chosen_source == "ocr":
+                ocr_selected_pages.append(page_number)
+            else:
+                embedded_selected_pages.append(page_number)
+            if chosen_text.strip():
+                selected_boundaries.append(
+                    {
+                        "page_number": page_number,
+                        "start_char": current_pos,
+                        "page_text_length": len(chosen_text),
+                    }
+                )
+                selected_parts.append(chosen_text)
+                current_pos += len(chosen_text) + 1
+
+        merged_text = "\n".join(selected_parts)
         merged_metadata.update(ocr_metadata)
         merged_metadata["original_extraction_method"] = original_method
-        merged_metadata["extraction_method"] = f"{original_method}+{ocr_method}"
-        merged_metadata["ocr_merge_strategy"] = "append_ocr_to_extracted_text"
-        merged_metadata["page_boundaries"] = [*original_boundaries, *ocr_boundaries]
+        if ocr_selected_pages and embedded_selected_pages:
+            merged_metadata["extraction_method"] = f"page_selected:{original_method}+{ocr_method}"
+        elif ocr_selected_pages:
+            merged_metadata["extraction_method"] = ocr_method
+        else:
+            merged_metadata["extraction_method"] = original_method
+        merged_metadata["ocr_merge_strategy"] = "page_quality_selection"
+        merged_metadata["page_boundaries"] = selected_boundaries
+        merged_metadata["page_count"] = max(
+            original_metadata.get("page_count", 0) or 0,
+            ocr_metadata.get("page_count", 0) or 0,
+            max((*embedded_pages, *ocr_pages), default=0),
+        )
+        merged_metadata["extraction_candidates"] = decisions
+        merged_metadata["embedded_selected_pages"] = embedded_selected_pages
+        merged_metadata["ocr_selected_pages"] = ocr_selected_pages
         merged_metadata["original_text_length"] = len(original_text)
         merged_metadata["ocr_text_length"] = len(ocr_text)
         return merged_text, merged_metadata
@@ -263,6 +348,37 @@ def merge_extracted_text_with_ocr(
     merged_metadata["ocr_merge_strategy"] = "ocr_only_empty_extraction"
     merged_metadata["original_text_length"] = 0
     merged_metadata["ocr_text_length"] = len(ocr_text)
+    from .quality import score_text
+
+    ocr_boundaries = ocr_metadata.get("page_boundaries", []) or [
+        {"page_number": 1, "start_char": 0, "page_text_length": len(ocr_text)}
+    ]
+    merged_metadata["extraction_candidates"] = [
+        {
+            "page_number": boundary.get("page_number", index + 1),
+            "candidates": {
+                "embedded": {"method": original_method, "score": 0.0, "text_length": 0},
+                "ocr": {
+                    "method": ocr_method,
+                    "score": score_text(
+                        ocr_text[
+                            boundary.get("start_char", 0) : boundary.get("start_char", 0)
+                            + boundary.get("page_text_length", 0)
+                        ]
+                    ),
+                    "text_length": boundary.get("page_text_length", 0),
+                },
+            },
+            "chosen_source": "ocr",
+            "rejected_source": None,
+            "reason": "only_candidate",
+        }
+        for index, boundary in enumerate(ocr_boundaries)
+    ]
+    merged_metadata["embedded_selected_pages"] = []
+    merged_metadata["ocr_selected_pages"] = [
+        item["page_number"] for item in merged_metadata["extraction_candidates"]
+    ]
     return ocr_text, merged_metadata
 
 

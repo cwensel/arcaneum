@@ -142,7 +142,7 @@ def test_process_pdf_reports_page_boundaries_and_ocr_page_stats(monkeypatch, tmp
     assert metadata["ocr_pages"][0]["low_confidence_words"][0]["text"] == "low"
 
 
-def test_merge_extracted_text_with_ocr_preserves_original_markdown_and_offsets_boundaries():
+def test_merge_extracted_text_with_ocr_preserves_better_original_markdown():
     extracted_text = "# Table\n\n| A | B |\n| - | - |"
     extracted_metadata = {
         "extraction_method": "pymupdf4llm_markdown",
@@ -167,14 +167,85 @@ def test_merge_extracted_text_with_ocr_preserves_original_markdown_and_offsets_b
         ocr_metadata,
     )
 
-    assert merged_text.startswith(extracted_text)
-    assert "faint low confidence words" in merged_text
+    assert merged_text == extracted_text
+    assert "faint low confidence words" not in merged_text
     assert merged_metadata["original_extraction_method"] == "pymupdf4llm_markdown"
-    assert merged_metadata["extraction_method"] == "pymupdf4llm_markdown+ocr_tesseract"
-    assert merged_metadata["ocr_merge_strategy"] == "append_ocr_to_extracted_text"
+    assert merged_metadata["extraction_method"] == "pymupdf4llm_markdown"
+    assert merged_metadata["ocr_merge_strategy"] == "page_quality_selection"
     assert merged_metadata["page_boundaries"][0] == extracted_metadata["page_boundaries"][0]
-    assert merged_metadata["page_boundaries"][1]["page_number"] == 1
-    assert merged_metadata["page_boundaries"][1]["start_char"] > len(extracted_text)
+    decision = merged_metadata["extraction_candidates"][0]
+    assert decision["chosen_source"] == "embedded"
+    assert decision["rejected_source"] == "ocr"
+
+
+def test_merge_extracted_text_with_ocr_replaces_corrupt_embedded_page():
+    extracted_text = "\ufffd" * 200
+    ocr_text = "This is clean OCR text from the page and it preserves the useful evidence."
+    boundaries = [{"page_number": 1, "start_char": 0, "page_text_length": 200}]
+
+    merged_text, metadata = merge_extracted_text_with_ocr(
+        extracted_text,
+        {"extraction_method": "embedded", "page_count": 1, "page_boundaries": boundaries},
+        ocr_text,
+        {
+            "extraction_method": "ocr_tesseract",
+            "page_count": 1,
+            "page_boundaries": [
+                {"page_number": 1, "start_char": 0, "page_text_length": len(ocr_text)}
+            ],
+        },
+    )
+
+    assert merged_text == ocr_text
+    assert "\ufffd" not in merged_text
+    assert metadata["ocr_selected_pages"] == [1]
+    assert metadata["extraction_candidates"][0]["chosen_source"] == "ocr"
+
+
+def test_merge_extracted_text_with_ocr_selects_each_page_independently():
+    clean = "This is a healthy embedded page with the original Markdown structure."
+    corrupt = "\ufffd" * 120
+    extracted_text = f"{clean}\n{corrupt}"
+    ocr_page_one = "noisy labels"
+    ocr_page_two = "This is the corrected OCR text for the second page."
+    ocr_text = f"{ocr_page_one}\n{ocr_page_two}"
+
+    merged_text, metadata = merge_extracted_text_with_ocr(
+        extracted_text,
+        {
+            "extraction_method": "embedded",
+            "page_count": 2,
+            "page_boundaries": [
+                {"page_number": 1, "start_char": 0, "page_text_length": len(clean)},
+                {
+                    "page_number": 2,
+                    "start_char": len(clean) + 1,
+                    "page_text_length": len(corrupt),
+                },
+            ],
+        },
+        ocr_text,
+        {
+            "extraction_method": "ocr_tesseract",
+            "page_count": 2,
+            "page_boundaries": [
+                {"page_number": 1, "start_char": 0, "page_text_length": len(ocr_page_one)},
+                {
+                    "page_number": 2,
+                    "start_char": len(ocr_page_one) + 1,
+                    "page_text_length": len(ocr_page_two),
+                },
+            ],
+        },
+    )
+
+    assert merged_text == f"{clean}\n{ocr_page_two}"
+    assert metadata["embedded_selected_pages"] == [1]
+    assert metadata["ocr_selected_pages"] == [2]
+    assert [item["chosen_source"] for item in metadata["extraction_candidates"]] == [
+        "embedded",
+        "ocr",
+    ]
 
 
 def test_pdf_batch_uploader_duplicate_path_preserves_return_contract(tmp_path):

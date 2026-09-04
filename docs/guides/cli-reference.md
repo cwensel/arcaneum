@@ -183,6 +183,7 @@ arc corpus sync MyCorpus /path/one /path/two               # Multiple paths
 arc corpus sync MyCorpus /path --parity                    # Detect renames, remove files no longer on disk
 arc corpus sync MyCorpus /path --parity --dry-run          # Preview rename/remove changes
 arc corpus sync MyCorpus /path --force                     # Force reindex all
+arc corpus sync MyCorpus /path --include-stale-policy      # Migrate unchanged stale-policy files
 arc corpus sync MyCorpus /path --verify                    # Verify after sync
 arc corpus sync MyCorpus /path --gpu                       # Opt into accelerator embedding
 arc corpus sync MyCorpus /path --models arctic-m           # Use specific model
@@ -212,6 +213,9 @@ arc corpus sync MyCorpus /path/to/repo --git-version       # Keep multiple versi
 - `--dry-run`: Show what would be synced, renamed, or removed without making
   changes. Pairs well with `--parity` to preview cleanup.
 - `--force`: Force reindex all files (deletes existing chunks first)
+- `--include-stale-policy`: Re-index otherwise unchanged files whose indexing
+  policy is stale or missing. Ordinary sync reports and skips these files so a
+  legacy corpus is never migrated implicitly.
 - `--verify`: Verify collection integrity after indexing
 - `--gpu`: Opt into accelerator embedding. CPU is the stable default.
 - `--cpu-workers`: Batch parallelization workers for CPU mode (default: 1)

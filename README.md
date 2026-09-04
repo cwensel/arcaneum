@@ -142,6 +142,7 @@ arc corpus create NAME --type TYPE              # pdf, code, or markdown
 arc corpus list                                 # List all corpora
 arc corpus sync NAME PATH [PATH...]             # Sync one or more directories
 arc corpus sync NAME PATH --parity              # Also detect renames, remove files no longer on disk
+arc corpus sync NAME PATH --include-stale-policy # Migrate stale/legacy indexing policies
 arc corpus items NAME                           # List items with parity status
 arc corpus verify NAME                          # Verify corpus health across both systems
 arc corpus parity NAME                          # Check/restore parity between systems

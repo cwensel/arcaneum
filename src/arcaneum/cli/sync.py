@@ -2215,6 +2215,7 @@ def sync_directory_command(
     parity: bool = False,
     repair: bool = False,
     repair_stale_policy: bool = False,
+    include_stale_policy: bool = False,
     quality_threshold: float = 0.9,
     qdrant_timeout: Optional[int] = None,
     mem_probe_interval: float = 0.0,
@@ -2265,6 +2266,7 @@ def sync_directory_command(
                 parity=parity,
                 repair=repair,
                 repair_stale_policy=repair_stale_policy,
+                include_stale_policy=include_stale_policy,
                 quality_threshold=quality_threshold,
                 qdrant_timeout=qdrant_timeout,
                 mem_probe_interval=mem_probe_interval,
@@ -2298,6 +2300,7 @@ def _sync_directory_locked(
     parity: bool = False,
     repair: bool = False,
     repair_stale_policy: bool = False,
+    include_stale_policy: bool = False,
     quality_threshold: float = 0.9,
     qdrant_timeout: Optional[int] = None,
     mem_probe_interval: float = 0.0,
@@ -2332,6 +2335,8 @@ def _sync_directory_locked(
         dry_run: If True, show what would be synced without making changes
         repair: If True, verify collection integrity and re-index only incomplete files
         repair_stale_policy: If True, include files whose only issue is stale policy
+        include_stale_policy: If True, ordinary sync also re-indexes otherwise
+                             unchanged files with stale or missing policy metadata
         order: Index order for discovered files ('path', 'newest', 'oldest').
                Affects only processing order within the sync, not what is
                indexed or how results later rank.
@@ -3130,6 +3135,7 @@ def _sync_directory_locked(
                     unchanged_candidates,
                     progress_callback=metadata_scan_progress,
                     active_policy=active_indexing_policy,
+                    include_stale_policy=include_stale_policy,
                 )
 
             modified_file_set = {str(f.absolute()) for f in modified_files}
@@ -3171,6 +3177,7 @@ def _sync_directory_locked(
                 files,
                 progress_callback=metadata_scan_progress,
                 active_policy=active_indexing_policy,
+                include_stale_policy=include_stale_policy,
             )
 
             candidate_new_paths = _filter_rename_candidate_paths(
@@ -3233,6 +3240,16 @@ def _sync_directory_locked(
 
             files = files_to_process
 
+        stale_policy_paths = sorted(sync_manager.last_stale_policy_paths)
+        deferred_policy_paths = sorted(
+            set(stale_policy_paths) & {str(path.absolute()) for path in already_indexed_files}
+        )
+        if deferred_policy_paths and not include_stale_policy and not output_json:
+            print_info(
+                f"Deferred {len(deferred_policy_paths)} unchanged files with stale indexing "
+                "policy; pass --include-stale-policy to migrate them"
+            )
+
         # Segment the pending list into the phases a resumed sync works through.
         # Only --order newest guarantees the mtime-descending sequence that makes
         # phase boundaries meaningful; any other order interleaves ages by design.
@@ -3258,7 +3275,7 @@ def _sync_directory_locked(
 
         # If no new files but there are files to backfill, continue
         # Also continue if renames or stale cleanup happened (to show summary)
-        if not files and not meili_backfill_paths and not qdrant_backfill_paths:
+        if not dry_run and not files and not meili_backfill_paths and not qdrant_backfill_paths:
             if files_renamed > 0 or stale_cleaned > 0:
                 # Renames/cleanup happened but no new files — show summary and return
                 data = {
@@ -3341,10 +3358,6 @@ def _sync_directory_locked(
 
         # Dry-run mode: report what would happen and exit
         if dry_run:
-            sync_manager.last_stale_policy_paths = sync_manager.get_stale_policy_paths(
-                corpus, active_indexing_policy
-            )
-            stale_policy_paths = sorted(sync_manager.last_stale_policy_paths)
             if output_json:
                 data = {
                     "dry_run": True,
@@ -3355,6 +3368,8 @@ def _sync_directory_locked(
                     "would_backfill_to_meili": len(meili_backfill_paths),
                     "would_backfill_to_qdrant": len(qdrant_backfill_paths),
                     "stale_policy_files": len(stale_policy_paths),
+                    "deferred_stale_policy_files": len(deferred_policy_paths),
+                    "policy_migration_deferred": bool(deferred_policy_paths),
                     "stale_reasons": {
                         "indexing_policy": len(stale_policy_paths),
                     },
@@ -3390,9 +3405,14 @@ def _sync_directory_locked(
                 if qdrant_backfill_paths:
                     console.print(f"Would backfill to Qdrant: {len(qdrant_backfill_paths)} files")
                 if stale_policy_paths:
-                    console.print(
-                        f"Would re-index for stale policy: {len(stale_policy_paths)} files"
-                    )
+                    if include_stale_policy:
+                        console.print(
+                            f"Would re-index for stale policy: {len(stale_policy_paths)} files"
+                        )
+                    else:
+                        console.print(
+                            f"Stale policy migration deferred: {len(deferred_policy_paths)} files"
+                        )
                 if verbose:
                     if detected_renames:
                         console.print("\nRenames detected:")

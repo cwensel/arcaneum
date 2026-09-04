@@ -1246,6 +1246,11 @@ def _drain_corpus_spool(corpus, *, max_batches, sync_kwargs):
 @click.option("--file-types", help="File extensions to index (e.g., .py,.md)")
 @click.option("--force", is_flag=True, help="Force reindex all files (bypass change detection)")
 @click.option("--dry-run", is_flag=True, help="Show what would be synced without making changes")
+@click.option(
+    "--include-stale-policy",
+    is_flag=True,
+    help="Reindex unchanged files with stale or missing indexing policy metadata",
+)
 @click.option("--verify", is_flag=True, help="Verify collection integrity after indexing")
 @click.option(
     "--text-workers",
@@ -1365,6 +1370,7 @@ def sync_directory(
     file_types,
     force,
     dry_run,
+    include_stale_policy,
     verify,
     text_workers,
     max_embedding_batch,
@@ -1427,6 +1433,7 @@ def sync_directory(
                 models=models,
                 file_types=file_types,
                 force=force,
+                include_stale_policy=include_stale_policy,
                 verify=verify,
                 text_workers=text_workers,
                 max_embedding_batch=max_embedding_batch,
@@ -1531,6 +1538,7 @@ def sync_directory(
         lock_wait=not no_wait,
         lock_timeout=lock_timeout,
         removed_paths=removed_paths,
+        include_stale_policy=include_stale_policy,
     )
 
 

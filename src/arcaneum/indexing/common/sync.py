@@ -971,6 +971,7 @@ class MetadataBasedSync:
         file_list: List[Path],
         progress_callback: Optional[Callable[[int], None]] = None,
         active_policy: Optional[Mapping[str, Any]] = None,
+        include_stale_policy: bool = False,
     ) -> Tuple[List[Path], List[Path]]:
         """Filter file list using fast metadata check to identify files needing processing.
 
@@ -994,6 +995,10 @@ class MetadataBasedSync:
         Args:
             collection_name: Qdrant collection name
             file_list: List of file paths to check
+            include_stale_policy: If true, an otherwise unchanged file with a
+                stale or missing indexing policy needs processing. Stale paths
+                are detected and exposed via ``last_stale_policy_paths`` either
+                way so callers can report a deferred migration.
 
         Returns:
             Tuple of:
@@ -1038,7 +1043,9 @@ class MetadataBasedSync:
                 if (
                     file_path_str,
                     quick_hash,
-                ) in indexed_quick_hashes and file_path_str not in stale_policy_paths:
+                ) in indexed_quick_hashes and (
+                    not include_stale_policy or file_path_str not in stale_policy_paths
+                ):
                     # Pass 1 HIT: Metadata unchanged → skip
                     already_indexed.append(file_path)
                 else:

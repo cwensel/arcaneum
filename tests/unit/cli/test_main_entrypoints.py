@@ -346,6 +346,22 @@ def test_corpus_sync_defaults_to_cpu_and_gpu_is_opt_in():
     ]
 
 
+def test_corpus_sync_policy_migration_is_opt_in():
+    calls = []
+
+    def fake_sync_directory_command(*args, **kwargs):
+        calls.append(kwargs["include_stale_policy"])
+
+    patches = {"arcaneum.cli.sync.sync_directory_command": fake_sync_directory_command}
+
+    default_result = _run(["corpus", "sync", "Docs", "."], **patches)
+    migration_result = _run(["corpus", "sync", "Docs", ".", "--include-stale-policy"], **patches)
+
+    assert default_result.exit_code == 0, default_result.output
+    assert migration_result.exit_code == 0, migration_result.output
+    assert calls == [False, True]
+
+
 def test_corpus_repair_policy_migration_is_opt_in():
     calls = []
 

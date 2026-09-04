@@ -420,7 +420,26 @@ def test_ready_manifest_snapshot_is_reused_across_sync_checks():
     assert qdrant.scroll.call_count == 1
 
 
-def test_unchanged_file_with_stale_policy_is_selected_for_reindex(tmp_path):
+def test_unchanged_file_with_missing_policy_is_reported_but_skipped_by_default(tmp_path):
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"unchanged")
+    absolute_path = str(source.absolute())
+
+    sync = MetadataBasedSync(MagicMock())
+    sync._get_indexed_quick_hashes = MagicMock(
+        return_value={(absolute_path, compute_quick_hash(source))}
+    )
+    sync.get_file_manifest_snapshot = MagicMock(return_value={absolute_path: {"store_type": "pdf"}})
+
+    with patch("arcaneum.indexing.common.sync.file_manifests_ready", return_value=True):
+        needs_processing, already_indexed = sync.get_unindexed_files("papers", [source])
+
+    assert needs_processing == []
+    assert already_indexed == [source]
+    assert sync.last_stale_policy_paths == {absolute_path}
+
+
+def test_unchanged_file_with_stale_policy_is_selected_for_explicit_migration(tmp_path):
     source = tmp_path / "paper.pdf"
     source.write_bytes(b"unchanged")
     absolute_path = str(source.absolute())
@@ -441,11 +460,53 @@ def test_unchanged_file_with_stale_policy_is_selected_for_reindex(tmp_path):
     )
 
     with patch("arcaneum.indexing.common.sync.file_manifests_ready", return_value=True):
-        needs_processing, already_indexed = sync.get_unindexed_files("papers", [source])
+        needs_processing, already_indexed = sync.get_unindexed_files(
+            "papers", [source], include_stale_policy=True
+        )
 
     assert needs_processing == [source]
     assert already_indexed == []
     assert sync.last_stale_policy_paths == {absolute_path}
+
+
+def test_changed_file_is_selected_without_policy_migration(tmp_path):
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"changed")
+    absolute_path = str(source.absolute())
+
+    sync = MetadataBasedSync(MagicMock())
+    sync._get_indexed_quick_hashes = MagicMock(return_value={(absolute_path, "old-quick-hash")})
+    sync.get_file_manifest_snapshot = MagicMock(return_value={absolute_path: {"store_type": "pdf"}})
+
+    with patch("arcaneum.indexing.common.sync.file_manifests_ready", return_value=True):
+        needs_processing, already_indexed = sync.get_unindexed_files("papers", [source])
+
+    assert needs_processing == [source]
+    assert already_indexed == []
+
+
+def test_migrated_file_is_unchanged_on_subsequent_policy_sync(tmp_path):
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"unchanged")
+    absolute_path = str(source.absolute())
+    current_policy = build_indexing_policy("pdf")
+
+    sync = MetadataBasedSync(MagicMock())
+    sync._get_indexed_quick_hashes = MagicMock(
+        return_value={(absolute_path, compute_quick_hash(source))}
+    )
+    sync.get_file_manifest_snapshot = MagicMock(
+        return_value={absolute_path: {"store_type": "pdf", "indexing_policy": current_policy}}
+    )
+
+    with patch("arcaneum.indexing.common.sync.file_manifests_ready", return_value=True):
+        needs_processing, already_indexed = sync.get_unindexed_files(
+            "papers", [source], include_stale_policy=True
+        )
+
+    assert needs_processing == []
+    assert already_indexed == [source]
+    assert sync.last_stale_policy_paths == set()
 
 
 def test_policy_identity_is_scoped_and_version_checked():
@@ -459,7 +520,7 @@ def test_policy_identity_is_scoped_and_version_checked():
     assert policy_is_current(pdf_policy, "pdf") is False
 
 
-def test_changed_chunk_config_selects_unchanged_file_for_reindex(tmp_path):
+def test_changed_chunk_config_selects_unchanged_file_for_explicit_migration(tmp_path):
     source = tmp_path / "paper.pdf"
     source.write_bytes(b"unchanged")
     absolute_path = str(source.absolute())
@@ -481,7 +542,7 @@ def test_changed_chunk_config_selects_unchanged_file_for_reindex(tmp_path):
 
     with patch("arcaneum.indexing.common.sync.file_manifests_ready", return_value=True):
         needs_processing, already_indexed = sync.get_unindexed_files(
-            "papers", [source], active_policy=active_policy
+            "papers", [source], active_policy=active_policy, include_stale_policy=True
         )
 
     assert needs_processing == [source]

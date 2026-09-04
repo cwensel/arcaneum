@@ -229,6 +229,16 @@ The system automatically tracks indexed files using metadata queries:
 
 To bypass incremental sync and reindex everything, use `--force`.
 
+Incremental sync reports stale or missing indexing policy metadata without
+selecting unchanged PDFs. Opt into that one-time policy migration explicitly:
+
+```bash
+arc corpus sync pdf-docs ./pdfs --include-stale-policy
+```
+
+Source changes are always re-indexed; this option only controls whether policy
+staleness by itself selects an otherwise unchanged file.
+
 To repair verifier-selected unhealthy PDFs—including corrupt extraction,
 incomplete/duplicate chunks, and duplicate sources—run:
 

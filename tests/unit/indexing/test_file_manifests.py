@@ -253,6 +253,33 @@ def test_pdf_alias_rename_preserves_manifest_canonical_path():
     assert manifest["canonical_path"] == "/canonical.pdf"
 
 
+def test_pdf_alias_rename_uses_recovered_store_type_for_canonical_path():
+    qdrant = MagicMock()
+    qdrant.retrieve.return_value = [
+        SimpleNamespace(
+            payload={
+                "file_hash": "content",
+                "chunk_count": 3,
+                "file_size": 10,
+                "store_type": "pdf",
+                "canonical_path": "/canonical.pdf",
+            }
+        )
+    ]
+    qdrant.get_collection.return_value = _collection_info()
+
+    MetadataBasedSync(qdrant).copy_file_manifest(
+        "papers",
+        "/old-alias.pdf",
+        "/new-alias.pdf",
+        "quick",
+        delete_source=True,
+    )
+
+    manifest = qdrant.upsert.call_args.kwargs["points"][0].payload
+    assert manifest["canonical_path"] == "/canonical.pdf"
+
+
 def test_handle_renames_updates_alias_metadata_without_moving_canonical_path():
     qdrant = MagicMock()
     qdrant.scroll.side_effect = [

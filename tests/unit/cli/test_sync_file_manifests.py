@@ -306,6 +306,55 @@ def test_pdf_stale_alias_only_removes_alias_metadata(tmp_path):
     qdrant.delete.assert_not_called()
 
 
+def test_pdf_stale_alias_removes_provenance_when_canonical_is_already_missing(tmp_path):
+    canonical_path = str(tmp_path / "missing-canonical.pdf")
+    alias_path = str(tmp_path / "missing-alias.pdf")
+    manager = Mock()
+    manager.get_file_manifest_snapshot.return_value = _pdf_alias_manifests(
+        canonical_path, alias_path
+    )
+    meili = Mock()
+    qdrant = Mock()
+
+    removed = sync_module._remove_indexed_paths(
+        qdrant, meili, manager, "Papers", "pdf", [alias_path]
+    )
+
+    assert removed == 1
+    manager.remove_alternate_path.assert_called_once_with("Papers", "content", alias_path)
+    manager.delete_file_manifest.assert_called_once_with("Papers", alias_path)
+    qdrant.delete.assert_not_called()
+
+
+def test_pdf_promotion_repoints_only_surviving_aliases(tmp_path, monkeypatch):
+    canonical_path = str(tmp_path / "missing-canonical.pdf")
+    stale_alias = str(tmp_path / "missing-alias.pdf")
+    live_file = tmp_path / "live.pdf"
+    live_file.write_bytes(b"same pdf")
+    live_alias = str(live_file)
+    shared = {
+        "file_hash": "content",
+        "chunk_count": 3,
+        "store_type": "pdf",
+        "canonical_path": canonical_path,
+    }
+    manager = Mock()
+    manager.get_file_manifest_snapshot.return_value = {
+        path: {**shared, "file_path": path, "quick_hash": path}
+        for path in (canonical_path, stale_alias, live_alias)
+    }
+    promote = Mock()
+    monkeypatch.setattr(sync_module, "_promote_pdf_canonical", promote)
+
+    removed, ordinary = sync_module._remove_pdf_alias_paths(
+        Mock(), Mock(), manager, "Papers", [canonical_path, stale_alias]
+    )
+
+    assert removed == 2
+    assert ordinary == []
+    assert promote.call_args.args[-1] == [live_alias]
+
+
 def test_meili_rename_confirms_pdf_alias_without_moving_canonical_documents():
     qdrant = Mock()
     qdrant.scroll.side_effect = [([], None), ([SimpleNamespace(id="chunk")], None)]

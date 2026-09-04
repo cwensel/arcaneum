@@ -588,7 +588,7 @@ def _remove_pdf_alias_paths(
                 corpus,
                 canonical_path,
                 live_paths[0],
-                sorted(all_group_paths),
+                live_paths,
             )
             removed += 1
 
@@ -598,7 +598,12 @@ def _remove_pdf_alias_paths(
                 sync_manager.delete_file_manifest(corpus, path)
                 removed += 1
             else:
-                ordinary.add(path)
+                remaining = sync_manager.remove_alternate_path(corpus, file_hash, path)
+                if remaining == 0:
+                    ordinary.add(path)
+                else:
+                    sync_manager.delete_file_manifest(corpus, path)
+                    removed += 1
 
         if canonical_path in requested_group and not live_paths:
             ordinary.add(canonical_path)

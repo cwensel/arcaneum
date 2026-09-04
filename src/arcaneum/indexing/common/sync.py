@@ -622,14 +622,16 @@ class MetadataBasedSync:
         source_absolute = str(Path(source_path).absolute())
         target_absolute = str(Path(target_path).absolute())
         source_canonical = payload.get("canonical_path") or source_absolute
+        effective_store_type = store_type if store_type is not None else payload.get("store_type")
         manifest_metadata = {
             "file_hash": payload.get("file_hash"),
             "chunk_count": payload.get("chunk_count"),
             "file_size": file_size if file_size is not None else payload.get("file_size"),
-            "store_type": store_type if store_type is not None else payload.get("store_type"),
+            "store_type": effective_store_type,
             "canonical_path": (
                 target_absolute
-                if delete_source and (store_type != "pdf" or source_canonical == source_absolute)
+                if delete_source
+                and (effective_store_type != "pdf" or source_canonical == source_absolute)
                 else source_canonical
             ),
             "indexing_policy": payload.get("indexing_policy"),
@@ -1483,7 +1485,8 @@ class MetadataBasedSync:
             with_vectors=False,
         )
         if not points or not points[0].payload:
-            raise RuntimeError(f"No canonical chunks found for PDF alias: {path_to_remove}")
+            logger.warning("No canonical chunks found for PDF alias: %s", path_to_remove)
+            return 0
 
         current_payload = points[0].payload
         primary_path = current_payload.get("file_path")

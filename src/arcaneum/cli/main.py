@@ -977,6 +977,11 @@ def search():
 @click.option("--limit", type=int, default=10, help="Number of results")
 @click.option("--offset", type=int, default=0, help="Number of results to skip (for pagination)")
 @click.option("--score-threshold", type=float, help="Minimum score threshold")
+@click.option(
+    "--include-references",
+    is_flag=True,
+    help="Include PDF references and bibliography chunks",
+)
 @click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 def search_semantic(
@@ -988,6 +993,7 @@ def search_semantic(
     limit,
     offset,
     score_threshold,
+    include_references,
     output_json,
     verbose,
 ):
@@ -1006,6 +1012,7 @@ def search_semantic(
         score_threshold,
         output_json,
         verbose,
+        include_references=include_references,
     )
 
 

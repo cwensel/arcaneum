@@ -80,6 +80,7 @@ def search_collection(
     offset: int = 0,
     query_filter: Optional[models.Filter] = None,
     score_threshold: Optional[float] = None,
+    include_references: bool = False,
 ) -> List[SearchResult]:
     """Search single collection with semantic query.
 
@@ -101,6 +102,7 @@ def search_collection(
         offset: Number of results to skip (for pagination)
         query_filter: Optional metadata filter
         score_threshold: Optional minimum similarity score (0.0 to 1.0)
+        include_references: Include PDF bibliography chunks (excluded by default)
 
     Returns:
         List of SearchResult objects, sorted by relevance (highest score first)
@@ -116,13 +118,22 @@ def search_collection(
         query, collection_name, client, vector_name
     )
 
+    effective_filter = metadata_exclusion_filter(query_filter)
+    if not include_references:
+        reference_condition = models.FieldCondition(
+            key="section_type", match=models.MatchValue(value="references")
+        )
+        effective_filter = effective_filter.model_copy(
+            update={"must_not": [*(effective_filter.must_not or []), reference_condition]}
+        )
+
     # Step 2: Execute Qdrant search using query_points API (qdrant-client 1.16+)
     try:
         response = client.query_points(
             collection_name=collection_name,
             query=query_vector,
             using=model_key,  # Named vector to search
-            query_filter=metadata_exclusion_filter(query_filter),
+            query_filter=effective_filter,
             limit=limit,
             offset=offset,
             score_threshold=score_threshold,

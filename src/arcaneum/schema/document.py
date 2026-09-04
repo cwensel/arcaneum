@@ -5,11 +5,10 @@ Qdrant (vector search) and MeiliSearch (full-text search) with shared metadata.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from arcaneum import __version__ as ARCANEUM_VERSION
-
 
 PERSISTED_SCHEMA_VERSION = 1
 PERSISTED_SCHEMA_VERSION_FIELD = "schema_version"
@@ -94,6 +93,8 @@ class DualIndexDocument:
     # Optional fields
     line_number: Optional[int] = None
     page_number: Optional[int] = None
+    section_type: Optional[str] = None
+    section_title: Optional[str] = None
     project: Optional[str] = None
     branch: Optional[str] = None
     git_project_identifier: Optional[str] = None
@@ -177,6 +178,12 @@ def to_qdrant_point(doc: DualIndexDocument, point_id: Optional[int] = None):
 
     if doc.page_number is not None:
         payload["page_number"] = doc.page_number
+
+    if doc.section_type:
+        payload["section_type"] = doc.section_type
+
+    if doc.section_title:
+        payload["section_title"] = doc.section_title
 
     if doc.project:
         payload["git_project_name"] = doc.project
@@ -304,6 +311,12 @@ def to_meilisearch_doc(doc: DualIndexDocument) -> Dict[str, Any]:
 
     if doc.page_number is not None:
         meili_doc["page_number"] = doc.page_number
+
+    if doc.section_type:
+        meili_doc["section_type"] = doc.section_type
+
+    if doc.section_title:
+        meili_doc["section_title"] = doc.section_title
 
     if doc.project:
         meili_doc["project"] = doc.project

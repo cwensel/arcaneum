@@ -4,18 +4,19 @@ import logging
 import sys
 import time
 from typing import List
+
 from rich.console import Console
 
+from ..paths import get_models_dir
 from ..search import (
     SearchEmbedder,
-    parse_filter,
     build_filter_description,
-    search_collection,
-    format_text_results,
     format_json_results,
     format_summary,
+    format_text_results,
+    parse_filter,
+    search_collection,
 )
-from ..paths import get_models_dir
 from .concurrency import acquire_embedder_slot
 from .errors import InvalidArgumentError, ResourceNotFoundError, SearchSlotUnavailable
 from .interaction_logger import interaction_logger
@@ -45,6 +46,7 @@ def search_command(
     score_threshold: float,
     output_json: bool,
     verbose: bool,
+    include_references: bool = False,
 ):
     """Search Qdrant collection(s) semantically.
 
@@ -58,6 +60,7 @@ def search_command(
         score_threshold: Optional minimum similarity score
         output_json: If True, output JSON format
         verbose: If True, show detailed output and logging
+        include_references: Include PDF bibliography chunks
     """
     # Setup logging based on verbose flag
     if verbose:
@@ -104,6 +107,7 @@ def search_command(
             offset=offset,
             filters=filter_arg if filter_arg else None,
             score_threshold=score_threshold,
+            include_references=include_references,
         ) as ctx:
             # Cap concurrent embedder loads (file-lock semaphore). Cold-loading
             # the embedding model in N parallel processes thrashes RAM/swap on
@@ -127,6 +131,7 @@ def search_command(
                         offset=0,  # Apply offset after merge
                         query_filter=query_filter,
                         score_threshold=score_threshold,
+                        include_references=include_references,
                     )
 
                 per_corpus, missing_corpora = fetch_from_corpora(

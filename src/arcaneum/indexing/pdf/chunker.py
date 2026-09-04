@@ -7,6 +7,28 @@ from typing import Dict, Iterable, List, Optional
 
 logger = logging.getLogger(__name__)
 
+_REFERENCE_HEADINGS = {"references", "bibliography", "works cited", "literature cited"}
+_ACKNOWLEDGEMENT_HEADINGS = {
+    "acknowledgement",
+    "acknowledgements",
+    "acknowledgment",
+    "acknowledgments",
+}
+_CONTENTS_HEADINGS = {"contents", "table of contents"}
+_BODY_HEADINGS = {
+    "abstract",
+    "introduction",
+    "background",
+    "related work",
+    "methods",
+    "methodology",
+    "materials and methods",
+    "results",
+    "discussion",
+    "conclusion",
+    "conclusions",
+}
+
 
 @dataclass
 class Chunk:
@@ -143,21 +165,35 @@ class PDFChunker:
         boundary_window = max(1, (chunk_chars + 4) // 5)
 
         regions, replacement_omissions = self._replacement_regions(text)
+        section_markers = self._section_markers(text)
         spans = []
         for source_start, normalized_region in regions:
-            region_spans = self._chunk_region_spans(
-                normalized_region,
-                chunk_chars=chunk_chars,
-                overlap_chars=overlap_chars,
-                boundary_window=boundary_window,
-            )
-            # Merge only within a clean region. A replacement run is a hard
-            # boundary even when either neighboring fragment is below the floor.
-            region_spans = self._merge_fragment_spans(region_spans)
-            spans.extend(
-                (source_start + chunk_start, source_start + chunk_end)
-                for chunk_start, chunk_end in region_spans
-            )
+            region_end = source_start + len(normalized_region)
+            section_offsets = [
+                offset - source_start
+                for offset, _, _ in section_markers
+                if source_start < offset < region_end
+            ]
+            segment_starts = [0, *section_offsets]
+            segment_ends = [*section_offsets, len(normalized_region)]
+            for segment_start, segment_end in zip(segment_starts, segment_ends):
+                segment = normalized_region[segment_start:segment_end]
+                region_spans = self._chunk_region_spans(
+                    segment,
+                    chunk_chars=chunk_chars,
+                    overlap_chars=overlap_chars,
+                    boundary_window=boundary_window,
+                )
+                # Merge only within one clean section. Replacement runs and
+                # section headings are both hard semantic boundaries.
+                region_spans = self._merge_fragment_spans(region_spans)
+                spans.extend(
+                    (
+                        source_start + segment_start + chunk_start,
+                        source_start + segment_start + chunk_end,
+                    )
+                    for chunk_start, chunk_end in region_spans
+                )
 
         chunk_count = len(spans)
         if replacement_omissions["character_count"] and chunk_count == 0:
@@ -186,6 +222,9 @@ class PDFChunker:
             page_number = self._calculate_page_number(chunk_start, metadata.get("page_boundaries"))
             if page_number is not None:
                 chunk_metadata["page_number"] = page_number
+            section_type, section_title = self._section_at_offset(section_markers, chunk_start)
+            chunk_metadata["section_type"] = section_type
+            chunk_metadata["section_title"] = section_title
 
             chunks.append(
                 Chunk(
@@ -198,6 +237,58 @@ class PDFChunker:
 
         logger.info(f"Created {chunk_count} chunks")
         return ChunkList(chunks, replacement_omissions=replacement_omissions)
+
+    @staticmethod
+    def _section_type(title: str) -> str:
+        normalized = re.sub(r"\s+", " ", title.strip().rstrip(":")).casefold()
+        normalized = re.sub(r"^\d+(?:\.\d+)*[.)]?\s+", "", normalized)
+        if normalized in _REFERENCE_HEADINGS:
+            return "references"
+        if normalized in _ACKNOWLEDGEMENT_HEADINGS:
+            return "acknowledgements"
+        if normalized in _CONTENTS_HEADINGS:
+            return "contents"
+        if normalized.startswith("appendix"):
+            return "appendix"
+        return "body"
+
+    @classmethod
+    def _section_markers(cls, text: str) -> List[tuple[int, str, str]]:
+        """Return conservative academic section headings and their source offsets."""
+        markers = []
+        known_bare = (
+            _REFERENCE_HEADINGS | _ACKNOWLEDGEMENT_HEADINGS | _CONTENTS_HEADINGS | _BODY_HEADINGS
+        )
+        for line_match in re.finditer(r"(?m)^[^\r\n]+", text):
+            raw_line = line_match.group(0)
+            title = raw_line.strip()
+            if not title:
+                continue
+            is_markdown = bool(re.match(r"^#{1,6}\s+\S", title))
+            is_numbered = bool(re.match(r"^\d+(?:\.\d+)*[.)]?\s+\S", title))
+            semantic_title = re.sub(r"^#{1,6}\s+", "", title).strip()
+            normalized = re.sub(r"^\d+(?:\.\d+)*[.)]?\s+", "", semantic_title.casefold()).rstrip(
+                ":"
+            )
+            is_known_bare = normalized in known_bare or normalized.startswith("appendix")
+            if not (is_markdown or is_numbered or is_known_bare):
+                continue
+            offset = line_match.start() + len(raw_line) - len(raw_line.lstrip())
+            markers.append((offset, cls._section_type(semantic_title), semantic_title))
+        return markers
+
+    @staticmethod
+    def _section_at_offset(
+        markers: List[tuple[int, str, str]], offset: int
+    ) -> tuple[str, Optional[str]]:
+        active = None
+        for marker in markers:
+            if marker[0] > offset:
+                break
+            active = marker
+        if active is None:
+            return "unknown", None
+        return active[1], active[2]
 
     def _chunk_region_spans(
         self,

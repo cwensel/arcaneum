@@ -342,3 +342,44 @@ def test_late_chunking_path_preserves_replacement_boundaries():
     assert [chunk.text for chunk in chunks] == [left, right]
     assert all(chunk.metadata["late_chunking"] is True for chunk in chunks)
     assert chunks.replacement_omissions["hard_boundary_count"] == 1
+
+
+def test_pdf_chunks_are_split_and_classified_at_academic_sections():
+    introduction = "The body explains the experiment and its results. " * 4
+    references = "[1] Example, A. A cited work. " * 5
+    text = f"# Introduction\n{introduction}\nReferences\n{references}"
+
+    chunks = _chunker(chunk_size=120, overlap_percent=0).chunk(text, {})
+
+    assert {chunk.metadata["section_type"] for chunk in chunks} == {"body", "references"}
+    reference_chunks = [chunk for chunk in chunks if chunk.metadata["section_type"] == "references"]
+    assert reference_chunks
+    assert all(chunk.metadata["section_title"] == "References" for chunk in reference_chunks)
+    assert all("experiment" not in chunk.text for chunk in reference_chunks)
+
+
+@pytest.mark.parametrize(
+    ("heading", "expected"),
+    [
+        ("Acknowledgements", "acknowledgements"),
+        ("Table of Contents", "contents"),
+        ("Appendix A: Fixtures", "appendix"),
+        ("2. Methods", "body"),
+    ],
+)
+def test_pdf_section_classifier_recognizes_common_bare_and_numbered_headings(heading, expected):
+    chunks = _chunker(chunk_size=500, overlap_percent=0).chunk(
+        f"{heading}\nThis is enough section text to produce a stable chunk.", {}
+    )
+
+    assert chunks[0].metadata["section_type"] == expected
+    assert chunks[0].metadata["section_title"] == heading
+
+
+def test_pdf_without_recognized_headings_retains_unknown_section_recall():
+    chunks = _chunker(chunk_size=500, overlap_percent=0).chunk(
+        "Unstructured extracted prose without a reliable section heading.", {}
+    )
+
+    assert chunks[0].metadata["section_type"] == "unknown"
+    assert chunks[0].metadata["section_title"] is None

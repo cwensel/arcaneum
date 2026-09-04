@@ -3500,6 +3500,8 @@ def _sync_directory_locked(
                                 if corpus_type == "pdf":
                                     doc.page_number = chunk_meta.get("page_number")
                                     doc.page_count = chunk_meta.get("page_count")
+                                    doc.section_type = chunk_meta.get("section_type")
+                                    doc.section_title = chunk_meta.get("section_title")
                                     if chunk_meta.get("extraction_floor"):
                                         doc.extraction_floor = True
                                     doc.ocr_confidence = chunk_meta.get("ocr_confidence")

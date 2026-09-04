@@ -15,7 +15,7 @@ full-text search (MeiliSearch) for the same content.
 - `update`: Update corpus metadata without reindexing
 - `delete`: Delete both Qdrant collection and MeiliSearch index
 - `sync`: Index directory to both systems simultaneously
-- `repair`: Re-index incomplete or garbled files (text quality detection)
+- `repair`: Selectively repair verifier-selected unhealthy files and PDF duplicates
 - `hook`: Install a git hook that auto-syncs a repo on every commit
 - `info`: Show corpus details (both systems)
 - `items`: List indexed items with parity status
@@ -90,6 +90,15 @@ full-text search (MeiliSearch) for the same content.
 - --confirm: Skip confirmation prompt when processing all corpora
 - --verbose: Show detailed progress
 - --json: Output in JSON format
+
+**Repair Behavior:**
+
+`/corpus repair NAME` re-indexes only files selected by corpus verification,
+including corrupt PDF extraction, incomplete or duplicate chunks, stale indexing
+policy, and duplicate PDF sources. Preview the exact set with
+`/corpus repair NAME --dry-run --json`. Identical PDFs retain every physical path
+as an alias of one searchable canonical document; parity cleanup promotes a live
+alias if the canonical path disappears.
 
 **Examples:**
 

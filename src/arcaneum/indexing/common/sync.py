@@ -619,15 +619,18 @@ class MetadataBasedSync:
                 return
         else:
             payload = source[0].payload
+        source_absolute = str(Path(source_path).absolute())
+        target_absolute = str(Path(target_path).absolute())
+        source_canonical = payload.get("canonical_path") or source_absolute
         manifest_metadata = {
             "file_hash": payload.get("file_hash"),
             "chunk_count": payload.get("chunk_count"),
             "file_size": file_size if file_size is not None else payload.get("file_size"),
             "store_type": store_type if store_type is not None else payload.get("store_type"),
             "canonical_path": (
-                str(Path(target_path).absolute())
-                if delete_source
-                else payload.get("canonical_path") or str(Path(source_path).absolute())
+                target_absolute
+                if delete_source and (store_type != "pdf" or source_canonical == source_absolute)
+                else source_canonical
             ),
             "indexing_policy": payload.get("indexing_policy"),
         }
@@ -641,6 +644,18 @@ class MetadataBasedSync:
         )
         if delete_source:
             self.delete_file_manifest(collection_name, source_path)
+
+    def set_file_manifest_canonical_path(
+        self, collection_name: str, file_path: str, canonical_path: str
+    ) -> None:
+        """Repoint an existing physical-path manifest to a live canonical source."""
+        self.qdrant.set_payload(
+            collection_name=collection_name,
+            payload={"canonical_path": str(Path(canonical_path).absolute())},
+            points=PointIdsList(points=[self.file_manifest_id(collection_name, file_path)]),
+            wait=True,
+        )
+        self._invalidate_manifest_snapshot(collection_name)
 
     def backfill_file_manifests(
         self,
@@ -1367,9 +1382,9 @@ class MetadataBasedSync:
                     current_payload = points[0].payload
                     file_paths = current_payload.get("file_paths")
                     if isinstance(file_paths, list):
-                        payload["file_paths"] = [
-                            new_path if path == old_path else path for path in file_paths
-                        ]
+                        payload["file_paths"] = sorted(
+                            {new_path if path == old_path else path for path in file_paths}
+                        )
 
                     file_quick_hashes = current_payload.get("file_quick_hashes")
                     if isinstance(file_quick_hashes, dict):
@@ -1382,7 +1397,46 @@ class MetadataBasedSync:
                             updated_quick_hashes[new_path] = new_quick_hash
                         payload["file_quick_hashes"] = updated_quick_hashes
 
-                # Update all chunks with old_path
+                if not points:
+                    # An alias has no searchable documents of its own. Rename
+                    # only its provenance metadata and leave the canonical
+                    # ``file_path`` (and therefore the shared chunk set) alone.
+                    alias_points, _ = self.qdrant.scroll(
+                        collection_name=collection_name,
+                        scroll_filter=metadata_exclusion_filter(
+                            Filter(
+                                must=[
+                                    FieldCondition(
+                                        key="file_paths", match=MatchValue(value=old_path)
+                                    )
+                                ]
+                            )
+                        ),
+                        limit=1,
+                        with_payload=["file_paths", "file_quick_hashes"],
+                        with_vectors=False,
+                    )
+                    if not alias_points or not alias_points[0].payload:
+                        logger.warning(f"No chunks found for rename: {old_path}")
+                        continue
+                    alias_payload = alias_points[0].payload
+                    file_paths = alias_payload.get("file_paths") or []
+                    payload = {
+                        "file_paths": sorted(
+                            {new_path if path == old_path else path for path in file_paths}
+                        )
+                    }
+                    file_quick_hashes = dict(alias_payload.get("file_quick_hashes") or {})
+                    existing_quick_hash = file_quick_hashes.pop(old_path, None)
+                    new_quick_hash = new_metadata.get("quick_hash", existing_quick_hash)
+                    if new_quick_hash:
+                        file_quick_hashes[new_path] = new_quick_hash
+                    payload["file_quick_hashes"] = file_quick_hashes
+                    selector_path_key = "file_paths"
+                else:
+                    selector_path_key = "file_path"
+
+                # Update all canonical chunks or every chunk carrying the alias.
                 self.qdrant.set_payload(
                     collection_name=collection_name,
                     payload=payload,
@@ -1391,7 +1445,7 @@ class MetadataBasedSync:
                             Filter(
                                 must=[
                                     FieldCondition(
-                                        key="file_path", match=MatchValue(value=old_path)
+                                        key=selector_path_key, match=MatchValue(value=old_path)
                                     )
                                 ]
                             )
@@ -1414,6 +1468,51 @@ class MetadataBasedSync:
             logger.info(f"Successfully renamed {renamed_count}/{len(renames)} files")
 
         return renamed_count
+
+    def remove_alternate_path(
+        self, collection_name: str, file_hash: str, path_to_remove: str
+    ) -> int:
+        """Remove one physical alias while preserving the canonical chunk set."""
+        points, _ = self.qdrant.scroll(
+            collection_name=collection_name,
+            scroll_filter=metadata_exclusion_filter(
+                Filter(must=[FieldCondition(key="file_hash", match=MatchValue(value=file_hash))])
+            ),
+            limit=1,
+            with_payload=["file_path", "file_paths", "file_quick_hashes", "quick_hash"],
+            with_vectors=False,
+        )
+        if not points or not points[0].payload:
+            raise RuntimeError(f"No canonical chunks found for PDF alias: {path_to_remove}")
+
+        current_payload = points[0].payload
+        primary_path = current_payload.get("file_path")
+        if primary_path == path_to_remove:
+            raise RuntimeError(f"Refusing to remove canonical path as an alias: {path_to_remove}")
+
+        file_paths = current_payload.get("file_paths") or ([primary_path] if primary_path else [])
+        remaining_paths = sorted(set(file_paths) - {path_to_remove})
+        quick_hashes = dict(current_payload.get("file_quick_hashes") or {})
+        quick_hashes.pop(path_to_remove, None)
+        payload: Dict[str, Any] = {
+            "file_paths": remaining_paths,
+            "file_quick_hashes": quick_hashes,
+        }
+        if primary_path and primary_path in quick_hashes:
+            payload["quick_hash"] = quick_hashes[primary_path]
+
+        self.qdrant.set_payload(
+            collection_name=collection_name,
+            payload=payload,
+            points=FilterSelector(
+                filter=metadata_exclusion_filter(
+                    Filter(
+                        must=[FieldCondition(key="file_hash", match=MatchValue(value=file_hash))]
+                    )
+                )
+            ),
+        )
+        return len(remaining_paths)
 
     def add_alternate_path(
         self, collection_name: str, file_hash: str, new_path: str, quick_hash: str

@@ -341,6 +341,8 @@ def _rename_file_manifests(
     renames: List[Tuple[str, str]],
 ) -> None:
     """Move deterministic manifests after both indexes confirm a rename."""
+    snapshot = sync_manager.get_file_manifest_snapshot(corpus) if corpus_type == "pdf" else {}
+    rename_map = dict(renames)
     for old_path, new_path in renames:
         new_file = Path(new_path)
         sync_manager.copy_file_manifest(
@@ -353,6 +355,24 @@ def _rename_file_manifests(
             store_type=corpus_type,
         )
 
+    # PDF aliases all point at one searchable canonical source. When that
+    # canonical source moves, repoint only its PDF alias manifests; an alias-
+    # only rename preserves the canonical pointer copied above.
+    if corpus_type != "pdf":
+        return
+    for old_path, new_path in renames:
+        old_absolute = str(Path(old_path).absolute())
+        payload = snapshot.get(old_absolute, {})
+        old_canonical = payload.get("canonical_path") or old_absolute
+        if old_canonical != old_absolute:
+            continue
+        file_hash = payload.get("file_hash")
+        for path, alias_payload in snapshot.items():
+            if path == old_absolute or alias_payload.get("file_hash") != file_hash:
+                continue
+            live_path = rename_map.get(path, path)
+            sync_manager.set_file_manifest_canonical_path(corpus, live_path, new_path)
+
 
 def _delete_file_manifests(
     sync_manager: MetadataBasedSync,
@@ -363,6 +383,227 @@ def _delete_file_manifests(
     """Remove manifests alongside their chunk lifecycle."""
     for path in paths:
         sync_manager.delete_file_manifest(corpus, path)
+
+
+def _meili_has_documents_for_path(meili: FullTextClient, corpus: str, file_path: str) -> bool:
+    """Read back whether MeiliSearch still exposes documents for ``file_path``."""
+    escaped_path = file_path.replace("\\", "\\\\").replace('"', '\\"')
+    result = meili.search(
+        index_name=corpus,
+        query="",
+        filter=f'file_path = "{escaped_path}"',
+        limit=1,
+    )
+    return bool(result.get("hits", []))
+
+
+def _rollback_pdf_canonical_promotion(
+    qdrant,
+    meili,
+    sync_manager: MetadataBasedSync,
+    corpus: str,
+    old_path: str,
+    new_path: str,
+    repointed_paths: List[str],
+) -> None:
+    """Best-effort rollback while the old canonical manifest still exists."""
+    rollback_errors: List[str] = []
+    for path in reversed(repointed_paths):
+        try:
+            sync_manager.set_file_manifest_canonical_path(corpus, path, old_path)
+        except Exception as exc:
+            rollback_errors.append(f"manifest {path}: {exc}")
+
+    try:
+        qdrant_restored = sync_manager.handle_renames(
+            corpus, _rename_tuples_with_metadata([(new_path, old_path)])
+        )
+    except Exception as exc:
+        qdrant_restored = 0
+        rollback_errors.append(f"Qdrant: {exc}")
+    # If Qdrant rolled back, look up the stable point IDs at old_path. If it
+    # did not, the IDs are still discoverable at new_path.
+    lookup_path = old_path if qdrant_restored == 1 else new_path
+    try:
+        _, confirmed = _handle_renames_meili(
+            [(lookup_path, old_path)],
+            qdrant,
+            meili,
+            corpus,
+        )
+    except Exception as exc:
+        confirmed = []
+        rollback_errors.append(f"MeiliSearch: {exc}")
+    if qdrant_restored != 1:
+        rollback_errors.append("Qdrant rename was not confirmed")
+    if (lookup_path, old_path) not in confirmed:
+        rollback_errors.append("MeiliSearch rename was not confirmed")
+    if rollback_errors:
+        raise RuntimeError(
+            f"Failed to roll back canonical PDF promotion: {old_path} -> {new_path}; "
+            + "; ".join(rollback_errors)
+        )
+
+
+def _promote_pdf_canonical(
+    qdrant,
+    meili,
+    sync_manager: MetadataBasedSync,
+    corpus: str,
+    old_path: str,
+    new_path: str,
+    group_paths: List[str],
+) -> None:
+    """Promote a live PDF alias without deleting its shared searchable chunks."""
+    _, confirmed = _handle_renames_meili([(old_path, new_path)], qdrant, meili, corpus)
+    if (old_path, new_path) not in confirmed:
+        raise RuntimeError(f"Failed to promote PDF alias in MeiliSearch: {old_path}")
+
+    renamed = sync_manager.handle_renames(
+        corpus, _rename_tuples_with_metadata([(old_path, new_path)])
+    )
+    if renamed != 1:
+        # A failed response can be ambiguous after a server-side commit. Read
+        # the actual path state before choosing the matching rollback route.
+        if sync_manager.has_chunks_for_file_path(corpus, new_path):
+            _rollback_pdf_canonical_promotion(
+                qdrant, meili, sync_manager, corpus, old_path, new_path, []
+            )
+        else:
+            _, rolled_back = _handle_renames_meili([(old_path, old_path)], qdrant, meili, corpus)
+            if (old_path, old_path) not in rolled_back:
+                raise RuntimeError(
+                    f"Failed to promote or roll back canonical PDF alias: {old_path}"
+                )
+        raise RuntimeError(f"Failed to promote PDF alias in Qdrant: {old_path}")
+
+    repointed_paths: List[str] = []
+    try:
+        if (
+            sync_manager.has_chunks_for_file_path(corpus, old_path)
+            or not sync_manager.has_chunks_for_file_path(corpus, new_path)
+            or _meili_has_documents_for_path(meili, corpus, old_path)
+            or not _meili_has_documents_for_path(meili, corpus, new_path)
+        ):
+            raise RuntimeError(
+                f"Canonical PDF promotion read-back verification failed: {old_path} -> {new_path}"
+            )
+
+        for path in sorted(set(group_paths) - {old_path}):
+            repointed_paths.append(path)
+            sync_manager.set_file_manifest_canonical_path(corpus, path, new_path)
+
+        manifests = sync_manager.get_file_manifest_snapshot(corpus)
+        if any(
+            manifests.get(path, {}).get("canonical_path") != new_path for path in repointed_paths
+        ):
+            raise RuntimeError(
+                f"Canonical PDF manifest read-back verification failed: {old_path} -> {new_path}"
+            )
+
+    except Exception:
+        _rollback_pdf_canonical_promotion(
+            qdrant,
+            meili,
+            sync_manager,
+            corpus,
+            old_path,
+            new_path,
+            repointed_paths,
+        )
+        raise
+
+    # The only destructive step is last, after both indexes and every live
+    # alias manifest have been read back at the new canonical path. If the
+    # delete response is ambiguous, inspect state before deciding to roll back.
+    try:
+        sync_manager.delete_file_manifest(corpus, old_path)
+    except Exception:
+        manifests = sync_manager.get_file_manifest_snapshot(corpus)
+        if old_path not in manifests:
+            return
+        _rollback_pdf_canonical_promotion(
+            qdrant,
+            meili,
+            sync_manager,
+            corpus,
+            old_path,
+            new_path,
+            repointed_paths,
+        )
+        raise
+
+    manifests = sync_manager.get_file_manifest_snapshot(corpus)
+    if old_path in manifests:
+        _rollback_pdf_canonical_promotion(
+            qdrant,
+            meili,
+            sync_manager,
+            corpus,
+            old_path,
+            new_path,
+            repointed_paths,
+        )
+        raise RuntimeError(f"Canonical PDF manifest deletion read-back failed: {old_path}")
+
+
+def _remove_pdf_alias_paths(
+    qdrant,
+    meili,
+    sync_manager: MetadataBasedSync,
+    corpus: str,
+    paths: List[str],
+) -> Tuple[int, List[str]]:
+    """Remove PDF aliases safely and return paths needing ordinary deletion."""
+    manifests = sync_manager.get_file_manifest_snapshot(corpus)
+    requested = set(paths)
+    groups: Dict[str, Set[str]] = {}
+    ordinary: Set[str] = set()
+
+    for path in requested:
+        file_hash = manifests.get(path, {}).get("file_hash")
+        if not file_hash:
+            ordinary.add(path)
+            continue
+        groups.setdefault(file_hash, set()).add(path)
+
+    removed = 0
+    for file_hash, requested_group in sorted(groups.items()):
+        all_group_paths = {
+            path for path, payload in manifests.items() if payload.get("file_hash") == file_hash
+        }
+        canonical_paths = {
+            payload.get("canonical_path") or path
+            for path, payload in manifests.items()
+            if path in all_group_paths
+        }
+        canonical_path = sorted(canonical_paths)[0]
+        live_paths = sorted(path for path in all_group_paths - requested if Path(path).exists())
+
+        if canonical_path in requested_group and live_paths:
+            _promote_pdf_canonical(
+                qdrant,
+                meili,
+                sync_manager,
+                corpus,
+                canonical_path,
+                live_paths[0],
+                sorted(all_group_paths),
+            )
+            removed += 1
+
+        for path in sorted(requested_group - {canonical_path}):
+            if live_paths or (canonical_path not in requested and Path(canonical_path).exists()):
+                sync_manager.remove_alternate_path(corpus, file_hash, path)
+                sync_manager.delete_file_manifest(corpus, path)
+                removed += 1
+            else:
+                ordinary.add(path)
+
+        if canonical_path in requested_group and not live_paths:
+            ordinary.add(canonical_path)
+
+    return removed, sorted(ordinary)
 
 
 def _remove_indexed_paths(
@@ -385,6 +626,12 @@ def _remove_indexed_paths(
 
     from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchValue
 
+    removed = 0
+    if corpus_type == "pdf":
+        removed, paths = _remove_pdf_alias_paths(qdrant, meili, sync_manager, corpus, paths)
+        if not paths:
+            return removed
+
     meili.delete_documents_by_file_paths(corpus, paths)
     for path in paths:
         qdrant.delete(
@@ -394,7 +641,7 @@ def _remove_indexed_paths(
             ),
         )
     _delete_file_manifests(sync_manager, corpus, corpus_type, paths)
-    return len(paths)
+    return removed + len(paths)
 
 
 def _stamp_last_sync_metadata(qdrant, corpus: str) -> None:
@@ -1562,6 +1809,7 @@ def _handle_renames_meili(
         return 0, []
 
     docs_by_rename: Dict[Tuple[str, str], List[Dict[str, str]]] = {}
+    alias_renames: List[Tuple[str, str]] = []
     index = meili.get_index(corpus)
 
     for old_path, new_path in renames:
@@ -1572,8 +1820,8 @@ def _handle_renames_meili(
         while True:
             points, offset = qdrant.scroll(
                 collection_name=corpus,
-                scroll_filter=Filter(
-                    must=[FieldCondition(key="file_path", match=MatchValue(value=old_path))]
+                scroll_filter=metadata_exclusion_filter(
+                    Filter(must=[FieldCondition(key="file_path", match=MatchValue(value=old_path))])
                 ),
                 limit=100,
                 offset=offset,
@@ -1598,9 +1846,25 @@ def _handle_renames_meili(
 
         if update_docs:
             docs_by_rename[(old_path, new_path)] = update_docs
+            continue
+
+        # Deduplicated PDF aliases do not have independent MeiliSearch
+        # documents. Confirm them from Qdrant provenance so their metadata can
+        # still be renamed without moving the canonical documents.
+        alias_points, _ = qdrant.scroll(
+            collection_name=corpus,
+            scroll_filter=metadata_exclusion_filter(
+                Filter(must=[FieldCondition(key="file_paths", match=MatchValue(value=old_path))])
+            ),
+            limit=1,
+            with_payload=False,
+            with_vectors=False,
+        )
+        if alias_points:
+            alias_renames.append((old_path, new_path))
 
     if not docs_by_rename:
-        return 0, []
+        return 0, alias_renames
 
     update_docs = [doc for docs in docs_by_rename.values() for doc in docs]
     try:
@@ -1616,7 +1880,7 @@ def _handle_renames_meili(
         )
         return 0, []
 
-    return len(update_docs), list(docs_by_rename.keys())
+    return len(update_docs), list(docs_by_rename.keys()) + alias_renames
 
 
 def _rename_tuples_with_metadata(renames: List[Tuple[str, str]]) -> List[Tuple[str, str, Dict]]:

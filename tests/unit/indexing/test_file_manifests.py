@@ -224,6 +224,96 @@ def test_rename_rebuilds_missing_manifest_from_already_moved_chunks():
     qdrant.delete.assert_called_once()
 
 
+def test_pdf_alias_rename_preserves_manifest_canonical_path():
+    qdrant = MagicMock()
+    qdrant.retrieve.return_value = [
+        SimpleNamespace(
+            payload={
+                "file_hash": "content",
+                "chunk_count": 3,
+                "file_size": 10,
+                "store_type": "pdf",
+                "canonical_path": "/canonical.pdf",
+            }
+        )
+    ]
+    qdrant.get_collection.return_value = _collection_info()
+
+    MetadataBasedSync(qdrant).copy_file_manifest(
+        "papers",
+        "/old-alias.pdf",
+        "/new-alias.pdf",
+        "quick",
+        delete_source=True,
+        file_size=10,
+        store_type="pdf",
+    )
+
+    manifest = qdrant.upsert.call_args.kwargs["points"][0].payload
+    assert manifest["canonical_path"] == "/canonical.pdf"
+
+
+def test_handle_renames_updates_alias_metadata_without_moving_canonical_path():
+    qdrant = MagicMock()
+    qdrant.scroll.side_effect = [
+        ([], None),
+        (
+            [
+                SimpleNamespace(
+                    payload={
+                        "file_paths": ["/canonical.pdf", "/old-alias.pdf"],
+                        "file_quick_hashes": {
+                            "/canonical.pdf": "canonical",
+                            "/old-alias.pdf": "alias",
+                        },
+                    }
+                )
+            ],
+            None,
+        ),
+    ]
+
+    renamed = MetadataBasedSync(qdrant).handle_renames(
+        "papers", [("/old-alias.pdf", "/new-alias.pdf", {"quick_hash": "new"})]
+    )
+
+    assert renamed == 1
+    payload = qdrant.set_payload.call_args.kwargs["payload"]
+    assert "file_path" not in payload
+    assert payload["file_paths"] == ["/canonical.pdf", "/new-alias.pdf"]
+    assert payload["file_quick_hashes"] == {
+        "/canonical.pdf": "canonical",
+        "/new-alias.pdf": "new",
+    }
+
+
+def test_remove_alternate_path_preserves_canonical_chunk_identity():
+    qdrant = MagicMock()
+    qdrant.scroll.return_value = (
+        [
+            SimpleNamespace(
+                payload={
+                    "file_path": "/canonical.pdf",
+                    "file_paths": ["/canonical.pdf", "/alias.pdf"],
+                    "file_quick_hashes": {
+                        "/canonical.pdf": "canonical",
+                        "/alias.pdf": "alias",
+                    },
+                }
+            )
+        ],
+        None,
+    )
+
+    remaining = MetadataBasedSync(qdrant).remove_alternate_path("papers", "content", "/alias.pdf")
+
+    assert remaining == 1
+    payload = qdrant.set_payload.call_args.kwargs["payload"]
+    assert payload["file_paths"] == ["/canonical.pdf"]
+    assert payload["file_quick_hashes"] == {"/canonical.pdf": "canonical"}
+    assert payload["quick_hash"] == "canonical"
+
+
 def test_rebuild_skips_chunks_missing_required_manifest_metadata():
     qdrant = MagicMock()
     qdrant.retrieve.return_value = []

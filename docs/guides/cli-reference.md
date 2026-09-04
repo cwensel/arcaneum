@@ -45,7 +45,7 @@ arc corpus list                               # List corpora with cached item co
 arc corpus list --details                     # Add model, last sync, chunk counts, and exact item counts
 arc corpus update <name>                      # Update description metadata
 arc corpus sync <name> <path> [<path>...]     # Index to both systems
-arc corpus repair <name>                      # Re-index incomplete/garbled files
+arc corpus repair <name>                      # Repair verifier-selected unhealthy files
 arc corpus items <name>                       # List items with parity status
 arc corpus verify <name>                      # Verify corpus health
 arc corpus parity <name>                      # Check/restore parity
@@ -164,7 +164,7 @@ arc corpus update <name> --description <text>            # Update metadata
 arc corpus update <name> --clear-description             # Remove the corpus description
 arc corpus delete <name>                                 # Delete both
 arc corpus sync <name> <path> [<path>...]                # Index to both (multiple paths supported)
-arc corpus repair <name>                                 # Re-index incomplete/garbled files
+arc corpus repair <name>                                 # Repair verifier-selected unhealthy files
 arc corpus info <name>                                   # Show corpus details
 arc corpus items <name>                                  # List indexed items with parity status
 arc corpus verify <name>                                 # Verify corpus health across both systems
@@ -203,6 +203,10 @@ arc corpus sync MyCorpus /path/to/repo --git-version       # Keep multiple versi
 - `--parity`: Check cross-system parity between Qdrant and MeiliSearch, detect
   renamed/moved files by content hash, and **remove indexed entries for files
   that no longer exist on disk** (scoped to the directories being synced).
+  For PDF corpora, byte-identical paths are tracked as aliases of one
+  deterministic canonical document. Removing or renaming an alias preserves
+  the shared chunks; removing the canonical path promotes the
+  lexicographically first live alias after Qdrant and MeiliSearch read-back.
   Slower — scrolls the full index. For standalone cross-system repair without
   indexing a directory, use [`arc corpus parity`](#corpus-parity) instead.
 - `--dry-run`: Show what would be synced, renamed, or removed without making
@@ -402,8 +406,10 @@ content.
 
 ### Corpus Repair
 
-Detect and re-index files with incomplete chunks, garbled text extraction, or
-duplicated chunks:
+Selectively detect and re-index only files for which verification recommends an
+automatic repair. This includes incomplete or duplicated chunks, garbled or
+dropped-out extraction, stale source/indexing policy, missing quality manifests,
+sub-floor or dropped chunks, and duplicate PDF sources:
 
 ```bash
 arc corpus repair MyCorpus                            # Detect and fix quality issues
@@ -415,7 +421,7 @@ arc corpus repair MyCorpus --verbose                  # Show per-file quality sc
 **Options:**
 
 - `--quality-threshold`: Text quality score threshold (0.0-1.0, default: 0.9)
-- `--dry-run`: Show what would be repaired without making changes
+- `--dry-run`: Show the exact files that would be repaired without making changes
 - `--gpu`: Opt into accelerator embedding. CPU is the stable default.
 - `--max-embedding-batch`: Cap embedding batch size
 - `--verbose`: Show per-file old → new quality scores
@@ -423,12 +429,27 @@ arc corpus repair MyCorpus --verbose                  # Show per-file quality sc
 
 **How it works:**
 
-1. Scans all indexed chunks and scores text quality (stop word frequency, replacement characters, ASCII ratio)
-2. Identifies files with incomplete chunk sets, average quality below threshold,
-   or duplicated chunks
+1. Scans persisted chunks and manifests for structural, policy, and PDF quality issues
+2. Selects only files marked `repair_recommended`; healthy files are not re-indexed
 3. Re-extracts affected files (with auto-OCR for garbled text from corrupt fonts)
-4. Compares new quality to old — only replaces if improved
-5. Reports per-file results (improved, skipped, incomplete)
+4. Consolidates content-identical PDFs into one canonical searchable chunk set
+   while retaining every physical path as an auditable alias
+5. Compares new quality to old — only replaces degraded extraction if improved
+6. Reports per-file results (improved, consolidated, skipped, or incomplete)
+
+There is no separate `--only-corrupt` switch: ordinary `repair` is already
+selective. Preview its verifier-selected file set before writing with:
+
+```bash
+arc corpus repair MyCorpus --dry-run --json
+```
+
+For duplicate PDFs, canonical selection is deterministic. Sync, repair, parity,
+export, and stale-path pruning expose one searchable document while manifests
+retain all source aliases. If the canonical file disappears during a parity
+sync, a live alias is promoted without deleting or re-embedding the shared
+content; failed read-back rolls the promotion back before the old manifest is
+removed.
 
 **Duplicated chunks:**
 

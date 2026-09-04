@@ -220,8 +220,24 @@ The system automatically tracks indexed files using metadata queries:
 - **Detection**: Based on file path and content hash (SHA256)
 - **Rename / removal**: Add `--parity` to `arc corpus sync` to detect
   renamed/moved files and remove indexed entries for files no longer on disk
+- **Duplicate content**: Byte-identical PDFs share one canonical searchable
+  chunk set. Every physical path remains in the manifest as an alias.
+- **Alias lifecycle**: Renaming or removing an alias preserves the shared
+  content. If the canonical path is removed, parity sync deterministically
+  promotes the lexicographically first live alias and verifies both indexes
+  before deleting the old manifest.
 
 To bypass incremental sync and reindex everything, use `--force`.
+
+To repair only verifier-selected unhealthy PDFs—including corrupt extraction,
+stale policy metadata, incomplete/duplicate chunks, and duplicate sources—run:
+
+```bash
+arc corpus repair pdf-docs --dry-run --json  # Preview exact files
+arc corpus repair pdf-docs                   # Repair that selection
+```
+
+Healthy PDFs are not re-indexed; no separate `--only-corrupt` option is needed.
 
 ## GPU Acceleration
 

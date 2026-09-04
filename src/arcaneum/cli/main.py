@@ -1906,11 +1906,12 @@ def corpus_hook_spool(corpus, repo, changed_since, between):
 def corpus_repair(
     corpus, quality_threshold, dry_run, no_gpu, max_embedding_batch, verbose, output_json
 ):
-    """Re-index incomplete or garbled files in a corpus.
+    """Selectively re-index files for which verification recommends repair.
 
-    Scans all indexed chunks for text quality issues (garbled text from
-    corrupt fonts, encoding failures) and incomplete chunk sets. Re-extracts
-    affected files with OCR fallback and compares quality before replacing.
+    Scans persisted chunks and manifests for incomplete or duplicated chunks,
+    corrupt extraction, stale policies, and duplicate PDF sources. Re-extracts
+    only affected files with OCR fallback, and consolidates duplicate PDFs into
+    one canonical searchable document while retaining source aliases.
 
     Examples:
 

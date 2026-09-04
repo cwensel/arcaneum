@@ -91,7 +91,9 @@ command both ensure both systems hold the same content, but operate differently:
 - `arc corpus sync --parity <path>`: Runs during a sync. In addition to indexing
   new/changed files in `<path>`, it detects renamed/moved files by content hash
   and **removes indexed entries for files that no longer exist on disk** (scoped
-  to the directories being synced).
+  to the directories being synced). Identical PDFs share one canonical
+  searchable chunk set; alias rename/removal preserves it, and canonical removal
+  promotes the lexicographically first live alias after dual-index read-back.
 - `arc corpus parity`: Standalone cross-system repair with no directory scan.
   Backfills missing entries between Qdrant and MeiliSearch but does not remove
   missing-from-disk files.
@@ -111,6 +113,16 @@ Use `--create-missing` to promote single-sided Qdrant collections into full corp
 - Then proceeds with normal parity sync
 
 Note: `meili_only` corpora cannot be auto-created (require `--type` and `--model`).
+
+## Selective Repair
+
+`arc corpus repair` re-indexes only verifier-selected unhealthy files; it is not
+a full-corpus force operation. Use `arc corpus repair NAME --dry-run --json` to
+inspect the exact set first. The selection includes incomplete/duplicate chunks,
+corrupt or dropped-out PDF extraction, stale source/policy metadata, missing
+quality manifests, and duplicate PDF sources. Duplicate sources are consolidated
+without losing their physical-path aliases. There is no separate
+`--only-corrupt` flag because the default repair path is already selective.
 
 ## Automatic Sync via Git Hook
 

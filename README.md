@@ -145,7 +145,7 @@ arc corpus sync NAME PATH --parity              # Also detect renames, remove fi
 arc corpus items NAME                           # List items with parity status
 arc corpus verify NAME                          # Verify corpus health across both systems
 arc corpus parity NAME                          # Check/restore parity between systems
-arc corpus repair NAME                          # Re-index incomplete or garbled files
+arc corpus repair NAME                          # Repair verifier-selected unhealthy files
 arc corpus sync NAME --changed-since HEAD       # Sync only what the last commit touched
 arc corpus hook install                         # Guided setup: pick/create a corpus, choose hooks
 arc corpus hook install NAME                    # Auto-sync a git repo on every commit

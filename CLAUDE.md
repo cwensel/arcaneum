@@ -69,7 +69,17 @@ arc corpus sync MyCorpus /path/to/files --parity
 
 # Preview parity changes without writing
 arc corpus sync MyCorpus /path/to/files --parity --dry-run
+
+# Preview and repair only verifier-selected unhealthy files. For PDFs this
+# also consolidates identical sources while preserving their paths as aliases.
+arc corpus repair MyCorpus --dry-run --json
+arc corpus repair MyCorpus
 ```
+
+PDF corpora keep one canonical searchable chunk set per content hash. Alias
+renames/removals preserve that content; parity sync promotes a live alias when
+the canonical path disappears and verifies both indexes before retiring the old
+manifest.
 
 ### Searching
 

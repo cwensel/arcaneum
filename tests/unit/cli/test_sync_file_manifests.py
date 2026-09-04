@@ -1,7 +1,10 @@
 """Focused CLI orchestration tests for file manifests."""
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, call
+
+import pytest
 
 from arcaneum.cli import sync as sync_module
 from arcaneum.indexing.policy import build_indexing_policy
@@ -177,4 +180,156 @@ def test_zero_chunk_file_publishes_manifest(tmp_path):
         file_size=0,
         store_type="markdown",
         indexing_policy=build_indexing_policy("markdown"),
+    )
+
+
+def _pdf_alias_manifests(canonical_path, alias_path):
+    shared = {
+        "file_hash": "content",
+        "chunk_count": 3,
+        "store_type": "pdf",
+        "canonical_path": canonical_path,
+    }
+    return {
+        canonical_path: {**shared, "file_path": canonical_path, "quick_hash": "canonical"},
+        alias_path: {**shared, "file_path": alias_path, "quick_hash": "alias"},
+    }
+
+
+def test_pdf_stale_canonical_promotes_live_alias_after_readback(tmp_path, monkeypatch):
+    canonical_path = str(tmp_path / "missing.pdf")
+    alias_file = tmp_path / "surviving.pdf"
+    alias_file.write_bytes(b"same pdf")
+    alias_path = str(alias_file)
+    manager = Mock()
+    manager.get_file_manifest_snapshot.return_value = _pdf_alias_manifests(
+        canonical_path, alias_path
+    )
+    manager.handle_renames.return_value = 1
+    manager.has_chunks_for_file_path.side_effect = lambda _, path: path == alias_path
+    manager.get_file_manifest_snapshot.side_effect = [
+        _pdf_alias_manifests(canonical_path, alias_path),
+        {
+            alias_path: {
+                **_pdf_alias_manifests(canonical_path, alias_path)[alias_path],
+                "canonical_path": alias_path,
+            }
+        },
+        {
+            alias_path: {
+                **_pdf_alias_manifests(canonical_path, alias_path)[alias_path],
+                "canonical_path": alias_path,
+            }
+        },
+    ]
+    meili = Mock()
+    qdrant = Mock()
+    monkeypatch.setattr(
+        sync_module,
+        "_handle_renames_meili",
+        Mock(return_value=(3, [(canonical_path, alias_path)])),
+    )
+    monkeypatch.setattr(
+        sync_module,
+        "_meili_has_documents_for_path",
+        lambda _meili, _corpus, path: path == alias_path,
+    )
+
+    removed = sync_module._remove_indexed_paths(
+        qdrant, meili, manager, "Papers", "pdf", [canonical_path]
+    )
+
+    assert removed == 1
+    manager.handle_renames.assert_called_once()
+    manager.set_file_manifest_canonical_path.assert_called_once_with(
+        "Papers", alias_path, alias_path
+    )
+    manager.delete_file_manifest.assert_called_once_with("Papers", canonical_path)
+    manager.remove_alternate_path.assert_not_called()
+    meili.delete_documents_by_file_paths.assert_not_called()
+    qdrant.delete.assert_not_called()
+
+
+def test_pdf_canonical_promotion_rolls_back_before_manifest_delete(tmp_path, monkeypatch):
+    canonical_path = str(tmp_path / "missing.pdf")
+    alias_file = tmp_path / "surviving.pdf"
+    alias_file.write_bytes(b"same pdf")
+    alias_path = str(alias_file)
+    manager = Mock()
+    manager.get_file_manifest_snapshot.return_value = _pdf_alias_manifests(
+        canonical_path, alias_path
+    )
+    manager.handle_renames.side_effect = [1, 1]
+    manager.has_chunks_for_file_path.return_value = False
+    meili = Mock()
+    qdrant = Mock()
+    rename_meili = Mock(
+        side_effect=[
+            (3, [(canonical_path, alias_path)]),
+            (3, [(canonical_path, canonical_path)]),
+        ]
+    )
+    monkeypatch.setattr(sync_module, "_handle_renames_meili", rename_meili)
+    monkeypatch.setattr(sync_module, "_meili_has_documents_for_path", lambda *_args: True)
+
+    with pytest.raises(RuntimeError, match="read-back verification failed"):
+        sync_module._remove_indexed_paths(qdrant, meili, manager, "Papers", "pdf", [canonical_path])
+
+    assert manager.handle_renames.call_count == 2
+    reverse = manager.handle_renames.call_args_list[-1].args[1][0]
+    assert reverse[:2] == (alias_path, canonical_path)
+    manager.delete_file_manifest.assert_not_called()
+    manager.set_file_manifest_canonical_path.assert_not_called()
+    assert rename_meili.call_args_list[-1].args[0] == [(canonical_path, canonical_path)]
+
+
+def test_pdf_stale_alias_only_removes_alias_metadata(tmp_path):
+    canonical_file = tmp_path / "canonical.pdf"
+    canonical_file.write_bytes(b"same pdf")
+    canonical_path = str(canonical_file)
+    alias_path = str(tmp_path / "missing-alias.pdf")
+    manager = Mock()
+    manager.get_file_manifest_snapshot.return_value = _pdf_alias_manifests(
+        canonical_path, alias_path
+    )
+    meili = Mock()
+    qdrant = Mock()
+
+    removed = sync_module._remove_indexed_paths(
+        qdrant, meili, manager, "Papers", "pdf", [alias_path]
+    )
+
+    assert removed == 1
+    manager.remove_alternate_path.assert_called_once_with("Papers", "content", alias_path)
+    manager.delete_file_manifest.assert_called_once_with("Papers", alias_path)
+    meili.delete_documents_by_file_paths.assert_not_called()
+    qdrant.delete.assert_not_called()
+
+
+def test_meili_rename_confirms_pdf_alias_without_moving_canonical_documents():
+    qdrant = Mock()
+    qdrant.scroll.side_effect = [([], None), ([SimpleNamespace(id="chunk")], None)]
+    meili = Mock()
+
+    updated, confirmed = sync_module._handle_renames_meili(
+        [("/old-alias.pdf", "/new-alias.pdf")], qdrant, meili, "Papers"
+    )
+
+    assert updated == 0
+    assert confirmed == [("/old-alias.pdf", "/new-alias.pdf")]
+    meili.get_index.return_value.update_documents.assert_not_called()
+
+
+def test_pdf_canonical_rename_repoints_other_alias_manifests(tmp_path):
+    old_path = str(tmp_path / "old.pdf")
+    new_file = tmp_path / "new.pdf"
+    new_file.write_bytes(b"pdf")
+    alias_path = str(tmp_path / "alias.pdf")
+    manager = Mock()
+    manager.get_file_manifest_snapshot.return_value = _pdf_alias_manifests(old_path, alias_path)
+
+    sync_module._rename_file_manifests(manager, "Papers", "pdf", [(old_path, str(new_file))])
+
+    manager.set_file_manifest_canonical_path.assert_called_once_with(
+        "Papers", alias_path, str(new_file)
     )

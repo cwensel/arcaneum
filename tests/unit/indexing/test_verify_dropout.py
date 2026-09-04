@@ -385,6 +385,8 @@ def test_short_single_chunk_section_is_not_a_sub_floor_defect(qdrant_client):
                 "text": chunk.text,
                 "section_type": chunk.metadata["section_type"],
                 "section_title": chunk.metadata["section_title"],
+                "section_offset": chunk.metadata["section_offset"],
+                "chunk_start_char": chunk.metadata["chunk_start_char"],
             }
         )
         for chunk in chunks
@@ -411,9 +413,11 @@ def test_repeated_short_headings_are_distinct_section_occurrences(qdrant_client)
                     "file_path": "/tmp/paper.pdf",
                     "chunk_index": index,
                     "chunk_count": 2,
-                    "text": f"References\nShort list {index}.",
-                    "section_type": "references",
-                    "section_title": "References",
+                    "text": f"1. Introduction\nShort section {index}.",
+                    "section_type": "body",
+                    "section_title": "1. Introduction",
+                    "section_offset": index * 100,
+                    "chunk_start_char": index * 100,
                 }
             )
             for index in range(2)
@@ -429,6 +433,47 @@ def test_repeated_short_headings_are_distinct_section_occurrences(qdrant_client)
         )
 
     assert result.sub_floor_chunks == 0
+
+
+def test_body_text_starting_with_title_does_not_hide_short_fragment(qdrant_client):
+    qdrant_client.scroll.side_effect = _scroll_once(
+        [
+            _point(
+                {
+                    "file_path": "/tmp/paper.pdf",
+                    "chunk_index": 0,
+                    "chunk_count": 2,
+                    "text": "Results\n" + "A" * 300,
+                    "section_type": "body",
+                    "section_title": "Results",
+                    "section_offset": 25,
+                    "chunk_start_char": 25,
+                }
+            ),
+            _point(
+                {
+                    "file_path": "/tmp/paper.pdf",
+                    "chunk_index": 1,
+                    "chunk_count": 2,
+                    "text": "Results remain preliminary.",
+                    "section_type": "body",
+                    "section_title": "Results",
+                    "section_offset": 25,
+                    "chunk_start_char": 330,
+                }
+            ),
+        ]
+    )
+
+    with patch.object(verify_mod, "file_manifests_ready", return_value=False):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=2,
+            check_quality=True,
+        )
+
+    assert result.sub_floor_chunks == 1
 
 
 def test_standard_pdf_verification_does_not_read_source_files(qdrant_client):

@@ -20,7 +20,7 @@ import os
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import FieldCondition, Filter, MatchValue
@@ -539,6 +539,8 @@ class CollectionVerifier:
             "quality_manifest",
             "section_type",
             "section_title",
+            "section_offset",
+            "chunk_start_char",
         ]
         if check_dropout:
             payload_fields.extend(["page_count", "extraction_floor"])
@@ -614,8 +616,9 @@ class CollectionVerifier:
                             ),
                             payload.get("section_type"),
                             payload.get("section_title"),
+                            payload.get("section_offset"),
+                            payload.get("chunk_start_char"),
                             text_length,
-                            text,
                         )
                     )
                     if text:
@@ -842,26 +845,20 @@ class CollectionVerifier:
                 ) or {}
                 fragment_floor = policy_config.get("min_chunk_chars", 200)
                 if isinstance(fragment_floor, int) and fragment_floor > 0:
-                    section_runs: List[List[int]] = []
-                    previous_section = None
-                    for _, section_type, section_title, length, chunk_text in sorted(
-                        file_data["quality_chunks"], key=lambda item: item[0]
-                    ):
-                        section = (section_type, section_title)
-                        normalized_title = (section_title or "").strip().casefold()
-                        starts_section = bool(
-                            normalized_title
-                            and chunk_text.lstrip("# 0123456789.)")
-                            .casefold()
-                            .startswith(normalized_title)
-                        )
-                        if not section_runs or section != previous_section or starts_section:
-                            section_runs.append([])
-                        section_runs[-1].append(length)
-                        previous_section = section
+                    section_chunks: Dict[Tuple[Any, ...], List[int]] = defaultdict(list)
+                    for (
+                        _chunk_order,
+                        section_type,
+                        section_title,
+                        section_offset,
+                        chunk_start,
+                        length,
+                    ) in file_data["quality_chunks"]:
+                        occurrence = section_offset if section_offset is not None else chunk_start
+                        section_chunks[(section_type, section_title, occurrence)].append(length)
                     sub_floor_for_file = sum(
                         length < fragment_floor
-                        for section_lengths in section_runs
+                        for section_lengths in section_chunks.values()
                         if len(section_lengths) > 1
                         for length in section_lengths
                     )

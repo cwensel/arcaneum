@@ -222,9 +222,12 @@ class PDFChunker:
             page_number = self._calculate_page_number(chunk_start, metadata.get("page_boundaries"))
             if page_number is not None:
                 chunk_metadata["page_number"] = page_number
-            section_type, section_title = self._section_at_offset(section_markers, chunk_start)
+            section_type, section_title, section_offset = self._section_at_offset(
+                section_markers, chunk_start
+            )
             chunk_metadata["section_type"] = section_type
             chunk_metadata["section_title"] = section_title
+            chunk_metadata["section_offset"] = section_offset
 
             chunks.append(
                 Chunk(
@@ -278,15 +281,15 @@ class PDFChunker:
     @staticmethod
     def _section_at_offset(
         markers: List[tuple[int, str, str]], offset: int
-    ) -> tuple[str, Optional[str]]:
+    ) -> tuple[str, Optional[str], Optional[int]]:
         active = None
         for marker in markers:
             if marker[0] > offset:
                 break
             active = marker
         if active is None:
-            return "unknown", None
-        return active[1], active[2]
+            return "unknown", None, None
+        return active[1], active[2], active[0]
 
     def _chunk_region_spans(
         self,

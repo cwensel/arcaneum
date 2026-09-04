@@ -284,6 +284,28 @@ def test_merge_with_one_missing_boundary_set_selects_whole_document():
     assert metadata[selected_key] == [1, 2]
 
 
+def test_document_quality_selection_uses_only_chosen_source_page_count():
+    embedded_text = "Readable embedded text with enough common words to win selection."
+    ocr_text = "xqz vvv zzz"
+
+    merged_text, metadata = merge_extracted_text_with_ocr(
+        embedded_text,
+        {"extraction_method": "embedded", "page_count": 2},
+        ocr_text,
+        {
+            "extraction_method": "ocr_tesseract",
+            "page_count": 5,
+            "page_boundaries": [
+                {"page_number": 1, "start_char": 0, "page_text_length": len(ocr_text)}
+            ],
+        },
+    )
+
+    assert merged_text == embedded_text
+    assert metadata["embedded_selected_pages"] == [1, 2]
+    assert metadata["ocr_selected_pages"] == []
+
+
 def test_pdf_batch_uploader_duplicate_path_preserves_return_contract(tmp_path):
     pdf_path = tmp_path / "duplicate.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n")

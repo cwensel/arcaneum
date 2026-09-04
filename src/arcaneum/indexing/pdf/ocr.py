@@ -275,12 +275,13 @@ def merge_extracted_text_with_ocr(
                     "reason": "missing_page_boundaries",
                 }
             ]
-            selected_page_count = max(
-                int(chosen_metadata.get("page_count", 0) or 0),
-                int(original_metadata.get("page_count", 0) or 0),
-                int(ocr_metadata.get("page_count", 0) or 0),
-                1,
-            )
+            selected_page_count = int(chosen_metadata.get("page_count", 0) or 0)
+            if selected_page_count <= 0:
+                selected_page_count = max(
+                    int(original_metadata.get("page_count", 0) or 0),
+                    int(ocr_metadata.get("page_count", 0) or 0),
+                    1,
+                )
             selected_pages = list(range(1, selected_page_count + 1))
             merged_metadata["embedded_selected_pages"] = [] if choose_ocr else selected_pages
             merged_metadata["ocr_selected_pages"] = selected_pages if choose_ocr else []

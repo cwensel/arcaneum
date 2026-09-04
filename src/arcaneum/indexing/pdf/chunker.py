@@ -172,10 +172,10 @@ class PDFChunker:
             section_offsets = [
                 offset - source_start
                 for offset, _, _ in section_markers
-                if source_start < offset < region_end
+                if source_start <= offset < region_end
             ]
-            segment_starts = [0, *section_offsets]
-            segment_ends = [*section_offsets, len(normalized_region)]
+            segment_starts = sorted({0, *section_offsets})
+            segment_ends = [*segment_starts[1:], len(normalized_region)]
             for segment_start, segment_end in zip(segment_starts, segment_ends):
                 segment = normalized_region[segment_start:segment_end]
                 region_spans = self._chunk_region_spans(
@@ -264,14 +264,12 @@ class PDFChunker:
             title = raw_line.strip()
             if not title:
                 continue
-            is_markdown = bool(re.match(r"^#{1,6}\s+\S", title))
-            is_numbered = bool(re.match(r"^\d+(?:\.\d+)*[.)]?\s+\S", title))
             semantic_title = re.sub(r"^#{1,6}\s+", "", title).strip()
             normalized = re.sub(r"^\d+(?:\.\d+)*[.)]?\s+", "", semantic_title.casefold()).rstrip(
                 ":"
             )
             is_known_bare = normalized in known_bare or normalized.startswith("appendix")
-            if not (is_markdown or is_numbered or is_known_bare):
+            if not is_known_bare:
                 continue
             offset = line_match.start() + len(raw_line) - len(raw_line.lstrip())
             markers.append((offset, cls._section_type(semantic_title), semantic_title))

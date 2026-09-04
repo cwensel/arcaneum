@@ -248,6 +248,36 @@ def test_merge_extracted_text_with_ocr_selects_each_page_independently():
     ]
 
 
+def test_merge_with_one_missing_boundary_set_selects_whole_document():
+    extracted_text = "Embedded content from every page, but without page metadata."
+    ocr_page_one = "OCR page one"
+    ocr_page_two = "OCR page two"
+    ocr_text = f"{ocr_page_one}\n{ocr_page_two}"
+
+    merged_text, metadata = merge_extracted_text_with_ocr(
+        extracted_text,
+        {"extraction_method": "embedded", "page_count": 2},
+        ocr_text,
+        {
+            "extraction_method": "ocr_tesseract",
+            "page_count": 2,
+            "page_boundaries": [
+                {"page_number": 1, "start_char": 0, "page_text_length": len(ocr_page_one)},
+                {
+                    "page_number": 2,
+                    "start_char": len(ocr_page_one) + 1,
+                    "page_text_length": len(ocr_page_two),
+                },
+            ],
+        },
+    )
+
+    assert merged_text in {extracted_text, ocr_text}
+    assert metadata["ocr_merge_strategy"] == "document_quality_selection"
+    assert metadata["extraction_candidates"][0]["scope"] == "document"
+    assert not (extracted_text in merged_text and ocr_text in merged_text)
+
+
 def test_pdf_batch_uploader_duplicate_path_preserves_return_contract(tmp_path):
     pdf_path = tmp_path / "duplicate.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n")

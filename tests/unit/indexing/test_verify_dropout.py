@@ -107,6 +107,42 @@ def test_duplicate_pdf_sources_are_repairable_as_one_content_group(qdrant_client
     assert all(file.duplicate_source_paths == ["/tmp/a.pdf", "/tmp/b.pdf"] for file in result.files)
 
 
+def test_duplicate_markdown_sources_are_not_flagged_without_alias_repair(qdrant_client):
+    qdrant_client.scroll.side_effect = _scroll_once(
+        [
+            _point(
+                {
+                    "file_path": "/tmp/a.md",
+                    "source_hash": "same-content",
+                    "chunk_index": 0,
+                    "chunk_count": 1,
+                    "text": "same text",
+                }
+            ),
+            _point(
+                {
+                    "file_path": "/tmp/b.md",
+                    "source_hash": "same-content",
+                    "chunk_index": 0,
+                    "chunk_count": 1,
+                    "text": "same text",
+                }
+            ),
+        ]
+    )
+
+    with patch.object(verify_mod, "file_manifests_ready", return_value=False):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="markdown",
+            total_points=2,
+        )
+
+    assert result.is_healthy is True
+    assert result.duplicate_source_groups == 0
+    assert result.get_items_needing_repair() == []
+
+
 def test_alias_manifest_does_not_look_like_an_incomplete_second_document(qdrant_client):
     qdrant_client.scroll.side_effect = _scroll_once(
         [

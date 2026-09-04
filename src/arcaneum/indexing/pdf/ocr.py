@@ -16,6 +16,7 @@ from PIL import Image
 
 from ...utils.memory import calculate_safe_workers
 from ..common.multiprocessing import get_mp_context, worker_init
+from .quality import needs_ocr, score_text
 
 logger = logging.getLogger(__name__)
 
@@ -198,18 +199,6 @@ def _ocr_single_page_worker(
         gc.collect()
 
 
-def _offset_page_boundaries(
-    page_boundaries: List[Dict[str, Any]], offset: int
-) -> List[Dict[str, Any]]:
-    """Return page boundaries shifted by a character offset."""
-    shifted = []
-    for boundary in page_boundaries:
-        shifted_boundary = dict(boundary)
-        shifted_boundary["start_char"] = shifted_boundary.get("start_char", 0) + offset
-        shifted.append(shifted_boundary)
-    return shifted
-
-
 def merge_extracted_text_with_ocr(
     extracted_text: str,
     extracted_metadata: Dict[str, Any],
@@ -236,7 +225,6 @@ def merge_extracted_text_with_ocr(
         return original_text, merged_metadata
 
     if original_text.strip():
-        from .quality import needs_ocr, score_text
 
         def page_texts(text: str, metadata: Dict[str, Any]) -> Dict[int, str]:
             pages: Dict[int, str] = {}
@@ -250,6 +238,48 @@ def merge_extracted_text_with_ocr(
             if not pages and text.strip():
                 pages[1] = text
             return pages
+
+        embedded_boundaries = original_metadata.get("page_boundaries", []) or []
+        ocr_boundaries = ocr_metadata.get("page_boundaries", []) or []
+        if bool(embedded_boundaries) != bool(ocr_boundaries):
+            embedded_score = score_text(original_text)
+            ocr_score = score_text(ocr_text)
+            choose_ocr = ocr_score > embedded_score + 0.05
+            chosen_text = ocr_text if choose_ocr else original_text
+            chosen_source = "ocr" if choose_ocr else "embedded"
+            chosen_metadata = ocr_metadata if choose_ocr else original_metadata
+            merged_metadata.update(ocr_metadata)
+            merged_metadata["original_extraction_method"] = original_method
+            merged_metadata["extraction_method"] = ocr_method if choose_ocr else original_method
+            merged_metadata["ocr_merge_strategy"] = "document_quality_selection"
+            merged_metadata["page_boundaries"] = chosen_metadata.get("page_boundaries", []) or [
+                {"page_number": 1, "start_char": 0, "page_text_length": len(chosen_text)}
+            ]
+            merged_metadata["extraction_candidates"] = [
+                {
+                    "scope": "document",
+                    "candidates": {
+                        "embedded": {
+                            "method": original_method,
+                            "score": embedded_score,
+                            "text_length": len(original_text),
+                        },
+                        "ocr": {
+                            "method": ocr_method,
+                            "score": ocr_score,
+                            "text_length": len(ocr_text),
+                        },
+                    },
+                    "chosen_source": chosen_source,
+                    "rejected_source": "embedded" if choose_ocr else "ocr",
+                    "reason": "missing_page_boundaries",
+                }
+            ]
+            merged_metadata["embedded_selected_pages"] = [] if choose_ocr else [1]
+            merged_metadata["ocr_selected_pages"] = [1] if choose_ocr else []
+            merged_metadata["original_text_length"] = len(original_text)
+            merged_metadata["ocr_text_length"] = len(ocr_text)
+            return chosen_text, merged_metadata
 
         embedded_pages = page_texts(original_text, original_metadata)
         ocr_pages = page_texts(ocr_text, ocr_metadata)
@@ -348,8 +378,6 @@ def merge_extracted_text_with_ocr(
     merged_metadata["ocr_merge_strategy"] = "ocr_only_empty_extraction"
     merged_metadata["original_text_length"] = 0
     merged_metadata["ocr_text_length"] = len(ocr_text)
-    from .quality import score_text
-
     ocr_boundaries = ocr_metadata.get("page_boundaries", []) or [
         {"page_number": 1, "start_char": 0, "page_text_length": len(ocr_text)}
     ]

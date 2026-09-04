@@ -41,13 +41,22 @@ def build_indexing_policy(
     }
 
 
-def policy_is_current(policy: object, corpus_type: str) -> bool:
+def policy_is_current(
+    policy: object,
+    corpus_type: str,
+    expected_policy: Optional[Mapping[str, Any]] = None,
+) -> bool:
     """Return whether a persisted policy uses the active corpus-scoped identities."""
     if not isinstance(policy, dict):
         return False
-    active = build_indexing_policy(corpus_type)
-    return (
+    active = expected_policy or build_indexing_policy(corpus_type)
+    identities_match = (
         policy.get("corpus_type") == corpus_type
         and (policy.get("extraction") or {}).get("id") == active["extraction"]["id"]
         and (policy.get("chunking") or {}).get("id") == active["chunking"]["id"]
+    )
+    stored_config = (policy.get("chunking") or {}).get("config") or {}
+    active_config = (active.get("chunking") or {}).get("config") or {}
+    return identities_match and (
+        not stored_config or not active_config or stored_config == active_config
     )

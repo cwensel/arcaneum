@@ -34,7 +34,7 @@ from arcaneum.indexing.collection_metadata import (
     user_point_count,
 )
 from arcaneum.indexing.common.sync import MetadataBasedSync
-from arcaneum.indexing.policy import policy_is_current
+from arcaneum.indexing.policy import build_indexing_policy, policy_is_current
 
 logger = logging.getLogger(__name__)
 
@@ -273,6 +273,14 @@ class CollectionVerifier:
             )
         else:
             check_quality = check_quality or collection_type == "pdf"
+            from arcaneum.config import DEFAULT_MODELS
+
+            configured_models = collection_metadata.get("model") or ""
+            first_model = configured_models.split(",", 1)[0].strip()
+            policy_config = (
+                DEFAULT_MODELS[first_model].__dict__ if first_model in DEFAULT_MODELS else {}
+            )
+            active_policy = build_indexing_policy(collection_type or "file", policy_config)
             result = self._verify_file_collection(
                 collection_name,
                 collection_type,
@@ -281,6 +289,7 @@ class CollectionVerifier:
                 check_quality=check_quality,
                 quality_threshold=quality_threshold,
                 deep=deep,
+                active_policy=active_policy,
             )
         result.schema_version = collection_metadata.get("schema_version")
         result.app_version = collection_metadata.get("app_version")
@@ -450,6 +459,7 @@ class CollectionVerifier:
         check_quality: bool = False,
         quality_threshold: float = 0.9,
         deep: bool = False,
+        active_policy: Optional[Dict] = None,
     ) -> CollectionVerificationResult:
         """Verify a PDF or markdown collection.
 
@@ -655,9 +665,10 @@ class CollectionVerifier:
         quality_manifest_gap_count = 0
 
         paths_by_source_hash: Dict[str, List[str]] = defaultdict(list)
-        for file_path, file_data in file_chunks.items():
-            if file_data["indices"] and file_data["source_hash"]:
-                paths_by_source_hash[file_data["source_hash"]].append(file_path)
+        if collection_type == "pdf":
+            for file_path, file_data in file_chunks.items():
+                if file_data["indices"] and file_data["source_hash"]:
+                    paths_by_source_hash[file_data["source_hash"]].append(file_path)
         duplicate_source_groups = [
             sorted(paths) for paths in paths_by_source_hash.values() if len(paths) > 1
         ]
@@ -682,7 +693,9 @@ class CollectionVerifier:
             stale_policy = bool(
                 manifests_authoritative
                 and collection_type
-                and not policy_is_current(file_data["indexing_policy"], collection_type)
+                and not policy_is_current(
+                    file_data["indexing_policy"], collection_type, active_policy
+                )
             )
             if stale_policy:
                 stale_policy_count += 1

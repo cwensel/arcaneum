@@ -342,6 +342,36 @@ def test_policy_identity_is_scoped_and_version_checked():
     assert policy_is_current(pdf_policy, "pdf") is False
 
 
+def test_changed_chunk_config_selects_unchanged_file_for_reindex(tmp_path):
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"unchanged")
+    absolute_path = str(source.absolute())
+    stored_policy = build_indexing_policy("pdf", {"chunk_size": 512})
+    active_policy = build_indexing_policy("pdf", {"chunk_size": 768})
+
+    sync = MetadataBasedSync(MagicMock())
+    sync._get_indexed_quick_hashes = MagicMock(
+        return_value={(absolute_path, compute_quick_hash(source))}
+    )
+    sync.get_file_manifest_snapshot = MagicMock(
+        return_value={
+            absolute_path: {
+                "store_type": "pdf",
+                "indexing_policy": stored_policy,
+            }
+        }
+    )
+
+    with patch("arcaneum.indexing.common.sync.file_manifests_ready", return_value=True):
+        needs_processing, already_indexed = sync.get_unindexed_files(
+            "papers", [source], active_policy=active_policy
+        )
+
+    assert needs_processing == [source]
+    assert already_indexed == []
+    assert policy_is_current(stored_policy, "pdf", active_policy) is False
+
+
 def test_chunk_content_hash_query_explicitly_excludes_reserved_points():
     qdrant = MagicMock()
     qdrant.scroll.return_value = ([], None)

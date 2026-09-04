@@ -201,6 +201,8 @@ def test_fetch_chunks_for_files_bulk_preserves_pdf_ocr_metadata():
                     "chunk_index": 3,
                     "document_type": "pdf",
                     "page_number": 2,
+                    "section_type": "references",
+                    "section_title": "References",
                     "ocr_confidence": 64.5,
                     "ocr_language": "eng",
                     "ocr_pages_processed": 4,
@@ -238,6 +240,47 @@ def test_fetch_chunks_for_files_bulk_preserves_pdf_ocr_metadata():
     assert doc["ocr_merge_strategy"] == "append_missing_pages"
     assert doc["ocr_triggered_by"] == "quality_gate"
     assert doc["quality_manifest"]["source_hash"] == "abc123"
+    assert doc["section_type"] == "references"
+    assert doc["section_title"] == "References"
+
+
+def test_backfill_meili_to_qdrant_preserves_pdf_section_metadata(monkeypatch, tmp_path):
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"%PDF-1.4\n")
+    chunks = [
+        {
+            "text": "A cited work.",
+            "metadata": {
+                "page_number": 3,
+                "section_type": "references",
+                "section_title": "References",
+            },
+        }
+    ]
+    monkeypatch.setattr(sync_module, "chunk_pdf_file", lambda *_args, **_kwargs: chunks)
+    qdrant = MagicMock()
+    embedding_client = MagicMock()
+    embedding_client.embed.return_value = [[0.1, 0.2]]
+
+    result = _backfill_meili_to_qdrant(
+        qdrant=qdrant,
+        embedding_client=embedding_client,
+        corpus="papers",
+        corpus_type="pdf",
+        model_list=["test-model"],
+        model_config={"chunk_size": 512, "chunk_overlap": 50},
+        file_paths=[str(source)],
+        verbose=False,
+        output_json=True,
+        progress=MagicMock(),
+        backfill_task=1,
+        text_workers=1,
+    )
+
+    assert result[:3] == (1, 1, 0)
+    point = qdrant.upsert.call_args_list[0].kwargs["points"][0]
+    assert point.payload["section_type"] == "references"
+    assert point.payload["section_title"] == "References"
 
 
 def test_backfill_meili_to_qdrant_builds_code_quality_manifest(tmp_path):

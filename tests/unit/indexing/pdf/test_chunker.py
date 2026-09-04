@@ -383,3 +383,18 @@ def test_pdf_without_recognized_headings_retains_unknown_section_recall():
 
     assert chunks[0].metadata["section_type"] == "unknown"
     assert chunks[0].metadata["section_title"] is None
+
+
+def test_numbered_reference_entries_remain_in_reference_section():
+    text = (
+        "References\n"
+        "1. Author, A. Reliable Systems. Conference, 2024.\n"
+        "2. Author, B. Durable Storage. Journal, 2025.\n"
+        "3. Author, C. Network Protocols. Workshop, 2026."
+    )
+
+    chunks = _chunker(chunk_size=55, overlap_percent=0).chunk(text, {})
+
+    assert len(chunks) > 1
+    assert all(chunk.metadata["section_type"] == "references" for chunk in chunks)
+    assert all(chunk.metadata["section_title"] == "References" for chunk in chunks)

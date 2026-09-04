@@ -5,7 +5,7 @@ import multiprocessing as mp
 import os
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 import xxhash
 from qdrant_client import QdrantClient
@@ -953,6 +953,7 @@ class MetadataBasedSync:
         collection_name: str,
         file_list: List[Path],
         progress_callback: Optional[Callable[[int], None]] = None,
+        active_policy: Optional[Mapping[str, Any]] = None,
     ) -> Tuple[List[Path], List[Path]]:
         """Filter file list using fast metadata check to identify files needing processing.
 
@@ -997,12 +998,7 @@ class MetadataBasedSync:
             indexed_quick_hashes = self._get_indexed_quick_hashes(
                 collection_name, progress_callback=progress_callback
             )
-            stale_policy_paths = set()
-            if file_manifests_ready(self.qdrant, collection_name):
-                for path, payload in self.get_file_manifest_snapshot(collection_name).items():
-                    corpus_type = payload.get("store_type") or "file"
-                    if not policy_is_current(payload.get("indexing_policy"), corpus_type):
-                        stale_policy_paths.add(path)
+            stale_policy_paths = self.get_stale_policy_paths(collection_name, active_policy)
             self.last_stale_policy_paths = stale_policy_paths
             pass1_qdrant_time = time.time() - pass1_qdrant_start
 
@@ -1056,6 +1052,26 @@ class MetadataBasedSync:
             self.last_stale_policy_paths = set()
             logger.warning(f"Error querying collection: {e}, processing all files")
             return (file_list, [])
+
+    def get_stale_policy_paths(
+        self,
+        collection_name: str,
+        active_policy: Optional[Mapping[str, Any]] = None,
+    ) -> set[str]:
+        """Return manifest paths whose indexing policy is no longer active."""
+        stale_paths: set[str] = set()
+        if not file_manifests_ready(self.qdrant, collection_name):
+            return stale_paths
+        for path, payload in self.get_file_manifest_snapshot(collection_name).items():
+            corpus_type = payload.get("store_type") or "file"
+            expected = (
+                active_policy
+                if active_policy and active_policy.get("corpus_type") == corpus_type
+                else None
+            )
+            if not policy_is_current(payload.get("indexing_policy"), corpus_type, expected):
+                stale_paths.add(path)
+        return stale_paths
 
     def delete_chunks_by_file_hash(self, collection_name: str, file_hash: str) -> int:
         """Delete all chunks with a specific file_hash from collection.

@@ -2182,6 +2182,14 @@ def _sync_directory_locked(
             prompt_policy_model_key_for_name(model_name) or model_name
             for model_name in raw_model_list
         ]
+        from ..indexing.policy import build_indexing_policy
+
+        policy_model_config = (
+            DEFAULT_MODELS[model_list[0]].__dict__
+            if model_list and model_list[0] in DEFAULT_MODELS
+            else {}
+        )
+        active_indexing_policy = build_indexing_policy(corpus_type, policy_model_config)
         normalized_configured_models = ",".join(model_list)
         metadata, policy_issues = _maybe_backfill_legacy_prompt_policy(
             qdrant,
@@ -2830,6 +2838,7 @@ def _sync_directory_locked(
                     corpus,
                     unchanged_candidates,
                     progress_callback=metadata_scan_progress,
+                    active_policy=active_indexing_policy,
                 )
 
             modified_file_set = {str(f.absolute()) for f in modified_files}
@@ -2870,6 +2879,7 @@ def _sync_directory_locked(
                 corpus,
                 files,
                 progress_callback=metadata_scan_progress,
+                active_policy=active_indexing_policy,
             )
 
             candidate_new_paths = _filter_rename_candidate_paths(
@@ -3040,6 +3050,9 @@ def _sync_directory_locked(
 
         # Dry-run mode: report what would happen and exit
         if dry_run:
+            sync_manager.last_stale_policy_paths = sync_manager.get_stale_policy_paths(
+                corpus, active_indexing_policy
+            )
             stale_policy_paths = sorted(sync_manager.last_stale_policy_paths)
             if output_json:
                 data = {
@@ -4000,6 +4013,9 @@ def _sync_directory_locked(
                                     payload["page_count"] = chunk_meta["page_count"]
                                 if chunk_meta.get("extraction_floor"):
                                     payload["extraction_floor"] = True
+                                for key in ("section_type", "section_title"):
+                                    if chunk_meta.get(key) is not None:
+                                        payload[key] = chunk_meta[key]
                                 for key in (
                                     "ocr_confidence",
                                     "ocr_language",
@@ -4355,6 +4371,9 @@ def _fetch_chunks_for_files_bulk(
                         meili_doc["document_type"] = payload["document_type"]
                     if payload.get("quality_manifest"):
                         meili_doc["quality_manifest"] = payload["quality_manifest"]
+                    for key in ("section_type", "section_title"):
+                        if payload.get(key) is not None:
+                            meili_doc[key] = payload[key]
                     for key in (
                         "ocr_confidence",
                         "ocr_language",
@@ -5203,6 +5222,9 @@ def _backfill_meili_to_qdrant(
                         payload["page_count"] = chunk_meta["page_count"]
                     if chunk_meta.get("extraction_floor"):
                         payload["extraction_floor"] = True
+                    for key in ("section_type", "section_title"):
+                        if chunk_meta.get(key) is not None:
+                            payload[key] = chunk_meta[key]
                     for key in (
                         "ocr_confidence",
                         "ocr_language",

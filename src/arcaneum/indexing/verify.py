@@ -540,7 +540,6 @@ class CollectionVerifier:
             "section_type",
             "section_title",
             "section_offset",
-            "chunk_start_char",
         ]
         if check_dropout:
             payload_fields.extend(["page_count", "extraction_floor"])
@@ -617,7 +616,6 @@ class CollectionVerifier:
                             payload.get("section_type"),
                             payload.get("section_title"),
                             payload.get("section_offset"),
-                            payload.get("chunk_start_char"),
                             text_length,
                         )
                     )
@@ -851,11 +849,14 @@ class CollectionVerifier:
                         section_type,
                         section_title,
                         section_offset,
-                        chunk_start,
                         length,
                     ) in file_data["quality_chunks"]:
-                        occurrence = section_offset if section_offset is not None else chunk_start
-                        section_chunks[(section_type, section_title, occurrence)].append(length)
+                        section_key = (
+                            (section_type, section_title, section_offset)
+                            if section_offset is not None
+                            else (section_type, section_title)
+                        )
+                        section_chunks[section_key].append(length)
                     sub_floor_for_file = sum(
                         length < fragment_floor
                         for section_lengths in section_chunks.values()

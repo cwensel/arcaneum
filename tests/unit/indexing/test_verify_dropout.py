@@ -476,6 +476,45 @@ def test_body_text_starting_with_title_does_not_hide_short_fragment(qdrant_clien
     assert result.sub_floor_chunks == 1
 
 
+def test_legacy_section_chunks_without_offsets_still_detect_short_fragment(qdrant_client):
+    qdrant_client.scroll.side_effect = _scroll_once(
+        [
+            _point(
+                {
+                    "file_path": "/tmp/legacy.pdf",
+                    "chunk_index": 0,
+                    "chunk_count": 2,
+                    "text": "A" * 300,
+                    "section_type": "body",
+                    "section_title": "Results",
+                    "chunk_start_char": 25,
+                }
+            ),
+            _point(
+                {
+                    "file_path": "/tmp/legacy.pdf",
+                    "chunk_index": 1,
+                    "chunk_count": 2,
+                    "text": "Short legacy fragment.",
+                    "section_type": "body",
+                    "section_title": "Results",
+                    "chunk_start_char": 330,
+                }
+            ),
+        ]
+    )
+
+    with patch.object(verify_mod, "file_manifests_ready", return_value=False):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=2,
+            check_quality=True,
+        )
+
+    assert result.sub_floor_chunks == 1
+
+
 def test_standard_pdf_verification_does_not_read_source_files(qdrant_client):
     qdrant_client.scroll.side_effect = _scroll_once(
         [

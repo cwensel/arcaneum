@@ -1776,10 +1776,13 @@ class PDFChunkList(list):
         self.quality_manifest = quality_manifest
 
 
-def _file_verification_breakdown(verification_result):
+def _file_verification_breakdown(verification_result, include_stale_policy: bool = True):
     """Group file verification outcomes into actionable and exhausted states."""
     files = getattr(verification_result, "files", [])
-    repairable = verification_result.get_items_needing_repair()
+    repairable = verification_result.get_items_needing_repair(
+        include_stale_policy=include_stale_policy
+    )
+    policy_only = [file.file_path for file in files if getattr(file, "policy_only_repair", False)]
     degraded = [file.file_path for file in files if getattr(file, "fidelity_degraded", False)]
     recovery_exhausted = [
         file.file_path for file in files if getattr(file, "recovery_exhausted", False)
@@ -1789,6 +1792,8 @@ def _file_verification_breakdown(verification_result):
         "degraded_paths": degraded,
         "recovery_exhausted_paths": recovery_exhausted,
         "repairable_files": len(repairable),
+        "policy_only_paths": policy_only,
+        "policy_only_files": len(policy_only),
         "degraded_files": len(degraded),
         "recovery_exhausted_files": len(recovery_exhausted),
     }
@@ -2222,6 +2227,7 @@ def sync_directory_command(
     dry_run: bool = False,
     parity: bool = False,
     repair: bool = False,
+    repair_stale_policy: bool = False,
     quality_threshold: float = 0.9,
     qdrant_timeout: Optional[int] = None,
     mem_probe_interval: float = 0.0,
@@ -2271,6 +2277,7 @@ def sync_directory_command(
                 dry_run=dry_run,
                 parity=parity,
                 repair=repair,
+                repair_stale_policy=repair_stale_policy,
                 quality_threshold=quality_threshold,
                 qdrant_timeout=qdrant_timeout,
                 mem_probe_interval=mem_probe_interval,
@@ -2303,6 +2310,7 @@ def _sync_directory_locked(
     dry_run: bool = False,
     parity: bool = False,
     repair: bool = False,
+    repair_stale_policy: bool = False,
     quality_threshold: float = 0.9,
     qdrant_timeout: Optional[int] = None,
     mem_probe_interval: float = 0.0,
@@ -2336,6 +2344,7 @@ def _sync_directory_locked(
                           Empty tuple disables prefix-based skipping. Default: ('_',)
         dry_run: If True, show what would be synced without making changes
         repair: If True, verify collection integrity and re-index only incomplete files
+        repair_stale_policy: If True, include files whose only issue is stale policy
         order: Index order for discovered files ('path', 'newest', 'oldest').
                Affects only processing order within the sync, not what is
                indexed or how results later rank.
@@ -2505,6 +2514,7 @@ def _sync_directory_locked(
 
         # Old quality scores map: populated during repair for garbled file comparison
         old_quality_scores = {}
+        policy_only_paths = []
 
         # Repair mode: verify collection and re-index incomplete or garbled files
         if repair:
@@ -2549,9 +2559,19 @@ def _sync_directory_locked(
                 interaction_logger.finish(result_count=0)
                 return
 
-            verification_breakdown = _file_verification_breakdown(verification_result)
+            verification_breakdown = _file_verification_breakdown(
+                verification_result,
+                include_stale_policy=repair_stale_policy,
+            )
             degraded_paths = verification_breakdown["degraded_paths"]
             recovery_exhausted_paths = verification_breakdown["recovery_exhausted_paths"]
+            policy_only_paths = verification_breakdown["policy_only_paths"]
+
+            if policy_only_paths and not repair_stale_policy and not output_json:
+                console.print(
+                    f"[dim]Skipping {len(policy_only_paths)} files whose only issue is "
+                    "stale indexing policy; pass --include-stale-policy to migrate them[/dim]"
+                )
 
             # Report garbled files separately from incomplete files
             garbled_count = verification_result.garbled_items
@@ -2654,6 +2674,8 @@ def _sync_directory_locked(
                         data={
                             "incomplete_files": verification_result.incomplete_items,
                             "repairable_files": len(repairable_paths),
+                            "policy_only_files": len(policy_only_paths),
+                            "policy_migration_deferred": bool(policy_only_paths),
                             "degraded_files": len(degraded_paths),
                             "recovery_exhausted_files": len(recovery_exhausted_paths),
                             "garbled_files": garbled_count,
@@ -2680,6 +2702,10 @@ def _sync_directory_locked(
                         "Dry run complete",
                         data={
                             "would_repair": len(existing_repairable),
+                            "policy_only_files": len(policy_only_paths),
+                            "policy_migration_deferred": bool(
+                                policy_only_paths and not repair_stale_policy
+                            ),
                             "degraded_files": len(degraded_paths),
                             "recovery_exhausted_files": len(recovery_exhausted_paths),
                             "garbled_files": garbled_count,
@@ -4431,6 +4457,8 @@ def _sync_directory_locked(
                 "skipped": len([r for r in repair_results if r[3] == "skipped"]),
                 "incomplete": len([r for r in repair_results if r[3] == "incomplete"]),
                 "no_text": len([r for r in repair_results if r[3] == "no_text"]),
+                "policy_only_files": len(policy_only_paths),
+                "policy_migration_deferred": bool(policy_only_paths and not repair_stale_policy),
                 "details": [
                     {"file": n, "old_score": o, "new_score": s, "action": a}
                     for n, o, s, a in repair_results

@@ -141,6 +141,7 @@ class FileVerificationResult:
     recovery_exhausted: bool = False  # degraded after OCR already ran
     repair_recommended: bool = False  # safe to enqueue for automatic repair
     stale_policy: bool = False  # source is unchanged but indexing policy is obsolete
+    policy_only_repair: bool = False  # repair is recommended only to migrate indexing policy
     dropped_chunk_count: int = 0  # chunks intentionally omitted during extraction cleanup
     sub_floor_chunk_count: int = 0  # non-sole chunks below the active fragment floor
     quality_manifest_missing: bool = False
@@ -205,12 +206,21 @@ class CollectionVerificationResult:
     files: List[FileVerificationResult] = field(default_factory=list)  # for pdf/markdown
     errors: List[str] = field(default_factory=list)
 
-    def get_items_needing_repair(self) -> List[str]:
-        """Return items for which an automatic re-index attempt is recommended."""
+    def get_items_needing_repair(self, include_stale_policy: bool = True) -> List[str]:
+        """Return items for which an automatic re-index attempt is recommended.
+
+        Verification keeps policy-only findings actionable for callers that
+        explicitly perform migrations. Integrity repair callers can exclude
+        those findings without hiding files that are both stale and damaged.
+        """
         if self.collection_type == "code":
             return [p.identifier for p in self.projects if not p.is_complete]
         else:
-            return [f.file_path for f in self.files if f.repair_recommended]
+            return [
+                f.file_path
+                for f in self.files
+                if f.repair_recommended and (include_stale_policy or not f.policy_only_repair)
+            ]
 
 
 class CollectionVerifier:
@@ -891,7 +901,7 @@ class CollectionVerifier:
                 manifest["quality_warnings"] = sorted(warnings)
                 file_data["quality_manifest"] = manifest
 
-            repair_recommended = (
+            non_policy_repair_recommended = (
                 not is_complete
                 or (has_garbled and not recovery_exhausted)
                 or suspected_dropout
@@ -899,11 +909,12 @@ class CollectionVerifier:
                 or has_duplicates
                 or has_duplicate_source
                 or fidelity_repair_recommended
-                or stale_policy
                 or quality_manifest_missing
                 or sub_floor_for_file > 0
                 or dropped_for_file > 0
             )
+            repair_recommended = non_policy_repair_recommended or stale_policy
+            policy_only_repair = stale_policy and not non_policy_repair_recommended
 
             file_is_healthy = (
                 is_complete
@@ -946,6 +957,7 @@ class CollectionVerifier:
                     recovery_exhausted=recovery_exhausted,
                     repair_recommended=repair_recommended,
                     stale_policy=stale_policy,
+                    policy_only_repair=policy_only_repair,
                     dropped_chunk_count=dropped_for_file,
                     sub_floor_chunk_count=sub_floor_for_file,
                     quality_manifest_missing=quality_manifest_missing,

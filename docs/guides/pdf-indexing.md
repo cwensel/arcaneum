@@ -229,14 +229,22 @@ The system automatically tracks indexed files using metadata queries:
 
 To bypass incremental sync and reindex everything, use `--force`.
 
-To repair only verifier-selected unhealthy PDFs—including corrupt extraction,
-stale policy metadata, incomplete/duplicate chunks, and duplicate sources—run:
+To repair verifier-selected unhealthy PDFs—including corrupt extraction,
+incomplete/duplicate chunks, and duplicate sources—run:
 
 ```bash
 arc corpus repair pdf-docs --dry-run --json  # Preview exact files
 arc corpus repair pdf-docs                   # Repair that selection
 ```
 
+Files whose only finding is stale or missing indexing policy are reported but
+not re-indexed by default. Include them when intentionally migrating policies:
+
+```bash
+arc corpus repair pdf-docs --include-stale-policy
+```
+
+PDFs that are both policy-stale and corrupt remain in the default repair set.
 Healthy PDFs are not re-indexed; no separate `--only-corrupt` option is needed.
 
 ## GPU Acceleration

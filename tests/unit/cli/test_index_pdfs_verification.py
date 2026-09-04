@@ -87,3 +87,32 @@ def test_mixed_report_recommends_repair_only_for_actionable_file(monkeypatch):
     sync_breakdown = sync._file_verification_breakdown(_result(repairable, exhausted))
     assert sync_breakdown["repairable_paths"] == ["/papers/incomplete.pdf"]
     assert sync_breakdown["recovery_exhausted_paths"] == ["/papers/exhausted.pdf"]
+
+
+def test_repair_breakdown_can_defer_policy_only_files():
+    policy_only = FileVerificationResult(
+        file_path="/papers/legacy.pdf",
+        expected_chunks=1,
+        actual_chunks=1,
+        is_complete=False,
+        stale_policy=True,
+        repair_recommended=True,
+        policy_only_repair=True,
+    )
+    corrupt_and_stale = FileVerificationResult(
+        file_path="/papers/corrupt.pdf",
+        expected_chunks=2,
+        actual_chunks=1,
+        is_complete=False,
+        stale_policy=True,
+        repair_recommended=True,
+        policy_only_repair=False,
+    )
+
+    breakdown = sync._file_verification_breakdown(
+        _result(policy_only, corrupt_and_stale), include_stale_policy=False
+    )
+
+    assert breakdown["repairable_paths"] == ["/papers/corrupt.pdf"]
+    assert breakdown["policy_only_paths"] == ["/papers/legacy.pdf"]
+    assert breakdown["policy_only_files"] == 1

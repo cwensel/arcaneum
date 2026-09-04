@@ -49,6 +49,7 @@ arc corpus sync MyCorpus --changed-since ORIG_HEAD..HEAD   # Since a pull
 # Repair incomplete or garbled files
 arc corpus repair MyCorpus                            # Detect and fix quality issues
 arc corpus repair MyCorpus --dry-run                  # Preview what would be repaired
+arc corpus repair MyCorpus --include-stale-policy     # Also migrate policy-only files
 arc corpus repair MyCorpus --quality-threshold 0.5    # More aggressive detection
 arc corpus repair MyCorpus --verbose                  # Show per-file quality scores
 
@@ -119,10 +120,12 @@ Note: `meili_only` corpora cannot be auto-created (require `--type` and `--model
 `arc corpus repair` re-indexes only verifier-selected unhealthy files; it is not
 a full-corpus force operation. Use `arc corpus repair NAME --dry-run --json` to
 inspect the exact set first. The selection includes incomplete/duplicate chunks,
-corrupt or dropped-out PDF extraction, stale source/policy metadata, missing
-quality manifests, and duplicate PDF sources. Duplicate sources are consolidated
-without losing their physical-path aliases. There is no separate
-`--only-corrupt` flag because the default repair path is already selective.
+corrupt or dropped-out PDF extraction, stale source metadata, missing quality
+manifests, and duplicate PDF sources. Policy-only findings stay visible but are
+deferred unless `--include-stale-policy` is passed; files that also have another
+repair reason remain selected. Duplicate sources are consolidated without losing
+their physical-path aliases. There is no separate `--only-corrupt` flag because
+the default repair path is already selective.
 
 ## Automatic Sync via Git Hook
 

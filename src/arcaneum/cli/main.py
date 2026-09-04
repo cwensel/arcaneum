@@ -1901,23 +1901,37 @@ def corpus_hook_spool(corpus, repo, changed_since, between):
     default=None,
     help="Cap embedding batch size (default: auto-tuned)",
 )
+@click.option(
+    "--include-stale-policy",
+    is_flag=True,
+    help="Also re-index files whose only issue is stale or missing indexing policy.",
+)
 @click.option("--verbose", "-v", is_flag=True, help="Show per-file quality scores and details")
 @click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def corpus_repair(
-    corpus, quality_threshold, dry_run, no_gpu, max_embedding_batch, verbose, output_json
+    corpus,
+    quality_threshold,
+    dry_run,
+    no_gpu,
+    max_embedding_batch,
+    include_stale_policy,
+    verbose,
+    output_json,
 ):
     """Selectively re-index files for which verification recommends repair.
 
     Scans persisted chunks and manifests for incomplete or duplicated chunks,
-    corrupt extraction, stale policies, and duplicate PDF sources. Re-extracts
-    only affected files with OCR fallback, and consolidates duplicate PDFs into
-    one canonical searchable document while retaining source aliases.
+    corrupt extraction, stale policies, and duplicate PDF sources. By default,
+    files whose only issue is stale policy are reported but deferred; pass
+    --include-stale-policy to migrate them. Re-extracts affected files with OCR
+    fallback and consolidates duplicate PDFs while retaining source aliases.
 
     Examples:
 
     \b
         arc corpus repair PapersFast
         arc corpus repair PapersFast --dry-run
+        arc corpus repair PapersFast --include-stale-policy
         arc corpus repair PapersFast --quality-threshold 0.5
         arc corpus repair PapersFast --verbose
     """
@@ -1956,6 +1970,7 @@ def corpus_repair(
         dry_run=dry_run,
         parity=False,
         repair=True,
+        repair_stale_policy=include_stale_policy,
         quality_threshold=quality_threshold,
     )
 

@@ -221,6 +221,7 @@ def test_stale_policy_manifest_is_unhealthy_and_repairable(qdrant_client):
             "canonical_path": "/tmp/a.pdf",
             "store_type": "pdf",
             "indexing_policy": stale_policy,
+            "quality_manifest": {"quality_warnings": []},
         }
     }
 
@@ -241,8 +242,101 @@ def test_stale_policy_manifest_is_unhealthy_and_repairable(qdrant_client):
     assert result.is_healthy is False
     assert result.stale_policy_items == 1
     assert result.files[0].stale_policy is True
+    assert result.files[0].policy_only_repair is True
     assert result.get_items_needing_repair() == ["/tmp/a.pdf"]
+    assert result.get_items_needing_repair(include_stale_policy=False) == []
     assert "stale_indexing_policy" in result.files[0].quality_manifest["quality_warnings"]
+
+
+def test_missing_legacy_policy_is_visible_but_policy_only(qdrant_client):
+    qdrant_client.scroll.side_effect = _scroll_once(
+        [
+            _point(
+                {
+                    "file_path": "/tmp/legacy.pdf",
+                    "source_hash": "legacy-content",
+                    "chunk_index": 0,
+                    "chunk_count": 1,
+                    "page_count": 1,
+                    "text": "A complete page of body text.",
+                }
+            )
+        ]
+    )
+    manifests = {
+        "/tmp/legacy.pdf": {
+            "file_hash": "legacy-content",
+            "chunk_count": 1,
+            "canonical_path": "/tmp/legacy.pdf",
+            "store_type": "pdf",
+            "quality_manifest": {"quality_warnings": []},
+        }
+    }
+
+    with (
+        patch.object(verify_mod, "file_manifests_ready", return_value=True),
+        patch.object(
+            verify_mod.MetadataBasedSync,
+            "get_file_manifest_snapshot",
+            return_value=manifests,
+        ),
+    ):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=1,
+        )
+
+    assert result.is_healthy is False
+    assert result.stale_policy_items == 1
+    assert result.files[0].stale_policy is True
+    assert result.files[0].policy_only_repair is True
+    assert result.get_items_needing_repair() == ["/tmp/legacy.pdf"]
+    assert result.get_items_needing_repair(include_stale_policy=False) == []
+
+
+def test_incomplete_legacy_file_remains_repairable_without_policy_migration(qdrant_client):
+    qdrant_client.scroll.side_effect = _scroll_once(
+        [
+            _point(
+                {
+                    "file_path": "/tmp/incomplete.pdf",
+                    "source_hash": "incomplete-content",
+                    "chunk_index": 0,
+                    "chunk_count": 2,
+                    "page_count": 1,
+                    "text": "The first of two expected chunks.",
+                }
+            )
+        ]
+    )
+    manifests = {
+        "/tmp/incomplete.pdf": {
+            "file_hash": "incomplete-content",
+            "chunk_count": 2,
+            "canonical_path": "/tmp/incomplete.pdf",
+            "store_type": "pdf",
+            "quality_manifest": {"quality_warnings": []},
+        }
+    }
+
+    with (
+        patch.object(verify_mod, "file_manifests_ready", return_value=True),
+        patch.object(
+            verify_mod.MetadataBasedSync,
+            "get_file_manifest_snapshot",
+            return_value=manifests,
+        ),
+    ):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=1,
+        )
+
+    assert result.files[0].stale_policy is True
+    assert result.files[0].policy_only_repair is False
+    assert result.get_items_needing_repair(include_stale_policy=False) == ["/tmp/incomplete.pdf"]
 
 
 def test_pdf_quality_counts_dropped_and_sub_floor_chunks(qdrant_client):

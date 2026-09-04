@@ -408,12 +408,14 @@ content.
 
 Selectively detect and re-index only files for which verification recommends an
 automatic repair. This includes incomplete or duplicated chunks, garbled or
-dropped-out extraction, stale source/indexing policy, missing quality manifests,
-sub-floor or dropped chunks, and duplicate PDF sources:
+dropped-out extraction, stale source metadata, missing quality manifests,
+sub-floor or dropped chunks, and duplicate PDF sources. Stale indexing policy
+remains visible but policy-only files are deferred unless explicitly included:
 
 ```bash
 arc corpus repair MyCorpus                            # Detect and fix quality issues
 arc corpus repair MyCorpus --dry-run                  # Preview what would be repaired
+arc corpus repair MyCorpus --include-stale-policy     # Also migrate policy-only files
 arc corpus repair MyCorpus --quality-threshold 0.5    # More aggressive detection
 arc corpus repair MyCorpus --verbose                  # Show per-file quality scores
 ```
@@ -422,6 +424,8 @@ arc corpus repair MyCorpus --verbose                  # Show per-file quality sc
 
 - `--quality-threshold`: Text quality score threshold (0.0-1.0, default: 0.9)
 - `--dry-run`: Show the exact files that would be repaired without making changes
+- `--include-stale-policy`: Also re-index files whose only issue is stale or
+  missing indexing policy
 - `--gpu`: Opt into accelerator embedding. CPU is the stable default.
 - `--max-embedding-batch`: Cap embedding batch size
 - `--verbose`: Show per-file old → new quality scores
@@ -430,19 +434,25 @@ arc corpus repair MyCorpus --verbose                  # Show per-file quality sc
 **How it works:**
 
 1. Scans persisted chunks and manifests for structural, policy, and PDF quality issues
-2. Selects only files marked `repair_recommended`; healthy files are not re-indexed
+2. Selects files with content, structural, source, or quality defects; policy-only
+   findings are reported and deferred unless `--include-stale-policy` is present
 3. Re-extracts affected files (with auto-OCR for garbled text from corrupt fonts)
 4. Consolidates content-identical PDFs into one canonical searchable chunk set
    while retaining every physical path as an auditable alias
 5. Compares new quality to old — only replaces degraded extraction if improved
 6. Reports per-file results (improved, consolidated, skipped, or incomplete)
 
-There is no separate `--only-corrupt` switch: ordinary `repair` is already
-selective. Preview its verifier-selected file set before writing with:
+There is no separate `--only-corrupt` switch: ordinary `repair` already excludes
+policy-only migration while retaining incomplete chunks, corrupt extraction,
+duplicates, and other actionable defects. Preview its selected file set before
+writing with:
 
 ```bash
 arc corpus repair MyCorpus --dry-run --json
 ```
+
+Use `--include-stale-policy` when intentionally migrating legacy manifests or
+reindexing unchanged files after an extraction/chunking policy change.
 
 For duplicate PDFs, canonical selection is deterministic. Sync, repair, parity,
 export, and stale-path pruning expose one searchable document while manifests

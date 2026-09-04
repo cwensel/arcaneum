@@ -56,6 +56,8 @@ full-text search (MeiliSearch) for the same content.
 - name: Corpus name (required)
 - --quality-threshold: Text quality threshold (0.0-1.0, default: 0.9)
 - --dry-run: Preview what would be repaired without making changes
+- --include-stale-policy: Also re-index files whose only issue is stale or
+  missing indexing policy
 - --gpu: Opt into accelerator embedding (CPU is the stable default)
 - --verbose: Show per-file quality scores and details
 - --json: Output in JSON format
@@ -94,11 +96,13 @@ full-text search (MeiliSearch) for the same content.
 **Repair Behavior:**
 
 `/corpus repair NAME` re-indexes only files selected by corpus verification,
-including corrupt PDF extraction, incomplete or duplicate chunks, stale indexing
-policy, and duplicate PDF sources. Preview the exact set with
-`/corpus repair NAME --dry-run --json`. Identical PDFs retain every physical path
-as an alias of one searchable canonical document; parity cleanup promotes a live
-alias if the canonical path disappears.
+including corrupt PDF extraction, incomplete or duplicate chunks, and duplicate
+PDF sources. Files whose only finding is stale or missing indexing policy are
+reported but deferred by default; pass `--include-stale-policy` to migrate them.
+Files that also have an integrity or quality defect remain selected without the
+flag. Preview the exact set with `/corpus repair NAME --dry-run --json`.
+Identical PDFs retain every physical path as an alias of one searchable canonical
+document; parity cleanup promotes a live alias if the canonical path disappears.
 
 **Examples:**
 
@@ -111,6 +115,7 @@ alias if the canonical path disappears.
 /corpus sync CodeBase ~/project1 ~/project2 ~/project3
 /corpus repair PapersFast
 /corpus repair PapersFast --dry-run
+/corpus repair PapersFast --include-stale-policy
 /corpus repair PapersFast --quality-threshold 0.5
 /corpus sync CodeBase --changed-since HEAD
 /corpus hook install

@@ -319,6 +319,13 @@ def _upsert_file_manifest(
         "file_size": file_path.stat().st_size,
         "store_type": corpus_type,
     }
+    from ..indexing.policy import build_indexing_policy
+
+    metadata["indexing_policy"] = (
+        quality_manifest.get("indexing_policy")
+        if isinstance(quality_manifest, dict)
+        else None
+    ) or build_indexing_policy(corpus_type)
     if quality_manifest is not None:
         metadata["quality_manifest"] = quality_manifest
     sync_manager.upsert_file_manifest(
@@ -1678,6 +1685,7 @@ def chunk_pdf_file(
     from ..indexing.pdf.extractor import PDFExtractor
     from ..indexing.pdf.ocr import OCREngine, merge_extracted_text_with_ocr
     from ..indexing.pdf.quality import looks_like_dropout
+    from ..indexing.policy import build_indexing_policy
 
     # Extract text from PDF using PDFExtractor class
     extractor = PDFExtractor(use_ocr=use_ocr)
@@ -1794,6 +1802,7 @@ def chunk_pdf_file(
         "ocr_merge_strategy": metadata.get("ocr_merge_strategy"),
         "ocr_triggered_by": metadata.get("ocr_triggered_by"),
         "ocr_attempt_failed": metadata.get("ocr_attempt_failed", False),
+        "indexing_policy": build_indexing_policy("pdf", model_config),
     }
     if extraction_floor:
         base_metadata["extraction_floor"] = True
@@ -3032,6 +3041,7 @@ def _sync_directory_locked(
 
         # Dry-run mode: report what would happen and exit
         if dry_run:
+            stale_policy_paths = sorted(sync_manager.last_stale_policy_paths)
             if output_json:
                 data = {
                     "dry_run": True,
@@ -3041,6 +3051,10 @@ def _sync_directory_locked(
                     "would_cleanup": len(stale_paths),
                     "would_backfill_to_meili": len(meili_backfill_paths),
                     "would_backfill_to_qdrant": len(qdrant_backfill_paths),
+                    "stale_policy_files": len(stale_policy_paths),
+                    "stale_reasons": {
+                        "indexing_policy": len(stale_policy_paths),
+                    },
                 }
                 if verbose:
                     data["files"] = [str(f) for f in files]
@@ -3054,6 +3068,8 @@ def _sync_directory_locked(
                         data["meili_backfill_files"] = meili_backfill_paths
                     if qdrant_backfill_paths:
                         data["qdrant_backfill_files"] = qdrant_backfill_paths
+                    if stale_policy_paths:
+                        data["stale_policy_paths"] = stale_policy_paths
                 print_json("success", "Dry run complete", data=data)
             else:
                 console.print("\n[bold yellow]DRY RUN - No changes will be made[/bold yellow]")
@@ -3070,6 +3086,10 @@ def _sync_directory_locked(
                     )
                 if qdrant_backfill_paths:
                     console.print(f"Would backfill to Qdrant: {len(qdrant_backfill_paths)} files")
+                if stale_policy_paths:
+                    console.print(
+                        f"Would re-index for stale policy: {len(stale_policy_paths)} files"
+                    )
                 if verbose:
                     if detected_renames:
                         console.print("\nRenames detected:")

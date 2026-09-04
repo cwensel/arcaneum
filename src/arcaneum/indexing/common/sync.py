@@ -27,6 +27,7 @@ from ..collection_metadata import (
     metadata_exclusion_filter,
     stamp_file_manifests_ready,
 )
+from ..policy import build_indexing_policy, policy_is_current
 from .multiprocessing import get_mp_context, worker_init
 from .text_source import read_text_source
 
@@ -140,6 +141,7 @@ def build_quality_manifest(
             "attempt_failed": bool(metadata.get("ocr_attempt_failed", False)),
         },
         "extraction_candidates": metadata.get("extraction_candidates", []),
+        "indexing_policy": metadata.get("indexing_policy") or build_indexing_policy(corpus_type),
         "table_handling_count": metadata.get("table_count"),
         "image_handling_count": metadata.get("image_count"),
         # Deprecated v1 fields retained so existing manifest readers keep a
@@ -370,6 +372,7 @@ class MetadataBasedSync:
         self._manifest_indexes_ready: set[str] = set()
         self._zero_vectors_by_collection: Dict[str, Any] = {}
         self._manifest_snapshots: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        self.last_stale_policy_paths: set[str] = set()
 
     @staticmethod
     def file_manifest_id(collection_name: str, file_path: str) -> str:
@@ -422,6 +425,8 @@ class MetadataBasedSync:
                         "file_size",
                         "store_type",
                         "quality_manifest",
+                        "canonical_path",
+                        "indexing_policy",
                     ],
                     with_vectors=False,
                 )
@@ -499,6 +504,7 @@ class MetadataBasedSync:
         store_type: Optional[str] = None,
         quality_manifest: Optional[Dict[str, Any]] = None,
         canonical_path: Optional[str] = None,
+        indexing_policy: Optional[Dict[str, Any]] = None,
     ) -> PointStruct:
         """Build a reserved manifest point for one physical source path."""
         absolute_path = str(Path(file_path).absolute())
@@ -516,6 +522,7 @@ class MetadataBasedSync:
             "store_type": store_type,
             "quality_manifest": quality_manifest,
             "canonical_path": canonical_path or absolute_path,
+            "indexing_policy": indexing_policy,
         }
         payload.update({key: value for key, value in optional.items() if value is not None})
         return PointStruct(
@@ -532,6 +539,11 @@ class MetadataBasedSync:
         **metadata: Any,
     ) -> None:
         """Persist one manifest. Call only after its chunks are durable."""
+        if metadata.get("indexing_policy") is None:
+            quality_manifest = metadata.get("quality_manifest") or {}
+            metadata["indexing_policy"] = quality_manifest.get(
+                "indexing_policy"
+            ) or build_indexing_policy(metadata.get("store_type") or "file")
         self.ensure_file_manifest_payload_index(collection_name)
         point = self.build_file_manifest_point(collection_name, file_path, quick_hash, **metadata)
         self.qdrant.upsert(collection_name=collection_name, points=[point], wait=True)
@@ -617,6 +629,7 @@ class MetadataBasedSync:
                 if delete_source
                 else payload.get("canonical_path") or str(Path(source_path).absolute())
             ),
+            "indexing_policy": payload.get("indexing_policy"),
         }
         if payload.get("quality_manifest") is not None:
             manifest_metadata["quality_manifest"] = payload["quality_manifest"]
@@ -984,6 +997,13 @@ class MetadataBasedSync:
             indexed_quick_hashes = self._get_indexed_quick_hashes(
                 collection_name, progress_callback=progress_callback
             )
+            stale_policy_paths = set()
+            if file_manifests_ready(self.qdrant, collection_name):
+                for path, payload in self.get_file_manifest_snapshot(collection_name).items():
+                    corpus_type = payload.get("store_type") or "file"
+                    if not policy_is_current(payload.get("indexing_policy"), corpus_type):
+                        stale_policy_paths.add(path)
+            self.last_stale_policy_paths = stale_policy_paths
             pass1_qdrant_time = time.time() - pass1_qdrant_start
 
             # Categorize files
@@ -1002,7 +1022,10 @@ class MetadataBasedSync:
                     continue
 
                 # Check if (file_path, quick_hash) exists in collection
-                if (file_path_str, quick_hash) in indexed_quick_hashes:
+                if (
+                    file_path_str,
+                    quick_hash,
+                ) in indexed_quick_hashes and file_path_str not in stale_policy_paths:
                     # Pass 1 HIT: Metadata unchanged → skip
                     already_indexed.append(file_path)
                 else:
@@ -1030,6 +1053,7 @@ class MetadataBasedSync:
         except FileManifestScanError:
             raise
         except Exception as e:
+            self.last_stale_policy_paths = set()
             logger.warning(f"Error querying collection: {e}, processing all files")
             return (file_list, [])
 

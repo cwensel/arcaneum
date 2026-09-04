@@ -34,6 +34,7 @@ from arcaneum.indexing.collection_metadata import (
     user_point_count,
 )
 from arcaneum.indexing.common.sync import MetadataBasedSync
+from arcaneum.indexing.policy import policy_is_current
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +140,7 @@ class FileVerificationResult:
     fidelity_degraded: bool = False  # replacements exceed the fidelity threshold
     recovery_exhausted: bool = False  # degraded after OCR already ran
     repair_recommended: bool = False  # safe to enqueue for automatic repair
+    stale_policy: bool = False  # source is unchanged but indexing policy is obsolete
 
     @property
     def completion_percentage(self) -> float:
@@ -188,6 +190,7 @@ class CollectionVerificationResult:
     dropout_at_floor: int = 0  # dropout files already marked extraction_floor (skipped)
     duplicate_items: int = 0  # files holding more than one point per chunk_index
     duplicate_source_groups: int = 0  # content hashes with multiple searchable documents
+    stale_policy_items: int = 0
     is_healthy: bool = True
     schema_version: Optional[int] = None
     app_version: Optional[str] = None
@@ -471,10 +474,12 @@ class CollectionVerifier:
                 "extraction_floor": False,
                 "quality_manifest": None,
                 "source_hash": None,
+                "indexing_policy": None,
             }
         )
 
-        if file_manifests_ready(self.qdrant, collection_name):
+        manifests_authoritative = file_manifests_ready(self.qdrant, collection_name)
+        if manifests_authoritative:
             manifests = MetadataBasedSync(self.qdrant).get_file_manifest_snapshot(collection_name)
             for file_path, payload in manifests.items():
                 canonical_path = payload.get("canonical_path")
@@ -485,6 +490,7 @@ class CollectionVerifier:
                 file_data = file_chunks[file_path]
                 file_data["chunk_count"] = payload.get("chunk_count", 0)
                 file_data["source_hash"] = payload.get("file_hash")
+                file_data["indexing_policy"] = payload.get("indexing_policy")
                 quality_manifest = payload.get("quality_manifest")
                 if isinstance(quality_manifest, dict):
                     file_data["quality_manifest"] = quality_manifest
@@ -626,6 +632,7 @@ class CollectionVerifier:
         dropout_count = 0
         dropout_at_floor = 0
         duplicate_count = 0
+        stale_policy_count = 0
 
         paths_by_source_hash: Dict[str, List[str]] = defaultdict(list)
         for file_path, file_data in file_chunks.items():
@@ -652,6 +659,18 @@ class CollectionVerifier:
             source_hash = file_data["source_hash"]
             source_aliases = duplicate_source_paths.get(file_path, [])
             has_duplicate_source = bool(source_aliases)
+            stale_policy = bool(
+                manifests_authoritative
+                and collection_type
+                and not policy_is_current(file_data["indexing_policy"], collection_type)
+            )
+            if stale_policy:
+                stale_policy_count += 1
+                manifest = file_data["quality_manifest"] or {}
+                warnings = set(manifest.get("quality_warnings", []))
+                warnings.add("stale_indexing_policy")
+                manifest["quality_warnings"] = sorted(warnings)
+                file_data["quality_manifest"] = manifest
 
             if inferred_chunk_count:
                 logger.warning(
@@ -776,6 +795,7 @@ class CollectionVerifier:
                 or has_duplicates
                 or has_duplicate_source
                 or fidelity_repair_recommended
+                or stale_policy
             )
 
             file_is_healthy = (
@@ -786,6 +806,7 @@ class CollectionVerifier:
                 and not has_duplicates
                 and not has_duplicate_source
                 and not fidelity_degraded
+                and not stale_policy
             )
 
             if file_is_healthy:
@@ -814,6 +835,7 @@ class CollectionVerifier:
                     fidelity_degraded=fidelity_degraded,
                     recovery_exhausted=recovery_exhausted,
                     repair_recommended=repair_recommended,
+                    stale_policy=stale_policy,
                 )
             )
 
@@ -829,12 +851,14 @@ class CollectionVerifier:
             dropout_at_floor=dropout_at_floor,
             duplicate_items=duplicate_count,
             duplicate_source_groups=len(duplicate_source_groups),
+            stale_policy_items=stale_policy_count,
             is_healthy=(
                 incomplete_count == 0
                 and garbled_count == 0
                 and dropout_count == 0
                 and duplicate_count == 0
                 and not duplicate_source_groups
+                and stale_policy_count == 0
             ),
             files=file_results,
         )

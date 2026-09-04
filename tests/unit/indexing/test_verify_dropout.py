@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from arcaneum.indexing import verify as verify_mod
+from arcaneum.indexing.policy import build_indexing_policy
 from arcaneum.indexing.verify import CollectionVerifier
 
 
@@ -126,11 +127,15 @@ def test_alias_manifest_does_not_look_like_an_incomplete_second_document(qdrant_
             "file_hash": "same-content",
             "chunk_count": 1,
             "canonical_path": "/tmp/a.pdf",
+            "store_type": "pdf",
+            "indexing_policy": build_indexing_policy("pdf"),
         },
         "/tmp/b.pdf": {
             "file_hash": "same-content",
             "chunk_count": 1,
             "canonical_path": "/tmp/a.pdf",
+            "store_type": "pdf",
+            "indexing_policy": build_indexing_policy("pdf"),
         },
     }
 
@@ -151,6 +156,54 @@ def test_alias_manifest_does_not_look_like_an_incomplete_second_document(qdrant_
     assert result.total_items == 1
     assert result.complete_items == 1
     assert result.duplicate_source_groups == 0
+
+
+def test_stale_policy_manifest_is_unhealthy_and_repairable(qdrant_client):
+    qdrant_client.scroll.side_effect = _scroll_once(
+        [
+            _point(
+                {
+                    "file_path": "/tmp/a.pdf",
+                    "source_hash": "content",
+                    "chunk_index": 0,
+                    "chunk_count": 1,
+                    "page_count": 1,
+                    "text": "A complete page of body text.",
+                }
+            )
+        ]
+    )
+    stale_policy = build_indexing_policy("pdf")
+    stale_policy["chunking"]["id"] = "pdf-chunking:v2"
+    manifests = {
+        "/tmp/a.pdf": {
+            "file_hash": "content",
+            "chunk_count": 1,
+            "canonical_path": "/tmp/a.pdf",
+            "store_type": "pdf",
+            "indexing_policy": stale_policy,
+        }
+    }
+
+    with (
+        patch.object(verify_mod, "file_manifests_ready", return_value=True),
+        patch.object(
+            verify_mod.MetadataBasedSync,
+            "get_file_manifest_snapshot",
+            return_value=manifests,
+        ),
+    ):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=1,
+        )
+
+    assert result.is_healthy is False
+    assert result.stale_policy_items == 1
+    assert result.files[0].stale_policy is True
+    assert result.get_items_needing_repair() == ["/tmp/a.pdf"]
+    assert "stale_indexing_policy" in result.files[0].quality_manifest["quality_warnings"]
 
 
 def test_extraction_floor_skips_repair(qdrant_client):

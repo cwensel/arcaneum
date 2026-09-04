@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from qdrant_client.models import FieldCondition, MatchValue, PayloadSchemaType
@@ -15,7 +15,9 @@ from arcaneum.indexing.common.sync import (
     FILE_MANIFEST_PAYLOAD_KEY,
     FILE_MANIFEST_PAYLOAD_VALUE,
     MetadataBasedSync,
+    compute_quick_hash,
 )
+from arcaneum.indexing.policy import build_indexing_policy, policy_is_current
 
 
 def _collection_info(payload_schema=None):
@@ -87,6 +89,8 @@ def test_ready_quick_hash_scan_uses_indexed_manifests_only():
         "file_size",
         "store_type",
         "quality_manifest",
+        "canonical_path",
+        "indexing_policy",
     ]
 
 
@@ -264,6 +268,8 @@ def test_ready_chunk_counts_are_read_from_manifests():
         "file_size",
         "store_type",
         "quality_manifest",
+        "canonical_path",
+        "indexing_policy",
     ]
 
 
@@ -295,6 +301,45 @@ def test_ready_manifest_snapshot_is_reused_across_sync_checks():
     assert sync.get_indexed_paths_by_content_hash("code") == {"content": ["/repo/a.py"]}
     assert sync.get_chunk_counts_by_file("code") == {"/repo/a.py": 7}
     assert qdrant.scroll.call_count == 1
+
+
+def test_unchanged_file_with_stale_policy_is_selected_for_reindex(tmp_path):
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"unchanged")
+    absolute_path = str(source.absolute())
+    stale_policy = build_indexing_policy("pdf")
+    stale_policy["chunking"]["id"] = "pdf-chunking:v2"
+
+    sync = MetadataBasedSync(MagicMock())
+    sync._get_indexed_quick_hashes = MagicMock(
+        return_value={(absolute_path, compute_quick_hash(source))}
+    )
+    sync.get_file_manifest_snapshot = MagicMock(
+        return_value={
+            absolute_path: {
+                "store_type": "pdf",
+                "indexing_policy": stale_policy,
+            }
+        }
+    )
+
+    with patch("arcaneum.indexing.common.sync.file_manifests_ready", return_value=True):
+        needs_processing, already_indexed = sync.get_unindexed_files("papers", [source])
+
+    assert needs_processing == [source]
+    assert already_indexed == []
+    assert sync.last_stale_policy_paths == {absolute_path}
+
+
+def test_policy_identity_is_scoped_and_version_checked():
+    pdf_policy = build_indexing_policy("pdf", {"min_chunk_chars": 200})
+
+    assert pdf_policy["chunking"]["config"] == {"min_chunk_chars": 200}
+    assert pdf_policy != build_indexing_policy("markdown")
+    assert policy_is_current(pdf_policy, "pdf") is True
+
+    pdf_policy["extraction"]["id"] = "pdf-extraction:v1"
+    assert policy_is_current(pdf_policy, "pdf") is False
 
 
 def test_chunk_content_hash_query_explicitly_excludes_reserved_points():

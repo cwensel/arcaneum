@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import Mock, call
 
 from arcaneum.cli import sync as sync_module
+from arcaneum.indexing.policy import build_indexing_policy
 
 
 def test_code_manifest_migration_reports_verbose_progress(monkeypatch):
@@ -85,6 +86,7 @@ def test_successful_code_index_publishes_complete_manifest(tmp_path):
         chunk_count=3,
         file_size=source.stat().st_size,
         store_type="code",
+        indexing_policy=build_indexing_policy("code"),
     )
 
 
@@ -174,4 +176,5 @@ def test_zero_chunk_file_publishes_manifest(tmp_path):
         chunk_count=0,
         file_size=0,
         store_type="markdown",
+        indexing_policy=build_indexing_policy("markdown"),
     )

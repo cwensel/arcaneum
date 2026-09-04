@@ -4511,6 +4511,7 @@ def _sync_directory_locked(
 
             verifier = CollectionVerifier(qdrant)
             verification_result = verifier.verify_collection(corpus, verbose=verbose)
+            verification_breakdown = _file_verification_breakdown(verification_result)
 
             if verification_result.is_healthy:
                 if not output_json:
@@ -4518,7 +4519,6 @@ def _sync_directory_locked(
                         f"[green]✓ Collection verified - all {verification_result.complete_items} files complete[/green]"
                     )
             else:
-                verification_breakdown = _file_verification_breakdown(verification_result)
                 repairable_paths = verification_breakdown["repairable_paths"]
                 recovery_exhausted_paths = verification_breakdown["recovery_exhausted_paths"]
                 if not output_json:
@@ -4540,7 +4540,6 @@ def _sync_directory_locked(
                     if repairable_paths:
                         console.print("[dim]Re-run with --repair to re-index eligible files[/dim]")
 
-            verification_breakdown = _file_verification_breakdown(verification_result)
             data["verification"] = {
                 "is_healthy": verification_result.is_healthy,
                 "total_files": verification_result.total_items,

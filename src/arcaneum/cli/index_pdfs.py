@@ -27,9 +27,15 @@ console = Console()
 logger = logging.getLogger(__name__)
 
 
-def _report_pdf_verification_issues(verification_result, *, repair_flag: str):
+def _report_pdf_verification_issues(
+    verification_result,
+    *,
+    repair_flag: str,
+    breakdown=None,
+):
     """Report unhealthy PDF files without presenting exhausted recovery as actionable."""
-    breakdown = _verification_breakdown(verification_result, include_stale_policy=False)
+    if breakdown is None:
+        breakdown = _verification_breakdown(verification_result, include_stale_policy=False)
     repairable = breakdown["repairable_paths"]
     policy_only = breakdown["policy_only_paths"]
     exhausted = breakdown["recovery_exhausted_paths"]
@@ -490,6 +496,7 @@ def index_pdfs_command(
                     _report_pdf_verification_issues(
                         verification_result,
                         repair_flag="--force",
+                        breakdown=verification_breakdown,
                     )
 
             stats["verification"] = {

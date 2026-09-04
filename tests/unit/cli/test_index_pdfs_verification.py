@@ -139,3 +139,35 @@ def test_policy_only_report_defers_force_reindex(monkeypatch):
     assert breakdown["policy_only_files"] == 1
     assert "policy migration is deferred" in output
     assert "Re-run with --force" not in output
+
+
+def test_report_reuses_precomputed_breakdown(monkeypatch):
+    repairable = FileVerificationResult(
+        file_path="/papers/incomplete.pdf",
+        expected_chunks=2,
+        actual_chunks=1,
+        is_complete=False,
+        repair_recommended=True,
+    )
+    result = _result(repairable)
+    breakdown = index_pdfs._verification_breakdown(result, include_stale_policy=False)
+    output = StringIO()
+    monkeypatch.setattr(
+        index_pdfs,
+        "console",
+        Console(file=output, force_terminal=False, color_system=None),
+    )
+
+    def fail_if_recomputed(*_args, **_kwargs):
+        raise AssertionError("breakdown recomputed")
+
+    monkeypatch.setattr(index_pdfs, "_verification_breakdown", fail_if_recomputed)
+
+    returned = index_pdfs._report_pdf_verification_issues(
+        result,
+        repair_flag="--force",
+        breakdown=breakdown,
+    )
+
+    assert returned is breakdown
+    assert "/papers/incomplete.pdf" in output.getvalue()

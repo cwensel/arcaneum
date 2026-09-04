@@ -292,6 +292,7 @@ def test_pdf_stale_alias_only_removes_alias_metadata(tmp_path):
     manager.get_file_manifest_snapshot.return_value = _pdf_alias_manifests(
         canonical_path, alias_path
     )
+    manager.remove_alternate_path.return_value = 1
     meili = Mock()
     qdrant = Mock()
 
@@ -306,6 +307,50 @@ def test_pdf_stale_alias_only_removes_alias_metadata(tmp_path):
     qdrant.delete.assert_not_called()
 
 
+def test_pdf_last_stale_alias_deletes_source_less_canonical_chunks(tmp_path):
+    canonical_path = str(tmp_path / "missing-canonical.pdf")
+    alias_path = str(tmp_path / "missing-alias.pdf")
+    manager = Mock()
+    manager.get_file_manifest_snapshot.return_value = _pdf_alias_manifests(
+        canonical_path, alias_path
+    )
+    manager.remove_alternate_path.return_value = 0
+    meili = Mock()
+    qdrant = Mock()
+
+    removed = sync_module._remove_indexed_paths(
+        qdrant, meili, manager, "Papers", "pdf", [alias_path]
+    )
+
+    assert removed == 1
+    meili.delete_documents_by_file_paths.assert_called_once_with("Papers", [canonical_path])
+    assert manager.delete_file_manifest.call_args_list == [
+        call("Papers", alias_path),
+        call("Papers", canonical_path),
+    ]
+    qdrant.delete.assert_called_once()
+
+
+def test_pdf_stale_alias_without_chunks_uses_ordinary_cleanup(tmp_path):
+    canonical_path = str(tmp_path / "missing-canonical.pdf")
+    alias_path = str(tmp_path / "missing-alias.pdf")
+    manager = Mock()
+    manager.get_file_manifest_snapshot.return_value = _pdf_alias_manifests(
+        canonical_path, alias_path
+    )
+    manager.remove_alternate_path.return_value = None
+    meili = Mock()
+    qdrant = Mock()
+
+    removed = sync_module._remove_indexed_paths(
+        qdrant, meili, manager, "Papers", "pdf", [alias_path]
+    )
+
+    assert removed == 1
+    meili.delete_documents_by_file_paths.assert_called_once_with("Papers", [alias_path])
+    manager.delete_file_manifest.assert_called_once_with("Papers", alias_path)
+
+
 def test_pdf_stale_alias_removes_provenance_when_canonical_is_already_missing(tmp_path):
     canonical_path = str(tmp_path / "missing-canonical.pdf")
     alias_path = str(tmp_path / "missing-alias.pdf")
@@ -313,6 +358,7 @@ def test_pdf_stale_alias_removes_provenance_when_canonical_is_already_missing(tm
     manager.get_file_manifest_snapshot.return_value = _pdf_alias_manifests(
         canonical_path, alias_path
     )
+    manager.remove_alternate_path.return_value = 1
     meili = Mock()
     qdrant = Mock()
 

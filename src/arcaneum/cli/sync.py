@@ -599,8 +599,14 @@ def _remove_pdf_alias_paths(
                 removed += 1
             else:
                 remaining = sync_manager.remove_alternate_path(corpus, file_hash, path)
-                if remaining == 0:
+                if remaining is None:
                     ordinary.add(path)
+                elif remaining == 0:
+                    # Chunks still exist, but no physical alias remains. Remove
+                    # the alias manifest now and route the searchable canonical
+                    # path through ordinary dual-index deletion.
+                    sync_manager.delete_file_manifest(corpus, path)
+                    ordinary.add(canonical_path)
                 else:
                     sync_manager.delete_file_manifest(corpus, path)
                     removed += 1

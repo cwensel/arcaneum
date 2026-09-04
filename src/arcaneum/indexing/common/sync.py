@@ -1473,8 +1473,8 @@ class MetadataBasedSync:
 
     def remove_alternate_path(
         self, collection_name: str, file_hash: str, path_to_remove: str
-    ) -> int:
-        """Remove one physical alias while preserving the canonical chunk set."""
+    ) -> Optional[int]:
+        """Remove one physical alias, or return ``None`` when no chunks exist."""
         points, _ = self.qdrant.scroll(
             collection_name=collection_name,
             scroll_filter=metadata_exclusion_filter(
@@ -1486,7 +1486,7 @@ class MetadataBasedSync:
         )
         if not points or not points[0].payload:
             logger.warning("No canonical chunks found for PDF alias: %s", path_to_remove)
-            return 0
+            return None
 
         current_payload = points[0].payload
         primary_path = current_payload.get("file_path")

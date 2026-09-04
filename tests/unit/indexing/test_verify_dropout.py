@@ -66,6 +66,93 @@ def test_dropout_detected_from_payload_page_count(qdrant_client):
     assert result.get_items_needing_repair() == ["/tmp/fake.pdf"]
 
 
+def test_duplicate_pdf_sources_are_repairable_as_one_content_group(qdrant_client):
+    qdrant_client.scroll.side_effect = _scroll_once(
+        [
+            _point(
+                {
+                    "file_path": "/tmp/a.pdf",
+                    "source_hash": "same-content",
+                    "chunk_index": 0,
+                    "chunk_count": 1,
+                    "page_count": 1,
+                    "text": "A complete page of body text.",
+                }
+            ),
+            _point(
+                {
+                    "file_path": "/tmp/b.pdf",
+                    "source_hash": "same-content",
+                    "chunk_index": 0,
+                    "chunk_count": 1,
+                    "page_count": 1,
+                    "text": "A complete page of body text.",
+                }
+            ),
+        ]
+    )
+
+    with patch.object(verify_mod, "file_manifests_ready", return_value=False):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=2,
+        )
+
+    assert result.duplicate_source_groups == 1
+    assert result.is_healthy is False
+    assert result.get_items_needing_repair() == ["/tmp/a.pdf", "/tmp/b.pdf"]
+    assert all(file.has_duplicate_source for file in result.files)
+    assert all(file.duplicate_source_paths == ["/tmp/a.pdf", "/tmp/b.pdf"] for file in result.files)
+
+
+def test_alias_manifest_does_not_look_like_an_incomplete_second_document(qdrant_client):
+    qdrant_client.scroll.side_effect = _scroll_once(
+        [
+            _point(
+                {
+                    "file_path": "/tmp/a.pdf",
+                    "source_hash": "same-content",
+                    "chunk_index": 0,
+                    "chunk_count": 1,
+                    "page_count": 1,
+                    "text": "A complete page of body text.",
+                }
+            )
+        ]
+    )
+    manifests = {
+        "/tmp/a.pdf": {
+            "file_hash": "same-content",
+            "chunk_count": 1,
+            "canonical_path": "/tmp/a.pdf",
+        },
+        "/tmp/b.pdf": {
+            "file_hash": "same-content",
+            "chunk_count": 1,
+            "canonical_path": "/tmp/a.pdf",
+        },
+    }
+
+    with (
+        patch.object(verify_mod, "file_manifests_ready", return_value=True),
+        patch.object(
+            verify_mod.MetadataBasedSync,
+            "get_file_manifest_snapshot",
+            return_value=manifests,
+        ),
+    ):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=1,
+        )
+
+    assert result.total_items == 1
+    assert result.complete_items == 1
+    assert result.duplicate_source_groups == 0
+
+
 def test_extraction_floor_skips_repair(qdrant_client):
     # Same dropout signal, but already marked extraction_floor → don't re-index
     qdrant_client.scroll.side_effect = _scroll_once(

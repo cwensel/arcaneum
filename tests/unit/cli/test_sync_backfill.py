@@ -17,6 +17,7 @@ from arcaneum.cli.sync import (
     _repair_meili_metadata,
 )
 from arcaneum.embeddings.client import get_embedding_prompt_policy
+from arcaneum.indexing.common.sync import MetadataBasedSync
 
 
 def test_adaptive_progress_uses_manual_refresh(monkeypatch):
@@ -70,6 +71,32 @@ def test_file_progress_weight_uses_bytes_and_keeps_empty_files_visible(tmp_path)
     assert _file_progress_weight(small) == 4096
     assert _file_progress_weight(empty) == 1
     assert _file_progress_weight(tmp_path / "missing.pdf") == 1
+
+
+def test_duplicate_manifest_records_canonical_source_path():
+    qdrant = MagicMock()
+    qdrant.retrieve.return_value = [
+        SimpleNamespace(
+            payload={
+                "file_hash": "same-content",
+                "chunk_count": 3,
+                "file_size": 100,
+                "store_type": "pdf",
+                "canonical_path": "/papers/a.pdf",
+            }
+        )
+    ]
+    sync = MetadataBasedSync(qdrant)
+    sync.upsert_file_manifest = MagicMock()
+
+    sync.copy_file_manifest(
+        "papers",
+        "/papers/a.pdf",
+        "/papers/b.pdf",
+        "quick-b",
+    )
+
+    assert sync.upsert_file_manifest.call_args.kwargs["canonical_path"] == "/papers/a.pdf"
 
 
 class MetadataQdrant:

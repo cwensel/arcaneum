@@ -2301,6 +2301,7 @@ def _sync_directory_locked(
             # Report duplicated files: the same chunk stored more than once,
             # from a re-index that appended instead of overwriting.
             duplicate_count = verification_result.duplicate_items
+            duplicate_source_groups = verification_result.duplicate_source_groups
             if duplicate_count > 0 and not output_json:
                 console.print(
                     f"[yellow]⚠ Found {duplicate_count} files with duplicated chunks[/yellow]"
@@ -2312,6 +2313,11 @@ def _sync_directory_locked(
                     )
                 if len(duplicate_files) > 5:
                     console.print(f"  [dim]... and {len(duplicate_files) - 5} more[/dim]")
+            if duplicate_source_groups > 0 and not output_json:
+                console.print(
+                    f"[yellow]⚠ Found {duplicate_source_groups} duplicate-content "
+                    "source groups to consolidate[/yellow]"
+                )
 
             if recovery_exhausted_paths and not output_json:
                 console.print(
@@ -2361,6 +2367,7 @@ def _sync_directory_locked(
                             "recovery_exhausted_files": len(recovery_exhausted_paths),
                             "garbled_files": garbled_count,
                             "duplicate_files": duplicate_count,
+                            "duplicate_source_groups": duplicate_source_groups,
                             "missing_from_disk": len(missing_from_disk),
                             "repaired": 0,
                         },
@@ -2386,6 +2393,7 @@ def _sync_directory_locked(
                             "recovery_exhausted_files": len(recovery_exhausted_paths),
                             "garbled_files": garbled_count,
                             "duplicate_files": duplicate_count,
+                            "duplicate_source_groups": duplicate_source_groups,
                             "files": existing_repairable,
                         },
                     )
@@ -2400,7 +2408,7 @@ def _sync_directory_locked(
             }
 
             # Set up for re-indexing: use incomplete files as single_files with force
-            single_files = [Path(p).resolve() for p in existing_repairable]
+            single_files = sorted(Path(p).resolve() for p in existing_repairable)
             dir_paths = []
             force = True
 
@@ -3262,10 +3270,72 @@ def _sync_directory_locked(
                         _set_phase(f"file:{file_path.name}")
 
                         try:
+                            file_path_str = str(file_path.absolute())
+                            pdf_file_hash = None
+                            pdf_quick_hash = None
+                            if corpus_type == "pdf":
+                                pdf_file_hash = compute_file_hash(file_path)
+                                pdf_quick_hash = compute_quick_hash(file_path)
+                                indexed_content_paths = sorted(
+                                    manifest_sync_manager.find_file_by_content_hash(
+                                        corpus, pdf_file_hash, raise_on_error=True
+                                    )
+                                )
+                                if indexed_content_paths:
+                                    canonical_path = indexed_content_paths[0]
+                                    if file_path_str != canonical_path:
+                                        # Existing duplicate chunk sets are removed during
+                                        # repair/force. Normal sync reaches this branch for a
+                                        # newly discovered alias, which has no chunks yet.
+                                        if repair or force:
+                                            dual_indexer.delete_by_file_path(file_path_str)
+                                            meili.delete_documents_by_file_paths(
+                                                corpus, [file_path_str]
+                                            )
+                                            _delete_file_manifests(
+                                                manifest_sync_manager,
+                                                corpus,
+                                                corpus_type,
+                                                [file_path_str],
+                                            )
+                                        manifest_sync_manager.add_alternate_path(
+                                            corpus,
+                                            pdf_file_hash,
+                                            file_path_str,
+                                            pdf_quick_hash,
+                                        )
+                                        registered_paths = (
+                                            manifest_sync_manager.find_file_by_content_hash(
+                                                corpus,
+                                                pdf_file_hash,
+                                                raise_on_error=True,
+                                            )
+                                        )
+                                        if file_path_str not in registered_paths:
+                                            raise RuntimeError(
+                                                f"Failed to register duplicate source alias: {file_path_str}"
+                                            )
+                                        manifest_sync_manager.copy_file_manifest(
+                                            corpus,
+                                            canonical_path,
+                                            file_path_str,
+                                            pdf_quick_hash,
+                                            file_size=file_path.stat().st_size,
+                                            store_type="pdf",
+                                        )
+                                        if verbose and not output_json:
+                                            progress.console.print(
+                                                f"[green]  ✓ {file_path.name} — alias of "
+                                                f"{Path(canonical_path).name}; no duplicate chunks[/green]"
+                                            )
+                                        total_indexed += 1
+                                        progress.advance(task, file_progress_weight)
+                                        _set_phase("idle")
+                                        continue
+
                             # In repair mode, extract BEFORE deleting so we can compare quality.
                             # In normal force mode, delete first to avoid duplicates during indexing.
                             if force and not repair:
-                                file_path_str = str(file_path.absolute())
                                 if verbose and not output_json:
                                     progress.console.print(
                                         f"[dim]Deleting existing chunks for {file_path.name}...[/dim]"
@@ -3424,8 +3494,8 @@ def _sync_directory_locked(
 
                             # Build dual index documents
                             documents = []
-                            file_hash = compute_file_hash(file_path)
-                            quick_hash = compute_quick_hash(file_path)
+                            file_hash = pdf_file_hash or compute_file_hash(file_path)
+                            quick_hash = pdf_quick_hash or compute_quick_hash(file_path)
                             chunking_version = (
                                 "code-ast:v1" if corpus_type == "code" else f"{corpus_type}:v1"
                             )

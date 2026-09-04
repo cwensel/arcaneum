@@ -130,6 +130,8 @@ class FileVerificationResult:
     suspected_dropout: bool = False  # extracted text implausibly small for page count
     has_duplicate_chunks: bool = False  # same chunk_index stored more than once
     duplicate_chunk_count: int = 0  # surplus points beyond one per chunk_index
+    has_duplicate_source: bool = False  # another primary path has identical content
+    duplicate_source_paths: List[str] = field(default_factory=list)
     total_text_chars: int = 0  # sum of chunk text lengths (for dropout detection)
     page_count: Optional[int] = None  # authoritative page count from PDF
     quality_manifest: Optional[dict] = None  # per-file extraction quality summary
@@ -185,6 +187,7 @@ class CollectionVerificationResult:
     dropout_items: int = 0  # files with suspected extraction dropout
     dropout_at_floor: int = 0  # dropout files already marked extraction_floor (skipped)
     duplicate_items: int = 0  # files holding more than one point per chunk_index
+    duplicate_source_groups: int = 0  # content hashes with multiple searchable documents
     is_healthy: bool = True
     schema_version: Optional[int] = None
     app_version: Optional[str] = None
@@ -474,6 +477,11 @@ class CollectionVerifier:
         if file_manifests_ready(self.qdrant, collection_name):
             manifests = MetadataBasedSync(self.qdrant).get_file_manifest_snapshot(collection_name)
             for file_path, payload in manifests.items():
+                canonical_path = payload.get("canonical_path")
+                if canonical_path and canonical_path != file_path:
+                    # Alias manifests preserve physical-path auditability but
+                    # do not represent a second searchable chunk set.
+                    continue
                 file_data = file_chunks[file_path]
                 file_data["chunk_count"] = payload.get("chunk_count", 0)
                 file_data["source_hash"] = payload.get("file_hash")
@@ -619,6 +627,17 @@ class CollectionVerifier:
         dropout_at_floor = 0
         duplicate_count = 0
 
+        paths_by_source_hash: Dict[str, List[str]] = defaultdict(list)
+        for file_path, file_data in file_chunks.items():
+            if file_data["indices"] and file_data["source_hash"]:
+                paths_by_source_hash[file_data["source_hash"]].append(file_path)
+        duplicate_source_groups = [
+            sorted(paths) for paths in paths_by_source_hash.values() if len(paths) > 1
+        ]
+        duplicate_source_paths = {
+            path: paths for paths in duplicate_source_groups for path in paths
+        }
+
         for file_path, file_data in file_chunks.items():
             indices = file_data["indices"]
             explicit_chunk_counts = file_data["explicit_chunk_counts"]
@@ -631,6 +650,8 @@ class CollectionVerifier:
             conflicting_chunk_counts = len(explicit_chunk_counts) > 1
             stale_source = False
             source_hash = file_data["source_hash"]
+            source_aliases = duplicate_source_paths.get(file_path, [])
+            has_duplicate_source = bool(source_aliases)
 
             if inferred_chunk_count:
                 logger.warning(
@@ -718,6 +739,14 @@ class CollectionVerifier:
             if has_duplicates:
                 duplicate_count += 1
 
+            if has_duplicate_source:
+                manifest = file_data["quality_manifest"] or {}
+                warnings = set(manifest.get("quality_warnings", []))
+                warnings.add("duplicate_source")
+                manifest["quality_warnings"] = sorted(warnings)
+                manifest["duplicate_source_paths"] = source_aliases
+                file_data["quality_manifest"] = manifest
+
             manifest = file_data["quality_manifest"]
             (
                 has_omitted_text,
@@ -745,6 +774,7 @@ class CollectionVerifier:
                 or suspected_dropout
                 or stale_source
                 or has_duplicates
+                or has_duplicate_source
                 or fidelity_repair_recommended
             )
 
@@ -754,6 +784,7 @@ class CollectionVerifier:
                 and not suspected_dropout
                 and not stale_source
                 and not has_duplicates
+                and not has_duplicate_source
                 and not fidelity_degraded
             )
 
@@ -774,6 +805,8 @@ class CollectionVerifier:
                     suspected_dropout=suspected_dropout,
                     has_duplicate_chunks=has_duplicates,
                     duplicate_chunk_count=duplicate_chunk_count,
+                    has_duplicate_source=has_duplicate_source,
+                    duplicate_source_paths=source_aliases,
                     total_text_chars=total_text_chars,
                     page_count=page_count,
                     quality_manifest=file_data["quality_manifest"],
@@ -795,11 +828,13 @@ class CollectionVerifier:
             dropout_items=dropout_count,
             dropout_at_floor=dropout_at_floor,
             duplicate_items=duplicate_count,
+            duplicate_source_groups=len(duplicate_source_groups),
             is_healthy=(
                 incomplete_count == 0
                 and garbled_count == 0
                 and dropout_count == 0
                 and duplicate_count == 0
+                and not duplicate_source_groups
             ),
             files=file_results,
         )

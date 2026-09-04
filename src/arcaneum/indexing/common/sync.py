@@ -498,6 +498,7 @@ class MetadataBasedSync:
         file_size: Optional[int] = None,
         store_type: Optional[str] = None,
         quality_manifest: Optional[Dict[str, Any]] = None,
+        canonical_path: Optional[str] = None,
     ) -> PointStruct:
         """Build a reserved manifest point for one physical source path."""
         absolute_path = str(Path(file_path).absolute())
@@ -514,6 +515,7 @@ class MetadataBasedSync:
             "file_size": file_size,
             "store_type": store_type,
             "quality_manifest": quality_manifest,
+            "canonical_path": canonical_path or absolute_path,
         }
         payload.update({key: value for key, value in optional.items() if value is not None})
         return PointStruct(
@@ -610,6 +612,11 @@ class MetadataBasedSync:
             "chunk_count": payload.get("chunk_count"),
             "file_size": file_size if file_size is not None else payload.get("file_size"),
             "store_type": store_type if store_type is not None else payload.get("store_type"),
+            "canonical_path": (
+                str(Path(target_path).absolute())
+                if delete_source
+                else payload.get("canonical_path") or str(Path(source_path).absolute())
+            ),
         }
         if payload.get("quality_manifest") is not None:
             manifest_metadata["quality_manifest"] = payload["quality_manifest"]
@@ -1442,6 +1449,7 @@ class MetadataBasedSync:
 
             if not path_existed:
                 file_paths.append(new_path_abs)
+            file_paths = sorted(set(file_paths))
 
             # Check if quick_hash changed (file was touched/modified)
             quick_hash_changed = file_quick_hashes.get(new_path_abs) != quick_hash

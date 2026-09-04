@@ -129,6 +129,7 @@ def test_alias_manifest_does_not_look_like_an_incomplete_second_document(qdrant_
             "canonical_path": "/tmp/a.pdf",
             "store_type": "pdf",
             "indexing_policy": build_indexing_policy("pdf"),
+            "quality_manifest": {"quality_warnings": []},
         },
         "/tmp/b.pdf": {
             "file_hash": "same-content",
@@ -136,6 +137,7 @@ def test_alias_manifest_does_not_look_like_an_incomplete_second_document(qdrant_
             "canonical_path": "/tmp/a.pdf",
             "store_type": "pdf",
             "indexing_policy": build_indexing_policy("pdf"),
+            "quality_manifest": {"quality_warnings": []},
         },
     }
 
@@ -204,6 +206,179 @@ def test_stale_policy_manifest_is_unhealthy_and_repairable(qdrant_client):
     assert result.files[0].stale_policy is True
     assert result.get_items_needing_repair() == ["/tmp/a.pdf"]
     assert "stale_indexing_policy" in result.files[0].quality_manifest["quality_warnings"]
+
+
+def test_pdf_quality_counts_dropped_and_sub_floor_chunks(qdrant_client):
+    qdrant_client.scroll.side_effect = _scroll_once(
+        [
+            _point(
+                {
+                    "file_path": "/tmp/a.pdf",
+                    "source_hash": "content",
+                    "chunk_index": 0,
+                    "chunk_count": 2,
+                    "page_count": 1,
+                    "text": "short",
+                    "quality_manifest": {
+                        "dropped_chunk_count": 2,
+                        "quality_warnings": [],
+                    },
+                }
+            ),
+            _point(
+                {
+                    "file_path": "/tmp/a.pdf",
+                    "source_hash": "content",
+                    "chunk_index": 1,
+                    "chunk_count": 2,
+                    "page_count": 1,
+                    "text": "x" * 500,
+                }
+            ),
+        ]
+    )
+    manifests = {
+        "/tmp/a.pdf": {
+            "file_hash": "content",
+            "chunk_count": 2,
+            "canonical_path": "/tmp/a.pdf",
+            "store_type": "pdf",
+            "indexing_policy": build_indexing_policy("pdf", {"min_chunk_chars": 200}),
+            "quality_manifest": {
+                "dropped_chunk_count": 2,
+                "quality_warnings": [],
+            },
+        }
+    }
+
+    with (
+        patch.object(verify_mod, "file_manifests_ready", return_value=True),
+        patch.object(
+            verify_mod.MetadataBasedSync,
+            "get_file_manifest_snapshot",
+            return_value=manifests,
+        ),
+    ):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=2,
+            check_quality=True,
+        )
+
+    assert result.is_healthy is False
+    assert result.dropped_chunks == 2
+    assert result.sub_floor_chunks == 1
+    assert result.files[0].dropped_chunk_count == 2
+    assert result.files[0].sub_floor_chunk_count == 1
+
+
+def test_authoritative_pdf_without_quality_manifest_reports_gap(qdrant_client):
+    qdrant_client.scroll.side_effect = _scroll_once(
+        [
+            _point(
+                {
+                    "file_path": "/tmp/a.pdf",
+                    "source_hash": "content",
+                    "chunk_index": 0,
+                    "chunk_count": 1,
+                    "page_count": 1,
+                    "text": "x" * 500,
+                }
+            )
+        ]
+    )
+    manifests = {
+        "/tmp/a.pdf": {
+            "file_hash": "content",
+            "chunk_count": 1,
+            "canonical_path": "/tmp/a.pdf",
+            "store_type": "pdf",
+            "indexing_policy": build_indexing_policy("pdf"),
+        }
+    }
+
+    with (
+        patch.object(verify_mod, "file_manifests_ready", return_value=True),
+        patch.object(
+            verify_mod.MetadataBasedSync,
+            "get_file_manifest_snapshot",
+            return_value=manifests,
+        ),
+    ):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=1,
+            check_quality=True,
+        )
+
+    assert result.is_healthy is False
+    assert result.quality_manifest_gaps == 1
+    assert result.files[0].quality_manifest_missing is True
+    assert result.get_items_needing_repair() == ["/tmp/a.pdf"]
+
+
+def test_standard_pdf_verification_does_not_read_source_files(qdrant_client):
+    qdrant_client.scroll.side_effect = _scroll_once(
+        [
+            _point(
+                {
+                    "file_path": "/tmp/a.pdf",
+                    "source_hash": "content",
+                    "chunk_index": 0,
+                    "chunk_count": 1,
+                    "text": "x" * 500,
+                }
+            )
+        ]
+    )
+
+    with (
+        patch.object(verify_mod, "_source_hash_matches_disk") as source_check,
+        patch.object(verify_mod, "_page_count_from_disk") as page_check,
+    ):
+        CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=1,
+            check_quality=True,
+        )
+
+    source_check.assert_not_called()
+    page_check.assert_not_called()
+
+
+def test_verify_collection_scores_pdf_quality_by_default(qdrant_client):
+    qdrant_client.scroll.side_effect = _scroll_once(
+        [
+            _point(
+                {
+                    "file_path": "/tmp/garbled.pdf",
+                    "chunk_index": 0,
+                    "chunk_count": 1,
+                    "page_count": 1,
+                    "text": "\ufffd" * 300,
+                }
+            )
+        ]
+    )
+
+    with (
+        patch.object(
+            verify_mod,
+            "get_collection_metadata",
+            return_value={"collection_type": "pdf", "schema_version": 1},
+        ),
+        patch.object(verify_mod, "persisted_schema_issues", return_value=[]),
+        patch.object(verify_mod, "user_point_count", return_value=1),
+        patch.object(verify_mod, "file_manifests_ready", return_value=False),
+    ):
+        result = CollectionVerifier(qdrant_client).verify_collection("Dummy")
+
+    assert result.garbled_items == 1
+    assert result.is_healthy is False
+    assert "text" in qdrant_client.scroll.call_args.kwargs["with_payload"]
 
 
 def test_extraction_floor_skips_repair(qdrant_client):
@@ -322,6 +497,7 @@ def test_quality_manifest_marks_stale_source(qdrant_client, tmp_path):
             collection_name="Dummy",
             collection_type="pdf",
             total_points=1,
+            deep=True,
         )
 
     assert result.is_healthy is False
@@ -355,6 +531,7 @@ def test_stale_source_accepts_sync_short_hash(qdrant_client, tmp_path):
             collection_name="Dummy",
             collection_type="pdf",
             total_points=1,
+            deep=True,
         )
 
     assert result.is_healthy is True
@@ -386,6 +563,7 @@ def test_stale_source_accepts_xxhash_file_hash(qdrant_client, tmp_path):
             collection_name="Dummy",
             collection_type="pdf",
             total_points=1,
+            deep=True,
         )
 
     assert result.is_healthy is True
@@ -416,6 +594,7 @@ def test_stale_source_accepts_normalized_text_hash(qdrant_client, tmp_path):
             collection_name="Dummy",
             collection_type="markdown",
             total_points=1,
+            deep=True,
         )
 
     assert result.is_healthy is True
@@ -941,6 +1120,7 @@ def test_dropout_falls_back_to_disk_page_count(qdrant_client, tmp_path):
             collection_name="Dummy",
             collection_type="pdf",
             total_points=1,
+            deep=True,
         )
 
     assert result.dropout_items == 1

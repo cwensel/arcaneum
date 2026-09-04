@@ -2095,8 +2095,18 @@ def corpus_items(name, output_json):
 @click.argument("name")
 @click.option("--project", help="Filter by project identifier (code corpora only)")
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed file-level results")
+@click.option(
+    "--deep",
+    is_flag=True,
+    help="Compare indexed PDF metadata with source files on disk",
+)
+@click.option(
+    "--strict",
+    is_flag=True,
+    help="Exit 1 when verification finds issues (for CI/agents)",
+)
 @click.option("--json", "output_json", is_flag=True, help="Output JSON format")
-def corpus_verify(name, project, verbose, output_json):
+def corpus_verify(name, project, verbose, deep, strict, output_json):
     """Verify corpus health across both Qdrant and MeiliSearch.
 
     Performs fsck-like integrity checks on both systems and reports
@@ -2108,10 +2118,14 @@ def corpus_verify(name, project, verbose, output_json):
         arc corpus verify MyCorpus
         arc corpus verify MyCorpus --verbose
         arc corpus verify MyCorpus --json
+        arc corpus verify MyCorpus --deep --strict --json
+
+    By default, detected quality issues are reported with exit status 0; use
+    --strict to make quality or service issues return status 1.
     """
     from arcaneum.cli.corpus import corpus_verify_command
 
-    corpus_verify_command(name, project, verbose, output_json)
+    corpus_verify_command(name, project, verbose, output_json, deep=deep, strict=strict)
 
 
 # Diagnostics command (RDR-006 enhancement)

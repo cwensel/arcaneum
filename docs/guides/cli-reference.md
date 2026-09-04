@@ -77,6 +77,8 @@ arc search text <query> --corpus <name>                     # Full-text search (
   only for multi-vector collections where the default cannot be inferred.
 - `--score-threshold`: Minimum similarity score; results below it are dropped.
   Useful to cut weak matches when a query has few good hits.
+- `--include-references`: Include PDF reference-section chunks. References are
+  excluded from semantic search by default.
 - `--collection`: *(Deprecated)* Collection to search — use `--corpus`.
 
 **`arc search text` only:**
@@ -660,6 +662,9 @@ arc corpus verify MyCode --project my-app
 
 # JSON output for automation
 arc corpus verify MyCorpus --json
+
+# Re-read source PDF metadata and fail CI when any issue remains
+arc corpus verify MyCorpus --deep --strict --json
 ```
 
 **Features:**
@@ -668,6 +673,15 @@ arc corpus verify MyCorpus --json
 - **MeiliSearch health check**: Verifies index accessibility and document retrieval
 - **Parity status**: Reports whether both systems have the corpus
 - **Detailed diagnostics**: Shows warnings for configuration issues
+- **PDF quality by default**: Reports garbled/dropout files, dropped or
+  sub-floor chunks, duplicate sources, stale policies, incomplete files, and
+  missing quality manifests from persisted index state
+- **Deep verification**: `--deep` additionally compares source hashes and PDF
+  page counts with files on disk
+
+Verification reports issues with exit status 0 by default so it remains useful
+as an interactive diagnostic. Pass `--strict` to return status 1 for any quality
+or service issue in CI and agent workflows.
 
 **Example Output:**
 

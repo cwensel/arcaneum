@@ -1756,6 +1756,9 @@ def corpus_verify_command(
     project: str | None,
     verbose: bool,
     output_json: bool,
+    *,
+    deep: bool = False,
+    strict: bool = False,
 ):
     """Verify corpus health across both Qdrant and MeiliSearch.
 
@@ -1769,6 +1772,8 @@ def corpus_verify_command(
         project: Optional project identifier filter (code collections only)
         verbose: Show detailed file-level results
         output_json: If True, output JSON format
+        deep: Compare persisted PDF metadata with source files on disk
+        strict: Exit 1 when verification reports issues (CI/agent mode)
     """
     from arcaneum.indexing.verify import CollectionVerifier
 
@@ -1788,7 +1793,7 @@ def corpus_verify_command(
             qdrant = create_qdrant_client()
             verifier = CollectionVerifier(qdrant)
             qdrant_result = verifier.verify_collection(
-                name, project_filter=project, verbose=verbose
+                name, project_filter=project, verbose=verbose, deep=deep
             )
         except Exception as e:
             errors.append(f"Qdrant: {e}")
@@ -1871,6 +1876,29 @@ def corpus_verify_command(
         elif meili_result:
             overall_healthy = meili_result["is_healthy"]
             parity_status = "meili_only"
+        overall_healthy = overall_healthy and not errors
+
+        quality_summary = None
+        if qdrant_result and qdrant_result.collection_type == "pdf":
+            quality_counts = {
+                "garbled_files": getattr(qdrant_result, "garbled_items", 0),
+                "dropout_files": getattr(qdrant_result, "dropout_items", 0),
+                "dropped_chunks": getattr(qdrant_result, "dropped_chunks", 0),
+                "sub_floor_chunks": getattr(qdrant_result, "sub_floor_chunks", 0),
+                "duplicate_source_groups": getattr(qdrant_result, "duplicate_source_groups", 0),
+                "stale_policy_files": getattr(qdrant_result, "stale_policy_items", 0),
+                "incomplete_files": qdrant_result.incomplete_items,
+                "quality_manifest_gaps": getattr(qdrant_result, "quality_manifest_gaps", 0),
+            }
+            quality_summary = {
+                **quality_counts,
+                "warnings": [
+                    {"code": code, "count": count}
+                    for code, count in quality_counts.items()
+                    if count
+                ],
+                "mode": "deep" if deep else "persisted",
+            }
 
         # Output results
         if output_json:
@@ -1881,6 +1909,8 @@ def corpus_verify_command(
                 "qdrant": None,
                 "meilisearch": None,
                 "errors": errors if errors else None,
+                "service_errors": errors,
+                "quality": quality_summary,
             }
 
             if qdrant_result:
@@ -1929,6 +1959,18 @@ def corpus_verify_command(
                 console.print("[green]Overall Status: Healthy[/green]")
             else:
                 console.print("[yellow]Overall Status: Issues detected[/yellow]")
+
+            if quality_summary is not None:
+                console.print("\n[bold]PDF Quality:[/bold]")
+                console.print(
+                    "  "
+                    + ", ".join(
+                        f"{label.replace('_', ' ')}: {count}"
+                        for label, count in quality_summary.items()
+                        if label not in {"warnings", "mode"}
+                    )
+                )
+                console.print(f"  Mode: {quality_summary['mode']}")
 
             # Qdrant section
             console.print("\n[bold]Qdrant Collection:[/bold]")
@@ -2019,6 +2061,8 @@ def corpus_verify_command(
             qdrant_healthy=qdrant_result.is_healthy if qdrant_result else None,
             meili_healthy=meili_result["is_healthy"] if meili_result else None,
         )
+        if strict and not overall_healthy:
+            sys.exit(1)
 
     except ResourceNotFoundError:
         interaction_logger.finish(error="corpus not found")

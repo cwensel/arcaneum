@@ -141,6 +141,9 @@ class FileVerificationResult:
     recovery_exhausted: bool = False  # degraded after OCR already ran
     repair_recommended: bool = False  # safe to enqueue for automatic repair
     stale_policy: bool = False  # source is unchanged but indexing policy is obsolete
+    dropped_chunk_count: int = 0  # chunks intentionally omitted during extraction cleanup
+    sub_floor_chunk_count: int = 0  # non-sole chunks below the active fragment floor
+    quality_manifest_missing: bool = False
 
     @property
     def completion_percentage(self) -> float:
@@ -191,6 +194,9 @@ class CollectionVerificationResult:
     duplicate_items: int = 0  # files holding more than one point per chunk_index
     duplicate_source_groups: int = 0  # content hashes with multiple searchable documents
     stale_policy_items: int = 0
+    dropped_chunks: int = 0
+    sub_floor_chunks: int = 0
+    quality_manifest_gaps: int = 0
     is_healthy: bool = True
     schema_version: Optional[int] = None
     app_version: Optional[str] = None
@@ -229,6 +235,7 @@ class CollectionVerifier:
         verbose: bool = False,
         check_quality: bool = False,
         quality_threshold: float = 0.9,
+        deep: bool = False,
     ) -> CollectionVerificationResult:
         """Verify a collection's integrity.
 
@@ -245,6 +252,7 @@ class CollectionVerifier:
             verbose: Log verbose output
             check_quality: Score text quality and flag garbled files
             quality_threshold: Minimum quality score (default 0.9, matches CLI/docs)
+            deep: Compare persisted metadata with source files on disk
 
         Returns:
             CollectionVerificationResult with detailed verification data
@@ -264,6 +272,7 @@ class CollectionVerifier:
                 collection_name, total_points, project_filter, verbose
             )
         else:
+            check_quality = check_quality or collection_type == "pdf"
             result = self._verify_file_collection(
                 collection_name,
                 collection_type,
@@ -271,6 +280,7 @@ class CollectionVerifier:
                 verbose,
                 check_quality=check_quality,
                 quality_threshold=quality_threshold,
+                deep=deep,
             )
         result.schema_version = collection_metadata.get("schema_version")
         result.app_version = collection_metadata.get("app_version")
@@ -439,6 +449,7 @@ class CollectionVerifier:
         verbose: bool = False,
         check_quality: bool = False,
         quality_threshold: float = 0.9,
+        deep: bool = False,
     ) -> CollectionVerificationResult:
         """Verify a PDF or markdown collection.
 
@@ -469,12 +480,14 @@ class CollectionVerifier:
                 "inferred_chunk_count": False,
                 "legacy_max_chunk_count": 0,
                 "quality_scores": [],
+                "chunk_lengths": [],
                 "total_text_chars": 0,
                 "page_count": None,
                 "extraction_floor": False,
                 "quality_manifest": None,
                 "source_hash": None,
                 "indexing_policy": None,
+                "has_persisted_quality_manifest": False,
             }
         )
 
@@ -494,6 +507,7 @@ class CollectionVerifier:
                 quality_manifest = payload.get("quality_manifest")
                 if isinstance(quality_manifest, dict):
                     file_data["quality_manifest"] = quality_manifest
+                    file_data["has_persisted_quality_manifest"] = True
                     page_coverage = quality_manifest.get("page_coverage") or {}
                     file_data["page_count"] = page_coverage.get("page_count")
 
@@ -575,8 +589,10 @@ class CollectionVerifier:
                 text = payload.get("text", "") if (check_quality or check_dropout) else ""
 
                 # Score text quality if requested
-                if check_quality and text:
-                    file_chunks[file_path]["quality_scores"].append(score_text(text))
+                if check_quality:
+                    file_chunks[file_path]["chunk_lengths"].append(len(text))
+                    if text:
+                        file_chunks[file_path]["quality_scores"].append(score_text(text))
 
                 # Accumulate dropout signal (total text, page_count, floor marker)
                 if check_dropout:
@@ -593,6 +609,7 @@ class CollectionVerifier:
                     and file_chunks[file_path]["quality_manifest"] is None
                 ):
                     file_chunks[file_path]["quality_manifest"] = manifest
+                    file_chunks[file_path]["has_persisted_quality_manifest"] = True
                 elif file_chunks[file_path]["quality_manifest"] is None:
                     file_chunks[file_path]["quality_manifest"] = {
                         "schema_version": 1,
@@ -633,6 +650,9 @@ class CollectionVerifier:
         dropout_at_floor = 0
         duplicate_count = 0
         stale_policy_count = 0
+        dropped_chunk_count = 0
+        sub_floor_chunk_count = 0
+        quality_manifest_gap_count = 0
 
         paths_by_source_hash: Dict[str, List[str]] = defaultdict(list)
         for file_path, file_data in file_chunks.items():
@@ -713,7 +733,7 @@ class CollectionVerifier:
                 manifest["quality_warnings"] = sorted(warnings)
                 file_data["quality_manifest"] = manifest
 
-            if source_hash and os.path.exists(file_path):
+            if deep and source_hash and os.path.exists(file_path):
                 stale_source = not _source_hash_matches_disk(file_path, source_hash)
                 if stale_source:
                     manifest = file_data["quality_manifest"] or {}
@@ -729,7 +749,7 @@ class CollectionVerifier:
             total_text_chars = file_data["total_text_chars"]
             page_count = file_data["page_count"]
             if check_dropout:
-                if page_count is None:
+                if deep and page_count is None:
                     page_count = _page_count_from_disk(file_path)
                 if page_count and total_text_chars:
                     if file_data["extraction_floor"]:
@@ -767,6 +787,42 @@ class CollectionVerifier:
                 file_data["quality_manifest"] = manifest
 
             manifest = file_data["quality_manifest"]
+            quality_manifest_missing = bool(
+                manifests_authoritative and not file_data["has_persisted_quality_manifest"]
+            )
+            if quality_manifest_missing:
+                quality_manifest_gap_count += 1
+                manifest = manifest or {}
+                warnings = set(manifest.get("quality_warnings", []))
+                warnings.add("quality_manifest_missing")
+                manifest["quality_warnings"] = sorted(warnings)
+                file_data["quality_manifest"] = manifest
+
+            dropped_for_file = 0
+            if isinstance(manifest, dict):
+                value = manifest.get("dropped_chunk_count", 0)
+                if isinstance(value, int) and value > 0:
+                    dropped_for_file = value
+                    dropped_chunk_count += value
+
+            sub_floor_for_file = 0
+            if check_quality and chunk_count > 1:
+                policy_config = ((file_data["indexing_policy"] or {}).get("chunking") or {}).get(
+                    "config"
+                ) or {}
+                fragment_floor = policy_config.get("min_chunk_chars", 200)
+                if isinstance(fragment_floor, int) and fragment_floor > 0:
+                    sub_floor_for_file = sum(
+                        length < fragment_floor for length in file_data["chunk_lengths"]
+                    )
+                    sub_floor_chunk_count += sub_floor_for_file
+                    if sub_floor_for_file:
+                        manifest = file_data["quality_manifest"] or {}
+                        warnings = set(manifest.get("quality_warnings", []))
+                        warnings.add("sub_floor_chunks")
+                        manifest["quality_warnings"] = sorted(warnings)
+                        file_data["quality_manifest"] = manifest
+
             (
                 has_omitted_text,
                 fidelity_degraded,
@@ -796,6 +852,9 @@ class CollectionVerifier:
                 or has_duplicate_source
                 or fidelity_repair_recommended
                 or stale_policy
+                or quality_manifest_missing
+                or sub_floor_for_file > 0
+                or dropped_for_file > 0
             )
 
             file_is_healthy = (
@@ -807,6 +866,9 @@ class CollectionVerifier:
                 and not has_duplicate_source
                 and not fidelity_degraded
                 and not stale_policy
+                and not quality_manifest_missing
+                and sub_floor_for_file == 0
+                and dropped_for_file == 0
             )
 
             if file_is_healthy:
@@ -836,6 +898,9 @@ class CollectionVerifier:
                     recovery_exhausted=recovery_exhausted,
                     repair_recommended=repair_recommended,
                     stale_policy=stale_policy,
+                    dropped_chunk_count=dropped_for_file,
+                    sub_floor_chunk_count=sub_floor_for_file,
+                    quality_manifest_missing=quality_manifest_missing,
                 )
             )
 
@@ -852,6 +917,9 @@ class CollectionVerifier:
             duplicate_items=duplicate_count,
             duplicate_source_groups=len(duplicate_source_groups),
             stale_policy_items=stale_policy_count,
+            dropped_chunks=dropped_chunk_count,
+            sub_floor_chunks=sub_floor_chunk_count,
+            quality_manifest_gaps=quality_manifest_gap_count,
             is_healthy=(
                 incomplete_count == 0
                 and garbled_count == 0
@@ -859,6 +927,9 @@ class CollectionVerifier:
                 and duplicate_count == 0
                 and not duplicate_source_groups
                 and stale_policy_count == 0
+                and dropped_chunk_count == 0
+                and sub_floor_chunk_count == 0
+                and quality_manifest_gap_count == 0
             ),
             files=file_results,
         )

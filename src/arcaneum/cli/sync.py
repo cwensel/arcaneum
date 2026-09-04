@@ -322,9 +322,7 @@ def _upsert_file_manifest(
     from ..indexing.policy import build_indexing_policy
 
     metadata["indexing_policy"] = (
-        quality_manifest.get("indexing_policy")
-        if isinstance(quality_manifest, dict)
-        else None
+        quality_manifest.get("indexing_policy") if isinstance(quality_manifest, dict) else None
     ) or build_indexing_policy(corpus_type)
     if quality_manifest is not None:
         metadata["quality_manifest"] = quality_manifest
@@ -2244,6 +2242,7 @@ def _sync_directory_locked(
                 verbose=verbose,
                 check_quality=is_pdf_corpus,
                 quality_threshold=quality_threshold,
+                deep=True,
             )
 
             if verification_result.is_healthy:

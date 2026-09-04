@@ -6,6 +6,8 @@ Tests for 'arc corpus' subcommands: create, list, delete, info, items, verify, p
 import json
 from types import SimpleNamespace
 
+import pytest
+
 
 def _collection_info(points_count=6, vectors=None):
     if vectors is None:
@@ -184,12 +186,19 @@ def test_corpus_verify_json_exposes_dropped_chunk_manifest(monkeypatch):
     verification = SimpleNamespace(
         collection_name="Docs",
         collection_type="pdf",
-        is_healthy=True,
+        is_healthy=False,
         total_points=0,
         total_items=1,
         complete_items=1,
         incomplete_items=0,
         duplicate_items=0,
+        duplicate_source_groups=1,
+        garbled_items=1,
+        dropout_items=1,
+        dropped_chunks=2,
+        sub_floor_chunks=1,
+        stale_policy_items=1,
+        quality_manifest_gaps=1,
         schema_version=1,
         app_version="test",
         errors=[],
@@ -204,11 +213,13 @@ def test_corpus_verify_json_exposes_dropped_chunk_manifest(monkeypatch):
         ],
     )
     monkeypatch.setattr(corpus, "create_qdrant_client", lambda: object())
-    monkeypatch.setattr(
-        verify_module.CollectionVerifier,
-        "verify_collection",
-        lambda *_args, **_kwargs: verification,
-    )
+    verify_calls = []
+
+    def verify(*args, **kwargs):
+        verify_calls.append((args, kwargs))
+        return verification
+
+    monkeypatch.setattr(verify_module.CollectionVerifier, "verify_collection", verify)
     monkeypatch.setattr(
         corpus,
         "create_meili_client",
@@ -223,9 +234,74 @@ def test_corpus_verify_json_exposes_dropped_chunk_manifest(monkeypatch):
         ),
     )
 
-    corpus.corpus_verify_command("Docs", project=None, verbose=False, output_json=True)
+    corpus.corpus_verify_command("Docs", project=None, verbose=False, output_json=True, deep=False)
 
     assert output["data"]["qdrant"]["files"][0]["quality_manifest"] == manifest
+    assert output["data"]["quality"] == {
+        "garbled_files": 1,
+        "dropout_files": 1,
+        "dropped_chunks": 2,
+        "sub_floor_chunks": 1,
+        "duplicate_source_groups": 1,
+        "stale_policy_files": 1,
+        "incomplete_files": 0,
+        "quality_manifest_gaps": 1,
+        "warnings": [
+            {"code": "garbled_files", "count": 1},
+            {"code": "dropout_files", "count": 1},
+            {"code": "dropped_chunks", "count": 2},
+            {"code": "sub_floor_chunks", "count": 1},
+            {"code": "duplicate_source_groups", "count": 1},
+            {"code": "stale_policy_files", "count": 1},
+            {"code": "quality_manifest_gaps", "count": 1},
+        ],
+        "mode": "persisted",
+    }
+    assert output["data"]["service_errors"] == ["MeiliSearch: Server not available"]
+    assert verify_calls[0][1]["deep"] is False
+
+
+def test_corpus_verify_strict_exits_nonzero_for_quality_issues(monkeypatch):
+    from arcaneum.cli import corpus
+    from arcaneum.indexing import verify as verify_module
+
+    verification = SimpleNamespace(
+        collection_name="Docs",
+        collection_type="pdf",
+        is_healthy=False,
+        total_points=1,
+        total_items=1,
+        complete_items=0,
+        incomplete_items=1,
+        duplicate_items=0,
+        schema_version=1,
+        app_version="test",
+        errors=[],
+        files=[],
+    )
+    monkeypatch.setattr(corpus, "create_qdrant_client", lambda: object())
+    monkeypatch.setattr(
+        verify_module.CollectionVerifier,
+        "verify_collection",
+        lambda *_args, **_kwargs: verification,
+    )
+    monkeypatch.setattr(
+        corpus,
+        "create_meili_client",
+        lambda: SimpleNamespace(health_check=lambda: False),
+    )
+    monkeypatch.setattr(corpus, "print_json", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(SystemExit) as exc_info:
+        corpus.corpus_verify_command(
+            "Docs",
+            project=None,
+            verbose=False,
+            output_json=True,
+            strict=True,
+        )
+
+    assert exc_info.value.code == 1
 
 
 def test_corpus_module_exports_expected_commands():
@@ -260,9 +336,9 @@ class TestCorpusCollectionMetadata:
         from arcaneum.indexing.collection_metadata import CollectionType
 
         values = set(CollectionType.values())
-        assert {"pdf", "code", "markdown"}.issubset(values), (
-            f"CollectionType missing required values: {values}"
-        )
+        assert {"pdf", "code", "markdown"}.issubset(
+            values
+        ), f"CollectionType missing required values: {values}"
 
 
 class TestCorpusDefaultModels:

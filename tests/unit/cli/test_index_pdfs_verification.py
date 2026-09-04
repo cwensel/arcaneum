@@ -1,0 +1,89 @@
+"""PDF verification reporting distinguishes actionable and exhausted failures."""
+
+from io import StringIO
+
+from rich.console import Console
+
+from arcaneum.cli import index_pdfs, sync
+from arcaneum.indexing.verify import CollectionVerificationResult, FileVerificationResult
+
+
+def _result(*files: FileVerificationResult) -> CollectionVerificationResult:
+    return CollectionVerificationResult(
+        collection_name="Papers",
+        collection_type="pdf",
+        total_points=len(files),
+        total_items=len(files),
+        complete_items=0,
+        incomplete_items=len(files),
+        is_healthy=False,
+        files=list(files),
+    )
+
+
+def _capture_report(monkeypatch, result):
+    output = StringIO()
+    monkeypatch.setattr(
+        index_pdfs,
+        "console",
+        Console(file=output, force_terminal=False, color_system=None),
+    )
+    breakdown = index_pdfs._report_pdf_verification_issues(result, repair_flag="--force")
+    return output.getvalue(), breakdown
+
+
+def test_exhausted_only_report_has_no_repair_or_missing_claim(monkeypatch):
+    exhausted = FileVerificationResult(
+        file_path="/papers/exhausted.pdf",
+        expected_chunks=1,
+        actual_chunks=1,
+        is_complete=False,
+        fidelity_degraded=True,
+        recovery_exhausted=True,
+        repair_recommended=False,
+    )
+
+    output, breakdown = _capture_report(monkeypatch, _result(exhausted))
+
+    assert "1 unhealthy files" in output
+    assert "automatic recovery is exhausted" in output
+    assert "0 incomplete" not in output
+    assert "no longer exist" not in output
+    assert "--force" not in output
+    assert breakdown["repairable_files"] == 0
+    assert breakdown["degraded_files"] == 1
+    assert breakdown["recovery_exhausted_files"] == 1
+    assert sync._file_verification_breakdown(_result(exhausted))["repairable_files"] == 0
+
+
+def test_mixed_report_recommends_repair_only_for_actionable_file(monkeypatch):
+    repairable = FileVerificationResult(
+        file_path="/papers/incomplete.pdf",
+        expected_chunks=2,
+        actual_chunks=1,
+        is_complete=False,
+        repair_recommended=True,
+    )
+    exhausted = FileVerificationResult(
+        file_path="/papers/exhausted.pdf",
+        expected_chunks=1,
+        actual_chunks=1,
+        is_complete=False,
+        fidelity_degraded=True,
+        recovery_exhausted=True,
+        repair_recommended=False,
+    )
+
+    output, breakdown = _capture_report(monkeypatch, _result(repairable, exhausted))
+
+    assert "2 unhealthy files" in output
+    assert "1 files can be repaired" in output
+    assert "/papers/incomplete.pdf" in output
+    assert "automatic recovery is exhausted" in output
+    assert "--force" in output
+    assert breakdown["repairable_files"] == 1
+    assert breakdown["degraded_files"] == 1
+    assert breakdown["recovery_exhausted_files"] == 1
+    sync_breakdown = sync._file_verification_breakdown(_result(repairable, exhausted))
+    assert sync_breakdown["repairable_paths"] == ["/papers/incomplete.pdf"]
+    assert sync_breakdown["recovery_exhausted_paths"] == ["/papers/exhausted.pdf"]

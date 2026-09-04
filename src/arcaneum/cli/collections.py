@@ -486,6 +486,13 @@ def verify_collection_command(
 
             console.print(f"[dim]Scanning collection '{name}'...[/dim]")
             result = verifier.verify_collection(name, project_filter=project, verbose=verbose)
+            needs_repair = result.get_items_needing_repair()
+            degraded_count = sum(
+                1 for file in result.files if _json_attr(file, "fidelity_degraded") is True
+            )
+            recovery_exhausted_count = sum(
+                1 for file in result.files if _json_attr(file, "recovery_exhausted") is True
+            )
 
             if output_json:
                 # Build JSON output
@@ -496,6 +503,9 @@ def verify_collection_command(
                     "total_items": result.total_items,
                     "complete_items": result.complete_items,
                     "incomplete_items": result.incomplete_items,
+                    "repairable_items": len(needs_repair),
+                    "degraded_items": degraded_count,
+                    "recovery_exhausted_items": recovery_exhausted_count,
                     "is_healthy": result.is_healthy,
                     "schema_version": _json_attr(result, "schema_version"),
                     "app_version": _json_attr(result, "app_version"),
@@ -535,6 +545,9 @@ def verify_collection_command(
                             "actual_chunks": file.actual_chunks,
                             "completion_percentage": round(file.completion_percentage, 1),
                             "is_complete": file.is_complete,
+                            "fidelity_degraded": bool(_json_attr(file, "fidelity_degraded")),
+                            "recovery_exhausted": bool(_json_attr(file, "recovery_exhausted")),
+                            "repair_recommended": bool(_json_attr(file, "repair_recommended")),
                         }
                         if not file.is_complete:
                             file_data["missing_indices"] = file.missing_indices
@@ -544,7 +557,7 @@ def verify_collection_command(
                         data["files"].append(file_data)
 
                 # Include items needing repair
-                data["needs_repair"] = result.get_items_needing_repair()
+                data["needs_repair"] = needs_repair
 
                 status = "success" if result.is_healthy else "warning"
                 msg = (
@@ -552,7 +565,7 @@ def verify_collection_command(
                     if result.is_healthy
                     else f"Collection '{name}' has verification errors"
                     if result.errors and result.incomplete_items == 0
-                    else f"Collection '{name}' has {result.incomplete_items} incomplete items"
+                    else f"Collection '{name}' has {result.incomplete_items} unhealthy items"
                 )
                 print_json(status, msg, data)
             else:
@@ -579,10 +592,10 @@ def verify_collection_command(
                     console.print("\n[yellow]Collection has verification errors[/yellow]")
                 else:
                     console.print(
-                        f"\n[yellow]Found {result.incomplete_items} incomplete items[/yellow]"
+                        f"\n[yellow]Found {result.incomplete_items} unhealthy items[/yellow]"
                     )
                     console.print(
-                        f"Complete: {result.complete_items}, Incomplete: {result.incomplete_items}"
+                        f"Healthy: {result.complete_items}, Unhealthy: {result.incomplete_items}"
                     )
 
                     # Show incomplete items
@@ -617,7 +630,7 @@ def verify_collection_command(
 
                         console.print(table)
                     else:
-                        table = Table(title="Incomplete Files")
+                        table = Table(title="Unhealthy Files")
                         table.add_column("File", style="cyan", no_wrap=False)
                         table.add_column("Chunks", style="yellow")
                         table.add_column("Completion", style="magenta")
@@ -632,8 +645,13 @@ def verify_collection_command(
 
                         console.print(table)
 
+                        if recovery_exhausted_count:
+                            console.print(
+                                f"[yellow]{recovery_exhausted_count} degraded files remain "
+                                "after OCR; automatic recovery is exhausted[/yellow]"
+                            )
+
                     # Show repair hint
-                    needs_repair = result.get_items_needing_repair()
                     if needs_repair:
                         console.print(f"\n[dim]To repair, re-index the following items:[/dim]")
                         for item in needs_repair[:10]:

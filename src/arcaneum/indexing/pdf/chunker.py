@@ -3,7 +3,7 @@
 import logging
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +16,29 @@ class Chunk:
     chunk_index: int
     token_count: int
     metadata: Dict
+
+
+class ChunkList(list):
+    """Chunks plus file-level replacement-character omission details."""
+
+    def __init__(
+        self, chunks: Iterable[Chunk] = (), *, replacement_omissions: Optional[Dict] = None
+    ):
+        super().__init__(chunks)
+        self.replacement_omissions = replacement_omissions or {
+            "source_character_count": 0,
+            "retained_character_count": 0,
+            "character_count": 0,
+            "replacement_ratio": 0.0,
+            "degraded": False,
+            "singleton_count": 0,
+            "multi_character_run_count": 0,
+            "multi_character_run_character_count": 0,
+            "hard_boundary_count": 0,
+            "hard_boundary_character_count": 0,
+            "normalized_run_count": 0,
+            "normalized_run_character_count": 0,
+        }
 
 
 class PDFChunker:
@@ -53,7 +76,7 @@ class PDFChunker:
         if self.min_chunk_chars < 0:
             raise ValueError("min_chunk_chars must be at least 0")
 
-    def chunk(self, text: str, metadata: Dict) -> List[Chunk]:
+    def chunk(self, text: str, metadata: Dict) -> ChunkList:
         """Chunk text using appropriate strategy.
 
         Strategies:
@@ -84,7 +107,7 @@ class PDFChunker:
             logger.info(f"Using traditional chunking (doc tokens: {estimated_tokens:.0f})")
             return self._traditional_chunking(text, metadata)
 
-    def _late_chunking(self, text: str, metadata: Dict) -> List[Chunk]:
+    def _late_chunking(self, text: str, metadata: Dict) -> ChunkList:
         """Implement late chunking strategy.
 
         Note: This is a simplified example. Production implementation would:
@@ -105,48 +128,44 @@ class PDFChunker:
 
         return chunks
 
-    def _traditional_chunking(self, text: str, metadata: Dict) -> List[Chunk]:
-        """Traditional token-aware chunking with overlap."""
-        spans = []
-        char_to_token = self.model_config.get("char_to_token_ratio", 3.3)
+    def _traditional_chunking(self, text: str, metadata: Dict) -> ChunkList:
+        """Traditional token-aware chunking with overlap.
 
-        # Calculate character limits
+        U+FFFD characters are normalized to spaces so nearby valid text stays
+        searchable. Runs of two or more become hard omitted boundaries only
+        when both adjacent regions contain enough meaningful text; other runs
+        remain length-preserving spaces to avoid tiny-chunk amplification.
+        Source offsets remain coordinates in the original extracted text.
+        """
+        char_to_token = self.model_config.get("char_to_token_ratio", 3.3)
         chunk_chars = max(1, int(self.chunk_size * char_to_token))
         overlap_chars = max(0, int(self.chunk_overlap * char_to_token))
         boundary_window = max(1, (chunk_chars + 4) // 5)
 
-        start = 0
-        while start < len(text):
-            end = min(start + chunk_chars, len(text))
-            if end < len(text):
-                end = self._find_end_boundary(text, start, end, boundary_window)
-
-            chunk_start, chunk_end = self._trim_span(text, start, end)
-            chunk_text = text[chunk_start:chunk_end]
-
-            if chunk_text:
-                spans.append((chunk_start, chunk_end))
-
-            if end >= len(text):
-                break
-
-            # Move start position (with overlap)
-            overlap_end = chunk_end if chunk_text else end
-            desired_start = max(start + 1, overlap_end - overlap_chars)
-            next_start = self._snap_start_to_whitespace(
-                text,
-                desired_start,
-                boundary_window,
-                minimum=start + 1,
-                maximum=overlap_end,
+        regions, replacement_omissions = self._replacement_regions(text)
+        spans = []
+        for source_start, normalized_region in regions:
+            region_spans = self._chunk_region_spans(
+                normalized_region,
+                chunk_chars=chunk_chars,
+                overlap_chars=overlap_chars,
+                boundary_window=boundary_window,
             )
-            start = max(start + 1, next_start)
+            # Merge only within a clean region. A replacement run is a hard
+            # boundary even when either neighboring fragment is below the floor.
+            region_spans = self._merge_fragment_spans(region_spans)
+            spans.extend(
+                (source_start + chunk_start, source_start + chunk_end)
+                for chunk_start, chunk_end in region_spans
+            )
 
-        spans = self._merge_fragment_spans(spans)
         chunk_count = len(spans)
+        if replacement_omissions["character_count"] and chunk_count == 0:
+            replacement_omissions["degraded"] = True
         chunks = []
         for chunk_index, (chunk_start, chunk_end) in enumerate(spans):
-            chunk_text = text[chunk_start:chunk_end]
+            source_text = text[chunk_start:chunk_end]
+            chunk_text = source_text.replace("\ufffd", " ")
             chunk_metadata = {
                 **metadata,
                 "chunk_index": chunk_index,
@@ -155,6 +174,15 @@ class PDFChunker:
                 "chunk_end_char": chunk_end,
                 "late_chunking": False,
             }
+            normalized_count = source_text.count("\ufffd")
+            if normalized_count:
+                chunk_metadata.update(
+                    {
+                        "chunk_text_normalized": True,
+                        "normalized_replacement_character_count": normalized_count,
+                        "chunk_source_offset_semantics": "original_extracted_text_half_open",
+                    }
+                )
             page_number = self._calculate_page_number(chunk_start, metadata.get("page_boundaries"))
             if page_number is not None:
                 chunk_metadata["page_number"] = page_number
@@ -169,7 +197,114 @@ class PDFChunker:
             )
 
         logger.info(f"Created {chunk_count} chunks")
-        return chunks
+        return ChunkList(chunks, replacement_omissions=replacement_omissions)
+
+    def _chunk_region_spans(
+        self,
+        text: str,
+        *,
+        chunk_chars: int,
+        overlap_chars: int,
+        boundary_window: int,
+    ) -> List[tuple[int, int]]:
+        """Return local spans for one region that cannot cross a hard boundary."""
+        spans = []
+        start = 0
+        while start < len(text):
+            end = min(start + chunk_chars, len(text))
+            if end < len(text):
+                end = self._find_end_boundary(text, start, end, boundary_window)
+
+            chunk_start, chunk_end = self._trim_span(text, start, end)
+            if chunk_start < chunk_end:
+                spans.append((chunk_start, chunk_end))
+
+            if end >= len(text):
+                break
+
+            overlap_end = chunk_end if chunk_start < chunk_end else end
+            desired_start = max(start + 1, overlap_end - overlap_chars)
+            next_start = self._snap_start_to_whitespace(
+                text,
+                desired_start,
+                boundary_window,
+                minimum=start + 1,
+                maximum=overlap_end,
+            )
+            start = max(start + 1, next_start)
+
+        return spans
+
+    def _replacement_regions(self, text: str) -> tuple[List[tuple[int, str]], Dict]:
+        """Split only meaningful regions on U+FFFD runs.
+
+        A run becomes a hard boundary only when the immediately adjacent
+        clean regions are both at least ``max(32, min_chunk_chars)`` chars.
+        Shorter neighbors would create low-value tiny chunks, so those runs
+        are length-preserving-normalized to spaces instead. Only aggregate
+        counts are retained to keep manifests bounded for hostile input.
+        """
+        matches = list(re.finditer(r"\ufffd{2,}", text))
+        segment_starts = [0, *(match.end() for match in matches)]
+        segment_ends = [*(match.start() for match in matches), len(text)]
+        segments = [text[start:end] for start, end in zip(segment_starts, segment_ends)]
+        safety_floor = max(32, self.min_chunk_chars)
+        meaningful_character_counts = [
+            sum(1 for character in segment if not character.isspace() and character != "\ufffd")
+            for segment in segments
+        ]
+        hard_boundaries = [
+            meaningful_character_counts[index] >= safety_floor
+            and meaningful_character_counts[index + 1] >= safety_floor
+            for index in range(len(matches))
+        ]
+
+        regions = []
+        region_start = 0
+        region_parts = [segments[0]]
+        for index, match in enumerate(matches):
+            if hard_boundaries[index]:
+                raw_region = "".join(region_parts)
+                if raw_region:
+                    regions.append((region_start, raw_region.replace("\ufffd", " ")))
+                region_start = match.end()
+                region_parts = [segments[index + 1]]
+            else:
+                region_parts.extend((" " * (match.end() - match.start()), segments[index + 1]))
+
+        raw_region = "".join(region_parts)
+        if raw_region:
+            regions.append((region_start, raw_region.replace("\ufffd", " ")))
+
+        multi_character_run_character_count = sum(match.end() - match.start() for match in matches)
+        hard_boundary_character_count = sum(
+            match.end() - match.start()
+            for match, is_hard in zip(matches, hard_boundaries)
+            if is_hard
+        )
+        hard_boundary_count = sum(hard_boundaries)
+        source_character_count = len(text)
+        character_count = text.count("\ufffd")
+        retained_character_count = source_character_count - character_count
+        replacement_ratio = (
+            character_count / source_character_count if source_character_count else 0.0
+        )
+        return regions, {
+            "source_character_count": source_character_count,
+            "retained_character_count": retained_character_count,
+            "character_count": character_count,
+            "replacement_ratio": replacement_ratio,
+            "degraded": replacement_ratio > 0.05,
+            "singleton_count": character_count - multi_character_run_character_count,
+            "multi_character_run_count": len(matches),
+            "multi_character_run_character_count": multi_character_run_character_count,
+            "hard_boundary_count": hard_boundary_count,
+            "hard_boundary_character_count": hard_boundary_character_count,
+            "normalized_run_count": len(matches) - hard_boundary_count,
+            "normalized_run_character_count": (
+                multi_character_run_character_count - hard_boundary_character_count
+            ),
+        }
 
     def _merge_fragment_spans(self, spans: List[tuple[int, int]]) -> List[tuple[int, int]]:
         """Merge sub-floor source spans into an adjacent chunk.

@@ -10,23 +10,13 @@ import pytest
 from PIL import Image
 
 from arcaneum.indexing.common.sync import MetadataBasedSync
+from arcaneum.indexing.pdf.chunker import PDFChunker
 from arcaneum.indexing.pdf.ocr import (
     OCREngine,
     _ocr_single_page_worker,
     merge_extracted_text_with_ocr,
 )
 from arcaneum.indexing.uploader import PDFBatchUploader
-
-
-def _uploader_chunk(text, index, count):
-    from arcaneum.indexing.pdf.chunker import Chunk
-
-    return Chunk(
-        text=text,
-        chunk_index=index,
-        token_count=len(text),
-        metadata={"chunk_index": index, "chunk_count": count},
-    )
 
 
 def test_ocr_module_import_does_not_import_cv2(monkeypatch):
@@ -334,7 +324,7 @@ def test_force_reindex_empty_pdf_records_zero_chunk_manifest(tmp_path):
 
 
 @pytest.mark.parametrize("streaming", [True, False])
-def test_pdf_uploader_drops_replacement_heavy_chunks_before_embedding(tmp_path, streaming):
+def test_pdf_uploader_splits_on_replacement_runs_before_embedding(tmp_path, streaming):
     pdf_path = tmp_path / "mixed.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n")
     qdrant = MagicMock()
@@ -350,21 +340,22 @@ def test_pdf_uploader_drops_replacement_heavy_chunks_before_embedding(tmp_path, 
         ocr_enabled=False,
         streaming=streaming,
     )
+    first = "clean extracted text " * 20
+    second = "more searchable text " * 20
     uploader.extractor.extract = MagicMock(
-        return_value=("clean extracted text " * 20, {"page_count": 1})
+        return_value=(first + "\ufffd" * 30 + second, {"page_count": 1})
     )
     uploader._upload_batch = MagicMock()
     uploaded = []
     uploader._upload_batch.side_effect = lambda _collection, points: uploaded.extend(list(points))
-    chunker = MagicMock()
-    chunker.chunk.return_value = [
-        _uploader_chunk("good first", 0, 3),
-        _uploader_chunk("\ufffd" * 30, 1, 3),
-        _uploader_chunk("good last", 2, 3),
-    ]
+    chunker = PDFChunker(
+        {"chunk_size": 8000, "char_to_token_ratio": 4.0, "min_chunk_chars": 0},
+        overlap_percent=0,
+        late_chunking_enabled=False,
+    )
 
     def embed_parallel(texts, _model, **kwargs):
-        assert texts == ["good first", "good last"]
+        assert texts == [first.strip(), second.strip()]
         vectors = [[0.1, 0.2, 0.3] for _ in texts]
         callback = kwargs.get("on_batch_complete")
         if callback:
@@ -388,11 +379,11 @@ def test_pdf_uploader_drops_replacement_heavy_chunks_before_embedding(tmp_path, 
         if point.payload.get("metadata_type") == "file_manifest"
     ]
     manifest = manifest_points[-1].payload["quality_manifest"]
-    assert manifest["dropped_chunk_count"] == 1
-    assert manifest["dropped_chunk_reason"] == "replacement_character_ratio_gt_0.05"
+    assert manifest["replacement_omissions"]["character_count"] == 30
+    assert manifest["replacement_omissions"]["hard_boundary_count"] == 1
 
 
-def test_pdf_uploader_all_dropped_skips_embedding_and_records_manifest(tmp_path):
+def test_pdf_uploader_all_omitted_skips_embedding_and_records_manifest(tmp_path):
     pdf_path = tmp_path / "garbage.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n")
     qdrant = MagicMock()
@@ -407,9 +398,12 @@ def test_pdf_uploader_all_dropped_skips_embedding_and_records_manifest(tmp_path)
         file_workers=1,
         ocr_enabled=False,
     )
-    uploader.extractor.extract = MagicMock(return_value=("text " * 40, {"page_count": 1}))
-    chunker = MagicMock()
-    chunker.chunk.return_value = [_uploader_chunk("\ufffd" * 30, 0, 1)]
+    uploader.extractor.extract = MagicMock(return_value=("\ufffd" * 120, {"page_count": 1}))
+    chunker = PDFChunker(
+        {"chunk_size": 8000, "char_to_token_ratio": 4.0, "min_chunk_chars": 0},
+        overlap_percent=0,
+        late_chunking_enabled=False,
+    )
 
     result = uploader._process_single_pdf(
         pdf_path, "docs", "stella", chunker, 1, False, 1, 1, force_reindex=True
@@ -423,4 +417,7 @@ def test_pdf_uploader_all_dropped_skips_embedding_and_records_manifest(tmp_path)
         for point in call.kwargs["points"]
         if point.payload.get("metadata_type") == "file_manifest"
     ]
-    assert manifest_points[-1].payload["quality_manifest"]["dropped_chunk_count"] == 1
+    manifest = manifest_points[-1].payload["quality_manifest"]
+    assert manifest["replacement_omissions"]["character_count"] == 120
+    assert manifest["replacement_omissions"]["hard_boundary_count"] == 0
+    assert manifest["replacement_omissions"]["normalized_run_count"] == 1

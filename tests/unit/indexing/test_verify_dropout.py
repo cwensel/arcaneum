@@ -417,6 +417,223 @@ def test_all_dropped_file_manifest_is_exposed_by_verify_json_model(qdrant_client
     assert result.total_items == 1
     assert result.files[0].actual_chunks == 0
     assert result.files[0].quality_manifest == manifest
+    assert result.files[0].has_omitted_text is True
+    assert result.files[0].fidelity_degraded is True
+    assert result.files[0].recovery_exhausted is False
+    assert result.files[0].repair_recommended is True
+    assert result.files[0].is_complete is False
+    assert result.is_healthy is False
+    assert result.get_items_needing_repair() == ["/tmp/all-garbage.pdf"]
+
+
+def test_current_partial_replacement_omissions_are_observable_but_healthy(
+    qdrant_client,
+):
+    file_path = "/tmp/normalized.pdf"
+    manifest = {
+        "chunk_count": 1,
+        "replacement_omissions": {
+            "source_character_count": 100,
+            "retained_character_count": 95,
+            "character_count": 5,
+            "replacement_ratio": 0.05,
+            "degraded": False,
+            "singleton_count": 5,
+            "multi_character_run_count": 0,
+            "multi_character_run_character_count": 0,
+            "hard_boundary_count": 0,
+            "hard_boundary_character_count": 0,
+            "normalized_run_count": 0,
+            "normalized_run_character_count": 0,
+        },
+        "quality_warnings": ["replacement_characters_omitted"],
+    }
+    qdrant_client.scroll.side_effect = _scroll_once(
+        [
+            _point(
+                {
+                    "file_path": file_path,
+                    "chunk_index": 0,
+                    "chunk_count": 1,
+                    "quality_manifest": manifest,
+                }
+            )
+        ]
+    )
+
+    with patch.object(verify_mod, "get_collection_type", return_value="pdf"):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=1,
+        )
+
+    file_result = result.files[0]
+    assert file_result.expected_chunks == 1
+    assert file_result.actual_chunks == 1
+    assert file_result.missing_indices == []
+    assert file_result.has_omitted_text is True
+    assert file_result.fidelity_degraded is False
+    assert file_result.recovery_exhausted is False
+    assert file_result.repair_recommended is False
+    assert file_result.is_complete is True
+    assert result.is_healthy is True
+    assert result.get_items_needing_repair() == []
+
+
+def test_over_five_percent_replacement_loss_is_degraded_and_repairable(qdrant_client):
+    file_path = "/tmp/degraded.pdf"
+    manifest = {
+        "chunk_count": 1,
+        "dropped_chunk_count": 0,
+        "dropped_chunk_reason": None,
+        "replacement_omissions": {
+            "source_character_count": 100,
+            "retained_character_count": 94,
+            "character_count": 6,
+            "replacement_ratio": 0.06,
+            "degraded": True,
+        },
+        "ocr": {"triggered": False},
+        "quality_warnings": ["replacement_characters_omitted"],
+    }
+    qdrant_client.scroll.side_effect = _scroll_once(
+        [
+            _point(
+                {
+                    "file_path": file_path,
+                    "chunk_index": 0,
+                    "chunk_count": 1,
+                    "quality_manifest": manifest,
+                }
+            )
+        ]
+    )
+
+    with patch.object(verify_mod, "get_collection_type", return_value="pdf"):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=1,
+        )
+
+    file_result = result.files[0]
+    assert file_result.has_omitted_text is True
+    assert file_result.fidelity_degraded is True
+    assert file_result.recovery_exhausted is False
+    assert file_result.repair_recommended is True
+    assert file_result.is_complete is False
+    assert "replacement_fidelity_degraded" in file_result.quality_manifest["quality_warnings"]
+    assert result.is_healthy is False
+    assert result.get_items_needing_repair() == [file_path]
+
+
+def test_ocr_exhausted_degradation_is_unhealthy_but_not_requeued(qdrant_client):
+    file_path = "/tmp/ocr-exhausted.pdf"
+    manifest = {
+        "chunk_count": 1,
+        "dropped_chunk_count": 0,
+        "dropped_chunk_reason": None,
+        "replacement_omissions": {
+            "source_character_count": 100,
+            "retained_character_count": 10,
+            "character_count": 90,
+            "replacement_ratio": 0.9,
+            "degraded": True,
+        },
+        "ocr": {"triggered": True, "reason": "garbled"},
+        "quality_warnings": ["replacement_characters_omitted"],
+    }
+    qdrant_client.scroll.side_effect = _scroll_once(
+        [
+            _point(
+                {
+                    "file_path": file_path,
+                    "chunk_index": 0,
+                    "chunk_count": 1,
+                    "text": "still unreadable after OCR",
+                    "quality_manifest": manifest,
+                }
+            )
+        ]
+    )
+
+    with (
+        patch.object(verify_mod, "get_collection_type", return_value="pdf"),
+        patch("arcaneum.indexing.pdf.quality.score_text", return_value=0.1),
+    ):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=1,
+            check_quality=True,
+        )
+
+    file_result = result.files[0]
+    assert file_result.fidelity_degraded is True
+    assert file_result.recovery_exhausted is True
+    assert file_result.has_garbled_text is True
+    assert file_result.repair_recommended is False
+    assert file_result.is_complete is False
+    assert "replacement_recovery_exhausted" in file_result.quality_manifest["quality_warnings"]
+    assert result.is_healthy is False
+    assert result.get_items_needing_repair() == []
+
+
+def test_all_omitted_current_manifest_keeps_zero_chunk_structure_coherent(qdrant_client):
+    file_path = "/tmp/all-omitted.pdf"
+    manifest = {
+        "chunk_count": 0,
+        "replacement_omissions": {
+            "source_character_count": 30,
+            "retained_character_count": 0,
+            "character_count": 30,
+            "replacement_ratio": 1.0,
+            "degraded": True,
+            "singleton_count": 0,
+            "multi_character_run_count": 1,
+            "multi_character_run_character_count": 30,
+            "hard_boundary_count": 0,
+            "hard_boundary_character_count": 0,
+            "normalized_run_count": 1,
+            "normalized_run_character_count": 30,
+        },
+        "quality_warnings": ["replacement_characters_omitted"],
+    }
+    qdrant_client.scroll.return_value = ([], None)
+
+    with (
+        patch.object(verify_mod, "file_manifests_ready", return_value=True),
+        patch.object(
+            verify_mod.MetadataBasedSync,
+            "get_file_manifest_snapshot",
+            return_value={
+                file_path: {
+                    "file_path": file_path,
+                    "chunk_count": 0,
+                    "quality_manifest": manifest,
+                }
+            },
+        ),
+    ):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=0,
+        )
+
+    file_result = result.files[0]
+    assert file_result.expected_chunks == 0
+    assert file_result.actual_chunks == 0
+    assert file_result.missing_indices == []
+    assert file_result.completion_percentage == 100.0
+    assert file_result.has_omitted_text is True
+    assert file_result.fidelity_degraded is True
+    assert file_result.recovery_exhausted is False
+    assert file_result.repair_recommended is True
+    assert file_result.is_complete is False
+    assert result.is_healthy is False
+    assert result.get_items_needing_repair() == [file_path]
 
 
 def test_chunk_count_rejects_sparse_out_of_range_indices(qdrant_client):

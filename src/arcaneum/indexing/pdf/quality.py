@@ -7,27 +7,13 @@ that need re-extraction with the updated pymupdf4llm auto-OCR.
 
 import logging
 import re
-from typing import Any
 
 logger = logging.getLogger(__name__)
-
-REPLACEMENT_HEAVY_DROP_REASON = "replacement_character_ratio_gt_0.05"
 
 
 def is_replacement_heavy(text: str) -> bool:
     """Return whether more than five percent of a chunk is U+FFFD."""
     return bool(text) and text.count("\ufffd") / len(text) > 0.05
-
-
-def filter_replacement_heavy_chunks(chunks: list[Any]) -> tuple[list[Any], int]:
-    """Drop U+FFFD-heavy chunks and densely renumber the retained chunks."""
-    retained = [chunk for chunk in chunks if not is_replacement_heavy(chunk.text)]
-    chunk_count = len(retained)
-    for chunk_index, chunk in enumerate(retained):
-        chunk.chunk_index = chunk_index
-        chunk.metadata["chunk_index"] = chunk_index
-        chunk.metadata["chunk_count"] = chunk_count
-    return retained, len(chunks) - chunk_count
 
 
 # High-frequency English stop words for readability detection

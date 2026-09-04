@@ -26,6 +26,55 @@ console = Console()
 logger = logging.getLogger(__name__)
 
 
+def _verification_breakdown(verification_result):
+    """Return bounded-count categories for PDF verification reporting."""
+    files = getattr(verification_result, "files", [])
+    repairable = verification_result.get_items_needing_repair()
+    degraded = [file.file_path for file in files if getattr(file, "fidelity_degraded", False)]
+    recovery_exhausted = [
+        file.file_path for file in files if getattr(file, "recovery_exhausted", False)
+    ]
+    return {
+        "repairable_paths": repairable,
+        "degraded_paths": degraded,
+        "recovery_exhausted_paths": recovery_exhausted,
+        "repairable_files": len(repairable),
+        "degraded_files": len(degraded),
+        "recovery_exhausted_files": len(recovery_exhausted),
+    }
+
+
+def _report_pdf_verification_issues(verification_result, *, repair_flag: str):
+    """Report unhealthy PDF files without presenting exhausted recovery as actionable."""
+    breakdown = _verification_breakdown(verification_result)
+    repairable = breakdown["repairable_paths"]
+    exhausted = breakdown["recovery_exhausted_paths"]
+
+    console.print(
+        f"[yellow]⚠ Verification found {verification_result.incomplete_items} "
+        "unhealthy files[/yellow]"
+    )
+    if repairable:
+        console.print(f"[yellow]{len(repairable)} files can be repaired[/yellow]")
+        for item in repairable[:5]:
+            console.print(f"  [yellow]{item}[/yellow]")
+        if len(repairable) > 5:
+            console.print(f"  [dim]... and {len(repairable) - 5} more[/dim]")
+    if exhausted:
+        console.print(
+            f"[yellow]{len(exhausted)} degraded files remain after OCR; "
+            "automatic recovery is exhausted[/yellow]"
+        )
+        for item in exhausted[:5]:
+            console.print(f"  [dim]{item}[/dim]")
+        if len(exhausted) > 5:
+            console.print(f"  [dim]... and {len(exhausted) - 5} more[/dim]")
+    if repairable:
+        console.print(f"[dim]Re-run with {repair_flag} to repair eligible files[/dim]")
+
+    return breakdown
+
+
 def index_pdfs_command(
     path: str,
     from_file: str,
@@ -438,6 +487,7 @@ def index_pdfs_command(
 
             verifier = CollectionVerifier(qdrant)
             verification_result = verifier.verify_collection(collection, verbose=verbose)
+            verification_breakdown = _verification_breakdown(verification_result)
 
             if verification_result.is_healthy:
                 if not output_json:
@@ -445,20 +495,20 @@ def index_pdfs_command(
                         f"[green]✓ Collection verified - all {verification_result.complete_items} files complete[/green]"
                     )
             else:
-                incomplete = verification_result.get_items_needing_repair()
                 if not output_json:
-                    console.print(f"[yellow]⚠ Found {len(incomplete)} incomplete files[/yellow]")
-                    for item in incomplete[:5]:
-                        console.print(f"  [yellow]{item}[/yellow]")
-                    if len(incomplete) > 5:
-                        console.print(f"  [dim]... and {len(incomplete) - 5} more[/dim]")
-                    console.print("[dim]Re-run with --force to repair incomplete files[/dim]")
+                    _report_pdf_verification_issues(
+                        verification_result,
+                        repair_flag="--force",
+                    )
 
             stats["verification"] = {
                 "is_healthy": verification_result.is_healthy,
                 "total_files": verification_result.total_items,
                 "complete_files": verification_result.complete_items,
                 "incomplete_files": verification_result.incomplete_items,
+                "repairable_files": verification_breakdown["repairable_files"],
+                "degraded_files": verification_breakdown["degraded_files"],
+                "recovery_exhausted_files": verification_breakdown["recovery_exhausted_files"],
             }
 
         # Output results

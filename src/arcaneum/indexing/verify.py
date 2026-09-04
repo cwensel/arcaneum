@@ -38,6 +38,34 @@ from arcaneum.indexing.common.sync import MetadataBasedSync
 logger = logging.getLogger(__name__)
 
 
+def _manifest_fidelity_state(
+    manifest: Optional[dict], chunk_count: int
+) -> tuple[bool, bool, bool, bool]:
+    """Return observed, degraded, recovery-exhausted, and repair flags."""
+    if not isinstance(manifest, dict):
+        return False, False, False, False
+    legacy_count = manifest.get("dropped_chunk_count", 0)
+    if isinstance(legacy_count, (int, float)) and legacy_count > 0:
+        return True, True, False, True
+    replacement_omissions = manifest.get("replacement_omissions")
+    if isinstance(replacement_omissions, dict):
+        count = replacement_omissions.get("character_count", 0)
+        if isinstance(count, (int, float)) and count > 0:
+            ratio = replacement_omissions.get("replacement_ratio")
+            if not isinstance(ratio, (int, float)):
+                source_count = replacement_omissions.get("source_character_count", 0)
+                ratio = (
+                    count / source_count
+                    if isinstance(source_count, (int, float)) and source_count > 0
+                    else 0.0
+                )
+            degraded = ratio > 0.05 or chunk_count == 0
+            ocr = manifest.get("ocr")
+            recovery_exhausted = degraded and isinstance(ocr, dict) and bool(ocr.get("triggered"))
+            return True, degraded, recovery_exhausted, degraded and not recovery_exhausted
+    return False, False, False, False
+
+
 def _source_hash_matches_disk(file_path: str, source_hash: str) -> bool:
     """Return True when a stored source hash matches a known indexer format."""
     sha256 = hashlib.sha256()
@@ -105,6 +133,10 @@ class FileVerificationResult:
     total_text_chars: int = 0  # sum of chunk text lengths (for dropout detection)
     page_count: Optional[int] = None  # authoritative page count from PDF
     quality_manifest: Optional[dict] = None  # per-file extraction quality summary
+    has_omitted_text: bool = False  # source text was omitted or normalized before indexing
+    fidelity_degraded: bool = False  # replacements exceed the fidelity threshold
+    recovery_exhausted: bool = False  # degraded after OCR already ran
+    repair_recommended: bool = False  # safe to enqueue for automatic repair
 
     @property
     def completion_percentage(self) -> float:
@@ -162,18 +194,11 @@ class CollectionVerificationResult:
     errors: List[str] = field(default_factory=list)
 
     def get_items_needing_repair(self) -> List[str]:
-        """Return items needing re-indexing (incomplete, garbled, dropout, or duplicated)."""
+        """Return items for which an automatic re-index attempt is recommended."""
         if self.collection_type == "code":
             return [p.identifier for p in self.projects if not p.is_complete]
         else:
-            return [
-                f.file_path
-                for f in self.files
-                if not f.is_complete
-                or f.has_garbled_text
-                or f.suspected_dropout
-                or f.has_duplicate_chunks
-            ]
+            return [f.file_path for f in self.files if f.repair_recommended]
 
 
 class CollectionVerifier:
@@ -693,12 +718,43 @@ class CollectionVerifier:
             if has_duplicates:
                 duplicate_count += 1
 
+            manifest = file_data["quality_manifest"]
+            (
+                has_omitted_text,
+                fidelity_degraded,
+                recovery_exhausted,
+                fidelity_repair_recommended,
+            ) = _manifest_fidelity_state(manifest, chunk_count)
+            if has_omitted_text:
+                manifest = manifest or {}
+                warnings = set(manifest.get("quality_warnings", []))
+                if manifest.get("dropped_chunk_count", 0):
+                    warnings.add("replacement_heavy_chunks_dropped")
+                else:
+                    warnings.add("replacement_characters_omitted")
+                if fidelity_degraded:
+                    warnings.add("replacement_fidelity_degraded")
+                if recovery_exhausted:
+                    warnings.add("replacement_recovery_exhausted")
+                manifest["quality_warnings"] = sorted(warnings)
+                file_data["quality_manifest"] = manifest
+
+            repair_recommended = (
+                not is_complete
+                or (has_garbled and not recovery_exhausted)
+                or suspected_dropout
+                or stale_source
+                or has_duplicates
+                or fidelity_repair_recommended
+            )
+
             file_is_healthy = (
                 is_complete
                 and not has_garbled
                 and not suspected_dropout
                 and not stale_source
                 and not has_duplicates
+                and not fidelity_degraded
             )
 
             if file_is_healthy:
@@ -721,6 +777,10 @@ class CollectionVerifier:
                     total_text_chars=total_text_chars,
                     page_count=page_count,
                     quality_manifest=file_data["quality_manifest"],
+                    has_omitted_text=has_omitted_text,
+                    fidelity_degraded=fidelity_degraded,
+                    recovery_exhausted=recovery_exhausted,
+                    repair_recommended=repair_recommended,
                 )
             )
 

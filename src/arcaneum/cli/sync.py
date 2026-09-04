@@ -1513,6 +1513,24 @@ class PDFChunkList(list):
         self.quality_manifest = quality_manifest
 
 
+def _file_verification_breakdown(verification_result):
+    """Group file verification outcomes into actionable and exhausted states."""
+    files = getattr(verification_result, "files", [])
+    repairable = verification_result.get_items_needing_repair()
+    degraded = [file.file_path for file in files if getattr(file, "fidelity_degraded", False)]
+    recovery_exhausted = [
+        file.file_path for file in files if getattr(file, "recovery_exhausted", False)
+    ]
+    return {
+        "repairable_paths": repairable,
+        "degraded_paths": degraded,
+        "recovery_exhausted_paths": recovery_exhausted,
+        "repairable_files": len(repairable),
+        "degraded_files": len(degraded),
+        "recovery_exhausted_files": len(recovery_exhausted),
+    }
+
+
 def _handle_renames_meili(
     renames: List[Tuple[str, str]],
     qdrant,
@@ -1694,6 +1712,7 @@ def chunk_pdf_file(
 
     if run_ocr and not use_ocr:
         # Re-extract with pymupdf4llm auto-OCR (handles garbled spans)
+        metadata["ocr_triggered_by"] = ocr_triggered_by or "quality"
         try:
             ocr_extractor = PDFExtractor(use_ocr=True)
             ocr_text, ocr_metadata = ocr_extractor.extract(file_path)
@@ -1703,8 +1722,8 @@ def chunk_pdf_file(
                 ocr_text,
                 ocr_metadata,
             )
-            metadata["ocr_triggered_by"] = ocr_triggered_by or "quality"
         except Exception as e:
+            metadata["ocr_attempt_failed"] = True
             logger.warning(f"OCR re-extraction failed for {file_path}: {e}")
 
     # Dropout fallback: the default extractor delegates to pymupdf4llm which
@@ -1739,6 +1758,7 @@ def chunk_pdf_file(
 
     # Final fallback: Tesseract OCR for completely empty extractions
     if not text or len(text.strip()) < 100:
+        metadata["ocr_triggered_by"] = "empty"
         try:
             ocr_engine = OCREngine(language="eng")
             ocr_text, ocr_metadata = ocr_engine.process_pdf(file_path)
@@ -1748,8 +1768,8 @@ def chunk_pdf_file(
                 ocr_text,
                 ocr_metadata,
             )
-            metadata["ocr_triggered_by"] = "empty"
         except Exception as e:
+            metadata["ocr_attempt_failed"] = True
             logger.warning(f"OCR failed for {file_path}: {e}")
 
     if not text or not text.strip():
@@ -1773,36 +1793,25 @@ def chunk_pdf_file(
         "ocr_low_confidence_word_count": metadata.get("ocr_low_confidence_word_count", 0),
         "ocr_merge_strategy": metadata.get("ocr_merge_strategy"),
         "ocr_triggered_by": metadata.get("ocr_triggered_by"),
+        "ocr_attempt_failed": metadata.get("ocr_attempt_failed", False),
     }
     if extraction_floor:
         base_metadata["extraction_floor"] = True
         metadata["extraction_floor"] = True
 
     source_hash = compute_file_hash(file_path)
+    chunks = chunker.chunk(text, base_metadata)
     quality_manifest = _build_quality_manifest(
         file_path=file_path,
         corpus_type="pdf",
         source_hash=source_hash,
-        chunk_count=0,
-        metadata={**metadata, **base_metadata},
+        chunk_count=len(chunks),
+        metadata={
+            **metadata,
+            **base_metadata,
+            "replacement_omissions": getattr(chunks, "replacement_omissions", None),
+        },
     )
-    base_metadata["quality_manifest"] = quality_manifest
-    chunks = chunker.chunk(text, base_metadata)
-    from ..indexing.pdf.quality import (
-        REPLACEMENT_HEAVY_DROP_REASON,
-        filter_replacement_heavy_chunks,
-    )
-
-    chunks, dropped_chunk_count = filter_replacement_heavy_chunks(chunks)
-    quality_manifest["chunk_count"] = len(chunks)
-    quality_manifest["dropped_chunk_count"] = dropped_chunk_count
-    quality_manifest["dropped_chunk_reason"] = (
-        REPLACEMENT_HEAVY_DROP_REASON if dropped_chunk_count else None
-    )
-    if dropped_chunk_count:
-        quality_manifest["quality_warnings"] = sorted(
-            {*quality_manifest["quality_warnings"], "replacement_heavy_chunks_dropped"}
-        )
     for chunk in chunks:
         chunk.metadata["quality_manifest"] = quality_manifest
 
@@ -2240,11 +2249,18 @@ def _sync_directory_locked(
                         data={
                             "total_files": verification_result.total_items,
                             "complete_files": verification_result.complete_items,
+                            "repairable_files": 0,
+                            "degraded_files": 0,
+                            "recovery_exhausted_files": 0,
                             "repaired": 0,
                         },
                     )
                 interaction_logger.finish(result_count=0)
                 return
+
+            verification_breakdown = _file_verification_breakdown(verification_result)
+            degraded_paths = verification_breakdown["degraded_paths"]
+            recovery_exhausted_paths = verification_breakdown["recovery_exhausted_paths"]
 
             # Report garbled files separately from incomplete files
             garbled_count = verification_result.garbled_items
@@ -2297,11 +2313,22 @@ def _sync_directory_locked(
                 if len(duplicate_files) > 5:
                     console.print(f"  [dim]... and {len(duplicate_files) - 5} more[/dim]")
 
-            incomplete_paths = verification_result.get_items_needing_repair()
+            if recovery_exhausted_paths and not output_json:
+                console.print(
+                    f"[yellow]⚠ Found {len(recovery_exhausted_paths)} degraded files "
+                    "after OCR; automatic recovery is exhausted[/yellow]"
+                )
+                for path in recovery_exhausted_paths[:5]:
+                    console.print(f"  [dim]{path}[/dim]")
+                if len(recovery_exhausted_paths) > 5:
+                    console.print(f"  [dim]... and {len(recovery_exhausted_paths) - 5} more[/dim]")
 
-            # Filter to files that still exist on disk
-            existing_incomplete = [p for p in incomplete_paths if Path(p).exists()]
-            missing_from_disk = [p for p in incomplete_paths if not Path(p).exists()]
+            repairable_paths = verification_breakdown["repairable_paths"]
+
+            # Only actionable paths participate in disk checks. Recovery-exhausted
+            # files remain indexed and must not be misreported as missing.
+            existing_repairable = [p for p in repairable_paths if Path(p).exists()]
+            missing_from_disk = [p for p in repairable_paths if not Path(p).exists()]
 
             if missing_from_disk and not output_json:
                 console.print(
@@ -2312,17 +2339,26 @@ def _sync_directory_locked(
                 if len(missing_from_disk) > 5:
                     console.print(f"  [dim]... and {len(missing_from_disk) - 5} more[/dim]")
 
-            if not existing_incomplete:
+            if not existing_repairable:
                 if not output_json:
-                    console.print(
-                        "[yellow]No repairable files found (files no longer exist on disk)[/yellow]"
-                    )
+                    if recovery_exhausted_paths:
+                        console.print(
+                            "[yellow]No automatic repairs recommended; degraded files "
+                            "have exhausted OCR recovery[/yellow]"
+                        )
+                    elif missing_from_disk:
+                        console.print("[yellow]No on-disk repairable files found[/yellow]")
+                    else:
+                        console.print("[yellow]No repairable files found[/yellow]")
                 else:
                     print_json(
                         "warning",
                         "No repairable files found",
                         data={
-                            "incomplete_files": len(incomplete_paths),
+                            "incomplete_files": verification_result.incomplete_items,
+                            "repairable_files": len(repairable_paths),
+                            "degraded_files": len(degraded_paths),
+                            "recovery_exhausted_files": len(recovery_exhausted_paths),
                             "garbled_files": garbled_count,
                             "duplicate_files": duplicate_count,
                             "missing_from_disk": len(missing_from_disk),
@@ -2333,8 +2369,8 @@ def _sync_directory_locked(
                 return
 
             if not output_json:
-                console.print(f"[blue]Found {len(existing_incomplete)} files to repair[/blue]")
-                for p in existing_incomplete:
+                console.print(f"[blue]Found {len(existing_repairable)} files to repair[/blue]")
+                for p in existing_repairable:
                     console.print(f"  [dim]{p}[/dim]")
 
             if dry_run:
@@ -2345,10 +2381,12 @@ def _sync_directory_locked(
                         "success",
                         "Dry run complete",
                         data={
-                            "would_repair": len(existing_incomplete),
+                            "would_repair": len(existing_repairable),
+                            "degraded_files": len(degraded_paths),
+                            "recovery_exhausted_files": len(recovery_exhausted_paths),
                             "garbled_files": garbled_count,
                             "duplicate_files": duplicate_count,
-                            "files": existing_incomplete,
+                            "files": existing_repairable,
                         },
                     )
                 interaction_logger.finish(result_count=0)
@@ -2362,7 +2400,7 @@ def _sync_directory_locked(
             }
 
             # Set up for re-indexing: use incomplete files as single_files with force
-            single_files = [Path(p).resolve() for p in existing_incomplete]
+            single_files = [Path(p).resolve() for p in existing_repairable]
             dir_paths = []
             force = True
 
@@ -4080,22 +4118,37 @@ def _sync_directory_locked(
                         f"[green]✓ Collection verified - all {verification_result.complete_items} files complete[/green]"
                     )
             else:
-                incomplete = verification_result.get_items_needing_repair()
+                verification_breakdown = _file_verification_breakdown(verification_result)
+                repairable_paths = verification_breakdown["repairable_paths"]
+                recovery_exhausted_paths = verification_breakdown["recovery_exhausted_paths"]
                 if not output_json:
-                    console.print(f"[yellow]⚠ Found {len(incomplete)} incomplete files[/yellow]")
-                    for item in incomplete[:5]:
-                        console.print(f"  [yellow]{item}[/yellow]")
-                    if len(incomplete) > 5:
-                        console.print(f"  [dim]... and {len(incomplete) - 5} more[/dim]")
                     console.print(
-                        "[dim]Re-run with --repair to re-index only incomplete files[/dim]"
+                        f"[yellow]⚠ Verification found {verification_result.incomplete_items} "
+                        "unhealthy files[/yellow]"
                     )
+                    if repairable_paths:
+                        console.print(
+                            f"[yellow]{len(repairable_paths)} files can be repaired[/yellow]"
+                        )
+                        for item in repairable_paths[:5]:
+                            console.print(f"  [yellow]{item}[/yellow]")
+                    if recovery_exhausted_paths:
+                        console.print(
+                            f"[yellow]{len(recovery_exhausted_paths)} degraded files remain "
+                            "after OCR; automatic recovery is exhausted[/yellow]"
+                        )
+                    if repairable_paths:
+                        console.print("[dim]Re-run with --repair to re-index eligible files[/dim]")
 
+            verification_breakdown = _file_verification_breakdown(verification_result)
             data["verification"] = {
                 "is_healthy": verification_result.is_healthy,
                 "total_files": verification_result.total_items,
                 "complete_files": verification_result.complete_items,
                 "incomplete_files": verification_result.incomplete_items,
+                "repairable_files": verification_breakdown["repairable_files"],
+                "degraded_files": verification_breakdown["degraded_files"],
+                "recovery_exhausted_files": verification_breakdown["recovery_exhausted_files"],
             }
 
         # Log successful operation (RDR-018)

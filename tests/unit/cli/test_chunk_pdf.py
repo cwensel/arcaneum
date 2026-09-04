@@ -14,6 +14,7 @@ import pytest
 
 from arcaneum.cli.sync import _build_quality_manifest, chunk_pdf_file
 from arcaneum.indexing.pdf.quality import is_replacement_heavy
+from arcaneum.indexing.verify import _manifest_fidelity_state
 
 
 def _make_chunk(text, metadata):
@@ -154,11 +155,11 @@ class TestDropoutFallback:
         chunker.chunk.side_effect = fake_chunk
         mock_chunker_cls.return_value = chunker
 
-        chunk_pdf_file(fake_pdf, model_config, use_ocr=False)
+        result = chunk_pdf_file(fake_pdf, model_config, use_ocr=False)
 
         # extraction_floor should be set because fallback didn't improve enough
         assert captured_meta.get("extraction_floor") is True
-        manifest = captured_meta["quality_manifest"]
+        manifest = result.quality_manifest
         assert manifest["fallback_method"] == "normalized_bypass_no_improvement"
         assert "extraction_floor" in manifest["quality_warnings"]
 
@@ -238,7 +239,7 @@ class TestSoftQualityGate:
         assert "clean OCR text with full content" in captured["text"]
         assert captured["metadata"]["ocr_merge_strategy"] == "append_ocr_to_extracted_text"
         assert captured["metadata"]["ocr_triggered_by"] == "quality"
-        manifest = captured["metadata"]["quality_manifest"]
+        manifest = result.quality_manifest
         assert manifest["ocr"]["triggered"] is True
         assert manifest["ocr"]["reason"] == "quality"
         assert manifest["ocr"]["confidence"] == 72.0
@@ -361,73 +362,129 @@ def test_quality_manifest_marks_forced_ocr(tmp_path):
 
     assert manifest["ocr"]["triggered"] is True
     assert manifest["ocr"]["reason"] == "forced"
+    assert manifest["dropped_chunk_count"] == 0
+    assert manifest["dropped_chunk_reason"] is None
 
 
-@patch("arcaneum.indexing.pdf.chunker.PDFChunker")
+def test_quality_manifest_marks_degraded_ocr_as_recovery_exhausted(tmp_path):
+    source = tmp_path / "degraded.pdf"
+    source.write_bytes(b"%PDF-1.4\n")
+
+    manifest = _build_quality_manifest(
+        file_path=source,
+        corpus_type="pdf",
+        source_hash="abc123",
+        chunk_count=1,
+        metadata={
+            "ocr_triggered_by": "garbled",
+            "replacement_omissions": {
+                "source_character_count": 100,
+                "retained_character_count": 10,
+                "character_count": 90,
+                "replacement_ratio": 0.9,
+                "degraded": True,
+            },
+        },
+    )
+
+    assert "replacement_fidelity_degraded" in manifest["quality_warnings"]
+    assert "replacement_recovery_exhausted" in manifest["quality_warnings"]
+
+
+@patch("arcaneum.indexing.pdf.extractor.PDFExtractor")
+@patch("arcaneum.indexing.pdf.quality.looks_like_dropout", return_value=False)
+@patch("arcaneum.indexing.pdf.quality.needs_ocr", return_value=True)
+def test_failed_ocr_attempt_converges_without_repair_loop(
+    _needs_ocr,
+    _dropout,
+    extractor_cls,
+    fake_pdf,
+    model_config,
+):
+    text = ("readable source text " * 20) + ("\ufffd" * 40)
+    initial_extractor = MagicMock()
+    initial_extractor.extract.return_value = (
+        text,
+        {"page_count": 1, "page_boundaries": []},
+    )
+    ocr_extractor = MagicMock()
+    ocr_extractor.extract.side_effect = RuntimeError("unbounded detail " * 1000)
+    extractor_cls.side_effect = [initial_extractor, ocr_extractor]
+
+    result = chunk_pdf_file(fake_pdf, model_config)
+
+    assert len(result) == 1
+    manifest = result.quality_manifest
+    assert manifest["ocr"]["triggered"] is True
+    assert manifest["ocr"]["reason"] == "garbled"
+    assert manifest["ocr"]["attempt_failed"] is True
+    assert "ocr_attempt_failed" in manifest["quality_warnings"]
+    assert "replacement_recovery_exhausted" in manifest["quality_warnings"]
+    assert "unbounded detail" not in str(manifest)
+    assert _manifest_fidelity_state(manifest, len(result)) == (True, True, True, False)
+
+
 @patch("arcaneum.indexing.pdf.extractor.PDFExtractor")
 @patch("arcaneum.indexing.pdf.quality.looks_like_dropout", return_value=False)
 @patch("arcaneum.indexing.pdf.quality.score_text", return_value=0.9)
 @patch("arcaneum.indexing.pdf.quality.needs_ocr", return_value=False)
-def test_replacement_heavy_chunks_are_dropped_and_survivors_are_dense(
+def test_replacement_runs_split_chunks_and_preserve_clean_text(
     _needs_ocr,
     _score_text,
     _dropout,
     extractor_cls,
-    chunker_cls,
     fake_pdf,
     model_config,
 ):
+    first = _REALISTIC_TEXT
+    second = _REALISTIC_TEXT.replace("paper", "study")
+    text = first + "\ufffd" * 20 + second
     extractor_cls.return_value.extract.return_value = (
-        _REALISTIC_TEXT,
+        text,
         {"page_count": 1, "page_boundaries": []},
     )
-    metadata = {"file_path": str(fake_pdf), "page_count": 1}
-    chunker_cls.return_value.chunk.return_value = [
-        _make_chunk("good first", dict(metadata)),
-        _make_chunk("\ufffd" * 20, dict(metadata)),
-        _make_chunk("good last", dict(metadata)),
-    ]
-    for index, chunk in enumerate(chunker_cls.return_value.chunk.return_value):
-        chunk.chunk_index = index
-        chunk.metadata["chunk_index"] = index
-        chunk.metadata["chunk_count"] = 3
 
     result = chunk_pdf_file(fake_pdf, model_config)
 
-    assert [chunk["text"] for chunk in result] == ["good first", "good last"]
+    assert [chunk["text"] for chunk in result] == [first.strip(), second.strip()]
     assert [chunk["metadata"]["chunk_index"] for chunk in result] == [0, 1]
     assert {chunk["metadata"]["chunk_count"] for chunk in result} == {2}
     manifest = result.quality_manifest
     assert manifest["chunk_count"] == 2
-    assert manifest["dropped_chunk_count"] == 1
-    assert manifest["dropped_chunk_reason"] == "replacement_character_ratio_gt_0.05"
+    assert manifest["replacement_omissions"]["source_character_count"] == len(text)
+    assert manifest["replacement_omissions"]["retained_character_count"] == len(text) - 20
+    assert manifest["replacement_omissions"]["character_count"] == 20
+    assert manifest["replacement_omissions"]["replacement_ratio"] == 20 / len(text)
+    assert manifest["replacement_omissions"]["degraded"] is False
+    assert manifest["replacement_omissions"]["hard_boundary_count"] == 1
+    assert "replacement_characters_omitted" in manifest["quality_warnings"]
 
 
-@patch("arcaneum.indexing.pdf.chunker.PDFChunker")
 @patch("arcaneum.indexing.pdf.extractor.PDFExtractor")
 @patch("arcaneum.indexing.pdf.quality.looks_like_dropout", return_value=False)
 @patch("arcaneum.indexing.pdf.quality.score_text", return_value=0.9)
 @patch("arcaneum.indexing.pdf.quality.needs_ocr", return_value=False)
-def test_all_replacement_heavy_chunks_keep_an_auditable_manifest(
+def test_all_replacement_text_keeps_an_auditable_manifest(
     _needs_ocr,
     _score_text,
     _dropout,
     extractor_cls,
-    chunker_cls,
     fake_pdf,
     model_config,
 ):
     extractor_cls.return_value.extract.return_value = (
-        _REALISTIC_TEXT,
+        "\ufffd" * 200,
         {"page_count": 1, "page_boundaries": []},
     )
-    chunker_cls.return_value.chunk.return_value = [
-        _make_chunk("\ufffd" * 20, {"chunk_index": 0, "chunk_count": 2}),
-        _make_chunk("x\ufffd" * 20, {"chunk_index": 1, "chunk_count": 2}),
-    ]
 
     result = chunk_pdf_file(fake_pdf, model_config)
 
     assert result == []
     assert result.quality_manifest["chunk_count"] == 0
-    assert result.quality_manifest["dropped_chunk_count"] == 2
+    assert result.quality_manifest["replacement_omissions"]["character_count"] == 200
+    assert result.quality_manifest["replacement_omissions"]["source_character_count"] == 200
+    assert result.quality_manifest["replacement_omissions"]["retained_character_count"] == 0
+    assert result.quality_manifest["replacement_omissions"]["replacement_ratio"] == 1.0
+    assert result.quality_manifest["replacement_omissions"]["degraded"] is True
+    assert result.quality_manifest["replacement_omissions"]["hard_boundary_count"] == 0
+    assert result.quality_manifest["replacement_omissions"]["normalized_run_count"] == 1

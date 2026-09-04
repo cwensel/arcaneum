@@ -71,12 +71,35 @@ def build_quality_manifest(
         warnings.append("dropout_recovered")
     if metadata.get("ocr_pages_failed", 0):
         warnings.append("ocr_pages_failed")
+    if metadata.get("ocr_attempt_failed", False):
+        warnings.append("ocr_attempt_failed")
     if empty_pages:
         warnings.append("empty_pages")
     if low_text_pages:
         warnings.append("low_text_pages")
-    if metadata.get("dropped_chunk_count", 0):
-        warnings.append("replacement_heavy_chunks_dropped")
+    replacement_omissions = dict(
+        metadata.get("replacement_omissions")
+        or {
+            "source_character_count": 0,
+            "retained_character_count": 0,
+            "character_count": 0,
+            "replacement_ratio": 0.0,
+            "degraded": False,
+            "singleton_count": 0,
+            "multi_character_run_count": 0,
+            "multi_character_run_character_count": 0,
+            "hard_boundary_count": 0,
+            "hard_boundary_character_count": 0,
+            "normalized_run_count": 0,
+            "normalized_run_character_count": 0,
+        }
+    )
+    if replacement_omissions.get("character_count", 0) and chunk_count == 0:
+        replacement_omissions["degraded"] = True
+    if replacement_omissions.get("character_count", 0):
+        warnings.append("replacement_characters_omitted")
+    if replacement_omissions.get("degraded", False):
+        warnings.append("replacement_fidelity_degraded")
 
     method = extraction_method or metadata.get("extraction_method") or metadata.get("method")
     if corpus_type == "code":
@@ -90,8 +113,10 @@ def build_quality_manifest(
     ocr_reason = metadata.get("ocr_triggered_by")
     if not ocr_reason and method and "ocr" in method:
         ocr_reason = "forced"
+    if replacement_omissions.get("degraded", False) and ocr_reason:
+        warnings.append("replacement_recovery_exhausted")
 
-    return {
+    manifest = {
         "schema_version": 1,
         "file_path": str(file_path),
         "source_hash": source_hash,
@@ -112,15 +137,21 @@ def build_quality_manifest(
             "pages_processed": metadata.get("ocr_pages_processed"),
             "confidence": metadata.get("ocr_confidence"),
             "failures": metadata.get("ocr_pages_failed"),
+            "attempt_failed": bool(metadata.get("ocr_attempt_failed", False)),
         },
         "table_handling_count": metadata.get("table_count"),
         "image_handling_count": metadata.get("image_count"),
-        "dropped_chunk_count": metadata.get("dropped_chunk_count", 0),
-        "dropped_chunk_reason": metadata.get("dropped_chunk_reason"),
+        # Deprecated v1 fields retained so existing manifest readers keep a
+        # stable shape. New indexers never drop whole chunks.
+        "dropped_chunk_count": 0,
+        "dropped_chunk_reason": None,
         "quality_warnings": sorted(set(warnings)),
         "repair_command": f"arc corpus sync <corpus> {file_path} --repair",
         "verify_command": "arc corpus verify <corpus> --json",
     }
+    if corpus_type == "pdf":
+        manifest["replacement_omissions"] = replacement_omissions
+    return manifest
 
 
 def _notify_progress(callback: Optional[Callable[[int], None]], count: int) -> None:

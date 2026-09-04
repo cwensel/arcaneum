@@ -29,7 +29,6 @@ from .common.sync import (
 from .pdf.chunker import PDFChunker
 from .pdf.extractor import PDFExtractor
 from .pdf.ocr import OCREngine, merge_extracted_text_with_ocr
-from .pdf.quality import REPLACEMENT_HEAVY_DROP_REASON, filter_replacement_heavy_chunks
 
 logger = logging.getLogger(__name__)
 
@@ -396,7 +395,6 @@ class PDFBatchUploader:
                 print(f"{timestamp()}   → chunking ({len(text)} chars)", flush=True)
 
             chunks = chunker.chunk(text, base_metadata)
-            chunks, dropped_chunk_count = filter_replacement_heavy_chunks(chunks)
             file_chunk_count = len(chunks)
             quality_manifest = build_quality_manifest(
                 file_path=pdf_path,
@@ -405,10 +403,7 @@ class PDFBatchUploader:
                 chunk_count=file_chunk_count,
                 metadata={
                     **base_metadata,
-                    "dropped_chunk_count": dropped_chunk_count,
-                    "dropped_chunk_reason": (
-                        REPLACEMENT_HEAVY_DROP_REASON if dropped_chunk_count else None
-                    ),
+                    "replacement_omissions": getattr(chunks, "replacement_omissions", None),
                 },
             )
             for chunk in chunks:

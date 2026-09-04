@@ -683,6 +683,10 @@ Verification reports issues with exit status 0 by default so it remains useful
 as an interactive diagnostic. Pass `--strict` to return status 1 for any quality
 or service issue in CI and agent workflows.
 
+`dropped_chunks` is a legacy-v1 fidelity counter for indexes that omitted whole
+replacement-heavy chunks. Current indexers preserve nearby text and therefore
+normally report zero; the field remains visible while legacy manifests exist.
+
 **Example Output:**
 
 ```text

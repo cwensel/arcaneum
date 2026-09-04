@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from arcaneum.indexing import verify as verify_mod
+from arcaneum.indexing.pdf.chunker import PDFChunker
 from arcaneum.indexing.policy import build_indexing_policy
 from arcaneum.indexing.verify import CollectionVerifier
 
@@ -353,6 +354,53 @@ def test_authoritative_pdf_without_quality_manifest_reports_gap(qdrant_client):
     assert result.quality_manifest_gaps == 1
     assert result.files[0].quality_manifest_missing is True
     assert result.get_items_needing_repair() == ["/tmp/a.pdf"]
+
+
+def test_short_single_chunk_section_is_not_a_sub_floor_defect(qdrant_client):
+    text = (
+        "Introduction\n"
+        + ("Detailed body evidence and analysis. " * 20)
+        + "\nAcknowledgements\nThanks to the team."
+    )
+    chunks = PDFChunker(
+        {
+            "chunk_size": 120,
+            "chunk_overlap": 0,
+            "char_to_token_ratio": 1,
+            "min_chunk_chars": 200,
+        },
+        overlap_percent=0,
+        late_chunking_enabled=False,
+    ).chunk(text, {})
+    assert any(
+        chunk.metadata["section_type"] == "acknowledgements" and len(chunk.text) < 200
+        for chunk in chunks
+    )
+    points = [
+        _point(
+            {
+                "file_path": "/tmp/paper.pdf",
+                "chunk_index": chunk.chunk_index,
+                "chunk_count": len(chunks),
+                "text": chunk.text,
+                "section_type": chunk.metadata["section_type"],
+                "section_title": chunk.metadata["section_title"],
+            }
+        )
+        for chunk in chunks
+    ]
+    qdrant_client.scroll.side_effect = _scroll_once(points)
+
+    with patch.object(verify_mod, "file_manifests_ready", return_value=False):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=len(points),
+            check_quality=True,
+        )
+
+    assert result.sub_floor_chunks == 0
+    assert all(file.sub_floor_chunk_count == 0 for file in result.files)
 
 
 def test_standard_pdf_verification_does_not_read_source_files(qdrant_client):

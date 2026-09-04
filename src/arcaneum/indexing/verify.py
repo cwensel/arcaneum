@@ -194,7 +194,7 @@ class CollectionVerificationResult:
     duplicate_items: int = 0  # files holding more than one point per chunk_index
     duplicate_source_groups: int = 0  # content hashes with multiple searchable documents
     stale_policy_items: int = 0
-    dropped_chunks: int = 0
+    dropped_chunks: int = 0  # legacy v1 manifests that omitted whole chunks
     sub_floor_chunks: int = 0
     quality_manifest_gaps: int = 0
     is_healthy: bool = True
@@ -491,6 +491,7 @@ class CollectionVerifier:
                 "legacy_max_chunk_count": 0,
                 "quality_scores": [],
                 "chunk_lengths": [],
+                "chunk_lengths_by_section": defaultdict(list),
                 "total_text_chars": 0,
                 "page_count": None,
                 "extraction_floor": False,
@@ -535,6 +536,8 @@ class CollectionVerifier:
             "ocr_pages_processed",
             "ocr_triggered_by",
             "quality_manifest",
+            "section_type",
+            "section_title",
         ]
         if check_dropout:
             payload_fields.extend(["page_count", "extraction_floor"])
@@ -600,7 +603,15 @@ class CollectionVerifier:
 
                 # Score text quality if requested
                 if check_quality:
-                    file_chunks[file_path]["chunk_lengths"].append(len(text))
+                    text_length = len(text)
+                    file_chunks[file_path]["chunk_lengths"].append(text_length)
+                    section_key = (
+                        payload.get("section_type"),
+                        payload.get("section_title"),
+                    )
+                    file_chunks[file_path]["chunk_lengths_by_section"][section_key].append(
+                        text_length
+                    )
                     if text:
                         file_chunks[file_path]["quality_scores"].append(score_text(text))
 
@@ -826,7 +837,10 @@ class CollectionVerifier:
                 fragment_floor = policy_config.get("min_chunk_chars", 200)
                 if isinstance(fragment_floor, int) and fragment_floor > 0:
                     sub_floor_for_file = sum(
-                        length < fragment_floor for length in file_data["chunk_lengths"]
+                        length < fragment_floor
+                        for section_lengths in file_data["chunk_lengths_by_section"].values()
+                        if len(section_lengths) > 1
+                        for length in section_lengths
                     )
                     sub_floor_chunk_count += sub_floor_for_file
                     if sub_floor_for_file:

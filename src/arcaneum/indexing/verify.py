@@ -274,9 +274,11 @@ class CollectionVerifier:
         else:
             check_quality = check_quality or collection_type == "pdf"
             from arcaneum.config import DEFAULT_MODELS
+            from arcaneum.embeddings.client import prompt_policy_model_key_for_name
 
             configured_models = collection_metadata.get("model") or ""
             first_model = configured_models.split(",", 1)[0].strip()
+            first_model = prompt_policy_model_key_for_name(first_model) or first_model
             policy_config = (
                 DEFAULT_MODELS[first_model].__dict__ if first_model in DEFAULT_MODELS else {}
             )
@@ -490,8 +492,7 @@ class CollectionVerifier:
                 "inferred_chunk_count": False,
                 "legacy_max_chunk_count": 0,
                 "quality_scores": [],
-                "chunk_lengths": [],
-                "chunk_lengths_by_section": defaultdict(list),
+                "quality_chunks": [],
                 "total_text_chars": 0,
                 "page_count": None,
                 "extraction_floor": False,
@@ -604,13 +605,18 @@ class CollectionVerifier:
                 # Score text quality if requested
                 if check_quality:
                     text_length = len(text)
-                    file_chunks[file_path]["chunk_lengths"].append(text_length)
-                    section_key = (
-                        payload.get("section_type"),
-                        payload.get("section_title"),
-                    )
-                    file_chunks[file_path]["chunk_lengths_by_section"][section_key].append(
-                        text_length
+                    file_chunks[file_path]["quality_chunks"].append(
+                        (
+                            (
+                                chunk_index
+                                if chunk_index is not None
+                                else len(file_chunks[file_path]["indices"])
+                            ),
+                            payload.get("section_type"),
+                            payload.get("section_title"),
+                            text_length,
+                            text,
+                        )
                     )
                     if text:
                         file_chunks[file_path]["quality_scores"].append(score_text(text))
@@ -836,9 +842,26 @@ class CollectionVerifier:
                 ) or {}
                 fragment_floor = policy_config.get("min_chunk_chars", 200)
                 if isinstance(fragment_floor, int) and fragment_floor > 0:
+                    section_runs: List[List[int]] = []
+                    previous_section = None
+                    for _, section_type, section_title, length, chunk_text in sorted(
+                        file_data["quality_chunks"], key=lambda item: item[0]
+                    ):
+                        section = (section_type, section_title)
+                        normalized_title = (section_title or "").strip().casefold()
+                        starts_section = bool(
+                            normalized_title
+                            and chunk_text.lstrip("# 0123456789.)")
+                            .casefold()
+                            .startswith(normalized_title)
+                        )
+                        if not section_runs or section != previous_section or starts_section:
+                            section_runs.append([])
+                        section_runs[-1].append(length)
+                        previous_section = section
                     sub_floor_for_file = sum(
                         length < fragment_floor
-                        for section_lengths in file_data["chunk_lengths_by_section"].values()
+                        for section_lengths in section_runs
                         if len(section_lengths) > 1
                         for length in section_lengths
                     )

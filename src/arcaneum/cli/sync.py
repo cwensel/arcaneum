@@ -2684,6 +2684,7 @@ def _sync_directory_locked(
             force=force,
             parity=parity,
         )
+        sync_manager = manifest_sync_manager
 
         if force:
             if not output_json:

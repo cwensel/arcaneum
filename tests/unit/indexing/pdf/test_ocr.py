@@ -276,6 +276,12 @@ def test_merge_with_one_missing_boundary_set_selects_whole_document():
     assert metadata["ocr_merge_strategy"] == "document_quality_selection"
     assert metadata["extraction_candidates"][0]["scope"] == "document"
     assert not (extracted_text in merged_text and ocr_text in merged_text)
+    selected_key = (
+        "ocr_selected_pages"
+        if metadata["extraction_candidates"][0]["chosen_source"] == "ocr"
+        else "embedded_selected_pages"
+    )
+    assert metadata[selected_key] == [1, 2]
 
 
 def test_pdf_batch_uploader_duplicate_path_preserves_return_contract(tmp_path):

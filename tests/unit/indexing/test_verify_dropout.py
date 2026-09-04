@@ -403,6 +403,34 @@ def test_short_single_chunk_section_is_not_a_sub_floor_defect(qdrant_client):
     assert all(file.sub_floor_chunk_count == 0 for file in result.files)
 
 
+def test_repeated_short_headings_are_distinct_section_occurrences(qdrant_client):
+    qdrant_client.scroll.side_effect = _scroll_once(
+        [
+            _point(
+                {
+                    "file_path": "/tmp/paper.pdf",
+                    "chunk_index": index,
+                    "chunk_count": 2,
+                    "text": f"References\nShort list {index}.",
+                    "section_type": "references",
+                    "section_title": "References",
+                }
+            )
+            for index in range(2)
+        ]
+    )
+
+    with patch.object(verify_mod, "file_manifests_ready", return_value=False):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=2,
+            check_quality=True,
+        )
+
+    assert result.sub_floor_chunks == 0
+
+
 def test_standard_pdf_verification_does_not_read_source_files(qdrant_client):
     qdrant_client.scroll.side_effect = _scroll_once(
         [
@@ -463,6 +491,36 @@ def test_verify_collection_scores_pdf_quality_by_default(qdrant_client):
     assert result.garbled_items == 1
     assert result.is_healthy is False
     assert "text" in qdrant_client.scroll.call_args.kwargs["with_payload"]
+
+
+def test_verify_maps_legacy_model_alias_before_policy_comparison(qdrant_client):
+    from arcaneum.config import DEFAULT_MODELS
+
+    verifier = CollectionVerifier(qdrant_client)
+    verifier._verify_file_collection = MagicMock(
+        return_value=SimpleNamespace(errors=[], is_healthy=True)
+    )
+
+    with (
+        patch.object(
+            verify_mod,
+            "get_collection_metadata",
+            return_value={
+                "collection_type": "pdf",
+                "model": "BAAI/bge-large-en-v1.5",
+                "schema_version": 1,
+            },
+        ),
+        patch.object(verify_mod, "persisted_schema_issues", return_value=[]),
+        patch.object(verify_mod, "user_point_count", return_value=0),
+    ):
+        verifier.verify_collection("Dummy")
+
+    active_policy = verifier._verify_file_collection.call_args.kwargs["active_policy"]
+    assert (
+        active_policy["chunking"]["config"]
+        == build_indexing_policy("pdf", DEFAULT_MODELS["bge-large"].__dict__)["chunking"]["config"]
+    )
 
 
 def test_extraction_floor_skips_repair(qdrant_client):

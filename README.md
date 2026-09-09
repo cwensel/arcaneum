@@ -6,7 +6,7 @@
 CLI tools and Claude Code plugins for semantic and full-text search.
 
 ```bash
-pipx install "https://github.com/cwensel/arcaneum/releases/download/v0.9.0/arcaneum-0.9.0-py3-none-any.whl"
+pipx install "https://github.com/cwensel/arcaneum/releases/download/v0.10.0/arcaneum-0.10.0-py3-none-any.whl"
 ```
 
 ## Overview
@@ -109,7 +109,7 @@ Get started with Arcaneum in just a few commands:
 
 ```bash
 # 1. Install
-pipx install "https://github.com/cwensel/arcaneum/releases/download/v0.9.0/arcaneum-0.9.0-py3-none-any.whl"
+pipx install "https://github.com/cwensel/arcaneum/releases/download/v0.10.0/arcaneum-0.10.0-py3-none-any.whl"
 
 # 2. Install Claude Code plugin (optional, in Claude Code)
 # /plugin install cwensel/arcaneum
@@ -327,7 +327,7 @@ arc container stop     # Stop services
 
 ```bash
 # Recommended: Install via pipx from latest release
-pipx install "https://github.com/cwensel/arcaneum/releases/download/v0.9.0/arcaneum-0.9.0-py3-none-any.whl"
+pipx install "https://github.com/cwensel/arcaneum/releases/download/v0.10.0/arcaneum-0.10.0-py3-none-any.whl"
 
 # Or install via Homebrew (macOS/Linux)
 brew install cwensel/arcaneum/arcaneum

@@ -311,8 +311,8 @@ class TestHandleRenamesQdrant:
         assert "file_paths" not in payload
         assert "file_quick_hashes" not in payload
 
-    def test_handle_renames_continues_when_existing_point_is_not_found(self):
-        """Missing lookup data should not block the simple file_path rename update."""
+    def test_handle_renames_skips_when_existing_point_is_not_found(self):
+        """Missing canonical and alias chunks should leave the index unchanged."""
         qdrant = Mock()
         qdrant.scroll.return_value = ([], None)
 
@@ -322,9 +322,8 @@ class TestHandleRenamesQdrant:
             [("/old/doc.pdf", "/new/doc.pdf", {"filename": "doc.pdf"})],
         )
 
-        assert renamed == 1
-        payload = qdrant.set_payload.call_args.kwargs["payload"]
-        assert payload == {"file_path": "/new/doc.pdf", "filename": "doc.pdf"}
+        assert renamed == 0
+        qdrant.set_payload.assert_not_called()
 
     def test_handle_renames_falls_back_to_point_quick_hash_for_missing_old_key(self):
         qdrant = Mock()

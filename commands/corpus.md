@@ -48,6 +48,10 @@ full-text search (MeiliSearch) for the same content.
 - --gpu: Opt into accelerator embedding (CPU is the stable default)
 - --changed-since REV: Sync only what a git commit or range touched (e.g. HEAD,
   ORIG_HEAD..HEAD), removing the files it deleted
+- --order: Process files by path (default), newest modification first, or oldest
+  modification first; this changes processing order, not search ranking
+- --include-stale-policy: Also re-index otherwise unchanged files whose indexing
+  policy is stale or missing
 - --no-wait: Fail instead of queueing when another sync of this corpus is running
 - --lock-timeout: Seconds to wait for the corpus write lock (default: 600)
 
@@ -118,6 +122,7 @@ document; parity cleanup promotes a live alias if the canonical path disappears.
 /corpus repair PapersFast --include-stale-policy
 /corpus repair PapersFast --quality-threshold 0.5
 /corpus sync CodeBase --changed-since HEAD
+/corpus sync CodeBase ~/projects --order newest
 /corpus hook install
 /corpus hook install CodeBase
 /corpus hook install CodeBase --hook post-merge
@@ -193,6 +198,15 @@ sees future commits, so already-committed files need one real sync.
 
 `/corpus sync NAME --changed-since HEAD` does the same thing on demand, without
 installing anything.
+
+Changed paths are written to a durable spool, so a failed or interrupted worker
+does not lose queued work. Git operations never wait for indexing. Sync writes
+to one corpus are serialized, while different corpora can proceed concurrently.
+Hook and drain outcomes are recorded in
+`~/.local/state/arcaneum/hook.log`.
+
+Install the optional `arcaneum[proctitle]` extra to make background workers
+appear as readable `arc ...` commands in `ps` and `top`.
 
 **Performance:**
 

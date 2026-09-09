@@ -172,6 +172,31 @@ arc search semantic "payment processing" --corpus MyCode
 arc search text "async def process_payment" --corpus MyCode
 ```
 
+### Keep a Git Repository Current Automatically
+
+After the initial sync, install a non-blocking hook to queue changed paths after
+commits. A background drain coalesces bursts and serializes writes to the corpus:
+
+```bash
+arc corpus hook install MyCode
+arc corpus hook status
+```
+
+Install without a corpus name for guided setup. Hook and drain outcomes are
+recorded in `~/.local/state/arcaneum/hook.log`; git operations continue even if
+indexing fails.
+
+### Index Markdown and Compressed Notes
+
+Markdown corpora accept `.md`, `.markdown`, `.mdown`, and `.md.zst` files. Zstd
+compression is transparent to discovery, frontmatter extraction, semantic
+chunking, and incremental sync:
+
+```bash
+arc corpus create Notes --type markdown
+arc corpus sync Notes ~/notes --order newest
+```
+
 ### Checking Status
 
 ```bash

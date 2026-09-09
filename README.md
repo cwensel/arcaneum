@@ -33,10 +33,14 @@ The system supports PDF documents and source code with git-aware, AST-based chun
 
 ### Indexing
 
-- **PDF Indexing**: OCR support for scanned documents, page-level metadata, parallel processing
+- **PDF Indexing**: Page-level OCR selection, quality manifests, source deduplication,
+  and reference-aware search
 - **Source Code Indexing**: Git-aware with AST chunking, multi-branch support, 165+ languages
-- **Markdown Indexing**: YAML frontmatter extraction, semantic chunking, incremental sync
+- **Markdown Indexing**: YAML frontmatter extraction, semantic chunking, incremental sync,
+  and transparent `.md.zst` support
 - **Dual Indexing**: Single command to index to both search engines
+- **Repository Automation**: Non-blocking git hooks keep code corpora current after commits,
+  pulls, checkouts, and rebases
 - **Performance Tuning**: Granular control over workers, batch sizes, and process priority via
   `arc corpus sync --max-embedding-batch`, `--text-workers`, `--cpu-workers`, and
   single-system indexing flags such as `--embedding-batch-size` and `--process-priority`
@@ -141,6 +145,7 @@ arc doctor                   # Verify setup
 arc corpus create NAME --type TYPE              # pdf, code, or markdown
 arc corpus list                                 # List all corpora
 arc corpus sync NAME PATH [PATH...]             # Sync one or more directories
+arc corpus sync NAME PATH --order newest        # Index recent files first
 arc corpus sync NAME PATH --parity              # Also detect renames, remove files no longer on disk
 arc corpus sync NAME PATH --include-stale-policy # Migrate stale/legacy indexing policies
 arc corpus items NAME                           # List items with parity status
@@ -215,6 +220,23 @@ arc search semantic "distributed consensus algorithms" --corpus Papers
 arc search text '"rate limiting"' --corpus Papers
 ```
 
+Semantic PDF search excludes detected reference sections by default so
+bibliographies do not dominate ordinary results. Include them for citation
+research with `arc search semantic "query" --corpus Papers --include-references`.
+
+### Keep a Git Repository in Sync
+
+Install non-blocking hooks after the initial corpus sync:
+
+```bash
+arc corpus hook install Frameworks
+arc corpus hook status
+```
+
+Changed paths are queued and drained in the background; bursts share one model
+load and writes to a corpus are serialized. Inspect hook and drain outcomes in
+`~/.local/state/arcaneum/hook.log`.
+
 ### Index Markdown Files
 
 ```bash
@@ -234,10 +256,11 @@ arc search text "meeting notes" --corpus Notes
 **Features:**
 
 - YAML frontmatter extraction (title, tags, category, etc.)
-- Semantic chunking preserving document structure
+- Semantic chunking preserving document structure with a measured 200-character
+  fragment floor
 - Incremental sync (SHA256 content hashing)
 - Custom exclude patterns
-- Supports .md, .markdown, .mdown extensions
+- Supports `.md`, `.markdown`, `.mdown`, and zstd-compressed `.md.zst` files
 
 ### Single-System Indexing (Advanced)
 
@@ -312,6 +335,9 @@ brew install cwensel/arcaneum/arcaneum
 # Or install latest from source
 pipx install "git+https://github.com/cwensel/arcaneum.git"
 ```
+
+For readable `arc ...` process names in `ps` and `top` during long syncs,
+install the optional `proctitle` extra.
 
 ### Local Development
 

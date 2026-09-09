@@ -13,7 +13,8 @@ full-text search. Use `/arc:index` when you only need semantic search in a singl
 **Subcommands (required):**
 
 - `pdf`: Index PDF documents into Qdrant (with OCR support)
-- `markdown`: Index markdown files into Qdrant (with frontmatter extraction)
+- `markdown`: Index plain or zstd-compressed markdown into Qdrant (with
+  frontmatter extraction)
 - `code`: Index source code repositories into Qdrant (git-aware)
 - `text`: Index content to MeiliSearch for full-text search (has its own
   `pdf`/`code`/`markdown` subcommands; advanced — prefer `/arc:corpus sync`
@@ -126,16 +127,18 @@ Features:
 1. Extract text from PDFs (PyMuPDF + pdfplumber fallback)
 2. Auto-trigger OCR for scanned PDFs (< 100 chars extracted)
 3. Chunk text with 15% overlap for context
-4. Generate embeddings (stella default: 1024D for documents)
+4. Generate embeddings (arctic-m default: 768D for documents)
 5. Upload to Qdrant with metadata (file path, page numbers)
 6. Incremental: Skips unchanged files (file hash metadata check)
 
 **Markdown Indexing:**
 
-1. Discover markdown files (.md, .markdown extensions)
+1. Discover markdown files (`.md`, `.markdown`, `.mdown`, and compressed
+   `.md.zst` variants)
 2. Extract YAML frontmatter (title, author, tags, category, etc.)
-3. Semantic chunking preserving document structure (headers, code blocks)
-4. Generate embeddings (stella default: 1024D for documents)
+3. Semantic chunking preserving document structure (headers, code blocks) and
+   merging sub-200-character residue into neighboring chunks
+4. Generate embeddings (arctic-m default: 768D for documents)
 5. Upload to Qdrant with metadata (file path, frontmatter fields, header context)
 6. Incremental: Skips unchanged files (SHA256 content hash check)
 
@@ -151,8 +154,8 @@ Features:
 
 **Default Models:**
 
-- PDFs: stella (1024D, document-optimized)
-- Markdown: stella (1024D, document-optimized)
+- PDFs: arctic-m (768D, stable FastEmbed document model)
+- Markdown: arctic-m (768D, stable FastEmbed document model)
 - Source: jina-code (768D, code-optimized)
 
 **Performance:** Measure the selected model, corpus, extraction workload, and

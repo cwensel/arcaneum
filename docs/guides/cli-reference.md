@@ -257,6 +257,10 @@ arc corpus sync MyCorpus /path/to/repo --git-version       # Keep multiple versi
 - `--mem-probe-log`: JSONL output path for memory snapshots (default:
   `~/.arcaneum/logs/arc-mem-<utc>-<pid>.jsonl`; pass `-` for stderr).
 
+Markdown corpora discover `.md`, `.markdown`, `.mdown`, and zstd-compressed
+`.md.zst` variants by default. Compressed files follow the same frontmatter,
+chunking, hashing, and incremental-sync path as plain Markdown.
+
 **Git Sync Modes:**
 
 | Mode            | Behavior                                                                             | Use Case                                 |

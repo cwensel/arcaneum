@@ -8,9 +8,14 @@ The PDF indexing pipeline supports:
 
 - **Text PDFs**: Machine-generated documents with embedded text (PyMuPDF, ~95x faster)
 - **Image PDFs**: Scanned documents requiring OCR (Tesseract)
-- **Mixed PDFs**: Documents with both text and scanned images
+- **Mixed PDFs**: Page-level selection between embedded text and raster OCR
 - **Incremental indexing**: Only new/modified files are processed
-- **PDF text normalization**: Markdown conversion, whitespace normalization, and OCR fallback for garbled text
+- **PDF text normalization**: Markdown conversion, safe fragment merging, and
+  omission of unrecoverable replacement-character spans
+- **Quality tracking**: Persisted extraction candidates, page coverage, OCR
+  provenance, warnings, and indexing-policy identity
+- **Search hygiene**: Content-identical source deduplication and reference
+  sections excluded from semantic search by default
 
 ## Prerequisites
 
@@ -61,6 +66,14 @@ arc corpus sync pdf-docs /path/to/pdfs --parity
 # Search with semantic or full-text
 arc search semantic "machine learning concepts" --corpus pdf-docs
 arc search text '"specific phrase"' --corpus pdf-docs
+```
+
+Detected reference sections remain indexed and available for citation research,
+but ordinary semantic search omits them so bibliography fragments do not crowd
+out body evidence:
+
+```bash
+arc search semantic "machine learning concepts" --corpus pdf-docs --include-references
 ```
 
 ### PDFs with OCR disabled (if all PDFs are machine-generated text)
@@ -256,6 +269,37 @@ arc corpus repair pdf-docs --include-stale-policy
 
 PDFs that are both policy-stale and corrupt remain in the default repair set.
 Healthy PDFs are not re-indexed; no separate `--only-corrupt` option is needed.
+
+## Extraction Quality and Provenance
+
+Arcaneum evaluates PDF extraction per page. When raster OCR clearly scores
+better than embedded text, only the OCR candidate enters the searchable body for
+that page; healthy embedded Markdown remains selected elsewhere. Rejected text
+is represented by candidate scores and provenance instead of being appended to
+the indexed text.
+
+Each indexed PDF has a quality manifest containing:
+
+- covered, empty, and low-text pages
+- OCR trigger, confidence, failures, and selected extraction candidates
+- omitted replacement-character counts and fidelity warnings
+- extraction and chunking policy identities
+
+Content-identical PDFs retain every physical source path as provenance for one
+canonical searchable document; verification reports those aliases alongside the
+quality evidence.
+
+Standard verification reads this persisted evidence without re-extracting every
+source file:
+
+```bash
+arc corpus verify pdf-docs
+arc corpus verify pdf-docs --json
+```
+
+Verification reports incomplete or duplicated chunks, extraction dropout,
+quality-manifest gaps, duplicate sources, and stale policies. Use `repair
+--dry-run` to inspect the actionable selection before re-indexing.
 
 ## GPU Acceleration
 

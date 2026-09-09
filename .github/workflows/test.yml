@@ -89,7 +89,11 @@ jobs:
 
       - name: Install system dependencies
         run: |
-          sudo apt-get update -q
+          # Hosted runners include unrelated third-party repositories. Refresh
+          # only Ubuntu indexes so a transient vendor mirror cannot block tests.
+          sudo apt-get update -q \
+            -o Dir::Etc::sourcelist="sources.list.d/ubuntu.sources" \
+            -o Dir::Etc::sourceparts="-"
           sudo apt-get install -y tesseract-ocr poppler-utils
 
       - name: Install package
@@ -184,7 +188,11 @@ jobs:
 
       - name: Install system dependencies
         run: |
-          sudo apt-get update -q
+          # Hosted runners include unrelated third-party repositories. Refresh
+          # only Ubuntu indexes so a transient vendor mirror cannot block tests.
+          sudo apt-get update -q \
+            -o Dir::Etc::sourcelist="sources.list.d/ubuntu.sources" \
+            -o Dir::Etc::sourceparts="-"
           sudo apt-get install -y tesseract-ocr poppler-utils
 
       - name: Install package
@@ -269,7 +277,11 @@ jobs:
 
       - name: Install system dependencies
         run: |
-          sudo apt-get update -q
+          # Hosted runners include unrelated third-party repositories. Refresh
+          # only Ubuntu indexes so a transient vendor mirror cannot block tests.
+          sudo apt-get update -q \
+            -o Dir::Etc::sourcelist="sources.list.d/ubuntu.sources" \
+            -o Dir::Etc::sourceparts="-"
           sudo apt-get install -y tesseract-ocr poppler-utils
 
       - name: Install package

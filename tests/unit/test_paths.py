@@ -14,6 +14,7 @@ def isolate_env(monkeypatch, tmp_path):
     monkeypatch.delenv("MEILISEARCH_API_KEY", raising=False)
     monkeypatch.delenv("HF_HOME", raising=False)
     monkeypatch.delenv("SENTENCE_TRANSFORMERS_HOME", raising=False)
+    monkeypatch.delenv("ORT_DISABLE_TELEMETRY", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     # Patch Path.home() so XDG defaults resolve under tmp_path
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
@@ -162,3 +163,52 @@ def test_configure_model_cache_env_respects_existing(monkeypatch, isolate_env):
     p.configure_model_cache_env()
     assert os.environ["HF_HOME"] == "/custom/hf"
     assert os.environ["SENTENCE_TRANSFORMERS_HOME"] == "/custom/st"
+
+
+# --- configure_inference_runtime_env ---
+
+
+def test_configure_inference_runtime_env_disables_telemetry_by_default(monkeypatch):
+    from arcaneum import paths as p
+
+    monkeypatch.delenv("ORT_DISABLE_TELEMETRY", raising=False)
+    p.configure_inference_runtime_env()
+
+    assert os.environ["ORT_DISABLE_TELEMETRY"] == "1"
+
+
+def test_configure_inference_runtime_env_respects_existing(monkeypatch):
+    from arcaneum import paths as p
+
+    monkeypatch.setenv("ORT_DISABLE_TELEMETRY", "0")
+    p.configure_inference_runtime_env()
+
+    assert os.environ["ORT_DISABLE_TELEMETRY"] == "0"
+
+
+def test_importing_arcaneum_disables_telemetry_before_onnx_runtime(tmp_path):
+    import subprocess
+    import sys
+
+    (tmp_path / "onnxruntime.py").write_text(
+        "import os\nassert os.environ.get('ORT_DISABLE_TELEMETRY') == '1'\n"
+    )
+    env = os.environ.copy()
+    env.pop("ORT_DISABLE_TELEMETRY", None)
+    env["PYTHONPATH"] = os.pathsep.join([str(tmp_path), env.get("PYTHONPATH", "")]).rstrip(
+        os.pathsep
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import arcaneum, onnxruntime, os; print(os.environ.get('ORT_DISABLE_TELEMETRY'))",
+        ],
+        capture_output=True,
+        env=env,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "1"
+    assert "telemetry.cc" not in result.stderr

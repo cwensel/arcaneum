@@ -150,5 +150,17 @@ def configure_model_cache_env():
         os.environ["SENTENCE_TRANSFORMERS_HOME"] = models_dir_str
 
 
+def configure_inference_runtime_env():
+    """Disable ONNX Runtime telemetry unless the user explicitly configured it.
+
+    ONNX Runtime 1.29 enabled POSIX telemetry in official macOS builds. Its
+    telemetry worker can race interpreter shutdown and abort otherwise
+    successful short-lived commands. This must run before FastEmbed imports
+    ONNX Runtime so the uploader and its worker threads are never created.
+    """
+    os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
+
+
 # Configure model cache on module import (so it's set before any model loading)
 configure_model_cache_env()
+configure_inference_runtime_env()

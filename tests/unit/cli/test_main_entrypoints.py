@@ -85,6 +85,25 @@ def test_search_text_entrypoint_dispatches():
     assert called["corpora"] == ["MyCorpus"]
 
 
+def test_search_group_help_explains_mode_choice():
+    """Search help should present semantic and text search as peers."""
+    result = _run(["search", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "Use semantic for concepts and paraphrases" in result.output
+    assert "Use text for identifiers" in result.output
+
+
+def test_search_text_help_explains_exact_phrases_and_regex_limit():
+    """Text-search help should preserve its boundary with local regex tools."""
+    result = _run(["search", "text", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "ranked keywords, identifiers, and quoted phrases" in result.output
+    assert "Preserve quotes inside QUERY for an exact phrase" in result.output
+    assert "does not evaluate regular expressions" in result.output
+
+
 def test_root_json_flag_propagates_to_subcommand(tmp_path):
     """`arc --json ...` should activate existing local output_json handlers."""
     runner = CliRunner()

@@ -952,13 +952,18 @@ def store(
 @cli.group(
     cls=HelpfulGroup,
     usage_examples=[
-        'arc search semantic "your query" --corpus CorpusName',
-        'arc search semantic "your query" --corpus Corp1 --corpus Corp2',
-        'arc search text "your query" --corpus CorpusName',
+        'arc search semantic "conceptual query" --corpus CorpusName',
+        'arc search text "identifier" --corpus CorpusName',
+        "arc search text '\"exact phrase\"' --corpus CorpusName",
     ],
 )
 def search():
-    """Search collections"""
+    """Search indexed corpora semantically or by ranked full text.
+
+    Use semantic for concepts and paraphrases. Use text for identifiers,
+    keywords, and quoted phrases. Text search is bounded and ranked; it does
+    not evaluate regular expressions.
+    """
     pass
 
 
@@ -997,7 +1002,7 @@ def search_semantic(
     output_json,
     verbose,
 ):
-    """Vector-based semantic search"""
+    """Find concepts and paraphrases with vector-based semantic search."""
     from arcaneum.cli.search import search_command
     from arcaneum.cli.utils import resolve_corpora
 
@@ -1032,7 +1037,13 @@ def search_semantic(
 @click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 def search_text(query, corpora, legacy_index, filter_arg, limit, offset, output_json, verbose):
-    """Keyword-based full-text search"""
+    """Find ranked keywords, identifiers, and quoted phrases in a corpus.
+
+    Preserve quotes inside QUERY for an exact phrase, for example:
+    arc search text '\"def authenticate\"' --corpus Code
+
+    This command does not evaluate regular expressions.
+    """
     from arcaneum.cli.fulltext import search_text_command
     from arcaneum.cli.utils import resolve_corpora
 

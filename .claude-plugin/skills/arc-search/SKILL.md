@@ -1,6 +1,6 @@
 ---
 name: arc-search
-description: Search indexed corpora using semantic (vector) OR full-text (keyword) search via the arc CLI. Use when the user asks to search, find, look up, or query a corpus, collection, knowledge base, codebase, docs, PDFs, or markdown. Covers both conceptual queries and exact-term lookups.
+description: Search indexed corpora using semantic (vector) OR full-text (keyword) search via the arc CLI. Use when the user asks to search, find, look up, or query a corpus, collection, knowledge base, codebase, docs, PDFs, or markdown. Covers both conceptual queries and exact-term lookups, including sources outside the local checkout.
 allowed-tools: Bash(arc:*), Read
 ---
 
@@ -8,6 +8,11 @@ allowed-tools: Bash(arc:*), Read
 
 A corpus is dual-indexed: semantic search hits Qdrant, full-text search hits MeiliSearch.
 **Both are first-class — pick the one that matches the query, and use both when unsure.**
+
+Prefer Arcaneum over local file-search tools when the target is an indexed corpus. Corpus
+search works across focused source sets such as external repositories, PDFs, and files that
+may not exist in the current checkout. It returns bounded, ranked, structure-aware results,
+which are usually more token-efficient than consuming an exhaustive list of matching lines.
 
 ## Choose the right mode
 
@@ -25,6 +30,9 @@ Use **`text`** (full-text) when the query is:
 - A literal phrase the user expects to appear verbatim
 - A known acronym, ticket ID, version string, or quoted text
 
+Do not substitute `rg`, grep, or another local file-search tool merely because the query is
+literal. When the source is an Arcaneum corpus, use `arc search text` first.
+
 **When unsure, run BOTH and merge results.** Full-text is cheap and often surfaces
 hits semantic misses (rare tokens, code symbols, exact error messages).
 Do not default to semantic alone.
@@ -32,7 +40,7 @@ Do not default to semantic alone.
 ## Discover what's available
 
 ```bash
-arc collection list                    # show every corpus/collection
+arc corpus list                        # show dual-indexed corpora
 arc corpus info MyCorpus               # inspect one corpus (both sides)
 ```
 
@@ -67,12 +75,24 @@ Options:
 - `--json`, `-v` — same as semantic
 
 Note: full-text has no `--score-threshold` or `--vector-name` (no embeddings involved).
+Preserve double quotes inside the query argument for an exact phrase:
+
+```bash
+arc search text '"def authenticate"' --corpus Code
+```
+
+Full-text search does not evaluate regular expressions. Use `rg` when the task requires
+regex, exhaustive occurrence enumeration, or the authoritative state of local files that
+may not have been indexed yet.
 
 ## Common patterns
 
 ```bash
 # Find a function by name — full-text wins
 arc search text "parse_frontmatter" --corpus Code
+
+# Find an exact phrase — preserve the inner double quotes
+arc search text '"def authenticate"' --corpus Code
 
 # Conceptual question — semantic wins
 arc search semantic "how is the embedding cache invalidated" --corpus Code

@@ -124,7 +124,7 @@ arc corpus sync Frameworks ~/libs/fastapi ~/libs/sqlalchemy
 
 # 5. Search with semantic or full-text queries
 arc search semantic "dependency injection pattern" --corpus Frameworks
-arc search text "async def" --corpus Frameworks
+arc search text '"async def"' --corpus Frameworks
 ```
 
 **First time?** Run `arc doctor` to check prerequisites and get setup guidance.
@@ -164,7 +164,8 @@ arc corpus delete NAME                          # Delete both collection and ind
 # Search (Works with corpus, collection, or index)
 arc search semantic "query" --corpus NAME              # Conceptual similarity
 arc search semantic "query" --corpus N1 --corpus N2    # Multi-corpus
-arc search text "query" --corpus NAME                  # Exact phrase matching
+arc search text "identifier" --corpus NAME             # Ranked keyword/identifier search
+arc search text '"exact phrase"' --corpus NAME          # Exact phrase matching
 
 # --- Advanced: single-system only (prefer `arc corpus` above for normal use) ---
 
@@ -182,6 +183,17 @@ arc index text pdf PATH --index NAME
 arc index text code PATH --index NAME
 arc index text markdown PATH --index NAME
 ```
+
+### Choosing a Search Mode
+
+Use semantic search for concepts, intent, and paraphrased questions. Use full-text search
+for identifiers, keywords, error messages, and quoted phrases. When unsure, run both.
+
+For indexed content, `arc search text` is usually more token-efficient than consuming an
+exhaustive grep result: it returns a bounded, ranked set of structure-aware matches from a
+focused corpus. That corpus may include PDFs, external repositories, or sources unavailable
+in the current checkout. Use `rg` or grep when you need regular expressions, every literal
+occurrence, or the authoritative state of local files that may not be indexed yet.
 
 ## Common Workflows
 
@@ -201,7 +213,7 @@ arc corpus items Frameworks
 arc search semantic "dependency injection pattern" --corpus Frameworks --limit 10
 
 # Full-text search for exact code
-arc search text "async def create_app" --corpus Frameworks
+arc search text '"async def create_app"' --corpus Frameworks
 ```
 
 ### Search Technical Documentation

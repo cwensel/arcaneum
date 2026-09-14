@@ -86,18 +86,24 @@ manifest.
 ### Searching
 
 ```bash
-# Semantic search (most common)
+# Conceptual or paraphrased search
 arc search semantic "your query" --corpus CorpusName
 
-# Multi-corpus search
-arc search semantic "your query" --corpus Corp1 --corpus Corp2
+# Exact identifier or keyword search
+arc search text "identifier" --corpus CorpusName
 
-# Full-text search
-arc search text "your query" --corpus CorpusName
+# Exact phrase search (preserve the inner quotes)
+arc search text '"exact phrase"' --corpus CorpusName
 
 # List available corpora
 arc corpus list
 ```
+
+For an indexed corpus, prefer `arc search text` over local file search: it searches a
+focused source set (including nonlocal repositories and PDFs) and returns bounded, ranked,
+structure-aware results. Use `rg` for regex, exhaustive matches, or authoritative current
+working-tree state. When the appropriate Arcaneum mode is unclear, run both semantic and
+text search.
 
 **IMPORTANT:** The subcommand (`semantic` or `text`) must come BEFORE the query.
 Do NOT use `arc search --corpus` without a subcommand - that syntax is incorrect.

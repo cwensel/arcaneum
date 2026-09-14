@@ -77,14 +77,18 @@ Note: `allowLocalBinding` is macOS only.
 
 ## Usage
 
-The plugin includes an auto-activating skill. When you mention searching a collection or
-request semantic search, Claude will automatically use `arc`.
+The plugin includes an auto-activating skill. When you ask to search an indexed corpus,
+whether conceptually or by exact term, Claude will automatically use `arc`.
+
+Full-text corpus search returns bounded, ranked results from focused source sets, including
+PDFs and repositories that may not be present in the local checkout. Use local `rg` instead
+when you specifically need regex, exhaustive matches, or current working-tree state.
 
 ### Manual Commands
 
 ```bash
-# List collections
-arc collection list
+# List dual-indexed corpora
+arc corpus list
 
 # Semantic search
 arc search semantic "authentication flow" --corpus MyCode --limit 10
@@ -94,6 +98,9 @@ arc search semantic "authentication" --corpus Code --corpus Docs
 
 # Full-text search
 arc search text "validateToken" --corpus MyCode --limit 10
+
+# Exact phrase search (preserve the inner quotes)
+arc search text '"def authenticate"' --corpus MyCode
 ```
 
 ## Requirements

@@ -1,22 +1,24 @@
 """Main CLI entry point for Arcaneum (RDR-001 with RDR-006 enhancements)."""
 
 import functools
-from contextlib import redirect_stdout
-import sys
-import click
 import os
+import sys
+from contextlib import redirect_stdout
 from pathlib import Path
+
+import click
+
 from arcaneum import __version__
 from arcaneum.cli import hooks as hook_utils
 from arcaneum.cli.errors import (
-    EXIT_SUCCESS,
     EXIT_ERROR,
     EXIT_INVALID_ARGS,
     EXIT_NOT_FOUND,
+    EXIT_SUCCESS,
     ArcaneumError,
+    HelpfulGroup,
     InvalidArgumentError,
     ResourceNotFoundError,
-    HelpfulGroup,
 )
 
 # Version check (RDR-006: Best practice from reference implementation)
@@ -28,8 +30,10 @@ if sys.version_info < MIN_PYTHON:
 # SSL configuration is deferred to main() so that merely importing this module
 # (e.g. as a library) does not globally monkey-patch requests/httpx/ssl for the
 # whole process. The CLI entry point invokes configure_ssl_from_env() below.
-from arcaneum.ssl_config import configure_ssl_from_env
-from arcaneum.cli.utils import validate_path_or_from_file
+# Import ssl_config before cli.utils so its warning filters are installed before
+# cli.utils transitively imports the embedding stack.
+from arcaneum.ssl_config import configure_ssl_from_env  # noqa: E402, I001
+from arcaneum.cli.utils import validate_path_or_from_file  # noqa: E402
 
 
 @click.group()
@@ -106,13 +110,19 @@ def collection():
 @click.option(
     "--model",
     default=None,
-    help="Embedding model (arctic-m, mxbai-large, bge, jina-code). If not specified, inferred from --type.",
+    help=(
+        "Embedding model (arctic-m, mxbai-large, bge, jina-code). "
+        "If not specified, inferred from --type."
+    ),
 )
 @click.option(
     "--type",
     "collection_type",
     type=click.Choice(["pdf", "code", "markdown"]),
-    help="Collection type (pdf, code, or markdown). Model will be inferred from type if not specified.",
+    help=(
+        "Collection type (pdf, code, or markdown). "
+        "Model will be inferred from type if not specified."
+    ),
 )
 @click.option("--hnsw-m", type=int, default=16, help="HNSW index parameter m")
 @click.option("--hnsw-ef", type=int, default=100, help="HNSW index parameter ef_construct")
@@ -336,7 +346,10 @@ def index():
     "--embedding-batch-size",
     type=int,
     default=None,
-    help="Batch size for embedding generation. Auto-tuned if not specified. Larger batches (300-500) improve GPU throughput 10-20%.",
+    help=(
+        "Batch size for embedding generation. Auto-tuned if not specified. "
+        "Larger batches (300-500) improve GPU throughput 10-20%."
+    ),
 )
 @click.option("--no-ocr", is_flag=True, help="Disable OCR (enabled by default for scanned PDFs)")
 @click.option("--ocr-language", default="eng", help="OCR language code")
@@ -344,7 +357,10 @@ def index():
     "--ocr-workers",
     type=int,
     default=None,
-    help="Parallel OCR workers for page processing (default: cpu_count, effective for scanned PDFs only)",
+    help=(
+        "Parallel OCR workers for page processing "
+        "(default: cpu_count, effective for scanned PDFs only)"
+    ),
 )
 @click.option(
     "--normalize-only",
@@ -465,7 +481,10 @@ def index_pdf(
     "--embedding-batch-size",
     type=int,
     default=None,
-    help="Batch size for embedding generation. Auto-tuned if not specified. Larger batches (300-500) improve GPU throughput 10-20%.",
+    help=(
+        "Batch size for embedding generation. Auto-tuned if not specified. "
+        "Larger batches (300-500) improve GPU throughput 10-20%."
+    ),
 )
 @click.option("--chunk-size", type=int, help="Target chunk size in tokens (default: 400)")
 @click.option("--chunk-overlap", type=int, help="Overlap between chunks in tokens (default: 20)")
@@ -574,7 +593,10 @@ def index_code(
     "--embedding-batch-size",
     type=int,
     default=None,
-    help="Batch size for embedding generation. Auto-tuned if not specified. Larger batches (300-500) improve GPU throughput 10-20%.",
+    help=(
+        "Batch size for embedding generation. Auto-tuned if not specified. "
+        "Larger batches (300-500) improve GPU throughput 10-20%."
+    ),
 )
 @click.option("--chunk-size", type=int, help="Target chunk size in tokens")
 @click.option("--chunk-overlap", type=int, help="Overlap between chunks in tokens")
@@ -1284,7 +1306,10 @@ def _drain_corpus_spool(corpus, *, max_batches, sync_kwargs):
     "--cpu-workers",
     type=int,
     default=None,
-    help="Batch parallelization workers for CPU embedding (default: 1, conservative to prevent system crashes)",
+    help=(
+        "Batch parallelization workers for CPU embedding "
+        "(default: 1, conservative to prevent system crashes)"
+    ),
 )
 @click.option(
     "--verbose", "-v", is_flag=True, help="Show detailed progress (files, chunks, indexing)"
@@ -1308,7 +1333,11 @@ def _drain_corpus_spool(corpus, *, max_batches, sync_kwargs):
 @click.option(
     "--parity",
     is_flag=True,
-    help="Also detect renames, remove indexed files no longer on disk, and check cross-system parity (slower than default; default already re-indexes edited files via mtime+size)",
+    help=(
+        "Also detect renames, remove indexed files no longer on disk, and check "
+        "cross-system parity (slower than default; default already re-indexes "
+        "edited files via mtime+size)"
+    ),
 )
 @click.option(
     "--order",
@@ -2204,18 +2233,20 @@ def log_tail(lines, poll_interval):
 
 
 # Configuration and cache management commands
-from arcaneum.cli.config import config_group
+from arcaneum.cli.config import config_group  # noqa: E402 -- register after cli is defined
 
 cli.add_command(config_group, name="config")
 
 # Container management commands
-from arcaneum.cli.docker import container_group
+from arcaneum.cli.docker import container_group  # noqa: E402 -- register after cli is defined
 
 cli.add_command(container_group, name="container")
 
 # MeiliSearch index management commands (RDR-008, RDR-010)
 # Named 'indexes' to mirror 'collection' for Qdrant
-from arcaneum.cli.fulltext import fulltext as indexes_group
+from arcaneum.cli.fulltext import (  # noqa: E402 -- register after cli is defined
+    fulltext as indexes_group,
+)
 
 cli.add_command(indexes_group, name="indexes")
 

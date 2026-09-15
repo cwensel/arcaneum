@@ -2,6 +2,17 @@
 
 The `arc` command-line tool provides all operations for semantic and full-text search with Qdrant and MeiliSearch.
 
+The CLI can describe its complete, installed command tree without consulting
+this document:
+
+```bash
+arc --help-all          # Help text for every command and option
+arc --json --help-all   # Machine-readable command manifest for agents and tools
+```
+
+Both forms are generated from the live Click command tree, so they reflect the
+version of `arc` that is actually installed.
+
 ## Installation & Setup
 
 ### Development Mode

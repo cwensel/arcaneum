@@ -94,6 +94,7 @@ for the capability matrix, worker fallback behavior, diagnostics, and evidence.
 
 - All operations via command-line interface
 - JSON output mode for automation
+- Live full-command discovery with `arc --help-all` and `arc --json --help-all`
 - Structured error messages with exit codes
 - Python >= 3.12 required
 

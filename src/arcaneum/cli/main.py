@@ -1,6 +1,7 @@
 """Main CLI entry point for Arcaneum (RDR-001 with RDR-006 enhancements)."""
 
 import functools
+import json
 import os
 import sys
 from contextlib import redirect_stdout
@@ -36,14 +37,34 @@ from arcaneum.ssl_config import configure_ssl_from_env  # noqa: E402, I001
 from arcaneum.cli.utils import validate_path_or_from_file  # noqa: E402
 
 
-@click.group()
+@click.group(invoke_without_command=True, no_args_is_help=True)
 @click.option("--json", "output_json", is_flag=True, help="Output JSON format")
+@click.option(
+    "--help-all",
+    is_flag=True,
+    help="Show help for every command; combine with --json for a machine-readable manifest",
+)
 @click.version_option(version=__version__)
 @click.pass_context
-def cli(ctx, output_json):
+def cli(ctx, output_json, help_all):
     """Arcaneum: Semantic and full-text search tools for Qdrant and MeiliSearch"""
     ctx.ensure_object(dict)
     ctx.obj["output_json"] = output_json
+
+    if help_all:
+        from arcaneum.cli.help_all import build_help_manifest, render_help_all
+
+        if output_json:
+            click.echo(
+                json.dumps(
+                    build_help_manifest(ctx, version=__version__),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            )
+        else:
+            click.echo(render_help_all(ctx), nl=False)
+        ctx.exit()
 
     # Run migration from legacy ~/.arcaneum/ to XDG-compliant structure if needed
     # Only show verbose output if user passed --verbose or similar flags

@@ -82,7 +82,9 @@ services:
       resources:
         limits:
           memory: 8G
-          cpus: '8.0'
+          # arc container start caps this to the Docker daemon's CPU count,
+          # since Compose refuses to start a container asking for more.
+          cpus: '${MEILI_CPUS:-8.0}'
         reservations:
           memory: 2G
           cpus: '2.0'

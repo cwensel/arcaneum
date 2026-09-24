@@ -90,6 +90,82 @@ class TestContainerStart:
         assert "not installed" in output.lower()
 
 
+class TestContainerResourceLimits:
+    """Test compose CPU limits passed by 'arc container start'."""
+
+    @staticmethod
+    def _limits(monkeypatch, ncpu_result):
+        from arcaneum.cli.docker import get_resource_limit_env
+
+        monkeypatch.delenv("MEILI_CPUS", raising=False)
+        with patch("subprocess.run", side_effect=ncpu_result) as mock_run:
+            return get_resource_limit_env(), mock_run
+
+    def test_meili_cpu_limit_capped_to_docker_cpus(self, monkeypatch):
+        """Compose refuses a CPU limit above the daemon's CPUs, so small hosts cap it."""
+        env, mock_run = self._limits(monkeypatch, [MagicMock(returncode=0, stdout="4\n")])
+
+        assert env == {"MEILI_CPUS": "4"}
+        assert mock_run.call_args.args[0] == ["docker", "info", "--format", "{{.NCPU}}"]
+
+    def test_meili_cpu_limit_uses_compose_default_on_large_hosts(self, monkeypatch):
+        env, _ = self._limits(monkeypatch, [MagicMock(returncode=0, stdout="12\n")])
+
+        assert env == {}
+
+    def test_meili_cpu_limit_uses_compose_default_when_docker_info_fails(self, monkeypatch):
+        env, _ = self._limits(monkeypatch, subprocess.SubprocessError("no daemon"))
+
+        assert env == {}
+
+    def test_user_meili_cpu_limit_is_not_overridden(self, monkeypatch):
+        from arcaneum.cli.docker import get_resource_limit_env
+
+        monkeypatch.setenv("MEILI_CPUS", "3")
+        with patch("subprocess.run") as mock_run:
+            env = get_resource_limit_env()
+
+        assert env == {}
+        mock_run.assert_not_called()
+
+    def test_start_passes_capped_cpu_limit_to_compose(self):
+        from arcaneum.cli.docker import start_command
+
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run", return_value=MagicMock(returncode=0)) as mock_run:
+                with patch(
+                    "arcaneum.cli.docker.get_compose_file",
+                    return_value="/path/to/docker-compose.yml",
+                ):
+                    with patch(
+                        "arcaneum.cli.docker.get_container_env",
+                        return_value={"MEILISEARCH_API_KEY": "test"},
+                    ):
+                        with patch(
+                            "arcaneum.cli.docker.get_resource_limit_env",
+                            return_value={"MEILI_CPUS": "4"},
+                        ):
+                            with patch(
+                                "arcaneum.cli.docker.check_qdrant_health", return_value=True
+                            ):
+                                with patch(
+                                    "arcaneum.cli.docker.check_meilisearch_health",
+                                    return_value=True,
+                                ):
+                                    with patch("time.sleep"):
+                                        start_command.callback(output_json=False)
+
+        compose_call = next(c for c in mock_run.call_args_list if "compose" in c.args[0])
+        compose_env = compose_call.kwargs["env"]
+        assert compose_env["MEILI_CPUS"] == "4"
+        assert compose_env["MEILISEARCH_API_KEY"] == "test"
+
+    def test_compose_meili_cpu_limit_is_interpolated(self):
+        compose = Path(__file__).parents[3] / "deploy" / "docker-compose.yml"
+
+        assert "cpus: '${MEILI_CPUS:-8.0}'" in compose.read_text()
+
+
 class TestContainerStop:
     """Test 'arc container stop' command."""
 

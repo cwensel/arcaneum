@@ -1,6 +1,7 @@
 """Container management commands for Arcaneum services."""
 
 import json
+import os
 import shutil
 import subprocess
 import time
@@ -158,6 +159,38 @@ def run_compose_command(
         return None
 
 
+# Default MeiliSearch CPU limit in deploy/docker-compose.yml.
+_MEILI_DEFAULT_CPUS = 8
+
+
+def _docker_cpu_count() -> int | None:
+    """CPUs available to the Docker daemon, or None if it cannot be asked."""
+    try:
+        result = subprocess.run(
+            ["docker", "info", "--format", "{{.NCPU}}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return int(result.stdout.strip()) if result.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
+def get_resource_limit_env():
+    """Get compose CPU limits that fit the Docker daemon.
+
+    Compose refuses to create a container whose CPU limit exceeds the daemon's
+    CPUs, so MEILI_CPUS is capped on smaller hosts unless the user set it.
+    """
+    if "MEILI_CPUS" in os.environ:
+        return {}
+    cpus = _docker_cpu_count()
+    if cpus and cpus < _MEILI_DEFAULT_CPUS:
+        return {"MEILI_CPUS": str(cpus)}
+    return {}
+
+
 def get_container_env():
     """Get environment variables for container startup.
 
@@ -212,7 +245,7 @@ def start_command(output_json=False):
         _exit_on_error()
 
     # Get container environment (auto-generates MeiliSearch key if needed)
-    container_env = get_container_env()
+    container_env = {**get_container_env(), **get_resource_limit_env()}
 
     print_info("Starting container services...", output_json)
     result = run_compose_command(

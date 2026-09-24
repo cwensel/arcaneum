@@ -611,3 +611,40 @@ def test_chunk_counts_can_bypass_manifests_and_count_real_points():
 
     assert counts == {"/repo/a.py": 2}
     assert qdrant.scroll.call_args.kwargs["with_payload"] == ["file_path"]
+
+
+def test_alias_file_paths_are_manifests_pointing_at_another_canonical_path():
+    qdrant = MagicMock()
+    qdrant.retrieve.return_value = [_ready_metadata_point()]
+    qdrant.get_collection.return_value = _collection_info(
+        {FILE_MANIFEST_PAYLOAD_KEY: SimpleNamespace()}
+    )
+    qdrant.scroll.return_value = (
+        [
+            SimpleNamespace(
+                payload={"file_path": "/papers/a.pdf", "canonical_path": "/papers/a.pdf"}
+            ),
+            SimpleNamespace(
+                payload={"file_path": "/papers/copy.pdf", "canonical_path": "/papers/a.pdf"}
+            ),
+            SimpleNamespace(payload={"file_path": "/papers/legacy.pdf"}),
+        ],
+        None,
+    )
+    sync = MetadataBasedSync(qdrant)
+
+    assert sync.get_alias_file_paths("pdf") == {"/papers/copy.pdf"}
+    assert sync._get_indexed_file_paths_set("pdf") == {
+        "/papers/a.pdf",
+        "/papers/copy.pdf",
+        "/papers/legacy.pdf",
+    }
+    assert qdrant.scroll.call_count == 1
+
+
+def test_alias_file_paths_are_empty_without_ready_manifests():
+    qdrant = MagicMock()
+    qdrant.retrieve.return_value = []
+
+    assert MetadataBasedSync(qdrant).get_alias_file_paths("pdf") == set()
+    qdrant.scroll.assert_not_called()

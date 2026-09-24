@@ -854,6 +854,21 @@ class MetadataBasedSync:
                 raise FileManifestScanError(collection_name) from e
             return set()
 
+    def get_alias_file_paths(self, collection_name: str) -> set:
+        """Get paths whose manifest points at another path's chunks.
+
+        Duplicate PDFs share one canonical chunk set, so an alias path has a
+        manifest but never any chunks (or MeiliSearch documents) of its own.
+        """
+        if not file_manifests_ready(self.qdrant, collection_name):
+            return set()
+        return {
+            path
+            for path, payload in self.get_file_manifest_snapshot(collection_name).items()
+            if payload.get("canonical_path")
+            and str(Path(payload["canonical_path"]).absolute()) != path
+        }
+
     def _get_indexed_file_paths_set(self, collection_name: str) -> set:
         """Get all indexed file_path values for deduplication in Pass 2.
 

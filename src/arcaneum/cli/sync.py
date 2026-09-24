@@ -3013,7 +3013,9 @@ def _sync_directory_locked(
 
             # Calculate set operations
             in_both_systems = qdrant_file_paths & meili_file_paths
-            missing_from_meili = qdrant_file_paths - meili_file_paths
+            missing_from_meili = _qdrant_paths_missing_from_meili(
+                sync_manager, corpus, qdrant_file_paths, meili_file_paths
+            )
             missing_from_qdrant = meili_file_paths - qdrant_file_paths
 
             # Files in Qdrant but not in MeiliSearch need backfill
@@ -4614,6 +4616,20 @@ def _sync_directory_locked(
         )
 
 
+def _qdrant_paths_missing_from_meili(
+    sync_manager,
+    corpus: str,
+    qdrant_file_paths: Set[str],
+    meili_file_paths: Set[str],
+) -> Set[str]:
+    """Qdrant-indexed paths whose chunks are absent from MeiliSearch.
+
+    PDF alias paths are excluded: their chunks live under the canonical path,
+    so MeiliSearch never holds documents for them and backfill has nothing to copy.
+    """
+    return qdrant_file_paths - meili_file_paths - sync_manager.get_alias_file_paths(corpus)
+
+
 def _fetch_chunks_for_files_bulk(
     qdrant,
     corpus: str,
@@ -6154,7 +6170,9 @@ def _parity_single_corpus(
 
         # Calculate set operations
         in_both = qdrant_file_paths & meili_file_paths
-        missing_from_meili = qdrant_file_paths - meili_file_paths
+        missing_from_meili = _qdrant_paths_missing_from_meili(
+            sync_manager, corpus, qdrant_file_paths, meili_file_paths
+        )
         missing_from_qdrant = meili_file_paths - qdrant_file_paths
 
         # Verify chunk counts if requested

@@ -13,6 +13,7 @@ from arcaneum.cli.sync import (
     _fetch_chunks_for_files_bulk,
     _file_progress_weight,
     _maybe_backfill_legacy_prompt_policy,
+    _qdrant_paths_missing_from_meili,
     _raise_if_sync_failures,
     _repair_meili_metadata,
 )
@@ -482,3 +483,22 @@ def test_fetch_chunks_for_files_bulk_skips_file_manifest_points():
     assert error is None
     docs = chunks_by_file["/docs/paper.pdf"]
     assert [d["id"] for d in docs] == ["chunk-point"]
+
+
+def test_parity_does_not_backfill_pdf_aliases_to_meili():
+    """Alias manifests share the canonical path's chunks, so MeiliSearch never
+    holds documents under the alias path. Treating them as missing sends the
+    backfill on a full Qdrant scan that finds nothing and warns per alias.
+    """
+    sync_manager = MagicMock()
+    sync_manager.get_alias_file_paths.return_value = {"/papers/copy.pdf"}
+
+    missing = _qdrant_paths_missing_from_meili(
+        sync_manager,
+        "Papers",
+        qdrant_file_paths={"/papers/a.pdf", "/papers/copy.pdf", "/papers/b.pdf"},
+        meili_file_paths={"/papers/a.pdf"},
+    )
+
+    assert missing == {"/papers/b.pdf"}
+    sync_manager.get_alias_file_paths.assert_called_once_with("Papers")

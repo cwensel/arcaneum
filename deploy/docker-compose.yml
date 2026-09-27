@@ -35,7 +35,9 @@ services:
 
   # MeiliSearch full-text search (RDR-008)
   meilisearch:
-    image: getmeili/meilisearch:v1.12
+    # Exact patch pin: MeiliSearch refuses data written by any other version.
+    # Bump it with `arc container upgrade`, which backs up and migrates the data.
+    image: getmeili/meilisearch:${MEILI_IMAGE_TAG:-v1.54.0}
     container_name: meilisearch-arcaneum
     restart: unless-stopped
 
@@ -54,6 +56,8 @@ services:
       - MEILI_ENV=${MEILI_ENV:-production}
       - MEILI_MASTER_KEY=${MEILISEARCH_API_KEY}
       - MEILI_HTTP_ADDR=0.0.0.0:7700
+      # Set only by `arc container upgrade`, after it has taken a backup.
+      - MEILI_UPGRADE_DB=${MEILI_UPGRADE_DB:-false}
 
       # Resource management (CRITICAL: Must set manually - MeiliSearch issue #4686)
       # Merge cost scales with total index size, so indexing a large index is

@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -191,6 +192,98 @@ def get_resource_limit_env():
     return {}
 
 
+# MeiliSearch opens only a database written by its exact version, down to the
+# patch, so deploy/docker-compose.yml pins an exact tag and data moves between
+# versions through `arc container upgrade`.
+_MEILI_IMAGE = "getmeili/meilisearch"
+_MEILI_DATA_VOLUME = "arcaneum_meilisearch-arcaneum-data"
+# Oldest database version MeiliSearch's --upgrade-db can migrate.
+_MEILI_MIN_UPGRADABLE = (1, 12, 0)
+
+
+def _parse_meili_version(text) -> tuple[int, int, int] | None:
+    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", str(text).strip())
+    return tuple(int(part) for part in match.groups()) if match else None
+
+
+def _format_meili_version(version: tuple[int, int, int]) -> str:
+    return "v" + ".".join(str(part) for part in version)
+
+
+def _compose_meili_image_tag(output_json: bool = False) -> str | None:
+    """MeiliSearch image tag compose will run: MEILI_IMAGE_TAG or the pinned default."""
+    if os.environ.get("MEILI_IMAGE_TAG"):
+        return os.environ["MEILI_IMAGE_TAG"]
+    compose_file = get_compose_file(output_json)
+    if not compose_file:
+        return None
+    try:
+        compose = Path(compose_file).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    match = re.search(r"getmeili/meilisearch:\$\{MEILI_IMAGE_TAG:-([^}]+)\}", compose)
+    return match.group(1) if match else None
+
+
+def _meili_data_version(image_tag: str) -> tuple[int, int, int] | None:
+    """Version of the database in the MeiliSearch volume, or None if unknown.
+
+    Read from the volume rather than the server so it works while MeiliSearch
+    is stopped, or crash-looping on data it refuses to open.
+    """
+    try:
+        # `docker run -v <name>:...` silently creates a missing volume.
+        inspect = subprocess.run(
+            ["docker", "volume", "inspect", _MEILI_DATA_VOLUME],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if inspect.returncode != 0:
+            return None
+        result = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--entrypoint",
+                "cat",
+                "-v",
+                f"{_MEILI_DATA_VOLUME}:/meili_data:ro",
+                f"{_MEILI_IMAGE}:{image_tag}",
+                "/meili_data/data.ms/VERSION",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return _parse_meili_version(result.stdout) if result.returncode == 0 else None
+
+
+def _meili_version_blocker(output_json: bool = False) -> str | None:
+    """Why compose cannot start MeiliSearch on the existing data, if it cannot."""
+    image_tag = _compose_meili_image_tag(output_json)
+    target = _parse_meili_version(image_tag) if image_tag else None
+    if target is None:
+        return None
+    current = _meili_data_version(image_tag)
+    if current is None or current == target:
+        return None
+    if current < target:
+        return (
+            f"MeiliSearch data is {_format_meili_version(current)} but the configured image "
+            f"is {image_tag}, and MeiliSearch will not open older data. "
+            "Migrate it with: arc container upgrade"
+        )
+    return (
+        f"MeiliSearch data is {_format_meili_version(current)}, newer than the configured "
+        f"image {image_tag}; downgrades are not supported. Set MEILI_IMAGE_TAG to the "
+        "data's version, or restore a backup into a fresh volume."
+    )
+
+
 def get_container_env():
     """Get environment variables for container startup.
 
@@ -242,6 +335,11 @@ def check_meilisearch_health():
 def start_command(output_json=False):
     """Start container services"""
     if not check_docker_available(output_json):
+        _exit_on_error()
+
+    blocker = _meili_version_blocker(output_json)
+    if blocker:
+        print_error(blocker, output_json)
         _exit_on_error()
 
     # Get container environment (auto-generates MeiliSearch key if needed)
@@ -1172,6 +1270,302 @@ def restore_command(
         "warnings": warnings,
     }
     print_success(f"Restore complete: {backup_path}", output_json, data=data)
+
+
+def _meili_server_version(meilisearch_url: str, headers: dict) -> tuple[int, int, int] | None:
+    try:
+        response = _request_json("GET", f"{meilisearch_url}/version", headers=headers)
+    except requests.RequestException:
+        return None
+    return _parse_meili_version(response.get("pkgVersion", ""))
+
+
+def _meili_index_counts(meilisearch_url: str, headers: dict) -> dict[str, int]:
+    stats = _request_json("GET", f"{meilisearch_url}/stats", headers=headers, timeout=120)
+    return {
+        uid: index.get("numberOfDocuments", 0)
+        for uid, index in sorted(stats.get("indexes", {}).items())
+    }
+
+
+def _wait_for_meili_health(meilisearch_url: str, timeout_seconds: int = 300) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            if requests.get(f"{meilisearch_url}/health", timeout=2).status_code == 200:
+                return True
+        except requests.RequestException:
+            pass
+        time.sleep(2)
+    return False
+
+
+def _wait_for_meili_upgrade_task(
+    meilisearch_url: str,
+    headers: dict,
+    output_json: bool = False,
+    unresponsive_seconds: int = 120,
+) -> dict:
+    """Wait for the upgradeDatabase task an --upgrade-db start enqueues.
+
+    There is no overall timeout: restarting MeiliSearch mid-upgrade can corrupt
+    the database, so the only safe stop is the task's own terminal state.
+    """
+    last_progress = time.monotonic()
+    last_report = last_progress
+    while True:
+        try:
+            tasks = _request_json(
+                "GET",
+                f"{meilisearch_url}/tasks",
+                headers=headers,
+                params={"types": "upgradeDatabase", "limit": 1},
+            ).get("results", [])
+        except requests.RequestException:
+            tasks = None
+        if tasks:
+            last_progress = time.monotonic()
+            if tasks[0].get("status") in ("succeeded", "failed", "canceled"):
+                return tasks[0]
+        elif time.monotonic() - last_progress > unresponsive_seconds:
+            state = "stopped responding" if tasks is None else "never reported an upgrade task"
+            raise RuntimeError(f"MeiliSearch {state} during the upgrade")
+        if time.monotonic() - last_report >= 60:
+            print_info("Still upgrading the MeiliSearch database...", output_json)
+            last_report = time.monotonic()
+        time.sleep(2)
+
+
+def _all_cores_env() -> dict:
+    """Let MeiliSearch use every Docker CPU while it serves no searches."""
+    cpus = _docker_cpu_count()
+    if not cpus:
+        return {}
+    return {
+        name: str(cpus)
+        for name in ("MEILI_MAX_INDEXING_THREADS", "MEILI_CPUS")
+        if name not in os.environ
+    }
+
+
+def _meili_upgrade_recovery_message(reason, backup_path: Path) -> str:
+    return (
+        f"MeiliSearch upgrade did not complete: {reason}\n"
+        "The database may be partially upgraded; MeiliSearch upgrades are not atomic.\n"
+        "Check 'arc container logs' first. To rebuild MeiliSearch from the backup:\n"
+        "  arc container stop\n"
+        f"  docker volume rm {_MEILI_DATA_VOLUME}\n"
+        "  arc container start\n"
+        f"  arc container restore {backup_path}"
+    )
+
+
+@container_group.command("upgrade")
+@click.option("--meilisearch-url", default="http://localhost:7700", help="MeiliSearch URL")
+@click.option(
+    "--dry-run", is_flag=True, help="Show the upgrade plan without backing up or restarting"
+)
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
+def upgrade_command(meilisearch_url, dry_run, output_json):
+    """Migrate MeiliSearch data to the pinned image version.
+
+    Exports every index to a JSONL backup, restarts MeiliSearch on the pinned
+    image with --upgrade-db, and verifies per-index document counts. If the
+    upgrade fails, 'arc container restore' rebuilds the indexes from the backup.
+    """
+    if not check_docker_available(output_json):
+        _exit_on_error()
+
+    image_tag = _compose_meili_image_tag(output_json)
+    target = _parse_meili_version(image_tag) if image_tag else None
+    if target is None:
+        print_error(
+            f"Cannot determine the pinned MeiliSearch version from {image_tag!r}", output_json
+        )
+        _exit_on_error()
+
+    current = _meili_data_version(image_tag)
+    if current is None or current == target:
+        message = (
+            "No MeiliSearch data to upgrade"
+            if current is None
+            else (f"MeiliSearch data is already {image_tag}")
+        )
+        print_success(message, output_json, data={"upgraded": False, "to": image_tag})
+        return
+    from_tag = _format_meili_version(current)
+    if current > target:
+        print_error(
+            f"MeiliSearch data is {from_tag}, newer than the configured image {image_tag}; "
+            "downgrades are not supported.",
+            output_json,
+        )
+        _exit_on_error()
+    if current < _MEILI_MIN_UPGRADABLE:
+        print_error(
+            f"MeiliSearch data is {from_tag}, too old to upgrade in place (needs v1.12+). "
+            f"Run 'arc container backup' with MEILI_IMAGE_TAG={from_tag}, remove the "
+            f"{_MEILI_DATA_VOLUME} volume, then 'arc container start' and "
+            "'arc container restore <backup>'.",
+            output_json,
+        )
+        _exit_on_error()
+
+    headers = _meilisearch_headers()
+    container_env = {**get_container_env(), **get_resource_limit_env()}
+    target_env = {**container_env, "MEILI_IMAGE_TAG": image_tag}
+
+    # The export and the baseline counts need the server on the data's own version.
+    if _meili_server_version(meilisearch_url, headers) != current:
+        if dry_run:
+            print_success(
+                f"Would start MeiliSearch {from_tag}, back up every index, "
+                f"and upgrade to {image_tag}",
+                output_json,
+                data={"dry_run": True, "from": from_tag, "to": image_tag, "indexes": None},
+            )
+            return
+        print_info(f"Starting MeiliSearch {from_tag} to export the current data...", output_json)
+        started = run_compose_command(
+            ["up", "-d", "meilisearch"],
+            env={**container_env, "MEILI_IMAGE_TAG": from_tag, "MEILI_UPGRADE_DB": "false"},
+            capture_output=output_json,
+            output_json=output_json,
+        )
+        if started is None or not _wait_for_meili_health(meilisearch_url):
+            print_error(
+                f"MeiliSearch {from_tag} did not become healthy; check: arc container logs",
+                output_json,
+            )
+            _exit_on_error()
+
+    try:
+        _ensure_meilisearch_idle(meilisearch_url, headers)
+        counts = _meili_index_counts(meilisearch_url, headers)
+    except (RuntimeError, requests.RequestException) as exc:
+        print_error(f"Cannot upgrade MeiliSearch: {exc}", output_json)
+        _exit_on_error()
+
+    plan = {"from": from_tag, "to": image_tag, "indexes": counts}
+    if dry_run:
+        print_success(
+            f"Would back up {len(counts)} indexes and upgrade {from_tag} -> {image_tag}",
+            output_json,
+            data={**plan, "dry_run": True},
+        )
+        return
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_path = _resolve_backup_path(None, timestamp, output_json)
+    backup_path.mkdir(parents=True, exist_ok=False)
+    print_info(f"Backing up MeiliSearch indexes to {backup_path}", output_json)
+    try:
+        exported = _backup_meilisearch(backup_path, meilisearch_url)
+    except (RuntimeError, requests.RequestException) as exc:
+        print_error(f"MeiliSearch backup failed; nothing was changed: {exc}", output_json)
+        _exit_on_error()
+    exported_counts = {entry["index"]: entry["documents"] for entry in exported}
+    if exported_counts != counts:
+        mismatched = sorted(
+            uid
+            for uid in set(counts) | set(exported_counts)
+            if counts.get(uid) != exported_counts.get(uid)
+        )
+        print_error(
+            "Backup does not match the live document counts for "
+            f"{', '.join(mismatched)}; nothing was changed.",
+            output_json,
+        )
+        _exit_on_error()
+    manifest = {
+        "version": 1,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "qdrant_url": None,
+        "meilisearch_url": meilisearch_url,
+        "meilisearch_version": from_tag,
+        "protected": ["MeiliSearch index settings and documents"],
+        "not_protected": [
+            "Qdrant collections (this backup precedes a MeiliSearch upgrade)",
+            "Local source files referenced by indexed metadata",
+        ],
+        "qdrant": [],
+        "meilisearch": exported,
+    }
+    (backup_path / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    # Pull before stopping anything, so a registry failure costs no downtime.
+    if (
+        run_compose_command(
+            ["pull", "meilisearch"],
+            env=target_env,
+            capture_output=output_json,
+            output_json=output_json,
+        )
+        is None
+    ):
+        print_error(f"Could not pull {_MEILI_IMAGE}:{image_tag}; nothing was changed.", output_json)
+        _exit_on_error()
+
+    print_warning(
+        f"Upgrading MeiliSearch {from_tag} -> {image_tag} in place. "
+        "Do not stop MeiliSearch until this command finishes.",
+        output_json,
+    )
+    try:
+        if (
+            run_compose_command(
+                ["up", "-d", "meilisearch"],
+                env={**target_env, **_all_cores_env(), "MEILI_UPGRADE_DB": "true"},
+                capture_output=output_json,
+                output_json=output_json,
+            )
+            is None
+        ):
+            raise RuntimeError(f"docker compose could not start {image_tag}")
+        if not _wait_for_meili_health(meilisearch_url):
+            raise RuntimeError(f"MeiliSearch {image_tag} did not become healthy")
+        task = _wait_for_meili_upgrade_task(meilisearch_url, headers, output_json)
+        if task.get("status") != "succeeded":
+            error = (task.get("error") or {}).get("message")
+            raise RuntimeError(
+                error or f"upgradeDatabase task {task.get('uid')} {task.get('status')}"
+            )
+        server_version = _meili_server_version(meilisearch_url, headers)
+        if server_version != target:
+            raise RuntimeError(f"server reports {server_version}, expected {image_tag}")
+        after = _meili_index_counts(meilisearch_url, headers)
+        if after != counts:
+            changed = ", ".join(
+                f"{uid} {counts.get(uid)} -> {after.get(uid)}"
+                for uid in sorted(set(counts) | set(after))
+                if counts.get(uid) != after.get(uid)
+            )
+            raise RuntimeError(f"document counts changed: {changed}")
+    except (RuntimeError, requests.RequestException) as exc:
+        print_error(_meili_upgrade_recovery_message(exc, backup_path), output_json)
+        _exit_on_error()
+
+    # Recreate without the flag, so a later image bump never upgrades unasked.
+    restarted = run_compose_command(
+        ["up", "-d", "meilisearch"],
+        env={**target_env, "MEILI_UPGRADE_DB": "false"},
+        capture_output=output_json,
+        output_json=output_json,
+    )
+    if restarted is None or not _wait_for_meili_health(meilisearch_url):
+        print_warning(
+            "Upgrade succeeded, but MeiliSearch did not restart cleanly; run: arc container start",
+            output_json,
+        )
+
+    print_success(
+        f"MeiliSearch upgraded {from_tag} -> {image_tag} "
+        f"({len(counts)} indexes, document counts verified)",
+        output_json,
+        data={**plan, "upgraded": True, "backup": str(backup_path)},
+    )
+    print_info("Next: check each corpus with 'arc corpus verify <corpus>'", output_json)
+    print_info(f"Backup kept at {backup_path}; delete it once searches look right", output_json)
 
 
 @container_group.command("reset")

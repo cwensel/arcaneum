@@ -42,7 +42,8 @@ docker compose up -d
 
 - **Qdrant**: Port 6333 (REST), 6334 (gRPC)
 - **Qdrant image**: `qdrant/qdrant:v1.18.2`
-- **MeiliSearch image**: `getmeili/meilisearch:v1.12`
+- **MeiliSearch image**: `getmeili/meilisearch:v1.54.0` (exact pin; migrate
+  existing data with `arc container upgrade`)
 - **Storage**: Docker named volumes managed by the `arcaneum` compose project
 - **Snapshots**: Docker named volumes managed by the `arcaneum` compose project
 

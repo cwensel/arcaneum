@@ -5,6 +5,7 @@ Uses mocked subprocess and requests to avoid actual Docker operations.
 """
 
 import json
+import re
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -164,6 +165,328 @@ class TestContainerResourceLimits:
         compose = Path(__file__).parents[3] / "deploy" / "docker-compose.yml"
 
         assert "cpus: '${MEILI_CPUS:-8.0}'" in compose.read_text()
+
+
+COMPOSE_FILE = Path(__file__).parents[3] / "deploy" / "docker-compose.yml"
+CI_WORKFLOW = Path(__file__).parents[3] / ".github" / "workflows" / "test.yml"
+
+
+class TestMeiliVersionPin:
+    """MeiliSearch opens only databases written by its exact version."""
+
+    def test_compose_pins_exact_meili_patch_version(self, monkeypatch):
+        from arcaneum.cli.docker import _compose_meili_image_tag, _parse_meili_version
+
+        monkeypatch.delenv("MEILI_IMAGE_TAG", raising=False)
+        with patch("arcaneum.cli.docker.get_compose_file", return_value=str(COMPOSE_FILE)):
+            tag = _compose_meili_image_tag()
+
+        # A floating minor tag would pull a new patch release that refuses the data.
+        assert _parse_meili_version(tag) is not None
+        assert _parse_meili_version(tag) >= (1, 51, 0)  # --upgrade-db flag name
+
+    def test_meili_image_tag_env_overrides_compose_default(self, monkeypatch):
+        from arcaneum.cli.docker import _compose_meili_image_tag
+
+        monkeypatch.setenv("MEILI_IMAGE_TAG", "v1.12.8")
+
+        assert _compose_meili_image_tag() == "v1.12.8"
+
+    def test_compose_upgrade_flag_defaults_off(self):
+        assert "MEILI_UPGRADE_DB=${MEILI_UPGRADE_DB:-false}" in COMPOSE_FILE.read_text()
+
+    def test_ci_meili_image_matches_compose(self, monkeypatch):
+        from arcaneum.cli.docker import _compose_meili_image_tag
+
+        monkeypatch.delenv("MEILI_IMAGE_TAG", raising=False)
+        with patch("arcaneum.cli.docker.get_compose_file", return_value=str(COMPOSE_FILE)):
+            tag = _compose_meili_image_tag()
+
+        ci_images = set(re.findall(r"image: getmeili/meilisearch:(\S+)", CI_WORKFLOW.read_text()))
+        assert ci_images == {tag}
+
+    def test_data_version_skips_missing_volume(self):
+        """`docker run -v <name>` would create the volume, so inspect first."""
+        from arcaneum.cli.docker import _meili_data_version
+
+        with patch("subprocess.run", return_value=MagicMock(returncode=1)) as mock_run:
+            assert _meili_data_version("v1.54.0") is None
+
+        assert mock_run.call_count == 1
+        assert mock_run.call_args.args[0][:3] == ["docker", "volume", "inspect"]
+
+    def test_data_version_read_from_volume(self):
+        from arcaneum.cli.docker import _meili_data_version
+
+        results = [MagicMock(returncode=0), MagicMock(returncode=0, stdout="1.12.8\n")]
+        with patch("subprocess.run", side_effect=results) as mock_run:
+            assert _meili_data_version("v1.54.0") == (1, 12, 8)
+
+        run_cmd = mock_run.call_args.args[0]
+        assert "arcaneum_meilisearch-arcaneum-data:/meili_data:ro" in run_cmd
+        assert "getmeili/meilisearch:v1.54.0" in run_cmd
+
+    def test_data_version_unparseable_is_unknown(self):
+        from arcaneum.cli.docker import _meili_data_version
+
+        results = [MagicMock(returncode=0), MagicMock(returncode=0, stdout="garbage")]
+        with patch("subprocess.run", side_effect=results):
+            assert _meili_data_version("v1.54.0") is None
+
+
+class TestContainerStartMeiliGuard:
+    """'arc container start' must not crash-loop MeiliSearch on old data."""
+
+    @staticmethod
+    def _start(data_version, image_tag="v1.54.0"):
+        from arcaneum.cli.docker import start_command
+
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run", return_value=MagicMock(returncode=0)):
+                with patch("arcaneum.cli.docker.run_compose_command") as mock_compose:
+                    with patch(
+                        "arcaneum.cli.docker._compose_meili_image_tag", return_value=image_tag
+                    ):
+                        with patch(
+                            "arcaneum.cli.docker._meili_data_version", return_value=data_version
+                        ):
+                            with patch(
+                                "arcaneum.cli.docker.get_container_env",
+                                return_value={"MEILISEARCH_API_KEY": "test"},
+                            ):
+                                with patch(
+                                    "arcaneum.cli.docker.check_qdrant_health", return_value=True
+                                ):
+                                    with patch(
+                                        "arcaneum.cli.docker.check_meilisearch_health",
+                                        return_value=True,
+                                    ):
+                                        with patch("time.sleep"):
+                                            start_command.callback(output_json=False)
+        return mock_compose
+
+    def test_start_refuses_older_meili_data(self, capsys):
+        with pytest.raises(SystemExit) as exc_info:
+            self._start((1, 12, 8))
+
+        assert exc_info.value.code == 1
+        err = capsys.readouterr().err
+        assert "v1.12.8" in err
+        assert "arc container upgrade" in err
+
+    def test_start_refuses_newer_meili_data(self, capsys):
+        with pytest.raises(SystemExit):
+            self._start((1, 55, 0))
+
+        assert "downgrade" in capsys.readouterr().err.lower()
+
+    def test_start_proceeds_on_matching_data(self):
+        mock_compose = self._start((1, 54, 0))
+
+        assert mock_compose.call_args.args[0] == ["up", "-d"]
+
+    def test_start_proceeds_on_fresh_install(self):
+        mock_compose = self._start(None)
+
+        assert mock_compose.call_args.args[0] == ["up", "-d"]
+
+
+class TestContainerUpgrade:
+    """Test 'arc container upgrade' (guided MeiliSearch --upgrade-db)."""
+
+    COUNTS = {"Claude": 655954, "DevRef": 101060}
+    EXPORTED = [
+        {
+            "index": "Claude",
+            "primaryKey": "id",
+            "documents": 655954,
+            "metadata_file": "meilisearch/Claude.metadata.json",
+            "documents_file": "meilisearch/Claude.documents.jsonl",
+        },
+        {
+            "index": "DevRef",
+            "primaryKey": "id",
+            "documents": 101060,
+            "metadata_file": "meilisearch/DevRef.metadata.json",
+            "documents_file": "meilisearch/DevRef.documents.jsonl",
+        },
+    ]
+
+    @staticmethod
+    def _upgrade(
+        tmp_path,
+        *,
+        data_version=(1, 12, 8),
+        server_versions=((1, 12, 8), (1, 54, 0)),
+        counts=None,
+        exported=None,
+        upgrade_task=None,
+        dry_run=False,
+        output_json=False,
+        order=None,
+    ):
+        from arcaneum.cli.docker import upgrade_command
+
+        counts = counts or [TestContainerUpgrade.COUNTS, TestContainerUpgrade.COUNTS]
+        order = [] if order is None else order
+
+        def compose(args, **kwargs):
+            order.append(("compose", list(args), dict(kwargs.get("env") or {})))
+            return MagicMock(returncode=0)
+
+        def backup(path, url, **kwargs):
+            order.append(("backup", path))
+            return exported if exported is not None else TestContainerUpgrade.EXPORTED
+
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run", return_value=MagicMock(returncode=0)):
+                with patch.multiple(
+                    "arcaneum.cli.docker",
+                    _compose_meili_image_tag=MagicMock(return_value="v1.54.0"),
+                    _meili_data_version=MagicMock(return_value=data_version),
+                    _meili_server_version=MagicMock(side_effect=list(server_versions)),
+                    _meili_index_counts=MagicMock(side_effect=list(counts)),
+                    _ensure_meilisearch_idle=MagicMock(),
+                    _backup_meilisearch=MagicMock(side_effect=backup),
+                    _wait_for_meili_health=MagicMock(return_value=True),
+                    _wait_for_meili_upgrade_task=MagicMock(
+                        return_value=upgrade_task or {"uid": 3, "status": "succeeded"}
+                    ),
+                    _meilisearch_headers=MagicMock(return_value={}),
+                    _docker_cpu_count=MagicMock(return_value=12),
+                    run_compose_command=MagicMock(side_effect=compose),
+                    get_container_env=MagicMock(return_value={"MEILISEARCH_API_KEY": "k"}),
+                    get_resource_limit_env=MagicMock(return_value={}),
+                    _resolve_backup_path=MagicMock(return_value=tmp_path / "backup"),
+                ):
+                    upgrade_command.callback(
+                        meilisearch_url="http://localhost:7700",
+                        dry_run=dry_run,
+                        output_json=output_json,
+                    )
+        return order
+
+    def test_upgrade_backs_up_then_upgrades_then_drops_flag(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("MEILI_MAX_INDEXING_THREADS", raising=False)
+        monkeypatch.delenv("MEILI_CPUS", raising=False)
+
+        order = self._upgrade(tmp_path)
+
+        steps = [step[0] if step[0] == "backup" else tuple(step[1]) for step in order]
+        assert steps == [
+            "backup",
+            ("pull", "meilisearch"),
+            ("up", "-d", "meilisearch"),
+            ("up", "-d", "meilisearch"),
+        ]
+        pull_env, upgrade_env, final_env = (step[2] for step in order[1:])
+        assert pull_env["MEILI_IMAGE_TAG"] == "v1.54.0"
+        assert upgrade_env["MEILI_IMAGE_TAG"] == "v1.54.0"
+        assert upgrade_env["MEILI_UPGRADE_DB"] == "true"
+        # No searches are served during the upgrade, so it may use every core.
+        assert upgrade_env["MEILI_MAX_INDEXING_THREADS"] == "12"
+        assert upgrade_env["MEILI_CPUS"] == "12"
+        # A later image bump must never upgrade the data without a backup.
+        assert final_env["MEILI_UPGRADE_DB"] == "false"
+        assert "MEILI_MAX_INDEXING_THREADS" not in final_env
+
+    def test_upgrade_writes_restorable_meili_only_manifest(self, tmp_path):
+        self._upgrade(tmp_path)
+
+        manifest = json.loads((tmp_path / "backup" / "manifest.json").read_text())
+        assert manifest["qdrant"] == []
+        assert manifest["meilisearch"] == self.EXPORTED
+        assert manifest["meilisearch_version"] == "v1.12.8"
+
+    def test_upgrade_json_reports_versions_and_backup(self, tmp_path, capsys):
+        self._upgrade(tmp_path, output_json=True)
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["status"] == "success"
+        assert payload["data"]["upgraded"] is True
+        assert payload["data"]["from"] == "v1.12.8"
+        assert payload["data"]["to"] == "v1.54.0"
+        assert payload["data"]["backup"] == str(tmp_path / "backup")
+        assert payload["data"]["indexes"] == self.COUNTS
+
+    def test_upgrade_noop_when_data_is_current(self, tmp_path):
+        order = self._upgrade(tmp_path, data_version=(1, 54, 0))
+
+        assert order == []
+
+    def test_upgrade_noop_on_fresh_install(self, tmp_path):
+        order = self._upgrade(tmp_path, data_version=None)
+
+        assert order == []
+
+    def test_upgrade_refuses_downgrade(self, tmp_path, capsys):
+        with pytest.raises(SystemExit):
+            self._upgrade(tmp_path, data_version=(1, 55, 0))
+
+        assert "downgrade" in capsys.readouterr().err.lower()
+
+    def test_upgrade_refuses_data_older_than_v1_12(self, tmp_path, capsys):
+        order = []
+        with pytest.raises(SystemExit):
+            self._upgrade(tmp_path, data_version=(1, 11, 3), order=order)
+
+        assert order == []
+        err = capsys.readouterr().err
+        assert "v1.11.3" in err
+        assert "arc container restore" in err
+
+    def test_dry_run_changes_nothing(self, tmp_path, capsys):
+        order = self._upgrade(tmp_path, dry_run=True, output_json=True)
+
+        assert order == []
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["data"]["dry_run"] is True
+        assert payload["data"]["indexes"] == self.COUNTS
+
+    def test_starts_old_version_when_meili_not_running(self, tmp_path):
+        order = self._upgrade(tmp_path, server_versions=(None, (1, 54, 0)))
+
+        first = order[0]
+        assert first[1] == ["up", "-d", "meilisearch"]
+        assert first[2]["MEILI_IMAGE_TAG"] == "v1.12.8"
+        assert first[2]["MEILI_UPGRADE_DB"] == "false"
+        assert order[1][0] == "backup"
+
+    def test_backup_count_mismatch_aborts_before_downtime(self, tmp_path, capsys):
+        short = [dict(self.EXPORTED[0], documents=1), self.EXPORTED[1]]
+
+        order = []
+        with pytest.raises(SystemExit):
+            self._upgrade(tmp_path, exported=short, order=order)
+
+        assert [step[0] for step in order] == ["backup"]
+        err = capsys.readouterr().err
+        assert "Claude" in err
+        assert "nothing was changed" in err.lower()
+
+    def test_failed_upgrade_task_prints_recovery_from_backup(self, tmp_path, capsys):
+        task = {"uid": 3, "status": "failed", "error": {"message": "corrupted"}}
+
+        with pytest.raises(SystemExit):
+            self._upgrade(tmp_path, upgrade_task=task)
+
+        err = capsys.readouterr().err
+        assert "corrupted" in err
+        assert "docker volume rm arcaneum_meilisearch-arcaneum-data" in err
+        assert f"arc container restore {tmp_path / 'backup'}" in err
+
+    def test_count_change_after_upgrade_is_a_failure(self, tmp_path, capsys):
+        after = dict(self.COUNTS, DevRef=100)
+
+        order = []
+        with pytest.raises(SystemExit):
+            self._upgrade(tmp_path, counts=[self.COUNTS, after], order=order)
+
+        # The container is left as-is for inspection rather than restarted.
+        assert len(order) == 3
+        err = capsys.readouterr().err
+        assert "DevRef" in err
+        assert "arc container restore" in err
 
 
 class TestContainerStop:

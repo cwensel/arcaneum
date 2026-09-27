@@ -1,6 +1,6 @@
 ---
 description: Manage container services (Qdrant, MeiliSearch)
-argument-hint: <start|stop|status|logs|restart|reset|backup|restore> [options]
+argument-hint: <start|stop|status|logs|restart|reset|backup|restore|upgrade> [options]
 ---
 
 Manage Docker container services for Qdrant and MeiliSearch.
@@ -15,12 +15,14 @@ Manage Docker container services for Qdrant and MeiliSearch.
 - reset: Delete all data and reset (WARNING: destructive)
 - backup: Back up Qdrant snapshots and MeiliSearch indexes
 - restore: Restore Qdrant snapshots and MeiliSearch indexes from a backup
+- upgrade: Back up MeiliSearch, then migrate its data to the pinned image version
 
 **Arguments:**
 
 - --follow, -f: Follow log output (logs command only)
 - --tail <n>: Number of log lines to show (logs command, default: 100)
 - --confirm: Confirm data deletion (reset command only)
+- --dry-run: Show the upgrade plan without changing anything (upgrade command only)
 - --json: Emit a machine-readable JSON envelope on stdout
 
 **Examples:**
@@ -34,6 +36,7 @@ Manage Docker container services for Qdrant and MeiliSearch.
 /container stop
 /container restart
 /container reset --confirm
+/container upgrade --dry-run
 ```
 
 **Execution:**

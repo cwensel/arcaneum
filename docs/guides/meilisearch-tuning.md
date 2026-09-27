@@ -39,6 +39,42 @@ Matched single-task comparison at the same index size:
 
 Roughly a 20x improvement in wall-clock indexing time.
 
+## v1.12.8 to v1.54.0 upgrade (2026-09-27)
+
+Migrated in place with `arc container upgrade`: 13 indexes, 1.22M documents,
+23.7 GiB. The JSONL backup (4.1 GB) took about 7 minutes. The
+`upgradeDatabase` task took 101 s. Every index kept its document count, and
+`arc corpus verify` shows Qdrant/MeiliSearch counts matching.
+
+Baseline from the v1.12.8 task history, last 100 successful document additions
+per index. Batched tasks share their batch's duration.
+
+| Index | Documents | Median task | p90 task | Docs/task (median) | Docs/s |
+| --- | --- | --- | --- | --- | --- |
+| `Claude` | 655,954 | 187.2 s | 352.4 s | 263 | 1.00 |
+| `PapersFast` | 347,751 | 21.1 s | 88.0 s | 61 | 2.38 |
+| `DevRef` | 101,060 | 6.9 s | 10.6 s | 282 | 26.68 |
+
+Merge-cost probe, re-adding 50 unchanged documents (see "Measuring"). The
+first run follows a restart, with a cold page cache. Host load averaged about
+21 on 12 cores during the v1.54.0 runs, so treat single values as noisy.
+
+| Index | v1.12.8 cold | v1.12.8 warm | v1.54.0 cold | v1.54.0 warm |
+| --- | --- | --- | --- | --- |
+| `Claude` | 57.8 s | 22.2-27.1 s | 33.5 s | 1.5-4.2 s |
+| `PapersFast` | 36.2 s | 2.5-2.8 s | 7.5 s | 1.4-8.2 s |
+| `DevRef` | 3.5 s | 0.5 s | 2.4 s | 0.4-0.7 s |
+
+The largest index gained most: warm merges on `Claude` are 6-15x faster.
+Smaller indexes were already cheap and did not change measurably.
+
+v1.54.0 reports per-step timings in `GET /batches/<uid>`
+(`stats.progressTrace`), which v1.12 lacked. In the cold `Claude` run,
+`post processing facets > facet search` took 26.7 s of 33.5 s. Warm runs
+spend about 1.2 s in `post processing words > word fst`. Facet search is
+unused by `arc search text`, so disabling it (kata `3h9w`) targets the largest
+remaining step.
+
 ## What was actually wrong
 
 The binding constraint was the **Docker VM**, not any MeiliSearch setting.
@@ -80,6 +116,24 @@ Thread count matters on v1.12 and later specifically: the ["Indexer edition
 2024"][indexer-2024] rewrite made merging parallel by hash-partitioning
 database keys. On earlier versions merging was single-threaded and this setting
 had little effect.
+
+Re-checked against v1.54.0 (2026-09-27): the upstream thread default is still
+half the processing units. Since v1.27 the batched task size defaults to half
+of `MEILI_MAX_INDEXING_MEMORY`. Both steady-state values stay.
+
+### Restores, reindexes, and upgrades
+
+The half-cores rule protects search latency. While nothing is being searched,
+such as during a full restore or reindex, give the indexer every core:
+
+```bash
+MEILI_MAX_INDEXING_THREADS=12 MEILI_CPUS=12 arc container start
+arc container restore <backup>
+arc container start   # back to the steady-state values
+```
+
+`arc container upgrade` does this automatically for its `--upgrade-db` phase,
+then restarts MeiliSearch on the steady-state values.
 
 ### Why the VM matters more than the container limit
 

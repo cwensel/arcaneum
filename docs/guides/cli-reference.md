@@ -1802,6 +1802,9 @@ arc container backup
 # Restore indexed data
 arc container restore BACKUP_DIRECTORY
 
+# Migrate MeiliSearch data to the pinned image version
+arc container upgrade
+
 # View logs
 arc container logs
 
@@ -1872,6 +1875,39 @@ arc container backup -o ./qdrant-only --skip-meilisearch --qdrant-url http://loc
 # Restore a large backup, allowing more time for MeiliSearch tasks
 arc container restore ./arcaneum-backup --meilisearch-timeout 600
 ```
+
+**Upgrading MeiliSearch:**
+
+MeiliSearch opens only data written by its exact version, so
+`deploy/docker-compose.yml` pins an exact image tag. After an Arcaneum update
+bumps that pin, `arc container start` refuses to start until the data is
+migrated:
+
+```bash
+# Show the from/to versions and per-index document counts
+arc container upgrade --dry-run
+
+# Back up, upgrade in place with --upgrade-db, verify counts
+arc container upgrade
+```
+
+`arc container upgrade` runs these steps:
+
+1. Exports every MeiliSearch index to a JSONL backup under the configured
+   `backup.path`. It starts the data's own version first if needed.
+2. Pulls the new image before any downtime.
+3. Restarts MeiliSearch with `MEILI_UPGRADE_DB=true` and all Docker CPUs.
+4. Waits for the `upgradeDatabase` task, then verifies the server version and
+   per-index document counts.
+5. Restarts without the upgrade flag.
+
+Do not stop MeiliSearch while it runs; upgrades are not atomic. On failure it
+prints the recovery commands: remove the MeiliSearch volume, start, then
+`arc container restore <backup>`. That rebuilds the indexes on the new version
+from the backup.
+
+Options: `--meilisearch-url`, `--dry-run`, `--json`. Set `MEILI_IMAGE_TAG` to
+run a different MeiliSearch image than the pinned default.
 
 **Data Location:**
 

@@ -195,7 +195,9 @@ Live read-only check on 2026-09-27, v1.12.8 (**Documented**):
    growing with index size (**Assumed**; v1.12 has no per-step timings).
    The DB is version-bound. Migration is either in-place `--upgrade-db`
    (dumpless upgrade, stabilized in v1.51) or `arc container backup`
-   followed by restore, which reindexes once. `arcaneum#wk39`.
+   followed by restore, which reindexes once. `arcaneum#wk39`. Done
+   2026-09-27 in place with `arc container upgrade`. Before/after figures
+   are in `docs/guides/meilisearch-tuning.md`.
 2. **Trim unused features**: `facetSearch: false` (keep facetDistribution
    for `mpk8`), granular filterable attributes (v1.14+), drop unused
    sortable attributes, and evaluate `prefixSearch: disabled` against

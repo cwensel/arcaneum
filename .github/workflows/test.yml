@@ -65,7 +65,7 @@ jobs:
 
     services:
       meilisearch:
-        image: getmeili/meilisearch:v1.12
+        image: getmeili/meilisearch:v1.54.0
         ports:
           - 7700:7700
         env:
@@ -165,7 +165,7 @@ jobs:
           --health-retries 20
 
       meilisearch:
-        image: getmeili/meilisearch:v1.12
+        image: getmeili/meilisearch:v1.54.0
         ports:
           - 7700:7700
         env:
@@ -254,7 +254,7 @@ jobs:
           --health-retries 20
 
       meilisearch:
-        image: getmeili/meilisearch:v1.12
+        image: getmeili/meilisearch:v1.54.0
         ports:
           - 7700:7700
         env:

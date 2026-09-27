@@ -173,3 +173,22 @@ def test_drain_stops_after_the_batch_limit(isolated, repo):
     assert result.exit_code == 0, result.output
     assert len(batches) == 3
     assert spool.has_pending("Docs"), "leftover work stays spooled for the next run"
+
+
+def test_drain_skips_file_types_the_corpus_cannot_index(isolated, repo):
+    """The hook spools every touched file; one it cannot index must not fail the batch.
+
+    A commit touching `bin/rfd` or `.gitignore` next to markdown wedged a
+    markdown corpus for days (kata 7g0v): the whole batch raised, the entry was
+    kept, and launchd re-ran the drain every few seconds.
+    """
+    spool.write_entry("Docs", repo, changed=[str(repo / "a.py")], removed=[])
+    seen = {}
+
+    result = _run(
+        ["corpus", "sync", "Docs", "--drain-spool"],
+        lambda corpus, paths, *a, **k: seen.update(k),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["skip_unsupported"] is True

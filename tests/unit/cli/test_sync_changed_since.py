@@ -188,3 +188,62 @@ def test_changed_since_skips_paths_deleted_from_the_worktree(repo, isolated_lock
 
     assert result.exit_code == 0, result.output
     assert seen.get("paths", []) == []
+
+
+def test_changed_since_skips_unsupported_file_types(repo, isolated_locks):
+    """git reports every touched file, not only ones the corpus type can index."""
+    (repo / "b.py").write_text("b changed\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "touch b")
+    seen = {}
+
+    result = _run(
+        ["corpus", "sync", "Docs", str(repo), "--changed-since", "HEAD"],
+        lambda corpus, paths, *args, **kwargs: seen.update(kwargs),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["skip_unsupported"] is True
+
+
+def test_explicit_paths_still_reject_unsupported_file_types(repo, isolated_locks):
+    """A file the user names explicitly keeps the hard error."""
+    seen = {}
+
+    result = _run(
+        ["corpus", "sync", "Docs", str(repo / "a.py")],
+        lambda corpus, paths, *args, **kwargs: seen.update(kwargs),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["skip_unsupported"] is False
+
+
+class TestUnsupportedSingleFiles:
+    """`_split_unsupported_files`: the corpus-type gate for explicit files."""
+
+    def test_unsupported_file_raises_by_default(self, tmp_path):
+        from arcaneum.cli.errors import InvalidArgumentError
+
+        files = [tmp_path / "a.md", tmp_path / "rfd"]
+        with pytest.raises(InvalidArgumentError, match="File type '' not supported"):
+            sync_mod._split_unsupported_files(files, "markdown", skip_unsupported=False)
+
+    def test_skip_drops_extensionless_dotfiles_and_other_types(self, tmp_path):
+        files = [
+            tmp_path / "README.md",
+            tmp_path / "bin" / "rfd",
+            tmp_path / ".gitignore",
+            tmp_path / "Rfd0003.lean",
+            tmp_path / "notes.md.zst",
+        ]
+
+        kept, skipped = sync_mod._split_unsupported_files(files, "markdown", skip_unsupported=True)
+
+        assert kept == [tmp_path / "README.md", tmp_path / "notes.md.zst"]
+        assert skipped == files[1:4]
+
+    def test_supported_files_pass_either_way(self, tmp_path):
+        files = [tmp_path / "a.md", tmp_path / "b.markdown"]
+
+        assert sync_mod._split_unsupported_files(files, "markdown", False) == (files, [])

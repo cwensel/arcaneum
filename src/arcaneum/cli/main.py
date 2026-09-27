@@ -1246,6 +1246,9 @@ def _drain_corpus_spool(corpus, *, max_batches, sync_kwargs):
                     tuple(changed),
                     None,
                     removed_paths=batch.removed,
+                    # The hook spools every touched file; one the corpus type
+                    # cannot index would fail the batch on every retry.
+                    skip_unsupported=True,
                     **sync_kwargs,
                 )
             except BaseException as exc:
@@ -1600,6 +1603,8 @@ def sync_directory(
         lock_timeout=lock_timeout,
         removed_paths=removed_paths,
         include_stale_policy=include_stale_policy,
+        # git names every touched file, not only ones this corpus type indexes.
+        skip_unsupported=bool(changed_since),
     )
 
 

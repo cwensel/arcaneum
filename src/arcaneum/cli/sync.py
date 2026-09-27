@@ -917,6 +917,37 @@ def _corpus_extension(path: Path) -> str:
     return path.suffix.lower()
 
 
+def _split_unsupported_files(
+    files: List[Path], corpus_type: str, skip_unsupported: bool
+) -> Tuple[List[Path], List[Path]]:
+    """Split explicit files into those the corpus type indexes and the rest.
+
+    A file the user names is rejected outright. Git-derived paths (the hook
+    spool, `--changed-since`) name every touched file, including extensionless
+    ones and dotfiles, so those callers skip the rest instead: rejecting
+    fails a batch that can never succeed, and the spool retries it forever
+    (kata 7g0v).
+    """
+    valid_extensions = SUPPORTED_EXTENSIONS_BY_TYPE.get(corpus_type, set())
+    kept: List[Path] = []
+    skipped: List[Path] = []
+    for path in files:
+        # Match on the full compressed extension first (".md.zst"), then the
+        # logical one, so `a.md.zst` validates as markdown even though
+        # Path.suffix reports ".zst".
+        ext = _corpus_extension(path)
+        if ext in valid_extensions:
+            kept.append(path)
+        elif skip_unsupported:
+            skipped.append(path)
+        else:
+            raise InvalidArgumentError(
+                f"File type '{ext}' not supported for corpus type '{corpus_type}'. "
+                f"Supported extensions: {', '.join(sorted(valid_extensions))}"
+            )
+    return kept, skipped
+
+
 # Supported file extensions per corpus type.  Used both for discovery defaults
 # (when the user passes no --file-types) and for validating any extensions the
 # user does provide.  Single source of truth so the two paths can't drift —
@@ -2240,6 +2271,7 @@ def sync_directory_command(
     lock_wait: bool = True,
     lock_timeout: Optional[float] = None,
     removed_paths: Optional[List[str]] = None,
+    skip_unsupported: bool = False,
 ):
     """Sync to a corpus while holding that corpus's write lock (kata htmw).
 
@@ -2289,6 +2321,7 @@ def sync_directory_command(
                 mem_probe_log=mem_probe_log,
                 order=order,
                 removed_paths=removed_paths,
+                skip_unsupported=skip_unsupported,
             )
     except CorpusLockUnavailable as e:
         print_error(str(e), output_json)
@@ -2323,6 +2356,7 @@ def _sync_directory_locked(
     mem_probe_log: Optional[str] = None,
     order: str = "path",
     removed_paths: Optional[List[str]] = None,
+    skip_unsupported: bool = False,
 ):
     """Sync directories or files to both Qdrant and MeiliSearch.
 
@@ -2359,6 +2393,9 @@ def _sync_directory_locked(
         removed_paths: Paths known to be deleted (from `--changed-since`, which
                learns them from git). Dropped from both systems without the
                full-corpus scan `--parity` needs to infer the same thing.
+        skip_unsupported: Skip individual files the corpus type cannot index
+               instead of rejecting the sync. For git-derived paths (the hook
+               spool, `--changed-since`), which name every touched file.
     """
     # Calculate effective text workers
     if text_workers is None:
@@ -2741,17 +2778,15 @@ def _sync_directory_locked(
 
         # Validate single file extensions against corpus type
         if single_files:
-            valid_extensions = SUPPORTED_EXTENSIONS_BY_TYPE.get(corpus_type, set())
-            for single_file in single_files:
-                # Match on the full compressed extension first (".md.zst"),
-                # then the logical one, so `a.md.zst` validates as markdown
-                # even though Path.suffix reports ".zst".
-                ext = _corpus_extension(single_file)
-                if ext not in valid_extensions:
-                    raise InvalidArgumentError(
-                        f"File type '{ext}' not supported for corpus type '{corpus_type}'. "
-                        f"Supported extensions: {', '.join(sorted(valid_extensions))}"
-                    )
+            single_files, skipped_files = _split_unsupported_files(
+                single_files, corpus_type, skip_unsupported
+            )
+            if skipped_files and not output_json:
+                print_info(
+                    f"Skipping {len(skipped_files)} file"
+                    f"{'s' if len(skipped_files) != 1 else ''} a {corpus_type} corpus "
+                    f"does not index: {', '.join(p.name for p in skipped_files)}"
+                )
 
         if not output_json:
             print_info(f"Corpus type: {corpus_type}")

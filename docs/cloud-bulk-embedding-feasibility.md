@@ -6,8 +6,9 @@ Could bulk indexing offload embedding to ephemeral AWS compute, managed by
 [clusterless](https://github.com/ClusterlessHQ/clusterless), to make large
 syncs faster and more stable? Short answer: yes, but not through Lambda or
 Fargate. AWS Batch on ECS Managed Instances is the AWS-managed GPU option.
-Faster embedding may not be the dominant win until MeiliSearch merge cost is
-measured alongside it.
+Faster embedding may not be the dominant win: MeiliSearch indexing is the
+larger local CPU cost, and it cannot usefully be offloaded (see
+[Full-text indexing](#full-text-indexing-meilisearch)).
 
 Evidence labels: **Documented** (official docs or source reading), **Measured
 elsewhere** (third-party benchmark, not our models or hardware),
@@ -153,6 +154,88 @@ issues.
   30M-review example reached 575k tokens/s on L40S, scaling down after 5
   idle minutes.
 
+## Full-text indexing (MeiliSearch)
+
+MeiliSearch indexing is the larger day-to-day CPU cost. Offloading
+embedding does not touch it. Tracking: kata umbrella `arcaneum#9gv0`. The
+batch-resolvable set carries label `batch:meili-indexing`.
+
+### Current cost
+
+Live read-only check on 2026-09-27, v1.12.8 (**Documented**):
+
+- 13 indexes, 25 GB. `Claude` (656k docs) spends 100–461 s per add of at
+  most 300 docs. `PapersFast` (348k docs) spends 95–126 s per add of 39–154
+  docs. `DevRef` (101k docs) spends 4–10 s.
+- Per-task cost grows with index size, not batch size (RDR-024: 0.7 s at 0
+  docs, 20.3 s at 300k). About 40% of 4,007 historical tasks carried fewer
+  than 50 docs, and each paid that cost.
+- Sync submits one add per file (`sync.py:4013`). RDR-024 cross-file
+  batching is Draft and not implemented. Recent batches include long runs of
+  single-task deletions.
+- Settings (`src/arcaneum/fulltext/indexes.py`) leave `facetSearch` and
+  `prefixSearch` on and configure `sortableAttributes`. `arc search text`
+  uses filters, highlighting, and typo tolerance, but no facet search, sort,
+  or search-as-you-type.
+- `meilisearch-tuning.md` already fixed the Docker VM page-cache bottleneck
+  and rejected `proximityPrecision: byAttribute` for phrase-ranking quality.
+
+### Levers, in order
+
+1. **Upgrade** v1.12.8 to current stable (v1.54.0, 2026-09-21), per the
+   release notes (**Documented**):
+   - v1.32: parallel payload extraction ("7x speedup on a four-million-
+     document insertion using four CPUs").
+   - v1.35: multithreaded facet and prefix post-processing.
+   - v1.43: faster facet-search indexing.
+   - v1.44: lower prefix memory.
+   - v1.45–1.47: new settings indexer.
+
+   Facet and prefix post-processing is a plausible cause of per-task cost
+   growing with index size (**Assumed**; v1.12 has no per-step timings).
+   The DB is version-bound. Migration is either in-place `--upgrade-db`
+   (dumpless upgrade, stabilized in v1.51) or `arc container backup`
+   followed by restore, which reindexes once. `arcaneum#wk39`.
+2. **Trim unused features**: `facetSearch: false` (keep facetDistribution
+   for `mpk8`), granular filterable attributes (v1.14+), drop unused
+   sortable attributes, and evaluate `prefixSearch: disabled` against
+   identifier queries. Keep `proximityPrecision: byWord`. Land it in the same
+   reindex as the upgrade. `arcaneum#3h9w`.
+3. **Fix the write pattern**: group deletions ahead of additions
+   (`arcaneum#w2x0`; delete-by-filter cannot be autobatched with adds). Then
+   re-validate RDR-024's premise on the new engine, finalize it, and
+   implement cross-file batching (`arcaneum#q0hv`).
+4. **Defer bulk builds**: load a side index with large batches and settings
+   applied first, verify, then swap it in with `swap-indexes`. This moves
+   CPU off interactive syncs; it does not remove it (`arcaneum#7mke`).
+
+### Offloading Meili: not viable
+
+- Dumps reindex on import, so there is no CPU saving on the receiver
+  (**Documented**).
+- Snapshots are whole-instance only. S3 snapshot upload is Enterprise-only.
+- A raw `data.ms` copy requires the identical version. arm64 to x86
+  portability is undocumented.
+- `/export` pushes documents to a live receiver, which most likely
+  reindexes them (**Assumed**).
+
+### Alternative lexical backends
+
+If Meili still hurts after levers 1–3, evaluate a backend whose index can be
+built remotely (e.g. in the clusterless embedding job) and shipped
+(`arcaneum#60dc`, related to `xtqt`):
+
+| Option | Phrase | Identifiers | Typo tolerance | Build elsewhere and ship |
+| --- | --- | --- | --- | --- |
+| Qdrant BM25 sparse + full-text `MatchPhrase` filter (1.15+) | Yes, as a filter | Good, with custom tokenization | No | Sparse vectors: yes. Payload index builds in Qdrant. |
+| Tantivy (`tantivy-py`) | Yes, positional | Excellent with code tokenizers (Bloop) | Manual only | Yes; cross-arch **Assumed** |
+| SQLite FTS5 (trigram / standard) | Yes, standard tokenizer | Good with trigram | No | Yes, one file |
+| MeiliSearch (current) | Yes | Good | Yes | No |
+
+The Qdrant-native option would also remove Qdrant/Meili parity entirely,
+since chunk text is already in the Qdrant payload. The BM25 plus
+phrase-filter combination is **Assumed** workable and needs a spike.
+
 ## Next steps
 
 Measure before committing to the remote design:
@@ -164,6 +247,13 @@ Measure before committing to the remote design:
 3. `arcaneum#vby2` (chunk-hash cache) and `arcaneum#nq22` (Qdrant bulk mode)
    pay off locally regardless of the cloud decision.
 4. `arcaneum#tpcs`: RDR seed for the remote design, gated on 1 and 2.
+
+Full-text, independent of the cloud work and likely the bigger local win:
+
+1. Batch `batch:meili-indexing`: `arcaneum#wk39` (upgrade), `arcaneum#3h9w`
+   (settings trim, after the upgrade), `arcaneum#w2x0` (grouped deletes).
+2. `arcaneum#q0hv`: re-validate and implement RDR-024 after the upgrade.
+3. `arcaneum#7mke` and `arcaneum#60dc`: seeds, gated on the results above.
 
 ## Sources
 
@@ -185,3 +275,12 @@ Measure before committing to the remote design:
 - [RunPod GPU embedding benchmark](https://www.runpod.io/blog/gpu-embedding-workloads-benchmark)
 - [HF Text Embeddings Inference](https://huggingface.co/docs/text-embeddings-inference/index)
 - [Bedrock batch inference](https://docs.aws.amazon.com/bedrock/latest/userguide/batch-inference.html)
+- [Meilisearch releases](https://github.com/meilisearch/meilisearch/releases)
+- [Meilisearch 1.12 new indexer](https://www.meilisearch.com/blog/introducing-indexer-2024)
+- [Meilisearch 1.14 granular filters](https://www.meilisearch.com/blog/meilisearch-1-14)
+- [Meilisearch dumps](https://www.meilisearch.com/docs/learn/data_backup/dumps)
+- [Qdrant full-text search](https://qdrant.tech/documentation/search/text-search/full-text-search/)
+- [Qdrant 1.15](https://qdrant.tech/blog/qdrant-1.15.x/)
+- [Qdrant BM25 inference](https://qdrant.tech/documentation/inference/inference-bm25/)
+- [Tantivy architecture](https://github.com/quickwit-oss/tantivy/blob/main/ARCHITECTURE.md)
+- [zoekt](https://github.com/sourcegraph/zoekt)

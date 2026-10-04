@@ -4,10 +4,15 @@ import json
 import re
 from typing import List, Dict, Any
 from .searcher import SearchResult
+from ..utils.search_output import content_preview, limit_json_content
 
 
 def format_text_results(
-    query: str, results: List[SearchResult], offset: int = 0, verbose: bool = False
+    query: str,
+    results: List[SearchResult],
+    offset: int = 0,
+    verbose: bool = False,
+    max_content_chars: int | None = None,
 ) -> str:
     """Format search results for human-readable terminal display.
 
@@ -26,6 +31,7 @@ def format_text_results(
         results: List of SearchResult objects
         offset: Number of results skipped (for pagination)
         verbose: If True, show more metadata and longer snippets
+        max_content_chars: Override snippet and line limits; zero means unlimited
 
     Returns:
         Formatted string for terminal output
@@ -59,13 +65,14 @@ def format_text_results(
         lines.append(f"    {result.location}")
         lines.append("")  # Blank line
 
-        # Content snippet
-        snippet_length = 400 if verbose else 200
-        snippet = extract_snippet(result.content, max_length=snippet_length)
-
-        # Show first few lines of snippet (max 5 lines in normal mode, 10 in verbose)
-        max_lines = 10 if verbose else 5
-        snippet_lines = snippet.split("\n")[:max_lines]
+        if max_content_chars is not None:
+            snippet_lines = content_preview(result.content, max_content_chars).split("\n")
+        else:
+            # Preserve the legacy snippet and line limits unless explicitly overridden.
+            snippet_length = 400 if verbose else 200
+            snippet = extract_snippet(result.content, max_length=snippet_length)
+            max_lines = 10 if verbose else 5
+            snippet_lines = snippet.split("\n")[:max_lines]
 
         for line in snippet_lines:
             lines.append(f"    {line}")
@@ -82,6 +89,7 @@ def format_json_results(
     limit: int = 10,
     offset: int = 0,
     verbose: bool = False,
+    max_content_chars: int | None = None,
 ) -> str:
     """Format search results as JSON.
 
@@ -109,12 +117,13 @@ def format_json_results(
         limit: Maximum number of results requested
         offset: Number of results skipped (for pagination)
         verbose: If True, include full metadata and longer content
+        max_content_chars: Override the content limit and add truncation flags; zero is unlimited
 
     Returns:
         JSON string (properly escaped for all control characters)
     """
     # Truncate content unless verbose mode
-    content_length = None if verbose else 500
+    content_length = None if verbose or max_content_chars is not None else 500
 
     output = {
         "query": query,
@@ -135,6 +144,9 @@ def format_json_results(
             for r in results
         ],
     }
+
+    if max_content_chars is not None:
+        output["results"] = [limit_json_content(r, max_content_chars) for r in output["results"]]
 
     # ensure_ascii=True escapes ALL non-ASCII and control characters
     # This is the safest option for PDF text which may contain unusual characters

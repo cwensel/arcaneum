@@ -80,7 +80,37 @@ arc search text <query> --corpus <name>                     # Full-text search (
 - `--limit`: Number of results to return
 - `--offset`: Number of results to skip (for pagination)
 - `--verbose`, `-v`: Verbose output
-- `--json`: Output JSON format
+- `--json`: Output JSON format (alias for `--format json`)
+- `--format text|compact|json`: Output format; defaults to the existing terminal text
+- `--max-content-chars N`: Maximum source characters per hit, in any format.
+  `0` means unlimited; negative values are rejected. Overrides the format's
+  default content limit, independently of `--verbose`.
+
+For agents and shell pipelines, use compact output without a JSON wrapper:
+
+```bash
+arc search semantic "authentication" --corpus Code --limit 5 \
+  --format compact --max-content-chars 1200
+arc search text "authenticate" --corpus Code --format compact
+arc search semantic "authentication" --corpus Code --json --max-content-chars 0
+```
+
+Compact output includes the query, corpora, returned count, numbered locations,
+source corpus for multi-corpus searches, and scores when available (semantic
+search). It preserves content indentation and long lines without terminal
+styling or wrapping. Numbering respects `--offset`. The default is 500 source
+characters per hit, including with `--verbose`; shortened content is followed
+by a separate `[truncated]` line outside that character budget. Empty searches
+print a header with `returned: 0`. Diagnostics go to stderr and failures exit
+nonzero, so no stderr suppression is needed.
+
+Without an explicit content limit, existing text and JSON output retain their
+previous defaults. With a limit, terminal text uses raw content and overrides
+its usual snippet and line limits. JSON keeps its existing schema (semantic:
+`results`; text: `data.hits`) and adds `content_truncated` to each hit; duplicate
+content in metadata and highlighted fields is also bounded. The marker is true
+if any of those content fields was shortened. `--json` cannot be combined with
+`--format text` or `--format compact`.
 
 **`arc search semantic` only:**
 

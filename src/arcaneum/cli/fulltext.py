@@ -18,6 +18,7 @@ from .search_merge import fetch_from_corpora, per_corpus_limit
 from .utils import create_meili_client
 from ..schema.document import persisted_metadata_fields
 from ..utils.formatting import format_size
+from ..utils.search_output import content_preview, format_compact_results, limit_json_content
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -98,6 +99,8 @@ def search_text_command(
     offset: int,
     output_json: bool,
     verbose: bool,
+    output_format: str | None = None,
+    max_content_chars: int | None = None,
 ):
     """
     Implementation for 'arc search text' command.
@@ -111,6 +114,8 @@ def search_text_command(
         offset: Number of results to skip (for pagination)
         output_json: If True, output JSON format
         verbose: If True, show detailed output
+        output_format: Text, compact, or JSON output; None preserves output_json
+        max_content_chars: Explicit content cap; zero is unlimited, None uses format defaults
     """
     # Setup logging based on verbose flag
     if verbose:
@@ -214,8 +219,27 @@ def search_text_command(
         display_index = corpora[0] if len(corpora) == 1 else f"[{', '.join(corpora)}]"
 
         # Format and output results
-        if output_json:
+        if output_format == "compact":
+            print(
+                format_compact_results(
+                    query,
+                    corpora,
+                    [
+                        {
+                            "location": format_location(hit),
+                            "content": hit.get("content"),
+                            "corpus": hit.get("_corpus"),
+                        }
+                        for hit in hits
+                    ],
+                    offset=offset,
+                    max_content_chars=500 if max_content_chars is None else max_content_chars,
+                )
+            )
+        elif output_json or output_format == "json":
             # JSON output mode
+            if max_content_chars is not None:
+                hits = [limit_json_content(hit, max_content_chars) for hit in hits]
             output = {
                 "status": "success",
                 "message": f"Found {total_estimated_hits} results",
@@ -260,7 +284,10 @@ def search_text_command(
                             console.print(f"   Project: {hit['project']}")
 
                     # Show highlighted content
-                    if "_formatted" in hit and "content" in hit["_formatted"]:
+                    if max_content_chars is not None:
+                        content = content_preview(hit.get("content") or "", max_content_chars)
+                        console.print(f"   {content}", markup=False, highlight=False)
+                    elif "_formatted" in hit and "content" in hit["_formatted"]:
                         content = hit["_formatted"]["content"]
                         # Truncate long content
                         if len(content) > 200:
@@ -281,6 +308,7 @@ def search_text_command(
     except (InvalidArgumentError, ResourceNotFoundError):
         raise  # Re-raise our custom exceptions for main() to handle
     except Exception as e:
+        error_console = Console(stderr=True)
         error_str = str(e)
         # Check for MeiliSearch filter attribute error
         if (
@@ -298,33 +326,35 @@ def search_text_command(
                 filterable = settings.get("filterableAttributes", [])
 
                 if bad_attr:
-                    console.print(
+                    error_console.print(
                         f"[red][ERROR] Filter attribute '{bad_attr}' is not filterable.[/red]"
                     )
                 else:
-                    console.print(f"[red][ERROR] Invalid filter attribute.[/red]")
+                    error_console.print(f"[red][ERROR] Invalid filter attribute.[/red]")
 
                 if filterable:
-                    console.print(f"\nAvailable filterable attributes for index '{index_name}':")
+                    error_console.print(
+                        f"\nAvailable filterable attributes for index '{index_name}':"
+                    )
                     for attr in filterable:
-                        console.print(f"  - {attr}")
+                        error_console.print(f"  - {attr}")
                     if bad_attr:
                         # Suggest similar attribute if there's a close match
                         for attr in filterable:
                             if bad_attr.lower() in attr.lower() or attr.lower() in bad_attr.lower():
-                                console.print(
+                                error_console.print(
                                     f'\n[yellow]Hint: Try --filter "{attr}=<value>"[/yellow]'
                                 )
                                 break
                 else:
-                    console.print(
+                    error_console.print(
                         f"\n[yellow]Index '{index_name}' has no filterable attributes configured.[/yellow]"
                     )
-                    console.print("[dim]Filters cannot be used with this index.[/dim]")
+                    error_console.print("[dim]Filters cannot be used with this index.[/dim]")
             except Exception:
-                console.print(f"[red][ERROR] Search failed: {e}[/red]")
+                error_console.print(f"[red][ERROR] Search failed: {e}[/red]")
         else:
-            console.print(f"[red][ERROR] Search failed: {e}[/red]")
+            error_console.print(f"[red][ERROR] Search failed: {e}[/red]")
 
         if verbose:
             import traceback

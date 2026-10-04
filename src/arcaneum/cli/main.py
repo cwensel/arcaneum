@@ -1006,8 +1006,18 @@ def search():
     Use semantic for concepts and paraphrases. Use text for identifiers,
     keywords, and quoted phrases. Text search is bounded and ranked; it does
     not evaluate regular expressions.
+
+    For LLMs and shell pipelines, use --format compact for plain locations and
+    content snippets. Control snippet length with --max-content-chars N.
+    Both options work with semantic and text search.
     """
     pass
+
+
+def _resolve_search_format(output_format, output_json):
+    if output_json and output_format not in (None, "json"):
+        raise click.UsageError("--json cannot be combined with --format text or compact")
+    return output_format or ("json" if output_json else "text")
 
 
 @search.command("semantic")
@@ -1030,7 +1040,32 @@ def search():
     is_flag=True,
     help="Include PDF references and bibliography chunks",
 )
-@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["text", "compact", "json"]),
+    default=None,
+    help=(
+        "Output format: text for terminals (default), compact for LLMs and pipes "
+        "(plain locations and snippets, no wrapping; 500 characters per hit), "
+        "json for structured data"
+    ),
+)
+@click.option(
+    "--max-content-chars",
+    type=click.IntRange(min=0),
+    default=None,
+    help=(
+        "Maximum source characters per hit in any format; 0 means unlimited. "
+        "Overrides default snippet limits independently of --verbose. Truncation is marked."
+    ),
+)
+@click.option(
+    "--json",
+    "output_json",
+    is_flag=True,
+    help="Alias for --format json; cannot combine with another format",
+)
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 def search_semantic(
     query,
@@ -1042,13 +1077,23 @@ def search_semantic(
     offset,
     score_threshold,
     include_references,
+    output_format,
+    max_content_chars,
     output_json,
     verbose,
 ):
-    """Find concepts and paraphrases with vector-based semantic search."""
+    """Find concepts and paraphrases with vector-based semantic search.
+
+    For LLMs and shell pipelines, use compact output directly:
+
+    \b
+    arc search semantic "query" --corpus Code --format compact --max-content-chars 1200
+    """
     from arcaneum.cli.search import search_command
     from arcaneum.cli.utils import resolve_corpora
 
+    output_format = _resolve_search_format(output_format, output_json)
+    output_json = output_format == "json"
     resolved_corpora = resolve_corpora(corpora, legacy_collection, "collection")
     search_command(
         query,
@@ -1061,6 +1106,8 @@ def search_semantic(
         output_json,
         verbose,
         include_references=include_references,
+        output_format=output_format,
+        max_content_chars=max_content_chars,
     )
 
 
@@ -1077,21 +1124,74 @@ def search_semantic(
 @click.option("--filter", "filter_arg", help="Metadata filter (key=value or JSON)")
 @click.option("--limit", type=int, default=10, help="Number of results")
 @click.option("--offset", type=int, default=0, help="Number of results to skip (for pagination)")
-@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["text", "compact", "json"]),
+    default=None,
+    help=(
+        "Output format: text for terminals (default), compact for LLMs and pipes "
+        "(plain locations and snippets, no wrapping; 500 characters per hit), "
+        "json for structured data"
+    ),
+)
+@click.option(
+    "--max-content-chars",
+    type=click.IntRange(min=0),
+    default=None,
+    help=(
+        "Maximum source characters per hit in any format; 0 means unlimited. "
+        "Overrides default snippet limits independently of --verbose. Truncation is marked."
+    ),
+)
+@click.option(
+    "--json",
+    "output_json",
+    is_flag=True,
+    help="Alias for --format json; cannot combine with another format",
+)
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
-def search_text(query, corpora, legacy_index, filter_arg, limit, offset, output_json, verbose):
+def search_text(
+    query,
+    corpora,
+    legacy_index,
+    filter_arg,
+    limit,
+    offset,
+    output_json,
+    verbose,
+    output_format,
+    max_content_chars,
+):
     """Find ranked keywords, identifiers, and quoted phrases in a corpus.
 
     Preserve quotes inside QUERY for an exact phrase, for example:
     arc search text '\"def authenticate\"' --corpus Code
 
     This command does not evaluate regular expressions.
+
+    For LLMs and shell pipelines, use compact output directly:
+
+    \b
+    arc search text "query" --corpus Code --format compact --max-content-chars 1200
     """
     from arcaneum.cli.fulltext import search_text_command
     from arcaneum.cli.utils import resolve_corpora
 
+    output_format = _resolve_search_format(output_format, output_json)
+    output_json = output_format == "json"
     resolved_corpora = resolve_corpora(corpora, legacy_index, "index")
-    search_text_command(query, resolved_corpora, filter_arg, limit, offset, output_json, verbose)
+    search_text_command(
+        query,
+        resolved_corpora,
+        filter_arg,
+        limit,
+        offset,
+        output_json,
+        verbose,
+        output_format=output_format,
+        max_content_chars=max_content_chars,
+    )
 
 
 # Dual indexing commands (RDR-009)
@@ -2293,7 +2393,12 @@ def main():
 
     proctitle.set_title_from_argv()
 
-    json_mode = "--json" in sys.argv[1:]
+    args = sys.argv[1:]
+    json_mode = (
+        "--json" in args
+        or "--format=json" in args
+        or any(flag == "--format" and value == "json" for flag, value in zip(args, args[1:]))
+    )
     try:
         cli(standalone_mode=False)
         return EXIT_SUCCESS

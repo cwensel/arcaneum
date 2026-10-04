@@ -17,6 +17,7 @@ from ..search import (
     parse_filter,
     search_collection,
 )
+from ..utils.search_output import format_compact_results
 from .concurrency import acquire_embedder_slot
 from .errors import InvalidArgumentError, ResourceNotFoundError, SearchSlotUnavailable
 from .interaction_logger import interaction_logger
@@ -47,6 +48,8 @@ def search_command(
     output_json: bool,
     verbose: bool,
     include_references: bool = False,
+    output_format: str | None = None,
+    max_content_chars: int | None = None,
 ):
     """Search Qdrant collection(s) semantically.
 
@@ -61,6 +64,8 @@ def search_command(
         output_json: If True, output JSON format
         verbose: If True, show detailed output and logging
         include_references: Include PDF bibliography chunks
+        output_format: Text, compact, or JSON output; None preserves output_json
+        max_content_chars: Explicit content cap; zero is unlimited, None uses format defaults
     """
     # Setup logging based on verbose flag
     if verbose:
@@ -162,7 +167,25 @@ def search_command(
         display_collection = corpora[0] if len(corpora) == 1 else f"[{', '.join(corpora)}]"
 
         # Format and output results
-        if output_json:
+        if output_format == "compact":
+            print(
+                format_compact_results(
+                    query,
+                    corpora,
+                    [
+                        {
+                            "location": r.location,
+                            "content": r.content,
+                            "score": r.score,
+                            "corpus": r.collection,
+                        }
+                        for r in results
+                    ],
+                    offset=offset,
+                    max_content_chars=500 if max_content_chars is None else max_content_chars,
+                )
+            )
+        elif output_json or output_format == "json":
             # JSON output mode
             output = format_json_results(
                 query=query,
@@ -171,6 +194,7 @@ def search_command(
                 limit=limit,
                 offset=offset,
                 verbose=verbose,
+                max_content_chars=max_content_chars,
             )
             # Use print() not console.print() for JSON to avoid Rich wrapping
             print(output)
@@ -190,9 +214,16 @@ def search_command(
 
             # Show results
             output = format_text_results(
-                query=query, results=results, offset=offset, verbose=verbose
+                query=query,
+                results=results,
+                offset=offset,
+                verbose=verbose,
+                max_content_chars=max_content_chars,
             )
-            console.print(output)
+            if max_content_chars is None:
+                console.print(output)
+            else:
+                console.print(output, markup=False, highlight=False)
 
         # Exit with success
         sys.exit(0)
@@ -205,7 +236,7 @@ def search_command(
 
     except Exception as e:
         # Unexpected errors (Qdrant connection, etc.)
-        console.print(f"[ERROR] Search failed: {e}", style="red")
+        print(f"[ERROR] Search failed: {e}", file=sys.stderr)
         if verbose:
             import traceback
 

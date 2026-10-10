@@ -861,6 +861,155 @@ class TestContainerLogs:
 class TestContainerBackupRestore:
     """Test 'arc container backup' and 'arc container restore' commands."""
 
+    @pytest.mark.parametrize("output_json", [False, True])
+    @pytest.mark.parametrize("skip_meilisearch", [False, True])
+    def test_backup_dry_run_is_read_only(
+        self, tmp_path, monkeypatch, output_json, skip_meilisearch
+    ):
+        from click.testing import CliRunner
+
+        from arcaneum.cli.main import cli
+
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+        monkeypatch.setenv("MEILISEARCH_API_KEY", "existing-test-key")
+        backup_path = tmp_path / "backup"
+        index_names = [f"index-{i}" for i in range(101)]
+
+        def fake_request(method, url, **kwargs):
+            assert method == "GET", "a dry run must never mutate services"
+            if url.endswith("/collections"):
+                return {"result": {"collections": [{"name": "Docs"}]}}
+            if url.endswith("/snapshots"):
+                return {"result": [{"name": "old.snapshot"}, {"name": "older.snapshot"}]}
+            assert not skip_meilisearch
+            assert kwargs["headers"] == {"Authorization": "Bearer existing-test-key"}
+            if url.endswith("/tasks"):
+                return {"results": []}
+            assert url.endswith("/indexes"), "a preview must not fetch document contents"
+            offset = kwargs["params"]["offset"]
+            return {"results": [{"uid": uid} for uid in index_names[offset : offset + 100]]}
+
+        args = ["container", "backup", "--dry-run", "--output", str(backup_path)]
+        if output_json:
+            args.append("--json")
+        if skip_meilisearch:
+            args.append("--skip-meilisearch")
+        with (
+            patch("shutil.which", return_value="/usr/bin/docker"),
+            patch("subprocess.run", return_value=MagicMock(returncode=0)) as run,
+            patch("arcaneum.cli.docker._request_json", side_effect=fake_request),
+            patch("arcaneum.migrations.run_migration_if_needed") as migrate,
+        ):
+            result = CliRunner().invoke(cli, args)
+
+        assert result.exit_code == 0, result.output
+        migrate.assert_not_called()
+        assert list(tmp_path.iterdir()) == [], "a preview must not create files or directories"
+        assert [call.args[0] for call in run.call_args_list] == [["docker", "info"]]
+        if output_json:
+            data = json.loads(result.stdout)["data"]
+            assert data["dry_run"] is True
+            assert data["path"] == str(backup_path)
+            assert data["qdrant_collections"] == ["Docs"]
+            assert data["meilisearch_indexes"] == ([] if skip_meilisearch else index_names)
+            assert data["skip_meilisearch"] is skip_meilisearch
+            warning = "\n".join(data["warnings"])
+            assert result.stderr == ""
+        else:
+            assert f"Would back up to {backup_path}" in result.output
+            assert "Qdrant collections: Docs" in result.output
+            expected_index = "(skipped)" if skip_meilisearch else "index-100"
+            assert expected_index in result.output
+            warning = result.stderr
+        for name in ("old.snapshot", "older.snapshot"):
+            command = f"curl -X DELETE http://localhost:6333/collections/Docs/snapshots/{name}"
+            assert command in warning
+        assert "<name>" not in warning
+
+    @pytest.mark.parametrize("config_location", ["missing", "current", "legacy"])
+    def test_dry_run_resolves_destination_without_creating_or_migrating(
+        self, tmp_path, monkeypatch, config_location
+    ):
+        from arcaneum.cli.docker import _resolve_backup_path
+
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+        if config_location != "missing":
+            config_dir = (
+                tmp_path / ".arcaneum"
+                if config_location == "legacy"
+                else tmp_path / "config" / "arcaneum"
+            )
+            config_dir.mkdir(parents=True)
+            (config_dir / "config.yaml").write_text("backup:\n  path: backups\n")
+        before = sorted(tmp_path.rglob("*"))
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            path = _resolve_backup_path(None, "timestamp", dry_run=True)
+        root = (
+            tmp_path / "data" / "arcaneum"
+            if config_location == "missing"
+            else tmp_path / "config" / "arcaneum"
+        )
+        assert path == root / "backups" / "timestamp"
+        assert sorted(tmp_path.rglob("*")) == before
+
+    @pytest.mark.parametrize("existing_key", [False, True])
+    def test_dry_run_credentials_do_not_generate_keys(self, tmp_path, monkeypatch, existing_key):
+        from arcaneum.cli.docker import _meilisearch_headers
+
+        monkeypatch.delenv("MEILISEARCH_API_KEY", raising=False)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        if existing_key:
+            key_file = tmp_path / "arcaneum" / "meilisearch.key"
+            key_file.parent.mkdir()
+            key_file.write_text("existing-test-key\n")
+            assert _meilisearch_headers(read_only=True) == {
+                "Authorization": "Bearer existing-test-key"
+            }
+            assert key_file.read_text() == "existing-test-key\n"
+        else:
+            with pytest.raises(RuntimeError, match="No existing MeiliSearch API key"):
+                _meilisearch_headers(read_only=True)
+            assert list(tmp_path.iterdir()) == []
+
+    def test_backup_dry_run_rejects_existing_destination(self, tmp_path):
+        from click.testing import CliRunner
+
+        from arcaneum.cli.docker import backup_command
+
+        with (
+            patch("arcaneum.cli.docker.check_docker_available", return_value=True),
+            patch("arcaneum.cli.docker._request_json") as request,
+        ):
+            result = CliRunner().invoke(backup_command, ["--dry-run", "--output", str(tmp_path)])
+        assert result.exit_code != 0
+        assert isinstance(result.exception, FileExistsError)
+        request.assert_not_called()
+
+    def test_backup_dry_run_rejects_busy_meilisearch(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+
+        from arcaneum.cli.docker import backup_command
+
+        monkeypatch.setenv("MEILISEARCH_API_KEY", "existing-test-key")
+        with (
+            patch("arcaneum.cli.docker.check_docker_available", return_value=True),
+            patch(
+                "arcaneum.cli.docker._request_json",
+                side_effect=[
+                    {"result": {"collections": []}},
+                    {"results": [{"uid": 1, "status": "processing"}]},
+                ],
+            ),
+        ):
+            result = CliRunner().invoke(
+                backup_command, ["--dry-run", "--output", str(tmp_path / "backup")]
+            )
+        assert result.exit_code != 0
+        assert "MeiliSearch has active tasks" in str(result.exception)
+        assert list(tmp_path.iterdir()) == []
+
     def test_backup_path_uses_xdg_fallback(self, tmp_path, monkeypatch):
         from arcaneum.cli.docker import _resolve_backup_path
 
@@ -996,6 +1145,11 @@ backup:
         assert manifest["qdrant"][0]["collection"] == "Docs"
         assert manifest["meilisearch"][0]["index"] == "DocsText"
         assert "Embedding model cache" in manifest["not_protected"]
+        from arcaneum.backup import verify_backup
+
+        verification = verify_backup(backup_path)
+        assert verification["valid"], verification["errors"]
+        assert verification["checksums_verified"] == 3
 
         meili_metadata = json.loads(
             (backup_path / "meilisearch" / "DocsText.metadata.json").read_text()

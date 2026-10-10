@@ -37,7 +37,16 @@ from arcaneum.ssl_config import configure_ssl_from_env  # noqa: E402, I001
 from arcaneum.cli.utils import validate_path_or_from_file  # noqa: E402
 
 
-@click.group(invoke_without_command=True, no_args_is_help=True)
+class _RootGroup(click.Group):
+    def parse_args(self, ctx, args):
+        remaining = super().parse_args(ctx, args)
+        # Click clears ctx.args before the root callback. Retain them so startup
+        # can recognize read-only backup previews using the command's parser.
+        ctx.meta["subcommand_args"] = list(remaining)
+        return remaining
+
+
+@click.group(cls=_RootGroup, invoke_without_command=True, no_args_is_help=True)
 @click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 @click.option(
     "--help-all",
@@ -65,6 +74,26 @@ def cli(ctx, output_json, help_all):
         else:
             click.echo(render_help_all(ctx), nl=False)
         ctx.exit()
+
+    # A backup preview must not migrate user data before its callback runs.
+    command_args = ctx.meta.get("subcommand_args", [])
+    if ctx.invoked_subcommand == "container" and command_args[:1] in (
+        ["backup-list"],
+        ["backup-verify"],
+        ["backup-prune"],
+        ["snapshot-list"],
+        ["snapshot-cleanup"],
+    ):
+        # Backup maintenance must not migrate unrelated data on startup.
+        return
+    if ctx.invoked_subcommand == "container" and command_args[:1] == ["backup"]:
+        from arcaneum.cli.docker import backup_command
+
+        with backup_command.make_context(
+            "backup", list(command_args[1:]), parent=ctx, resilient_parsing=True
+        ) as backup_ctx:
+            if backup_ctx.params.get("dry_run"):
+                return
 
     # Run migration from legacy ~/.arcaneum/ to XDG-compliant structure if needed
     # Only show verbose output if user passed --verbose or similar flags
@@ -2364,8 +2393,23 @@ from arcaneum.cli.config import config_group  # noqa: E402 -- register after cli
 cli.add_command(config_group, name="config")
 
 # Container management commands
+from arcaneum.cli.backups import (  # noqa: E402
+    backup_list_command,
+    backup_prune_command,
+    backup_verify_command,
+    snapshot_cleanup_command,
+    snapshot_list_command,
+)
 from arcaneum.cli.docker import container_group  # noqa: E402 -- register after cli is defined
 
+for command in (
+    backup_list_command,
+    backup_verify_command,
+    backup_prune_command,
+    snapshot_list_command,
+    snapshot_cleanup_command,
+):
+    container_group.add_command(command)
 cli.add_command(container_group, name="container")
 
 # MeiliSearch index management commands (RDR-008, RDR-010)

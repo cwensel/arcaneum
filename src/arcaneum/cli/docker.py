@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import time
@@ -26,7 +27,9 @@ def _exit_on_error(code: int = 1):
     raise SystemExit(code)
 
 
-def _resolve_backup_path(output: str | None, timestamp: str, output_json: bool = False) -> Path:
+def _resolve_backup_path(
+    output: str | None, timestamp: str, output_json: bool = False, dry_run: bool = False
+) -> Path:
     """Resolve the directory for a full backup.
 
     An explicit output path names the backup directory exactly. A configured
@@ -36,10 +39,18 @@ def _resolve_backup_path(output: str | None, timestamp: str, output_json: bool =
     if output:
         return Path(output).expanduser()
 
-    config_path = resolve_config_path()
-    if config_path.exists():
+    if dry_run:
+        # Preview the post-migration destination without migrating legacy config.
+        config_home = os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))
+        config_path = Path(config_home) / "arcaneum" / "config.yaml"
+        config_source = config_path
+        if not config_source.exists():
+            config_source = Path.home() / ".arcaneum" / "config.yaml"
+    else:
+        config_source = config_path = resolve_config_path()
+    if config_source.exists():
         try:
-            configured_path = load_backup_config(config_path).path
+            configured_path = load_backup_config(config_source).path
         except (OSError, ValueError) as exc:
             print_warning(
                 f"Ignoring invalid backup configuration in {config_path}: {exc}",
@@ -52,6 +63,9 @@ def _resolve_backup_path(output: str | None, timestamp: str, output_json: bool =
                 backup_root = (config_path.parent / backup_root).resolve()
             return backup_root / timestamp
 
+    if dry_run:
+        data_home = os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share"))
+        return Path(data_home) / "arcaneum" / "backups" / timestamp
     return get_data_dir() / "backups" / timestamp
 
 
@@ -624,9 +638,21 @@ def _request_json(method: str, url: str, **kwargs):
     return response.json()
 
 
-def _meilisearch_headers():
+def _meilisearch_headers(read_only: bool = False):
     from arcaneum.paths import get_meilisearch_api_key
 
+    if read_only:
+        key = os.environ.get("MEILISEARCH_API_KEY", "")
+        if len(key) < 16:
+            config_home = os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))
+            key_file = Path(config_home) / "arcaneum" / "meilisearch.key"
+            key = key_file.read_text().strip() if key_file.exists() else ""
+        if len(key) < 16:
+            raise RuntimeError(
+                "No existing MeiliSearch API key. Set MEILISEARCH_API_KEY or use "
+                "--skip-meilisearch to preview Qdrant only."
+            )
+        return {"Authorization": f"Bearer {key}"}
     return {"Authorization": f"Bearer {get_meilisearch_api_key()}"}
 
 
@@ -698,11 +724,15 @@ def _warn_orphaned_qdrant_snapshots(
     if not orphans:
         return
 
+    delete_commands = "\n".join(
+        "curl -X DELETE "
+        + shlex.quote(f"{qdrant_url}/collections/{collection}/snapshots/{snapshot['name']}")
+        for snapshot in orphans
+    )
     _record_warning(
         f"{collection}: {len(orphans)} orphaned snapshot"
         f"{'s' if len(orphans) != 1 else ''} left in the container from an earlier "
-        f"backup; delete with: "
-        f"curl -X DELETE {qdrant_url}/collections/{collection}/snapshots/<name>",
+        f"backup; delete with:\n{delete_commands}",
         output_json,
         warnings,
     )
@@ -792,6 +822,68 @@ def _latest_meilisearch_task_uid(meilisearch_url: str, headers: dict):
     return tasks[0].get("uid")
 
 
+def _list_meilisearch_indexes(meilisearch_url: str, headers: dict) -> list[dict]:
+    indexes = []
+    offset = 0
+    limit = 100
+    while True:
+        response = _request_json(
+            "GET",
+            f"{meilisearch_url}/indexes",
+            headers=headers,
+            params={"limit": limit, "offset": offset},
+        )
+        batch = response.get("results", [])
+        indexes.extend(batch)
+        if len(batch) < limit:
+            return indexes
+        offset += limit
+
+
+def _preview_backup(
+    backup_path: Path,
+    qdrant_url: str,
+    meilisearch_url: str,
+    skip_meilisearch: bool,
+    output_json: bool,
+) -> None:
+    """Inspect backup inputs without creating artifacts or modifying services."""
+    if backup_path.exists():
+        raise FileExistsError(f"Backup directory already exists: {backup_path}")
+
+    warnings: list[str] = []
+    collections = _request_json("GET", f"{qdrant_url}/collections")
+    names = [item["name"] for item in collections.get("result", {}).get("collections", [])]
+    for name in names:
+        _warn_orphaned_qdrant_snapshots(qdrant_url, name, output_json, warnings)
+
+    indexes = []
+    if not skip_meilisearch:
+        headers = _meilisearch_headers(read_only=True)
+        _ensure_meilisearch_idle(meilisearch_url, headers)
+        indexes = [item["uid"] for item in _list_meilisearch_indexes(meilisearch_url, headers)]
+
+    print_info(f"Would back up to {backup_path}", output_json)
+    print_info(f"Qdrant collections: {', '.join(names) or '(none)'}", output_json)
+    meili_summary = "(skipped)" if skip_meilisearch else ", ".join(indexes) or "(none)"
+    print_info(
+        f"MeiliSearch indexes: {meili_summary}",
+        output_json,
+    )
+    print_success(
+        "Backup dry run complete; no backup created",
+        output_json,
+        data={
+            "dry_run": True,
+            "path": str(backup_path),
+            "qdrant_collections": names,
+            "meilisearch_indexes": indexes,
+            "skip_meilisearch": skip_meilisearch,
+            "warnings": warnings,
+        },
+    )
+
+
 def _backup_meilisearch(
     backup_path: Path,
     meilisearch_url: str,
@@ -806,22 +898,7 @@ def _backup_meilisearch(
         _ensure_meilisearch_idle(meilisearch_url, headers)
 
     exported = []
-    indexes = []
-    offset = 0
-    limit = 100
-
-    while True:
-        indexes_response = _request_json(
-            "GET",
-            f"{meilisearch_url}/indexes",
-            headers=headers,
-            params={"limit": limit, "offset": offset},
-        )
-        batch = indexes_response.get("results", [])
-        indexes.extend(batch)
-        if len(batch) < limit:
-            break
-        offset += limit
+    indexes = _list_meilisearch_indexes(meilisearch_url, headers)
 
     for index in indexes:
         uid = index["uid"]
@@ -1111,6 +1188,7 @@ def _restore_meilisearch(
     help="Qdrant operation timeout in seconds",
 )
 @click.option("--skip-meilisearch", is_flag=True, help="Only back up Qdrant snapshots")
+@click.option("--dry-run", is_flag=True, help="Preview the backup using read-only service queries")
 @click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def backup_command(
     output,
@@ -1120,13 +1198,17 @@ def backup_command(
     qdrant_timeout,
     skip_meilisearch,
     output_json,
+    dry_run=False,
 ):
     """Back up Qdrant snapshots and MeiliSearch indexes."""
     if not check_docker_available(output_json):
         _exit_on_error()
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    backup_path = _resolve_backup_path(output, timestamp, output_json)
+    backup_path = _resolve_backup_path(output, timestamp, output_json, dry_run=dry_run)
+    if dry_run:
+        _preview_backup(backup_path, qdrant_url, meilisearch_url, skip_meilisearch, output_json)
+        return
     backup_path.mkdir(parents=True, exist_ok=False)
     print_info(f"Backing up to {backup_path}", output_json)
 
@@ -1174,6 +1256,10 @@ def backup_command(
             starting_task_uid=meili_starting_task_uid,
         )
 
+    from arcaneum.backup import backup_checksums
+
+    print_info("Calculating backup checksums...", output_json)
+    manifest["checksums"] = backup_checksums(backup_path, manifest)
     manifest_path = backup_path / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     corpora = _backup_corpus_details(backup_path, manifest)

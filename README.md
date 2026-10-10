@@ -458,6 +458,15 @@ steps.
 Use `arc container backup` before upgrades or migrations. It creates a
 timestamped directory under `~/.local/share/arcaneum/backups/` with Qdrant
 collection snapshots plus MeiliSearch index settings and JSONL document exports.
+Use `arc container backup --dry-run` to preview the destination, collections,
+indexes, and orphaned snapshots without creating a backup; add `--json` for
+structured output.
+Manage saved backups with `arc container backup-list`, check integrity with
+`arc container backup-verify <backup-directory>`, and preview retention with
+`arc container backup-prune --keep 5 --dry-run` (use `--confirm` to apply).
+Use `arc container snapshot-list` to inspect snapshots left inside Qdrant and
+`arc container snapshot-cleanup --dry-run` to preview cleanup of all snapshots
+(use `--confirm` to delete while backup and restore are idle).
 Restore with `arc container restore <backup-directory>` while the container
 services are running. Restore recreates same-named MeiliSearch indexes from the
 backup.

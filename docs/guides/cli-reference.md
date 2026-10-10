@@ -1892,6 +1892,11 @@ Both `arc container backup` and `arc container restore` accept:
 `arc container backup` additionally accepts:
 
 - `--output`, `-o`: Backup directory to create (overrides configured `backup.path`)
+- `--dry-run`: Preview the resolved destination, Qdrant collections, MeiliSearch
+  indexes, and orphaned snapshot cleanup commands. Queries running services without
+  creating backup files, snapshots, or credentials. Checks that MeiliSearch is idle;
+  requires an existing API key unless `--skip-meilisearch` is used. An existing
+  output directory is rejected, as it would be for a real backup.
 
 `arc container restore` additionally accepts:
 
@@ -1899,12 +1904,86 @@ Both `arc container backup` and `arc container restore` accept:
   restoring large indexes whose import tasks exceed the default.
 
 ```bash
+# Preview a backup, including any orphaned snapshot names
+arc container backup --dry-run
+arc container backup --dry-run --json
+
 # Back up only Qdrant, against a non-default endpoint
 arc container backup -o ./qdrant-only --skip-meilisearch --qdrant-url http://localhost:6333
 
 # Restore a large backup, allowing more time for MeiliSearch tasks
 arc container restore ./arcaneum-backup --meilisearch-timeout 600
 ```
+
+**Backup maintenance:**
+
+```bash
+# List backups in the configured backup.path (or the default backup root)
+arc container backup-list
+arc container backup-list --root /Volumes/Manual/Arcaneum --json
+
+# Verify one backup locally, without running Docker or either database service
+arc container backup-verify /Volumes/Manual/Arcaneum/20261010T151258Z
+
+# Preview retention, then apply the same policy
+arc container backup-prune --keep 5 --older-than 30 --dry-run
+arc container backup-prune --keep 5 --older-than 30 --confirm
+
+# Inspect and clean up all snapshots left inside Qdrant (while backup/restore is idle)
+arc container snapshot-list
+arc container snapshot-cleanup --dry-run
+arc container snapshot-cleanup --confirm
+
+# Optionally limit cleanup to a collection or an exact snapshot name
+arc container snapshot-cleanup --collection Claude --dry-run
+arc container snapshot-cleanup --collection Claude --snapshot NAME.snapshot --dry-run
+```
+
+All five maintenance commands accept `--json` and skip automatic legacy data
+migration. `backup-list` and `backup-prune` accept `--root` to override the
+configured backup root. They inspect immediate child directories; backups made
+with `backup --output` outside that root require selecting their parent with
+`--root`, or passing the backup directory directly to `backup-verify`.
+
+`backup-list` shows manifest dates, total artifact sizes, and included corpora,
+newest first. Listing checks manifest structure and file presence but does not
+hash file contents. Unfinished directories, invalid manifests, missing artifacts,
+and symlinked backup directories are reported as skipped.
+
+`arc container backup` records SHA-256 hashes and sizes for every artifact in
+the manifest. `backup-verify` checks those values, validates MeiliSearch metadata
+and JSONL document counts, and rejects missing files, empty Qdrant snapshots,
+and unsafe artifact paths. Older backups without checksums still receive
+structural checks, with a warning that corruption cannot be ruled out. Verification
+does not perform a trial restore or establish database-version compatibility.
+Failures return a nonzero exit code.
+
+`backup-prune` requires `--keep N` (at least 1) and/or `--older-than DAYS` (at least
+1). When both are supplied, it protects the newest N verified backups and only
+deletes remaining backups older than the age cutoff. Retention is global across
+the root, including Qdrant-only and MeiliSearch-only backups; it is not per corpus.
+An age-only policy can remove every backup older than the cutoff. Pruning verifies
+backups before selection, so corrupt backups are preserved and do not count toward
+`--keep`. It reads artifact contents even during a dry run, which can take time for
+large backups. Unrecognized and incomplete directories are never pruned. Actual
+deletion requires `--confirm`; use `--dry-run` to inspect the selection first.
+
+`snapshot-list` queries Qdrant directly and shows collection, snapshot name, size,
+and creation time. Repeat `--collection` to filter multiple collections; omit it
+to list all. Snapshot presence does not prove it is orphaned: snapshots may also
+belong to an active backup, restore, or a manual operation. Run cleanup while those
+operations are idle. `snapshot-cleanup` selects every snapshot in every collection
+by default. Arcaneum normally removes temporary snapshots after copying them, so
+leftovers from interrupted backups can be reclaimed. Cleanup also removes manually
+created snapshots unless you filter the selection. Use optional `--collection` to
+limit cleanup to one collection, or repeat `--snapshot` to select exact names.
+If a name occurs in multiple collections, every matching snapshot is selected.
+All selected collections and requested names are checked before any deletion;
+`--confirm` is required to delete, and `--dry-run` only previews. JSON output includes
+`deleted_snapshots` with collection/name pairs, alongside the `deleted` name list.
+Both commands accept `--qdrant-url`; cleanup also accepts
+`--qdrant-timeout` (default 300 seconds). Partial deletion failures report which
+snapshots were deleted and return a nonzero exit code.
 
 **Upgrading MeiliSearch:**
 

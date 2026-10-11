@@ -2145,6 +2145,10 @@ def corpus_verify_command(
                         f"  [dim]... and {len(parity['items']) - len(shown)} more "
                         f"(see: arc corpus items {name})[/dim]"
                     )
+                if parity_status == "mismatch":
+                    console.print(
+                        f"  [dim]Fix with: arc corpus repair {name} (preview with --dry-run)[/dim]"
+                    )
 
             # Errors
             if errors:

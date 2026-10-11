@@ -73,6 +73,8 @@ arc corpus sync MyCorpus /path/to/files --parity --dry-run
 # Preview and repair verifier-selected content/integrity issues. Policy-only
 # findings are reported but require --include-stale-policy to migrate. For PDFs
 # this also consolidates identical sources while preserving their paths as aliases.
+# It then restores Qdrant/MeiliSearch chunk-count parity (the `mismatch` that
+# `arc corpus verify` reports).
 arc corpus repair MyCorpus --dry-run --json
 arc corpus repair MyCorpus
 arc corpus repair MyCorpus --include-stale-policy

@@ -448,6 +448,7 @@ def test_corpus_verify_text_output_lists_unsynced_items(monkeypatch, capsys):
     assert "Status: mismatch" in out
     assert "Items: 1 synced, 1 qdrant_only" in out
     assert "/docs/b.pdf: qdrant_only (qdrant 1, meili 0)" in out
+    assert "Fix with: arc corpus repair Docs" in out
 
 
 def test_corpus_verify_parity_honors_project_filter(monkeypatch):

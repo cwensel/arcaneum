@@ -6,8 +6,9 @@ following reference implementation practices.
 
 import json
 import sys
+from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 
 def timestamp() -> str:
@@ -50,6 +51,25 @@ def format_json_response(
     return json.dumps(response, indent=2)
 
 
+_json_capture: Optional[List[Dict[str, Any]]] = None
+
+
+@contextmanager
+def capture_json(documents: List[Dict[str, Any]]) -> Iterator[List[Dict[str, Any]]]:
+    """Collect print_json responses into `documents` instead of printing them.
+
+    Lets a command that chains other commands emit one combined JSON
+    document, so --json output stays a single parseable object.
+    """
+    global _json_capture
+    previous = _json_capture
+    _json_capture = documents
+    try:
+        yield documents
+    finally:
+        _json_capture = previous
+
+
 def print_json(
     status: str,
     message: str = "",
@@ -65,6 +85,9 @@ def print_json(
         errors: List of error messages (optional)
     """
     output = format_json_response(status, message, data, errors)
+    if _json_capture is not None:
+        _json_capture.append(json.loads(output))
+        return
     print(output)
 
 

@@ -2129,6 +2129,11 @@ def corpus_repair(
     --include-stale-policy to migrate them. Re-extracts affected files with OCR
     fallback and consolidates duplicate PDFs while retaining source aliases.
 
+    Then restores Qdrant/MeiliSearch parity, as `arc corpus parity --verify`
+    does: files missing from MeiliSearch or with mismatched chunk counts are
+    re-copied from Qdrant, and files missing from Qdrant are re-embedded when
+    they still exist on disk.
+
     Examples:
 
     \b
@@ -2138,7 +2143,7 @@ def corpus_repair(
         arc corpus repair PapersFast --quality-threshold 0.5
         arc corpus repair PapersFast --verbose
     """
-    from arcaneum.cli.sync import sync_directory_command
+    from arcaneum.cli.sync import repair_corpus_command
     from arcaneum.cli.utils import create_qdrant_client
     from arcaneum.indexing.collection_metadata import get_collection_metadata
 
@@ -2153,28 +2158,16 @@ def corpus_repair(
     except Exception:
         configured_models = None
 
-    sync_directory_command(
+    repair_corpus_command(
         corpus,
-        paths=(),
-        from_file=None,
         models=configured_models or "arctic-m",
-        file_types=None,
-        force=False,
-        verify=False,
-        text_workers=None,
-        max_embedding_batch=max_embedding_batch,
+        quality_threshold=quality_threshold,
+        dry_run=dry_run,
         no_gpu=no_gpu,
-        cpu_workers=None,
+        max_embedding_batch=max_embedding_batch,
+        include_stale_policy=include_stale_policy,
         verbose=verbose,
         output_json=output_json,
-        git_update=False,
-        git_version=False,
-        skip_dir_prefixes=("_",),
-        dry_run=dry_run,
-        parity=False,
-        repair=True,
-        repair_stale_policy=include_stale_policy,
-        quality_threshold=quality_threshold,
     )
 
 

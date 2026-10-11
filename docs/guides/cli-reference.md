@@ -490,6 +490,16 @@ arc corpus repair MyCorpus --verbose                  # Show per-file quality sc
    while retaining every physical path as an auditable alias
 5. Compares new quality to old — only replaces degraded extraction if improved
 6. Reports per-file results (improved, consolidated, skipped, or incomplete)
+7. Restores Qdrant/MeiliSearch parity, as `arc corpus parity --verify` does:
+   files missing from MeiliSearch, or with a different chunk count there, are
+   re-copied from Qdrant without re-embedding; files missing from Qdrant are
+   re-embedded if they still exist on disk, otherwise skipped and reported
+
+Both steps run under the corpus write lock, and `--dry-run` previews both. If
+the content step fails, the parity step does not run. With `--json` the output
+is one document: the content repair result, with the parity result under
+`data.parity` (`status` is `success`, `skipped` when the corpus is missing
+from one system, or `error`). A parity failure exits 1.
 
 There is no separate `--only-corrupt` switch: ordinary `repair` already excludes
 policy-only migration while retaining incomplete chunks, corrupt extraction,
@@ -606,6 +616,8 @@ arc corpus parity MyCorpus --json
   - **Qdrant -> MeiliSearch**: Copies metadata from Qdrant (no file access needed)
   - **MeiliSearch -> Qdrant**: Re-chunks and embeds files (requires file access)
 - Files that don't exist on disk are skipped with a warning
+- Holds the corpus write lock while writing, like `sync` and `repair`
+  (`--dry-run` takes no lock)
 
 **Options:**
 
@@ -841,7 +853,8 @@ item (per file, or per git project for code corpora), the same comparison as
 
 - `synced`: every item has the same chunk count in Qdrant and MeiliSearch
 - `mismatch`: at least one item differs; `parity.items` lists each one as
-  `mismatch`, `qdrant_only`, or `meili_only`, and the corpus is reported unhealthy
+  `mismatch`, `qdrant_only`, or `meili_only`, and the corpus is reported
+  unhealthy. `arc corpus repair` restores parity
 - `unknown`: the comparison could not run; `parity.reason` says why
 - `qdrant_only` / `meili_only`: the corpus exists in only one system
 

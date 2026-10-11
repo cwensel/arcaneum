@@ -189,7 +189,7 @@ from ..cli.errors import (
 )
 from ..cli.interaction_logger import interaction_logger
 from ..cli.native_stderr import relay_native_stderr
-from ..cli.output import print_error, print_info, print_json
+from ..cli.output import capture_json, print_error, print_info, print_json
 from ..cli.utils import create_qdrant_client
 from ..config import DEFAULT_MODELS
 from ..embeddings.client import (
@@ -2586,12 +2586,12 @@ def _sync_directory_locked(
             if verification_result.is_healthy:
                 if not output_json:
                     console.print(
-                        f"[green]✓ Collection is healthy - all {verification_result.complete_items} files complete, nothing to repair[/green]"
+                        f"[green]✓ Collection is healthy - all {verification_result.complete_items} files complete, none need re-indexing[/green]"
                     )
                 else:
                     print_json(
                         "success",
-                        "Collection is healthy, nothing to repair",
+                        "Collection is healthy, no files need re-indexing",
                         data={
                             "total_files": verification_result.total_items,
                             "complete_files": verification_result.complete_items,
@@ -6002,19 +6002,20 @@ def _parity_all_corpora(
                 console.print(f"\n[bold]Processing {i}/{len(can_process)}: {c['name']}[/bold]")
 
             try:
-                _parity_single_corpus(
-                    corpus=c["name"],
-                    dry_run=False,  # Already handled dry_run above
-                    verify=verify,
-                    repair_metadata=repair_metadata,
-                    effective_text_workers=effective_text_workers,
-                    qdrant_timeout=qdrant_timeout,
-                    max_embedding_batch=max_embedding_batch,
-                    create_missing=False,  # Already handled create_missing above
-                    verbose=verbose,
-                    output_json=output_json,
-                    all_corpora_mode=True,  # Suppress per-corpus logging
-                )
+                with acquire_corpus_lock(c["name"], quiet=output_json):
+                    _parity_single_corpus(
+                        corpus=c["name"],
+                        dry_run=False,  # Already handled dry_run above
+                        verify=verify,
+                        repair_metadata=repair_metadata,
+                        effective_text_workers=effective_text_workers,
+                        qdrant_timeout=qdrant_timeout,
+                        max_embedding_batch=max_embedding_batch,
+                        create_missing=False,  # Already handled create_missing above
+                        verbose=verbose,
+                        output_json=output_json,
+                        all_corpora_mode=True,  # Suppress per-corpus logging
+                    )
                 results.append({"corpus": c["name"], "status": "success"})
             except Exception as e:
                 logger.error(f"Failed to process corpus {c['name']}: {e}")
@@ -6621,20 +6622,30 @@ def parity_command(
         effective_text_workers = text_workers
 
     if corpus:
-        # Single corpus mode
-        _parity_single_corpus(
-            corpus=corpus,
-            dry_run=dry_run,
-            verify=verify,
-            repair_metadata=repair_metadata,
-            effective_text_workers=effective_text_workers,
-            qdrant_timeout=qdrant_timeout,
-            max_embedding_batch=max_embedding_batch,
-            create_missing=create_missing,
-            verbose=verbose,
-            output_json=output_json,
-            all_corpora_mode=False,
+        # Single corpus mode. Backfill deletes and rewrites documents in both
+        # systems, so it takes the corpus write lock like sync does; a dry run
+        # only reads.
+        lock_ctx = (
+            contextlib.nullcontext() if dry_run else acquire_corpus_lock(corpus, quiet=output_json)
         )
+        try:
+            with lock_ctx:
+                _parity_single_corpus(
+                    corpus=corpus,
+                    dry_run=dry_run,
+                    verify=verify,
+                    repair_metadata=repair_metadata,
+                    effective_text_workers=effective_text_workers,
+                    qdrant_timeout=qdrant_timeout,
+                    max_embedding_batch=max_embedding_batch,
+                    create_missing=create_missing,
+                    verbose=verbose,
+                    output_json=output_json,
+                    all_corpora_mode=False,
+                )
+        except CorpusLockUnavailable as e:
+            print_error(str(e), output_json)
+            sys.exit(e.exit_code)
     else:
         # All corpora mode
         _parity_all_corpora(
@@ -6649,3 +6660,153 @@ def parity_command(
             output_json=output_json,
             effective_text_workers=effective_text_workers,
         )
+
+
+_JSON_STATUS_SEVERITY = {"success": 0, "warning": 1, "error": 2}
+
+
+def repair_corpus_command(
+    corpus: str,
+    models: str,
+    quality_threshold: float,
+    dry_run: bool,
+    no_gpu: bool,
+    max_embedding_batch: Optional[int],
+    include_stale_policy: bool,
+    verbose: bool,
+    output_json: bool,
+):
+    """Repair verifier-selected files, then restore cross-system parity.
+
+    Content repair re-indexes the files the Qdrant verifier selects; it never
+    compares against MeiliSearch. The parity pass (`arc corpus parity
+    --verify`) follows, so one command fixes what `arc corpus verify` reports
+    as qdrant_only, meili_only, or chunk-count mismatch. Both passes run
+    under one corpus lock; a dry run previews both and takes no lock.
+
+    Under --json the passes emit one document: the content repair response,
+    with the parity response nested under data.parity.
+    """
+    lock_ctx = (
+        contextlib.nullcontext() if dry_run else acquire_corpus_lock(corpus, quiet=output_json)
+    )
+    try:
+        with lock_ctx:
+            _repair_corpus_locked(
+                corpus,
+                models,
+                quality_threshold,
+                dry_run,
+                no_gpu,
+                max_embedding_batch,
+                include_stale_policy,
+                verbose,
+                output_json,
+            )
+    except CorpusLockUnavailable as e:
+        print_error(str(e), output_json)
+        sys.exit(e.exit_code)
+
+
+def _repair_corpus_locked(
+    corpus: str,
+    models: str,
+    quality_threshold: float,
+    dry_run: bool,
+    no_gpu: bool,
+    max_embedding_batch: Optional[int],
+    include_stale_policy: bool,
+    verbose: bool,
+    output_json: bool,
+):
+    content_docs: List[Dict[str, Any]] = []
+    try:
+        with capture_json(content_docs) if output_json else contextlib.nullcontext():
+            sync_directory_command(
+                corpus,
+                paths=(),
+                from_file=None,
+                models=models,
+                file_types=None,
+                force=False,
+                verify=False,
+                text_workers=None,
+                max_embedding_batch=max_embedding_batch,
+                no_gpu=no_gpu,
+                cpu_workers=None,
+                verbose=verbose,
+                output_json=output_json,
+                git_update=False,
+                git_version=False,
+                skip_dir_prefixes=("_",),
+                dry_run=dry_run,
+                parity=False,
+                repair=True,
+                repair_stale_policy=include_stale_policy,
+                quality_threshold=quality_threshold,
+            )
+    except BaseException:
+        # Content repair already reported its failure. Parity would compare a
+        # half-repaired corpus, so stop and surface the failure unchanged.
+        for doc in content_docs:
+            print_json(doc["status"], doc["message"], doc["data"], doc["errors"])
+        raise
+
+    parity_docs: List[Dict[str, Any]] = []
+    parity_error = None
+    try:
+        with capture_json(parity_docs) if output_json else contextlib.nullcontext():
+            parity_command(
+                corpus,
+                dry_run=dry_run,
+                verify=True,
+                repair_metadata=False,
+                text_workers=None,
+                max_embedding_batch=max_embedding_batch,
+                qdrant_timeout=120,
+                create_missing=False,
+                confirm=False,
+                verbose=verbose,
+                output_json=output_json,
+            )
+        parity_doc = parity_docs[-1] if parity_docs else {"status": "success", "message": ""}
+        parity = {
+            "status": parity_doc["status"],
+            "message": parity_doc["message"],
+            **parity_doc.get("data", {}),
+        }
+    except ResourceNotFoundError as e:
+        # A corpus missing from one system has no parity to restore here;
+        # `arc corpus parity --create-missing` promotes it.
+        parity = {"status": "skipped", "message": str(e)}
+        if not output_json:
+            console.print(f"[yellow]Parity check skipped: {e}[/yellow]")
+    except Exception as e:
+        parity_error = f"Parity repair failed: {e}"
+        parity = {"status": "error", "message": str(e)}
+        if not output_json:
+            console.print(f"[red]{parity_error}[/red]")
+
+    if output_json:
+        content_doc = (
+            content_docs[-1]
+            if content_docs
+            else {"status": "success", "message": "", "data": {}, "errors": []}
+        )
+        # Earlier documents are unexpected; pass them through rather than drop them.
+        for doc in content_docs[:-1]:
+            print_json(doc["status"], doc["message"], doc["data"], doc["errors"])
+        status = max(
+            content_doc["status"],
+            "warning" if parity["status"] == "skipped" else parity["status"],
+            key=lambda s: _JSON_STATUS_SEVERITY.get(s, 0),
+        )
+        print_json(
+            status,
+            content_doc["message"],
+            data={**content_doc["data"], "parity": parity},
+            errors=content_doc["errors"] + ([parity_error] if parity_error else []),
+        )
+
+    if parity_error:
+        sys.exit(1)

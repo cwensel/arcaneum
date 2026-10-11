@@ -175,15 +175,75 @@ def test_repair_holds_the_lock(isolated_locks):
         observed["holder"] = corpus_lock.read_lock_holder(corpus_lock.corpus_lock_path(corpus))
 
     runner = CliRunner()
-    with patch("arcaneum.cli.sync._sync_directory_locked", impl):
-        with patch(
-            "arcaneum.cli.utils.create_qdrant_client", side_effect=RuntimeError("no server")
-        ):
-            result = runner.invoke(cli, ["corpus", "repair", "Docs"], catch_exceptions=False)
+    with (
+        patch("arcaneum.cli.sync._sync_directory_locked", impl),
+        patch("arcaneum.cli.sync._parity_single_corpus", lambda **kwargs: None),
+        patch("arcaneum.cli.utils.create_qdrant_client", side_effect=RuntimeError("no server")),
+    ):
+        result = runner.invoke(cli, ["corpus", "repair", "Docs"], catch_exceptions=False)
 
     assert result.exit_code == 0, result.output
     assert observed["holder"] is not None
     assert observed["holder"]["corpus"] == "Docs"
+
+
+def _run_parity(args, impl):
+    runner = CliRunner()
+    with patch("arcaneum.cli.sync._parity_single_corpus", impl):
+        return runner.invoke(cli, args, catch_exceptions=False)
+
+
+def test_parity_holds_the_lock(isolated_locks):
+    """`arc corpus parity` deletes and backfills documents, so it locks too."""
+    observed = {}
+
+    def impl(**kwargs):
+        observed["holder"] = corpus_lock.read_lock_holder(
+            corpus_lock.corpus_lock_path(kwargs["corpus"])
+        )
+
+    result = _run_parity(["corpus", "parity", "Docs"], impl)
+
+    assert result.exit_code == 0, result.output
+    assert observed["holder"] is not None
+    assert observed["holder"]["corpus"] == "Docs"
+
+
+def test_parity_dry_run_takes_no_lock(isolated_locks):
+    ran = []
+
+    def impl(**kwargs):
+        ran.append(kwargs["dry_run"])
+
+    with corpus_lock.acquire_corpus_lock("Docs"):
+        held = dict(corpus_lock._held)
+        corpus_lock._held.clear()
+        try:
+            result = _run_parity(["corpus", "parity", "Docs", "--dry-run"], impl)
+        finally:
+            corpus_lock._held.update(held)
+
+    assert result.exit_code == 0, result.output
+    assert ran == [True]
+
+
+def test_parity_fails_fast_when_corpus_is_locked(isolated_locks):
+    ran = []
+
+    with corpus_lock.acquire_corpus_lock("Docs"):
+        held = dict(corpus_lock._held)
+        corpus_lock._held.clear()
+        try:
+            with patch.object(corpus_lock, "DEFAULT_LOCK_TIMEOUT_SECONDS", 0):
+                result = _run_parity(
+                    ["corpus", "parity", "Docs"], lambda **_kwargs: ran.append(True)
+                )
+        finally:
+            corpus_lock._held.update(held)
+
+    assert result.exit_code != 0
+    assert ran == []
+    assert "corpus lock" in result.output
 
 
 def test_delete_holds_the_lock_during_destructive_work(isolated_locks):

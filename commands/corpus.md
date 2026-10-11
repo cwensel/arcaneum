@@ -107,6 +107,9 @@ Files that also have an integrity or quality defect remain selected without the
 flag. Preview the exact set with `/corpus repair NAME --dry-run --json`.
 Identical PDFs retain every physical path as an alias of one searchable canonical
 document; parity cleanup promotes a live alias if the canonical path disappears.
+Repair then restores Qdrant/MeiliSearch parity (as `/corpus parity NAME --verify`
+does), so it also fixes the `mismatch` that `/corpus verify` reports. Under
+`--json` the parity result is nested at `data.parity`.
 
 **Examples:**
 

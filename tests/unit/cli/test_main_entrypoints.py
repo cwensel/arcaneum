@@ -381,7 +381,8 @@ def test_corpus_sync_policy_migration_is_opt_in():
     assert calls == [False, True]
 
 
-def test_corpus_repair_policy_migration_is_opt_in():
+def test_corpus_repair_policy_migration_is_opt_in(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))  # repair takes the corpus lock
     calls = []
 
     def fake_sync_directory_command(*args, **kwargs):
@@ -389,6 +390,7 @@ def test_corpus_repair_policy_migration_is_opt_in():
 
     patches = {
         "arcaneum.cli.sync.sync_directory_command": fake_sync_directory_command,
+        "arcaneum.cli.sync.parity_command": lambda *args, **kwargs: None,
         "arcaneum.cli.utils.create_qdrant_client": lambda: object(),
         "arcaneum.indexing.collection_metadata.get_collection_metadata": (
             lambda _client, _corpus: {"model": "arctic-m"}

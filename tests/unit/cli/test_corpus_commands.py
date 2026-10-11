@@ -304,6 +304,217 @@ def test_corpus_verify_strict_exits_nonzero_for_quality_issues(monkeypatch):
     assert exc_info.value.code == 1
 
 
+def _verification_result(collection_type="pdf", total_points=3):
+    return SimpleNamespace(
+        collection_name="Docs",
+        collection_type=collection_type,
+        is_healthy=True,
+        total_points=total_points,
+        total_items=2,
+        complete_items=2,
+        incomplete_items=0,
+        duplicate_items=0,
+        schema_version=1,
+        app_version="test",
+        errors=[],
+        files=[],
+        projects=[],
+    )
+
+
+def _mock_parity_clients(monkeypatch, qdrant_payloads, meili_docs, collection_type="pdf"):
+    """Patch both store clients so verify/items see the given chunks."""
+    from arcaneum.cli import corpus
+    from arcaneum.indexing import verify as verify_module
+
+    class Qdrant:
+        def scroll(self, collection_name, **_kwargs):
+            return [SimpleNamespace(payload=payload) for payload in qdrant_payloads], None
+
+    class Index:
+        def get_documents(self, params):
+            start = params["offset"]
+            return {"results": meili_docs[start : start + params["limit"]]}
+
+    class Meili:
+        def health_check(self):
+            return True
+
+        def index_exists(self, _name):
+            return True
+
+        def get_index_stats(self, _name):
+            return {"numberOfDocuments": len(meili_docs), "isIndexing": False}
+
+        def get_index_settings(self, _name):
+            return {"searchableAttributes": ["content"], "filterableAttributes": ["file_path"]}
+
+        def search(self, _name, _query, limit=1):
+            return {"hits": meili_docs[:limit]}
+
+        def get_index(self, _name):
+            return Index()
+
+    monkeypatch.setattr(corpus, "create_qdrant_client", lambda: Qdrant())
+    monkeypatch.setattr(corpus, "create_meili_client", lambda: Meili())
+    monkeypatch.setattr(
+        verify_module.CollectionVerifier,
+        "verify_collection",
+        lambda *_args, **_kwargs: _verification_result(collection_type, len(qdrant_payloads)),
+    )
+    output = {}
+    monkeypatch.setattr(
+        corpus,
+        "print_json",
+        lambda status, message, data: output.update(
+            {"status": status, "message": message, "data": data}
+        ),
+    )
+    return output
+
+
+def test_corpus_verify_reports_synced_when_stores_agree(monkeypatch):
+    from arcaneum.cli import corpus
+
+    chunks = [
+        {"file_path": "/docs/a.pdf"},
+        {"file_path": "/docs/a.pdf"},
+        {"file_path": "/docs/b.pdf"},
+    ]
+    output = _mock_parity_clients(monkeypatch, chunks, [dict(c) for c in chunks])
+
+    corpus.corpus_verify_command("Docs", project=None, verbose=False, output_json=True)
+
+    data = output["data"]
+    assert data["parity_status"] == "synced"
+    assert data["parity"] == {
+        "status": "synced",
+        "summary": {"synced": 2, "mismatch": 0, "qdrant_only": 0, "meili_only": 0},
+        "items": [],
+    }
+    assert data["overall_healthy"] is True
+
+
+def test_corpus_verify_reports_mismatch_naming_the_file(monkeypatch):
+    from arcaneum.cli import corpus
+
+    qdrant_chunks = [
+        {"file_path": "/docs/a.pdf"},
+        {"file_path": "/docs/a.pdf"},
+        {"file_path": "/docs/b.pdf"},
+        {"file_path": "/docs/c.pdf"},
+    ]
+    # One chunk of a.pdf and all of c.pdf were deleted from MeiliSearch;
+    # d.pdf exists only in MeiliSearch.
+    meili_docs = [
+        {"file_path": "/docs/a.pdf"},
+        {"file_path": "/docs/b.pdf"},
+        {"file_path": "/docs/d.pdf"},
+    ]
+    output = _mock_parity_clients(monkeypatch, qdrant_chunks, meili_docs)
+
+    with pytest.raises(SystemExit) as exc_info:
+        corpus.corpus_verify_command(
+            "Docs", project=None, verbose=False, output_json=True, strict=True
+        )
+
+    assert exc_info.value.code == 1
+    data = output["data"]
+    assert data["parity_status"] == "mismatch"
+    assert data["overall_healthy"] is False
+    assert data["parity"]["summary"] == {
+        "synced": 1,
+        "mismatch": 1,
+        "qdrant_only": 1,
+        "meili_only": 1,
+    }
+    assert data["parity"]["items"] == [
+        {"id": "/docs/a.pdf", "qdrant_chunks": 2, "meili_chunks": 1, "status": "mismatch"},
+        {"id": "/docs/c.pdf", "qdrant_chunks": 1, "meili_chunks": 0, "status": "qdrant_only"},
+        {"id": "/docs/d.pdf", "qdrant_chunks": 0, "meili_chunks": 1, "status": "meili_only"},
+    ]
+
+
+def test_corpus_verify_text_output_lists_unsynced_items(monkeypatch, capsys):
+    from arcaneum.cli import corpus
+
+    qdrant_chunks = [{"file_path": "/docs/a.pdf"}, {"file_path": "/docs/b.pdf"}]
+    meili_docs = [{"file_path": "/docs/a.pdf"}]
+    _mock_parity_clients(monkeypatch, qdrant_chunks, meili_docs)
+
+    corpus.corpus_verify_command("Docs", project=None, verbose=False, output_json=False)
+
+    out = capsys.readouterr().out
+    assert "Status: mismatch" in out
+    assert "Items: 1 synced, 1 qdrant_only" in out
+    assert "/docs/b.pdf: qdrant_only (qdrant 1, meili 0)" in out
+
+
+def test_corpus_verify_parity_honors_project_filter(monkeypatch):
+    from arcaneum.cli import corpus
+
+    qdrant_chunks = [
+        {"git_project_identifier": "repo#main"},
+        {"git_project_identifier": "other#main"},
+    ]
+    # other#main is out of parity, but only repo#main is being verified.
+    meili_docs = [{"git_project_identifier": "repo#main"}]
+    output = _mock_parity_clients(monkeypatch, qdrant_chunks, meili_docs, collection_type="code")
+
+    corpus.corpus_verify_command("Code", project="repo#main", verbose=False, output_json=True)
+
+    assert output["data"]["parity_status"] == "synced"
+    assert output["data"]["parity"]["summary"]["synced"] == 1
+
+
+def test_corpus_verify_reports_unknown_parity_when_scan_fails(monkeypatch):
+    from arcaneum.cli import corpus
+
+    chunks = [{"file_path": "/docs/a.pdf"}]
+    output = _mock_parity_clients(monkeypatch, chunks, chunks)
+
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("scroll timed out")
+
+    monkeypatch.setattr(corpus, "_scan_qdrant_parity_items", fail)
+
+    corpus.corpus_verify_command("Docs", project=None, verbose=False, output_json=True)
+
+    data = output["data"]
+    assert data["parity_status"] == "unknown"
+    assert data["parity"]["reason"] == "Parity scan failed: scroll timed out"
+    assert data["overall_healthy"] is False
+
+
+def test_corpus_items_reports_per_item_parity(monkeypatch):
+    from arcaneum.cli import corpus
+    from arcaneum.indexing import collection_metadata
+
+    qdrant_chunks = [
+        {"file_path": "/docs/a.md", "filename": "a.md"},
+        {"file_path": "/docs/a.md", "filename": "a.md"},
+        {"file_path": "/docs/b.md", "filename": "b.md"},
+    ]
+    meili_docs = [{"file_path": "/docs/a.md", "filename": "a.md"}]
+    output = _mock_parity_clients(monkeypatch, qdrant_chunks, meili_docs)
+    monkeypatch.setattr(
+        collection_metadata,
+        "get_collection_metadata",
+        lambda *_args: {"collection_type": "markdown"},
+    )
+
+    corpus.corpus_items_command("Docs", output_json=True)
+
+    data = output["data"]
+    assert data["summary"] == {"synced": 0, "mismatch": 1, "qdrant_only": 1, "meili_only": 0}
+    assert [
+        (i["id"], i["qdrant_chunks"], i["meili_chunks"], i["status"]) for i in data["items"]
+    ] == [
+        ("/docs/a.md", 2, 1, "mismatch"),
+        ("/docs/b.md", 1, 0, "qdrant_only"),
+    ]
+
+
 def test_corpus_module_exports_expected_commands():
     """Every documented 'arc corpus' subcommand function is importable."""
     from arcaneum.cli import corpus

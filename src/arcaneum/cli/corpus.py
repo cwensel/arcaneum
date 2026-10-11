@@ -1384,6 +1384,183 @@ def corpus_info_command(name: str, output_json: bool):
         sys.exit(1)
 
 
+PARITY_ITEM_STATUSES = ("synced", "mismatch", "qdrant_only", "meili_only")
+
+
+def _scan_qdrant_parity_items(qdrant, name: str, collection_type: str | None) -> dict:
+    """Group Qdrant chunks per item and count them.
+
+    Items are keyed by git_project_identifier for code collections and by
+    file_path for every other type, matching _scan_meili_parity_items.
+    """
+    if collection_type == "code":
+        id_field = "git_project_identifier"
+        payload_fields = [
+            "git_project_name",
+            "git_project_identifier",
+            "git_branch",
+            "git_commit_hash",
+            "git_remote_url",
+        ]
+    else:
+        id_field = "file_path"
+        payload_fields = ["file_path", "file_hash", "file_size", "filename"]
+
+    qdrant_items = {}
+    offset = None
+    while True:
+        points, offset = qdrant.scroll(
+            collection_name=name,
+            scroll_filter=metadata_exclusion_filter(),
+            limit=1000,
+            offset=offset,
+            with_payload=payload_fields,
+            with_vectors=False,
+        )
+
+        if not points:
+            break
+
+        for point in points:
+            if not point.payload:
+                continue
+
+            item_id = point.payload.get(id_field)
+            if item_id and item_id not in qdrant_items:
+                qdrant_items[item_id] = {
+                    **{k: point.payload.get(k) for k in payload_fields},
+                    "qdrant_chunks": 1,
+                }
+            elif item_id:
+                qdrant_items[item_id]["qdrant_chunks"] += 1
+
+        if offset is None:
+            break
+
+    return qdrant_items
+
+
+def _scan_meili_parity_items(meili, name: str, collection_type: str | None) -> dict:
+    """Group MeiliSearch documents per item and count them.
+
+    Uses get_documents() instead of search() to avoid the maxTotalHits cap.
+    """
+    index = meili.get_index(name)
+    batch_offset = 0
+    batch_size = 1000
+
+    # Determine fields to fetch based on collection type
+    if collection_type == "code":
+        doc_fields = [
+            "file_path",
+            "filename",
+            "language",
+            "programming_language",
+            "git_project_identifier",
+            "git_project_name",
+            "git_branch",
+        ]
+    else:
+        doc_fields = ["file_path", "filename", "language", "programming_language"]
+
+    meili_items = {}
+    while True:
+        result = index.get_documents(
+            {
+                "offset": batch_offset,
+                "limit": batch_size,
+                "fields": doc_fields,
+            }
+        )
+
+        # Handle both dict and object results
+        if hasattr(result, "results"):
+            docs = result.results
+        else:
+            docs = result.get("results", [])
+
+        if not docs:
+            break
+
+        for doc in docs:
+            # Extract field values handling both dict and object docs
+            def _get(field):
+                if isinstance(doc, dict):
+                    return doc.get(field)
+                return getattr(doc, field, None)
+
+            # For code collections, group by git_project_identifier
+            # For other types, group by file_path
+            if collection_type == "code":
+                item_id = _get("git_project_identifier")
+            else:
+                item_id = _get("file_path") or _get("filename")
+
+            if item_id and item_id not in meili_items:
+                meili_items[item_id] = {
+                    "file_path": _get("file_path"),
+                    "filename": _get("filename"),
+                    "language": _get("language") or _get("programming_language"),
+                    "git_project_identifier": _get("git_project_identifier"),
+                    "git_project_name": _get("git_project_name"),
+                    "git_branch": _get("git_branch"),
+                    "meili_chunks": 1,
+                }
+            elif item_id:
+                meili_items[item_id]["meili_chunks"] += 1
+
+        batch_offset += len(docs)
+        if len(docs) < batch_size:
+            break
+
+    return meili_items
+
+
+def _classify_parity_item(qdrant_chunks: int, meili_chunks: int) -> str:
+    """Return an item's parity status from its per-store chunk counts."""
+    if qdrant_chunks > 0 and meili_chunks > 0:
+        return "synced" if qdrant_chunks == meili_chunks else "mismatch"
+    if qdrant_chunks > 0:
+        return "qdrant_only"
+    return "meili_only"
+
+
+def _summarize_parity_items(items: list[dict]) -> dict:
+    """Count items per parity status."""
+    return {
+        status: sum(1 for item in items if item["status"] == status)
+        for status in PARITY_ITEM_STATUSES
+    }
+
+
+def _compare_parity_items(qdrant_items: dict, meili_items: dict) -> dict:
+    """Compare per-item chunk counts across both stores.
+
+    Returns the corpus parity status, a per-status summary, and the items
+    that are not synced.
+    """
+    items = []
+    for item_id in sorted(set(qdrant_items) | set(meili_items)):
+        q_chunks = qdrant_items.get(item_id, {}).get("qdrant_chunks", 0)
+        m_chunks = meili_items.get(item_id, {}).get("meili_chunks", 0)
+        items.append(
+            {
+                "id": item_id,
+                "qdrant_chunks": q_chunks,
+                "meili_chunks": m_chunks,
+                "status": _classify_parity_item(q_chunks, m_chunks),
+            }
+        )
+
+    summary = _summarize_parity_items(items)
+    unsynced = [item for item in items if item["status"] != "synced"]
+    return {
+        "status": "mismatch" if unsynced else "synced",
+        "summary": summary,
+        "items": unsynced,
+    }
+
+
 def corpus_items_command(name: str, output_json: bool):
     """List all indexed items in a corpus with parity status.
 
@@ -1411,52 +1588,7 @@ def corpus_items_command(name: str, output_json: bool):
             qdrant = create_qdrant_client()
             metadata = get_collection_metadata(qdrant, name)
             collection_type = metadata.get("collection_type")
-
-            # Determine which field to use based on collection type
-            if collection_type == "code":
-                id_field = "git_project_identifier"
-                payload_fields = [
-                    "git_project_name",
-                    "git_project_identifier",
-                    "git_branch",
-                    "git_commit_hash",
-                    "git_remote_url",
-                ]
-            else:
-                id_field = "file_path"
-                payload_fields = ["file_path", "file_hash", "file_size", "filename"]
-
-            # Scroll through collection
-            offset = None
-            while True:
-                points, offset = qdrant.scroll(
-                    collection_name=name,
-                    scroll_filter=metadata_exclusion_filter(),
-                    limit=1000,
-                    offset=offset,
-                    with_payload=payload_fields,
-                    with_vectors=False,
-                )
-
-                if not points:
-                    break
-
-                for point in points:
-                    if not point.payload:
-                        continue
-
-                    item_id = point.payload.get(id_field)
-                    if item_id and item_id not in qdrant_items:
-                        qdrant_items[item_id] = {
-                            **{k: point.payload.get(k) for k in payload_fields},
-                            "qdrant_chunks": 1,
-                        }
-                    elif item_id:
-                        qdrant_items[item_id]["qdrant_chunks"] += 1
-
-                if offset is None:
-                    break
-
+            qdrant_items = _scan_qdrant_parity_items(qdrant, name, collection_type)
         except Exception as e:
             errors.append(f"Qdrant: {e}")
 
@@ -1468,74 +1600,7 @@ def corpus_items_command(name: str, output_json: bool):
             elif not meili.index_exists(name):
                 errors.append(f"MeiliSearch: Index '{name}' not found")
             else:
-                # Use get_documents() instead of search() to avoid maxTotalHits cap
-                index = meili.get_index(name)
-                batch_offset = 0
-                batch_size = 1000
-
-                # Determine fields to fetch based on collection type
-                if collection_type == "code":
-                    doc_fields = [
-                        "file_path",
-                        "filename",
-                        "language",
-                        "programming_language",
-                        "git_project_identifier",
-                        "git_project_name",
-                        "git_branch",
-                    ]
-                else:
-                    doc_fields = ["file_path", "filename", "language", "programming_language"]
-
-                while True:
-                    result = index.get_documents(
-                        {
-                            "offset": batch_offset,
-                            "limit": batch_size,
-                            "fields": doc_fields,
-                        }
-                    )
-
-                    # Handle both dict and object results
-                    if hasattr(result, "results"):
-                        docs = result.results
-                    else:
-                        docs = result.get("results", [])
-
-                    if not docs:
-                        break
-
-                    for doc in docs:
-                        # Extract field values handling both dict and object docs
-                        def _get(field):
-                            if isinstance(doc, dict):
-                                return doc.get(field)
-                            return getattr(doc, field, None)
-
-                        # For code collections, group by git_project_identifier
-                        # For other types, group by file_path
-                        if collection_type == "code":
-                            item_id = _get("git_project_identifier")
-                        else:
-                            item_id = _get("file_path") or _get("filename")
-
-                        if item_id and item_id not in meili_items:
-                            meili_items[item_id] = {
-                                "file_path": _get("file_path"),
-                                "filename": _get("filename"),
-                                "language": _get("language") or _get("programming_language"),
-                                "git_project_identifier": _get("git_project_identifier"),
-                                "git_project_name": _get("git_project_name"),
-                                "git_branch": _get("git_branch"),
-                                "meili_chunks": 1,
-                            }
-                        elif item_id:
-                            meili_items[item_id]["meili_chunks"] += 1
-
-                    batch_offset += len(docs)
-                    if len(docs) < batch_size:
-                        break
-
+                meili_items = _scan_meili_parity_items(meili, name, collection_type)
         except Exception as e:
             if "not available" not in str(e).lower():
                 errors.append(f"MeiliSearch: {e}")
@@ -1586,12 +1651,7 @@ def corpus_items_command(name: str, output_json: bool):
             q_chunks = q_item.get("qdrant_chunks", 0)
             m_chunks = m_item.get("meili_chunks", 0)
 
-            if q_chunks > 0 and m_chunks > 0:
-                status = "synced" if q_chunks == m_chunks else "mismatch"
-            elif q_chunks > 0:
-                status = "qdrant_only"
-            else:
-                status = "meili_only"
+            status = _classify_parity_item(q_chunks, m_chunks)
 
             # Merge metadata from both sources
             merged = {
@@ -1621,10 +1681,11 @@ def corpus_items_command(name: str, output_json: bool):
             merged_items.sort(key=lambda x: x.get("filename") or x["id"])
 
         # Calculate summary stats
-        synced_count = sum(1 for i in merged_items if i["status"] == "synced")
-        mismatch_count = sum(1 for i in merged_items if i["status"] == "mismatch")
-        qdrant_only_count = sum(1 for i in merged_items if i["status"] == "qdrant_only")
-        meili_only_count = sum(1 for i in merged_items if i["status"] == "meili_only")
+        summary = _summarize_parity_items(merged_items)
+        synced_count = summary["synced"]
+        mismatch_count = summary["mismatch"]
+        qdrant_only_count = summary["qdrant_only"]
+        meili_only_count = summary["meili_only"]
 
         # Output
         if output_json:
@@ -1632,12 +1693,7 @@ def corpus_items_command(name: str, output_json: bool):
                 "corpus": name,
                 "type": collection_type,
                 "item_count": len(merged_items),
-                "summary": {
-                    "synced": synced_count,
-                    "mismatch": mismatch_count,
-                    "qdrant_only": qdrant_only_count,
-                    "meili_only": meili_only_count,
-                },
+                "summary": summary,
                 "items": merged_items,
                 "errors": errors if errors else None,
             }
@@ -1863,13 +1919,32 @@ def corpus_verify_command(
         # Compute overall health and parity
         overall_healthy = True
         parity_status = "unknown"
+        parity = None
 
         if qdrant_result and meili_result:
             qdrant_healthy = qdrant_result.is_healthy
             meili_healthy = meili_result["is_healthy"]
             overall_healthy = qdrant_healthy and meili_healthy
 
-            parity_status = "needs_review"
+            # Same per-item chunk comparison as 'arc corpus items'
+            if not output_json:
+                console.print("[dim]Comparing items across both systems...[/dim]")
+            try:
+                collection_type = qdrant_result.collection_type
+                qdrant_items = _scan_qdrant_parity_items(qdrant, name, collection_type)
+                meili_items = _scan_meili_parity_items(meili, name, collection_type)
+                if project:
+                    qdrant_items = {k: v for k, v in qdrant_items.items() if k == project}
+                    meili_items = {k: v for k, v in meili_items.items() if k == project}
+                parity = _compare_parity_items(qdrant_items, meili_items)
+            except Exception as e:
+                reason = f"Parity scan failed: {e}"
+                parity = {"status": "unknown", "reason": reason}
+                errors.append(reason)
+
+            parity_status = parity["status"]
+            if parity_status == "mismatch":
+                overall_healthy = False
         elif qdrant_result:
             overall_healthy = qdrant_result.is_healthy
             parity_status = "qdrant_only"
@@ -1906,6 +1981,7 @@ def corpus_verify_command(
                 "corpus": name,
                 "overall_healthy": overall_healthy,
                 "parity_status": parity_status,
+                "parity": parity,
                 "qdrant": None,
                 "meilisearch": None,
                 "errors": errors if errors else None,
@@ -2044,6 +2120,31 @@ def corpus_verify_command(
                         console.print(f"    [dim]• {warning}[/dim]")
             else:
                 console.print("  [yellow]Not found or not accessible[/yellow]")
+
+            # Parity section
+            console.print("\n[bold]Parity:[/bold]")
+            if parity is None:
+                console.print(f"  [yellow]Status: {parity_status}[/yellow]")
+            elif parity_status == "unknown":
+                console.print(f"  [yellow]Status: unknown ({parity['reason']})[/yellow]")
+            else:
+                summary_str = ", ".join(
+                    f"{count} {status}" for status, count in parity["summary"].items() if count
+                )
+                color = "green" if parity_status == "synced" else "red"
+                console.print(f"  [{color}]Status: {parity_status}[/{color}]")
+                console.print(f"  Items: {summary_str or '0'}")
+                shown = parity["items"] if verbose else parity["items"][:5]
+                for item in shown:
+                    console.print(
+                        f"  [dim]• {item['id']}: {item['status']} "
+                        f"(qdrant {item['qdrant_chunks']}, meili {item['meili_chunks']})[/dim]"
+                    )
+                if len(parity["items"]) > len(shown):
+                    console.print(
+                        f"  [dim]... and {len(parity['items']) - len(shown)} more "
+                        f"(see: arc corpus items {name})[/dim]"
+                    )
 
             # Errors
             if errors:

@@ -772,6 +772,7 @@ normally report zero; the field remains visible while legacy manifests exist.
 ```text
 Verifying Qdrant collection 'MyCorpus'...
 Verifying MeiliSearch index 'MyCorpus'...
+Comparing items across both systems...
 
 Corpus: MyCorpus
 Overall Status: Healthy
@@ -784,6 +785,10 @@ MeiliSearch Index:
   Status: Healthy
   Documents: 2,847
   Sample retrieval: OK
+
+Parity:
+  Status: synced
+  Items: 150 synced
 
 All checks passed
 ```
@@ -803,7 +808,12 @@ All checks passed
   "data": {
     "corpus": "MyCorpus",
     "overall_healthy": true,
-    "parity_status": "needs_review",
+    "parity_status": "synced",
+    "parity": {
+      "status": "synced",
+      "summary": {"synced": 150, "mismatch": 0, "qdrant_only": 0, "meili_only": 0},
+      "items": []
+    },
     "qdrant": {
       "collection": "MyCorpus",
       "type": "pdf",
@@ -824,6 +834,19 @@ All checks passed
   }
 }
 ```
+
+**Parity:** when both systems hold the corpus, verify compares chunk counts per
+item (per file, or per git project for code corpora), the same comparison as
+`arc corpus items`. `parity_status` is one of:
+
+- `synced`: every item has the same chunk count in Qdrant and MeiliSearch
+- `mismatch`: at least one item differs; `parity.items` lists each one as
+  `mismatch`, `qdrant_only`, or `meili_only`, and the corpus is reported unhealthy
+- `unknown`: the comparison could not run; `parity.reason` says why
+- `qdrant_only` / `meili_only`: the corpus exists in only one system
+
+With `--project`, parity covers only that project. Parity checks chunk counts,
+not content quality; quality problems are reported under `quality`.
 
 ### Corpus Delete
 

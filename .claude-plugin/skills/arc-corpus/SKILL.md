@@ -46,10 +46,16 @@ arc corpus hook uninstall MyCorpus                    # Remove just this corpus'
 arc corpus sync MyCorpus --changed-since HEAD              # Last commit
 arc corpus sync MyCorpus --changed-since ORIG_HEAD..HEAD   # Since a pull
 
-# Repair incomplete or garbled files
-arc corpus repair MyCorpus                            # Detect and fix quality issues
+# Check health: content quality plus Qdrant/MeiliSearch parity
+arc corpus verify MyCorpus                            # Human-readable report
+arc corpus verify MyCorpus --json                     # parity_status: synced | mismatch | unknown
+arc corpus verify MyCorpus --strict --json            # Exit 1 on any issue, including mismatch
+
+# Repair incomplete or garbled files, then restore parity
+arc corpus repair MyCorpus                            # Detect and fix quality and parity issues
 arc corpus repair MyCorpus --dry-run                  # Preview what would be repaired
 arc corpus repair MyCorpus --include-stale-policy     # Also migrate policy-only files
+arc corpus repair MyCorpus --prune-orphans            # Also delete docs for files gone everywhere
 arc corpus repair MyCorpus --quality-threshold 0.5    # More aggressive detection
 arc corpus repair MyCorpus --verbose                  # Show per-file quality scores
 
@@ -66,6 +72,8 @@ arc corpus parity MyCorpus              # Check and backfill single corpus
 arc corpus parity MyCorpus --dry-run    # Preview only
 arc corpus parity MyCorpus --verify     # Verify chunk counts match
 arc corpus parity MyCorpus --repair-metadata  # Fix missing git metadata (code corpora)
+arc corpus parity MyCorpus --prune-orphans    # Delete MeiliSearch docs for files gone everywhere
+arc corpus parity MyCorpus --force-prune      # Same, even if the file's directory is missing
 arc corpus parity MyCorpus --verbose    # Detailed progress
 
 # All-corpora mode (no corpus name)
@@ -96,8 +104,13 @@ command both ensure both systems hold the same content, but operate differently:
   searchable chunk set; alias rename/removal preserves it, and canonical removal
   promotes the lexicographically first live alias after dual-index read-back.
 - `arc corpus parity`: Standalone cross-system repair with no directory scan.
-  Backfills missing entries between Qdrant and MeiliSearch but does not remove
-  missing-from-disk files.
+  Backfills missing entries between Qdrant and MeiliSearch; `--verify` also
+  fixes per-file chunk-count mismatches. It does not remove missing-from-disk
+  files unless `--prune-orphans` is passed, and then only MeiliSearch
+  documents that nothing in Qdrant references. Files whose directory is also
+  missing are kept (possibly an unmounted volume) unless `--force-prune`.
+  Holds the corpus write lock; `--dry-run` does not. With no NAME, `--json`
+  prints one summary document.
 
 Cross-system backfill direction (both commands):
 
@@ -126,6 +139,13 @@ deferred unless `--include-stale-policy` is passed; files that also have another
 repair reason remain selected. Duplicate sources are consolidated without losing
 their physical-path aliases. There is no separate `--only-corrupt` flag because
 the default repair path is already selective.
+
+After the content step, repair runs the `arc corpus parity --verify` pass, so it
+also fixes the `mismatch` that `arc corpus verify` reports. Both steps share one
+corpus lock, and `--dry-run` previews both. With `--json` the output is one
+document with the parity result under `data.parity`; a parity failure exits 1.
+Pass `--prune-orphans` to also clear MeiliSearch documents for files gone from
+both Qdrant and disk.
 
 ## Automatic Sync via Git Hook
 

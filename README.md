@@ -155,6 +155,7 @@ arc corpus verify NAME                          # Verify corpus health across bo
 arc corpus parity NAME                          # Check/restore parity between systems
 arc corpus repair NAME                          # Repair content/integrity issues and parity, not policy-only files
 arc corpus repair NAME --include-stale-policy   # Also migrate stale/legacy indexing policies
+arc corpus repair NAME --prune-orphans          # Also delete docs for files gone from Qdrant and disk
 arc corpus sync NAME --changed-since HEAD       # Sync only what the last commit touched
 arc corpus hook install                         # Guided setup: pick/create a corpus, choose hooks
 arc corpus hook install NAME                    # Auto-sync a git repo on every commit

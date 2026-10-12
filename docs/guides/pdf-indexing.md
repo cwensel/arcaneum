@@ -270,6 +270,12 @@ arc corpus repair pdf-docs --include-stale-policy
 PDFs that are both policy-stale and corrupt remain in the default repair set.
 Healthy PDFs are not re-indexed; no separate `--only-corrupt` option is needed.
 
+Repair then restores Qdrant/MeiliSearch parity, fixing the `mismatch` that
+`arc corpus verify` reports. MeiliSearch documents for PDFs deleted from both
+Qdrant and disk are reported but kept; add `--prune-orphans` to delete them
+(PDFs whose directory is also missing, such as on an unmounted drive, are kept
+unless `--force-prune`).
+
 ## Extraction Quality and Provenance
 
 Arcaneum evaluates PDF extraction per page. When raster OCR clearly scores

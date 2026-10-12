@@ -2277,6 +2277,9 @@ def corpus_parity(
 
     Use --create-missing to create MeiliSearch indexes for corpora that only
     exist in Qdrant. This promotes single-sided collections into full corpora.
+
+    Writes hold the corpus lock, like sync and repair; --dry-run takes none.
+    Without NAME, --json prints one summary document with per-corpus results.
     """
     from arcaneum.cli.sync import parity_command
 
@@ -2348,6 +2351,11 @@ def corpus_verify(name, project, verbose, deep, strict, output_json):
     Performs fsck-like integrity checks on both systems and reports
     collection/index health and parity status.
 
+    Parity compares chunk counts per file (per git project for code corpora),
+    as `arc corpus items` does: synced, mismatch (lists each differing item
+    and marks the corpus unhealthy), or unknown (the comparison failed).
+    `arc corpus repair` fixes a mismatch.
+
     Examples:
 
     \b
@@ -2356,8 +2364,8 @@ def corpus_verify(name, project, verbose, deep, strict, output_json):
         arc corpus verify MyCorpus --json
         arc corpus verify MyCorpus --deep --strict --json
 
-    By default, detected quality issues are reported with exit status 0; use
-    --strict to make quality or service issues return status 1.
+    By default, detected issues are reported with exit status 0; use
+    --strict to make quality, parity, or service issues return status 1.
     """
     from arcaneum.cli.corpus import corpus_verify_command
 

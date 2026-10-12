@@ -2372,6 +2372,36 @@ def corpus_verify(name, project, verbose, deep, strict, output_json):
     corpus_verify_command(name, project, verbose, output_json, deep=deep, strict=strict)
 
 
+@corpus.command("doctor")
+@click.argument("names", nargs=-1)
+@click.option("--verbose", "-v", is_flag=True, help="Also show informational findings and counts")
+@click.option("--strict", is_flag=True, help="Exit 1 when any corpus needs action (for CI/agents)")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
+def corpus_doctor(names, verbose, strict, output_json):
+    """Check corpora for problems and list the commands that fix them.
+
+    Read-only. For every corpus (or each NAME given), runs the checks of
+    `arc corpus verify` (stored content quality and Qdrant/MeiliSearch
+    parity) and looks for MeiliSearch documents whose files are gone from
+    Qdrant and disk. Each corpus is reported as ok, needs action, or error,
+    with the command to run. Policy migration and pruning files whose
+    directory is missing are listed separately as optional.
+
+    Uses stored quality data, like `verify` without --deep; `arc corpus
+    repair --dry-run` re-reads sources and may select more files.
+
+    Examples:
+
+    \b
+        arc corpus doctor
+        arc corpus doctor PapersFast NextLit
+        arc corpus doctor --strict --json
+    """
+    from arcaneum.cli.corpus_doctor import corpus_doctor_command
+
+    corpus_doctor_command(names, verbose, output_json, strict=strict)
+
+
 # Diagnostics command (RDR-006 enhancement)
 @cli.command("doctor")
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed diagnostic information")

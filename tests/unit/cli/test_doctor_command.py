@@ -83,6 +83,27 @@ class TestDoctorChecks:
         capsys.readouterr()
         dependency_check.assert_any_call("PyMuPDF", "pymupdf")
 
+    def test_doctor_points_at_corpus_doctor_when_setup_passes(self, capsys):
+        """Setup checks never look inside corpora; say which command does."""
+        from arcaneum.cli.doctor import doctor_command
+
+        successful_check = MagicMock(return_value=(True, "available"))
+
+        with patch.multiple(
+            "arcaneum.cli.doctor",
+            check_python_version=successful_check,
+            check_dependency=successful_check,
+            check_optional_dependency=successful_check,
+            check_qdrant_connection=successful_check,
+            check_meilisearch_connection=successful_check,
+            check_embedding_models=successful_check,
+            check_temp_dir_writable=successful_check,
+            check_environment_vars=successful_check,
+        ):
+            doctor_command()
+
+        assert "arc corpus doctor" in capsys.readouterr().out
+
     def test_qdrant_connection_success(self):
         """Test Qdrant connection check when server is available."""
         from arcaneum.cli.doctor import check_qdrant_connection

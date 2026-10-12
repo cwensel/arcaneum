@@ -263,6 +263,7 @@ def doctor_command(verbose: bool = False, output_json: bool = False):
             print_info(f"✅ All required checks passed ({passed}/{total_required})")
             if optional > 0:
                 print_info(f"⚠️  {optional} optional check(s) not configured")
+            print_info("Run 'arc corpus doctor' to check indexed corpora for needed repairs")
             return EXIT_SUCCESS
         else:
             print_error(f"❌ {failed} check(s) failed, {passed} passed", json_output=False)

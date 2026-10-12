@@ -70,6 +70,9 @@ arc corpus sync MyCorpus /path/to/files --parity
 # Preview parity changes without writing
 arc corpus sync MyCorpus /path/to/files --parity --dry-run
 
+# Check every corpus (read-only) and list the commands that fix each one
+arc corpus doctor
+
 # Preview and repair verifier-selected content/integrity issues. Policy-only
 # findings are reported but require --include-stale-policy to migrate. For PDFs
 # this also consolidates identical sources while preserving their paths as aliases.

@@ -1440,17 +1440,43 @@ def _scan_qdrant_parity_items(qdrant, name: str, collection_type: str | None) ->
     return qdrant_items
 
 
-def _scan_meili_parity_items(meili, name: str, collection_type: str | None) -> dict:
+def _qdrant_parity_items_from_verification(verification) -> dict | None:
+    """Per-file Qdrant point counts taken from a file-level verification result.
+
+    The verifier has already scrolled every point, counting each chunk_index
+    and its surplus copies, so actual_chunks + duplicate_chunk_count equals
+    what _scan_qdrant_parity_items would count, without a second scan.
+    Returns None for code collections, which verify per project instead.
+    """
+    if verification.collection_type == "code":
+        return None
+    items = {}
+    for file in verification.files:
+        points = file.actual_chunks + file.duplicate_chunk_count
+        if points:
+            items[file.file_path] = {"qdrant_chunks": points}
+    return items
+
+
+def _scan_meili_parity_items(
+    meili, name: str, collection_type: str | None, *, ids_only: bool = False
+) -> dict:
     """Group MeiliSearch documents per item and count them.
 
     Uses get_documents() instead of search() to avoid the maxTotalHits cap.
+    With ids_only, fetches just the grouping fields in large pages: enough
+    for a parity comparison and many times faster on large indexes.
     """
     index = meili.get_index(name)
     batch_offset = 0
-    batch_size = 1000
+    batch_size = 10000 if ids_only else 1000
 
     # Determine fields to fetch based on collection type
-    if collection_type == "code":
+    if ids_only:
+        doc_fields = (
+            ["git_project_identifier"] if collection_type == "code" else ["file_path", "filename"]
+        )
+    elif collection_type == "code":
         doc_fields = [
             "file_path",
             "filename",
@@ -1931,8 +1957,10 @@ def corpus_verify_command(
                 console.print("[dim]Comparing items across both systems...[/dim]")
             try:
                 collection_type = qdrant_result.collection_type
-                qdrant_items = _scan_qdrant_parity_items(qdrant, name, collection_type)
-                meili_items = _scan_meili_parity_items(meili, name, collection_type)
+                qdrant_items = _qdrant_parity_items_from_verification(qdrant_result)
+                if qdrant_items is None:
+                    qdrant_items = _scan_qdrant_parity_items(qdrant, name, collection_type)
+                meili_items = _scan_meili_parity_items(meili, name, collection_type, ids_only=True)
                 if project:
                     qdrant_items = {k: v for k, v in qdrant_items.items() if k == project}
                     meili_items = {k: v for k, v in meili_items.items() if k == project}

@@ -59,6 +59,7 @@ arc corpus sync <name> <path> [<path>...]     # Index to both systems
 arc corpus repair <name>                      # Repair verifier-selected unhealthy files
 arc corpus items <name>                       # List items with parity status
 arc corpus verify <name>                      # Verify corpus health
+arc corpus doctor [<name>...]                 # Check all corpora; list fix commands
 arc corpus parity <name>                      # Check/restore parity
 arc corpus delete <name>                      # Delete both collection and index
 ```
@@ -209,6 +210,7 @@ arc corpus repair <name>                                 # Repair verifier-selec
 arc corpus info <name>                                   # Show corpus details
 arc corpus items <name>                                  # List indexed items with parity status
 arc corpus verify <name>                                 # Verify corpus health across both systems
+arc corpus doctor [<name>...]                            # Check all corpora, list commands to fix them
 arc corpus parity <name>                                 # Restore parity between indexes
 arc corpus hook install <name>                           # Auto-sync a git repo on commit
 ```
@@ -878,6 +880,57 @@ item (per file, or per git project for code corpora), the same comparison as
 
 With `--project`, parity covers only that project. Parity checks chunk counts,
 not content quality; quality problems are reported under `quality`.
+
+### Corpus Doctor
+
+Check every corpus (or the named ones) and list the command that fixes each
+problem. Read-only: nothing is written.
+
+```bash
+arc corpus doctor                         # Check all corpora
+arc corpus doctor PapersFast NextLit      # Check only these
+arc corpus doctor --verbose               # Include informational findings and counts
+arc corpus doctor --strict --json         # Exit 1 if any corpus needs action
+```
+
+For each corpus, doctor runs the checks of `arc corpus verify` (stored content
+quality and Qdrant/MeiliSearch parity) and looks for MeiliSearch documents whose
+files are gone from both Qdrant and disk. It fails fast if either service is
+unreachable, since every corpus would otherwise look one-sided.
+
+Each corpus is reported as `ok`, `needs_action`, or `error` (a check failed).
+Findings map to commands:
+
+| Finding | Command |
+| --- | --- |
+| Files need re-indexing (incomplete, duplicate, degraded) | `arc corpus repair NAME` |
+| Items differ between Qdrant and MeiliSearch | `arc corpus repair NAME` |
+| MeiliSearch documents for files gone from Qdrant and disk | `arc corpus repair NAME --prune-orphans` |
+| Corpus exists only in Qdrant | `arc corpus parity NAME --create-missing` |
+| Corpus exists only in MeiliSearch | create the collection, then re-sync (manual) |
+| Healthy files under a stale indexing policy | optional: `arc corpus repair NAME --include-stale-policy` |
+| Orphaned files whose directory is missing | optional: mount the volume, or `arc corpus repair NAME --force-prune` |
+| Files degraded after OCR, recovery exhausted | informational, no command |
+
+Required commands are combined per corpus (for example
+`arc corpus repair NAME --prune-orphans`). Optional commands are listed
+separately because they migrate policy or could delete documents for files on
+an unmounted volume. Preview any repair with `--dry-run` first.
+
+Corpora are checked four at a time, so a sweep takes about as long as verifying
+the largest corpus (roughly 7 minutes for 1.3M chunks across 15 corpora).
+Verifier warnings about individual files are hidden unless `--verbose`; their
+findings still appear as counts.
+
+Doctor uses stored quality data, like `verify` without `--deep`;
+`arc corpus repair --dry-run` re-reads sources and can select more files. For
+code corpora, parity is compared per git project, so orphaned files are not
+counted separately (repair's file-level parity step still handles them).
+
+JSON output is one document: `data.corpora` holds each corpus's `status`,
+`findings` (`code`, `severity`, `message`, `count`, `command`), `commands`, and
+`optional_commands`; `data.summary` counts statuses; `data.commands` and
+`data.optional_commands` collect them across corpora.
 
 ### Corpus Delete
 

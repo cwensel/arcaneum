@@ -304,7 +304,25 @@ def test_corpus_verify_strict_exits_nonzero_for_quality_issues(monkeypatch):
     assert exc_info.value.code == 1
 
 
-def _verification_result(collection_type="pdf", total_points=3):
+def _verification_result(collection_type="pdf", total_points=3, qdrant_payloads=()):
+    # Like the real verifier, file-level results carry each file's point
+    # counts (code collections report projects instead).
+    files = []
+    if collection_type != "code":
+        counts = {}
+        for payload in qdrant_payloads:
+            counts[payload["file_path"]] = counts.get(payload["file_path"], 0) + 1
+        files = [
+            SimpleNamespace(
+                file_path=path,
+                actual_chunks=count,
+                duplicate_chunk_count=0,
+                is_complete=True,
+                has_duplicate_chunks=False,
+                quality_manifest=None,
+            )
+            for path, count in counts.items()
+        ]
     return SimpleNamespace(
         collection_name="Docs",
         collection_type=collection_type,
@@ -317,18 +335,22 @@ def _verification_result(collection_type="pdf", total_points=3):
         schema_version=1,
         app_version="test",
         errors=[],
-        files=[],
+        files=files,
         projects=[],
     )
 
 
-def _mock_parity_clients(monkeypatch, qdrant_payloads, meili_docs, collection_type="pdf"):
+def _mock_parity_clients(
+    monkeypatch, qdrant_payloads, meili_docs, collection_type="pdf", scroll_calls=None
+):
     """Patch both store clients so verify/items see the given chunks."""
     from arcaneum.cli import corpus
     from arcaneum.indexing import verify as verify_module
 
     class Qdrant:
         def scroll(self, collection_name, **_kwargs):
+            if scroll_calls is not None:
+                scroll_calls.append(collection_name)
             return [SimpleNamespace(payload=payload) for payload in qdrant_payloads], None
 
     class Index:
@@ -360,7 +382,9 @@ def _mock_parity_clients(monkeypatch, qdrant_payloads, meili_docs, collection_ty
     monkeypatch.setattr(
         verify_module.CollectionVerifier,
         "verify_collection",
-        lambda *_args, **_kwargs: _verification_result(collection_type, len(qdrant_payloads)),
+        lambda *_args, **_kwargs: _verification_result(
+            collection_type, len(qdrant_payloads), qdrant_payloads
+        ),
     )
     output = {}
     monkeypatch.setattr(
@@ -371,6 +395,22 @@ def _mock_parity_clients(monkeypatch, qdrant_payloads, meili_docs, collection_ty
         ),
     )
     return output
+
+
+def test_corpus_verify_parity_reuses_verifier_counts_instead_of_rescanning(monkeypatch):
+    """The verifier already scrolled every point; parity must not scroll again."""
+    from arcaneum.cli import corpus
+
+    chunks = [{"file_path": "/docs/a.pdf"}, {"file_path": "/docs/a.pdf"}]
+    scroll_calls = []
+    output = _mock_parity_clients(
+        monkeypatch, chunks, [dict(c) for c in chunks], scroll_calls=scroll_calls
+    )
+
+    corpus.corpus_verify_command("Docs", project=None, verbose=False, output_json=True)
+
+    assert output["data"]["parity_status"] == "synced"
+    assert scroll_calls == []
 
 
 def test_corpus_verify_reports_synced_when_stores_agree(monkeypatch):
@@ -477,7 +517,7 @@ def test_corpus_verify_reports_unknown_parity_when_scan_fails(monkeypatch):
     def fail(*_args, **_kwargs):
         raise RuntimeError("scroll timed out")
 
-    monkeypatch.setattr(corpus, "_scan_qdrant_parity_items", fail)
+    monkeypatch.setattr(corpus, "_scan_meili_parity_items", fail)
 
     corpus.corpus_verify_command("Docs", project=None, verbose=False, output_json=True)
 

@@ -37,3 +37,6 @@ arc doctor $ARGUMENTS
 **Note:** This diagnostic command helps troubleshoot setup issues. I'll run all
 checks and present a summary showing which requirements are met (✅) and which
 need attention (❌), along with specific guidance for fixing any problems found.
+
+These checks cover setup only, not indexed content. To check corpora for
+needed repairs and get the commands that fix them, use `/corpus doctor`.

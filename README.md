@@ -152,6 +152,7 @@ arc corpus sync NAME PATH --parity              # Also detect renames, remove fi
 arc corpus sync NAME PATH --include-stale-policy # Migrate stale/legacy indexing policies
 arc corpus items NAME                           # List items with parity status
 arc corpus verify NAME                          # Verify corpus health across both systems
+arc corpus doctor                               # Check all corpora, list the commands that fix them
 arc corpus parity NAME                          # Check/restore parity between systems
 arc corpus repair NAME                          # Repair content/integrity issues and parity, not policy-only files
 arc corpus repair NAME --include-stale-policy   # Also migrate stale/legacy indexing policies

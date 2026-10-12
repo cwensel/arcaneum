@@ -1,6 +1,6 @@
 ---
 description: Manage dual-index corpora (recommended)
-argument-hint: <create|list|update|delete|sync|repair|hook|info|items|parity|verify> <name> [paths...] [options]
+argument-hint: <create|list|update|delete|sync|repair|hook|info|items|parity|verify|doctor> <name> [paths...] [options]
 ---
 
 **Recommended for most users.** Manage corpora that combine both vector search (Qdrant) and
@@ -15,12 +15,15 @@ full-text search (MeiliSearch) for the same content.
 - `update`: Update corpus metadata without reindexing
 - `delete`: Delete both Qdrant collection and MeiliSearch index
 - `sync`: Index directory to both systems simultaneously
-- `repair`: Selectively repair verifier-selected unhealthy files and PDF duplicates
+- `repair`: Selectively repair verifier-selected unhealthy files and PDF duplicates,
+  then restore parity
 - `hook`: Install a git hook that auto-syncs a repo on every commit
 - `info`: Show corpus details (both systems)
 - `items`: List indexed items with parity status
 - `parity`: Check and restore parity between systems
 - `verify`: Verify corpus health across both Qdrant and MeiliSearch
+- `doctor`: Check all corpora (or the named ones) read-only and list the commands
+  that fix each problem
 
 **Common Options:**
 
@@ -99,6 +102,17 @@ full-text search (MeiliSearch) for the same content.
 - --force-prune: Like --prune-orphans, but also prune files whose directory is missing
 - --verbose: Show detailed progress
 - --json: Output in JSON format
+
+**Doctor Options:**
+
+- names: Corpus names (optional - if omitted, checks all corpora)
+- --verbose: Also show informational findings and counts
+- --strict: Exit 1 when any corpus needs action
+- --json: Output in JSON format (one document; `data.commands` lists what to run)
+
+`/corpus doctor` writes nothing. Required fixes are combined per corpus (for
+example `arc corpus repair NAME --prune-orphans`); policy migration and pruning
+files whose directory is missing are listed separately as optional.
 
 **Repair Behavior:**
 

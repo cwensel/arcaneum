@@ -51,6 +51,10 @@ arc corpus verify MyCorpus                            # Human-readable report
 arc corpus verify MyCorpus --json                     # parity_status: synced | mismatch | unknown
 arc corpus verify MyCorpus --strict --json            # Exit 1 on any issue, including mismatch
 
+# Sweep every corpus (read-only) and get the commands that fix each one
+arc corpus doctor                                     # All corpora; lists commands to run
+arc corpus doctor MyCorpus OtherCorpus --json         # data.commands / data.optional_commands
+
 # Repair incomplete or garbled files, then restore parity
 arc corpus repair MyCorpus                            # Detect and fix quality and parity issues
 arc corpus repair MyCorpus --dry-run                  # Preview what would be repaired

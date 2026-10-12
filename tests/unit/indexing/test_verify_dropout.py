@@ -450,6 +450,55 @@ def test_authoritative_pdf_without_quality_manifest_reports_gap(qdrant_client):
     assert result.get_items_needing_repair() == ["/tmp/a.pdf"]
 
 
+def test_authoritative_markdown_without_quality_manifest_is_healthy(qdrant_client):
+    """Markdown indexing never writes a quality manifest (there is no
+    extraction step to describe), so its absence is not a defect. Flagging it
+    marked every markdown file for a re-index that could never clear it.
+    """
+    qdrant_client.scroll.side_effect = _scroll_once(
+        [
+            _point(
+                {
+                    "file_path": "/tmp/a.md",
+                    "source_hash": "content",
+                    "chunk_index": 0,
+                    "chunk_count": 1,
+                    "text": "Schema changes are applied in stages so readers keep working. " * 8,
+                }
+            )
+        ]
+    )
+    manifests = {
+        "/tmp/a.md": {
+            "file_hash": "content",
+            "chunk_count": 1,
+            "canonical_path": "/tmp/a.md",
+            "store_type": "markdown",
+            "indexing_policy": build_indexing_policy("markdown"),
+        }
+    }
+
+    with (
+        patch.object(verify_mod, "file_manifests_ready", return_value=True),
+        patch.object(
+            verify_mod.MetadataBasedSync,
+            "get_file_manifest_snapshot",
+            return_value=manifests,
+        ),
+    ):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="markdown",
+            total_points=1,
+            check_quality=True,
+        )
+
+    assert result.quality_manifest_gaps == 0
+    assert result.files[0].quality_manifest_missing is False
+    assert result.get_items_needing_repair() == []
+    assert result.is_healthy is True
+
+
 def test_short_single_chunk_section_is_not_a_sub_floor_defect(qdrant_client):
     text = (
         "Introduction\n"

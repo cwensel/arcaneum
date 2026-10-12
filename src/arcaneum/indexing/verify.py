@@ -38,6 +38,11 @@ from arcaneum.indexing.policy import build_indexing_policy, policy_is_current
 
 logger = logging.getLogger(__name__)
 
+# Collection types whose indexing persists a quality manifest (PDF extraction
+# evidence; code chunking method). Markdown is read as-is with nothing to
+# describe, so only these types count a missing manifest as a defect.
+QUALITY_MANIFEST_TYPES = frozenset({"pdf", "code"})
+
 
 def _manifest_fidelity_state(
     manifest: Optional[dict], chunk_count: int
@@ -855,7 +860,9 @@ class CollectionVerifier:
 
             manifest = file_data["quality_manifest"]
             quality_manifest_missing = bool(
-                manifests_authoritative and not file_data["has_persisted_quality_manifest"]
+                manifests_authoritative
+                and collection_type in QUALITY_MANIFEST_TYPES
+                and not file_data["has_persisted_quality_manifest"]
             )
             if quality_manifest_missing:
                 quality_manifest_gap_count += 1

@@ -138,7 +138,7 @@ Note: `meili_only` corpora cannot be auto-created (require `--type` and `--model
 a full-corpus force operation. Use `arc corpus repair NAME --dry-run --json` to
 inspect the exact set first. The selection includes incomplete/duplicate chunks,
 corrupt or dropped-out PDF extraction, stale source metadata, missing quality
-manifests, and duplicate PDF sources. Policy-only findings stay visible but are
+manifests (PDF and code only), and duplicate PDF sources. Policy-only findings stay visible but are
 deferred unless `--include-stale-policy` is passed; files that also have another
 repair reason remain selected. Duplicate sources are consolidated without losing
 their physical-path aliases. There is no separate `--only-corrupt` flag because

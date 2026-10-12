@@ -459,8 +459,9 @@ content.
 
 Selectively detect and re-index only files for which verification recommends an
 automatic repair. This includes incomplete or duplicated chunks, garbled or
-dropped-out extraction, stale source metadata, missing quality manifests,
-sub-floor or dropped chunks, and duplicate PDF sources. Stale indexing policy
+dropped-out extraction, stale source metadata, missing quality manifests
+(PDF and code; markdown indexing does not write one), sub-floor or dropped
+chunks, and duplicate PDF sources. Stale indexing policy
 remains visible but policy-only files are deferred unless explicitly included:
 
 ```bash

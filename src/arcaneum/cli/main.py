@@ -2084,6 +2084,13 @@ def corpus_hook_spool(corpus, repo, changed_since, between):
         )
 
 
+PRUNE_ORPHANS_HELP = (
+    "Delete MeiliSearch documents for files gone from both Qdrant and disk. "
+    "Files whose directory is also missing are kept (possible unmounted volume)."
+)
+FORCE_PRUNE_HELP = "Like --prune-orphans, but also prune files whose directory is missing."
+
+
 @corpus.command("repair")
 @click.argument("corpus")
 @click.option(
@@ -2109,6 +2116,8 @@ def corpus_hook_spool(corpus, repo, changed_since, between):
     is_flag=True,
     help="Also re-index files whose only issue is stale or missing indexing policy.",
 )
+@click.option("--prune-orphans", is_flag=True, help=PRUNE_ORPHANS_HELP)
+@click.option("--force-prune", is_flag=True, help=FORCE_PRUNE_HELP)
 @click.option("--verbose", "-v", is_flag=True, help="Show per-file quality scores and details")
 @click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def corpus_repair(
@@ -2118,6 +2127,8 @@ def corpus_repair(
     no_gpu,
     max_embedding_batch,
     include_stale_policy,
+    prune_orphans,
+    force_prune,
     verbose,
     output_json,
 ):
@@ -2132,13 +2143,15 @@ def corpus_repair(
     Then restores Qdrant/MeiliSearch parity, as `arc corpus parity --verify`
     does: files missing from MeiliSearch or with mismatched chunk counts are
     re-copied from Qdrant, and files missing from Qdrant are re-embedded when
-    they still exist on disk.
+    they still exist on disk. With --prune-orphans, MeiliSearch documents for
+    files gone from both Qdrant and disk are deleted.
 
     Examples:
 
     \b
         arc corpus repair PapersFast
         arc corpus repair PapersFast --dry-run
+        arc corpus repair PapersFast --prune-orphans
         arc corpus repair PapersFast --include-stale-policy
         arc corpus repair PapersFast --quality-threshold 0.5
         arc corpus repair PapersFast --verbose
@@ -2168,6 +2181,8 @@ def corpus_repair(
         include_stale_policy=include_stale_policy,
         verbose=verbose,
         output_json=output_json,
+        prune_orphans=prune_orphans,
+        force_prune=force_prune,
     )
 
 
@@ -2212,6 +2227,8 @@ def corpus_repair(
 @click.option(
     "--confirm", is_flag=True, help="Skip confirmation prompt when processing all corpora"
 )
+@click.option("--prune-orphans", is_flag=True, help=PRUNE_ORPHANS_HELP)
+@click.option("--force-prune", is_flag=True, help=FORCE_PRUNE_HELP)
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed progress for each file")
 @click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def corpus_parity(
@@ -2224,6 +2241,8 @@ def corpus_parity(
     timeout,
     create_missing,
     confirm,
+    prune_orphans,
+    force_prune,
     verbose,
     output_json,
 ):
@@ -2238,7 +2257,10 @@ def corpus_parity(
     - Qdrant -> MeiliSearch: Copies metadata (no file access needed)
     - MeiliSearch -> Qdrant: Re-chunks and embeds files (requires file access)
 
-    Files that don't exist on disk are skipped with a warning.
+    Files that don't exist on disk are skipped with a warning. Use
+    --prune-orphans to delete their MeiliSearch documents when nothing in
+    Qdrant references them; files whose directory is also missing are kept
+    (it may be an unmounted volume) unless --force-prune is given.
 
     Use --verify to check that chunk counts match for files in both systems.
     This detects partial uploads from previous failed syncs.
@@ -2270,6 +2292,8 @@ def corpus_parity(
         confirm,
         verbose,
         output_json,
+        prune_orphans=prune_orphans,
+        force_prune=force_prune,
     )
 
 

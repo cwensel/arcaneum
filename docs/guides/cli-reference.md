@@ -475,6 +475,10 @@ arc corpus repair MyCorpus --verbose                  # Show per-file quality sc
 - `--dry-run`: Show the exact files that would be repaired without making changes
 - `--include-stale-policy`: Also re-index files whose only issue is stale or
   missing indexing policy
+- `--prune-orphans`: In the parity step, delete MeiliSearch documents for
+  files gone from both Qdrant and disk (see [Corpus Parity](#corpus-parity))
+- `--force-prune`: Like `--prune-orphans`, but also prune files whose
+  directory is missing
 - `--gpu`: Opt into accelerator embedding. CPU is the stable default.
 - `--max-embedding-batch`: Cap embedding batch size
 - `--verbose`: Show per-file old → new quality scores
@@ -494,6 +498,7 @@ arc corpus repair MyCorpus --verbose                  # Show per-file quality sc
    files missing from MeiliSearch, or with a different chunk count there, are
    re-copied from Qdrant without re-embedding; files missing from Qdrant are
    re-embedded if they still exist on disk, otherwise skipped and reported
+   (or pruned from MeiliSearch with `--prune-orphans`)
 
 Both steps run under the corpus write lock, and `--dry-run` previews both. If
 the content step fails, the parity step does not run. With `--json` the output
@@ -616,8 +621,17 @@ arc corpus parity MyCorpus --json
   - **Qdrant -> MeiliSearch**: Copies metadata from Qdrant (no file access needed)
   - **MeiliSearch -> Qdrant**: Re-chunks and embeds files (requires file access)
 - Files that don't exist on disk are skipped with a warning
+- With `--prune-orphans`, MeiliSearch-only files that are also gone from disk
+  have their MeiliSearch documents deleted. A file is pruned only when Qdrant
+  holds no chunks for it and no manifest names it as a duplicate PDF's
+  canonical path. Files whose directory is also missing are kept, since that
+  more often means an unmounted volume than a deletion; `--force-prune`
+  prunes them too. `--dry-run` lists what would be pruned
+  (`would_prune_orphans` and `orphans_kept_dir_missing` in JSON)
 - Holds the corpus write lock while writing, like `sync` and `repair`
   (`--dry-run` takes no lock)
+- Without NAME, `--json` prints one summary document; each `results` entry
+  carries that corpus's backfill counts
 
 **Options:**
 
@@ -632,6 +646,10 @@ arc corpus parity MyCorpus --json
   - Computes and repairs `git_version_identifier` for version-aware search
 - `--create-missing`: Create missing MeiliSearch indexes for qdrant_only corpora
 - `--confirm`: Skip confirmation prompt when processing all corpora
+- `--prune-orphans`: Delete MeiliSearch documents for files gone from both
+  Qdrant and disk (see above)
+- `--force-prune`: Like `--prune-orphans`, but also prune files whose
+  directory is missing
 - `--verbose`: Show detailed progress for each file
 - `--json`: Output JSON format for scripting
 

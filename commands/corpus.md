@@ -94,6 +94,9 @@ full-text search (MeiliSearch) for the same content.
 - --repair-metadata: Update MeiliSearch docs with missing git metadata (code corpora)
 - --create-missing: Create missing MeiliSearch indexes for qdrant_only corpora
 - --confirm: Skip confirmation prompt when processing all corpora
+- --prune-orphans: Delete MeiliSearch documents for files gone from both Qdrant
+  and disk (files whose directory is missing are kept: possible unmounted volume)
+- --force-prune: Like --prune-orphans, but also prune files whose directory is missing
 - --verbose: Show detailed progress
 - --json: Output in JSON format
 
@@ -109,7 +112,9 @@ Identical PDFs retain every physical path as an alias of one searchable canonica
 document; parity cleanup promotes a live alias if the canonical path disappears.
 Repair then restores Qdrant/MeiliSearch parity (as `/corpus parity NAME --verify`
 does), so it also fixes the `mismatch` that `/corpus verify` reports. Under
-`--json` the parity result is nested at `data.parity`.
+`--json` the parity result is nested at `data.parity`. MeiliSearch documents for
+files gone from both Qdrant and disk are only reported; pass `--prune-orphans`
+(or `--force-prune`) to delete them.
 
 **Examples:**
 

@@ -420,6 +420,7 @@ def test_corpus_parity_passes_max_embedding_batch():
         confirm,
         verbose,
         output_json,
+        **_kwargs,
     ):
         called["name"] = name
         called["max_embedding_batch"] = max_embedding_batch

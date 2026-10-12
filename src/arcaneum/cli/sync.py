@@ -4665,6 +4665,50 @@ def _qdrant_paths_missing_from_meili(
     return qdrant_file_paths - meili_file_paths - sync_manager.get_alias_file_paths(corpus)
 
 
+def _classify_meili_orphans(
+    qdrant,
+    sync_manager,
+    corpus: str,
+    paths: List[str],
+    force_prune: bool = False,
+) -> Dict[str, List[str]]:
+    """Decide which MeiliSearch-only paths missing from disk are safe to prune.
+
+    A path is "referenced" (never pruned) when Qdrant still holds chunks for
+    it or a manifest names it as a duplicate PDF's canonical path; a missing
+    manifest is not proof the content is gone. Otherwise it is "dir_missing"
+    when its parent directory is also gone, which looks more like an
+    unmounted volume than a deletion, unless force_prune is set. The rest
+    are "prunable".
+    """
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+    canonical_paths = set()
+    if file_manifests_ready(qdrant, corpus):
+        canonical_paths = {
+            str(Path(payload["canonical_path"]).absolute())
+            for payload in sync_manager.get_file_manifest_snapshot(corpus).values()
+            if payload.get("canonical_path")
+        }
+
+    result: Dict[str, List[str]] = {"prunable": [], "dir_missing": [], "referenced": []}
+    for path in sorted(paths):
+        chunk_count = qdrant.count(
+            collection_name=corpus,
+            count_filter=metadata_exclusion_filter(
+                Filter(must=[FieldCondition(key="file_path", match=MatchValue(value=path))])
+            ),
+            exact=True,
+        ).count
+        if path in canonical_paths or chunk_count > 0:
+            result["referenced"].append(path)
+        elif not force_prune and not Path(path).parent.exists():
+            result["dir_missing"].append(path)
+        else:
+            result["prunable"].append(path)
+    return result
+
+
 def _fetch_chunks_for_files_bulk(
     qdrant,
     corpus: str,
@@ -5833,6 +5877,8 @@ def _parity_all_corpora(
     verbose: bool,
     output_json: bool,
     effective_text_workers: int,
+    prune_orphans: bool = False,
+    force_prune: bool = False,
 ):
     """Process parity for all discovered corpora.
 
@@ -6001,8 +6047,14 @@ def _parity_all_corpora(
             if not output_json:
                 console.print(f"\n[bold]Processing {i}/{len(can_process)}: {c['name']}[/bold]")
 
+            # Under --json, fold each corpus's response into its results entry
+            # so the summary below is the only document on stdout.
+            corpus_docs: List[Dict[str, Any]] = []
             try:
-                with acquire_corpus_lock(c["name"], quiet=output_json):
+                with (
+                    acquire_corpus_lock(c["name"], quiet=output_json),
+                    capture_json(corpus_docs) if output_json else contextlib.nullcontext(),
+                ):
                     _parity_single_corpus(
                         corpus=c["name"],
                         dry_run=False,  # Already handled dry_run above
@@ -6015,8 +6067,14 @@ def _parity_all_corpora(
                         verbose=verbose,
                         output_json=output_json,
                         all_corpora_mode=True,  # Suppress per-corpus logging
+                        prune_orphans=prune_orphans,
+                        force_prune=force_prune,
                     )
-                results.append({"corpus": c["name"], "status": "success"})
+                entry = {"corpus": c["name"], "status": "success"}
+                if corpus_docs:
+                    entry["message"] = corpus_docs[-1]["message"]
+                    entry.update(corpus_docs[-1]["data"])
+                results.append(entry)
             except Exception as e:
                 logger.error(f"Failed to process corpus {c['name']}: {e}")
                 results.append({"corpus": c["name"], "status": "failed", "error": str(e)})
@@ -6073,6 +6131,8 @@ def _parity_single_corpus(
     verbose: bool,
     output_json: bool,
     all_corpora_mode: bool = False,
+    prune_orphans: bool = False,
+    force_prune: bool = False,
 ):
     """Check and restore parity for a single corpus.
 
@@ -6088,6 +6148,9 @@ def _parity_single_corpus(
         verbose: If True, show detailed progress
         output_json: If True, output JSON format
         all_corpora_mode: If True, suppress interaction logging (called from _parity_all_corpora)
+        prune_orphans: If True, delete MeiliSearch documents for files that are in
+            neither Qdrant nor on disk (see _classify_meili_orphans)
+        force_prune: If True, also prune orphans whose directory is missing
     """
     if not all_corpora_mode:
         interaction_logger.start(
@@ -6304,6 +6367,30 @@ def _parity_single_corpus(
 
         meili_backfill_paths = list(missing_from_meili)
 
+        # MeiliSearch-only files missing from disk cannot be backfilled. With
+        # --prune-orphans, delete the documents nothing in Qdrant still references.
+        orphans = None
+        if prune_orphans and qdrant_skip_paths:
+            orphans = _classify_meili_orphans(
+                qdrant, sync_manager, corpus, qdrant_skip_paths, force_prune=force_prune
+            )
+        prunable_orphans = orphans["prunable"] if orphans else []
+        kept_orphans = orphans["dir_missing"] if orphans else []
+        if qdrant_skip_paths and not output_json:
+            if orphans is None:
+                console.print(
+                    f"\n[dim]{len(qdrant_skip_paths)} MeiliSearch-only files are missing from "
+                    "disk; pass --prune-orphans to delete their MeiliSearch documents[/dim]"
+                )
+            elif kept_orphans:
+                console.print(
+                    f"\n[yellow]Keeping {len(kept_orphans)} orphaned files whose directory is "
+                    "missing (unmounted volume?); pass --force-prune to prune them[/yellow]"
+                )
+                if verbose:
+                    for p in kept_orphans[:10]:
+                        console.print(f"  [yellow]{p}[/yellow]")
+
         # Dry-run mode: report and exit
         if dry_run:
             if not output_json:
@@ -6337,8 +6424,18 @@ def _parity_single_corpus(
                         if len(qdrant_skip_paths) > 10:
                             console.print(f"  ... and {len(qdrant_skip_paths) - 10} more")
 
-                if not meili_backfill_paths and not qdrant_backfill_paths:
-                    console.print("\n[green]✓ Indexes are already in parity[/green]")
+                if prunable_orphans:
+                    console.print(
+                        f"\nWould prune from MeiliSearch: {len(prunable_orphans)} orphaned files"
+                    )
+                    for p in prunable_orphans if verbose else prunable_orphans[:10]:
+                        console.print(f"  {p}")
+
+                if not meili_backfill_paths and not qdrant_backfill_paths and not prunable_orphans:
+                    if qdrant_skip_paths:
+                        console.print("\n[yellow]Nothing to backfill[/yellow]")
+                    else:
+                        console.print("\n[green]✓ Indexes are already in parity[/green]")
             else:
                 data = {
                     "corpus": corpus,
@@ -6348,6 +6445,8 @@ def _parity_single_corpus(
                     "would_backfill_to_qdrant": len(qdrant_backfill_paths),
                     "would_skip_not_found": len(qdrant_skip_paths),
                     "skipped_files": qdrant_skip_paths,
+                    "would_prune_orphans": prunable_orphans,
+                    "orphans_kept_dir_missing": kept_orphans,
                 }
                 print_json("success", "Dry run complete", data=data)
 
@@ -6367,17 +6466,32 @@ def _parity_single_corpus(
                 )
 
         # Nothing to do (unless repair_metadata is requested)
-        if not meili_backfill_paths and not qdrant_backfill_paths and not repair_metadata:
+        if (
+            not meili_backfill_paths
+            and not qdrant_backfill_paths
+            and not prunable_orphans
+            and not repair_metadata
+        ):
+            # Unreachable MeiliSearch-only files mean the indexes still differ.
+            message = (
+                "Nothing to backfill" if qdrant_skip_paths else "Indexes are already in parity"
+            )
             if output_json:
                 data = {
                     "corpus": corpus,
                     "files_in_both": len(in_both),
                     "meili_backfilled": 0,
                     "qdrant_backfilled": 0,
+                    "qdrant_skipped_not_found": len(qdrant_skip_paths),
+                    "skipped_files": qdrant_skip_paths,
+                    "pruned_orphans": [],
+                    "orphans_kept_dir_missing": kept_orphans,
                 }
-                print_json("success", "Indexes are already in parity", data=data)
+                print_json("success", message, data=data)
+            elif qdrant_skip_paths:
+                console.print(f"\n[yellow]{message}[/yellow]")
             else:
-                console.print("\n[green]✓ Indexes are already in parity[/green]")
+                console.print(f"\n[green]✓ {message}[/green]")
             if not all_corpora_mode:
                 interaction_logger.finish(result_count=0)
             return
@@ -6397,6 +6511,16 @@ def _parity_single_corpus(
                     console.print(
                         f"[yellow]Warning: Could not delete mismatched files: {e}[/yellow]"
                     )
+
+        # Prune orphaned MeiliSearch documents (nothing in Qdrant or on disk)
+        pruned_orphans: List[str] = []
+        if prunable_orphans:
+            if not output_json:
+                console.print(
+                    f"\n[dim]Pruning {len(prunable_orphans)} orphaned files from MeiliSearch...[/dim]"
+                )
+            meili.delete_documents_by_file_paths(corpus, prunable_orphans)
+            pruned_orphans = prunable_orphans
 
         # Backfill MeiliSearch from Qdrant
         meili_backfilled = 0
@@ -6515,6 +6639,8 @@ def _parity_single_corpus(
             "qdrant_backfill_failed": qdrant_backfill_failed,
             "qdrant_skipped_not_found": len(qdrant_skip_paths),
             "skipped_files": qdrant_skip_paths,
+            "pruned_orphans": pruned_orphans,
+            "orphans_kept_dir_missing": kept_orphans,
             "metadata_repaired": metadata_repaired,
             "metadata_repair_failed": metadata_repair_failed,
         }
@@ -6538,9 +6664,13 @@ def _parity_single_corpus(
                     status += f" [yellow]({qdrant_backfill_failed} failed)[/yellow]"
                 console.print(f"   Backfilled to Qdrant:      {status}")
 
-            if qdrant_skip_paths:
+            if pruned_orphans:
+                console.print(f"   Pruned from MeiliSearch:   {len(pruned_orphans)} files")
+
+            still_skipped = len(qdrant_skip_paths) - len(pruned_orphans)
+            if still_skipped:
                 console.print(
-                    f"   [yellow]Skipped (not found):      {len(qdrant_skip_paths)} files[/yellow]"
+                    f"   [yellow]Skipped (not found):      {still_skipped} files[/yellow]"
                 )
 
             if metadata_repaired > 0 or metadata_repair_failed > 0:
@@ -6588,6 +6718,8 @@ def parity_command(
     confirm: bool,
     verbose: bool,
     output_json: bool,
+    prune_orphans: bool = False,
+    force_prune: bool = False,
 ):
     """Check and restore parity between Qdrant and MeiliSearch.
 
@@ -6598,7 +6730,8 @@ def parity_command(
     - Qdrant -> MeiliSearch: Copies metadata (no file access needed)
     - MeiliSearch -> Qdrant: Re-chunks and embeds files (requires file access)
 
-    Files that don't exist on disk are skipped with a warning.
+    Files that don't exist on disk are skipped with a warning, or pruned from
+    MeiliSearch with prune_orphans (force_prune implies it).
 
     Args:
         corpus: Corpus name (optional - if None, process all corpora)
@@ -6621,6 +6754,8 @@ def parity_command(
     else:
         effective_text_workers = text_workers
 
+    prune_orphans = prune_orphans or force_prune
+
     if corpus:
         # Single corpus mode. Backfill deletes and rewrites documents in both
         # systems, so it takes the corpus write lock like sync does; a dry run
@@ -6642,6 +6777,8 @@ def parity_command(
                     verbose=verbose,
                     output_json=output_json,
                     all_corpora_mode=False,
+                    prune_orphans=prune_orphans,
+                    force_prune=force_prune,
                 )
         except CorpusLockUnavailable as e:
             print_error(str(e), output_json)
@@ -6659,6 +6796,8 @@ def parity_command(
             verbose=verbose,
             output_json=output_json,
             effective_text_workers=effective_text_workers,
+            prune_orphans=prune_orphans,
+            force_prune=force_prune,
         )
 
 
@@ -6675,6 +6814,8 @@ def repair_corpus_command(
     include_stale_policy: bool,
     verbose: bool,
     output_json: bool,
+    prune_orphans: bool = False,
+    force_prune: bool = False,
 ):
     """Repair verifier-selected files, then restore cross-system parity.
 
@@ -6702,6 +6843,8 @@ def repair_corpus_command(
                 include_stale_policy,
                 verbose,
                 output_json,
+                prune_orphans=prune_orphans,
+                force_prune=force_prune,
             )
     except CorpusLockUnavailable as e:
         print_error(str(e), output_json)
@@ -6718,6 +6861,8 @@ def _repair_corpus_locked(
     include_stale_policy: bool,
     verbose: bool,
     output_json: bool,
+    prune_orphans: bool = False,
+    force_prune: bool = False,
 ):
     content_docs: List[Dict[str, Any]] = []
     try:
@@ -6768,6 +6913,8 @@ def _repair_corpus_locked(
                 confirm=False,
                 verbose=verbose,
                 output_json=output_json,
+                prune_orphans=prune_orphans,
+                force_prune=force_prune,
             )
         parity_doc = parity_docs[-1] if parity_docs else {"status": "success", "message": ""}
         parity = {

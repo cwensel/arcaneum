@@ -334,6 +334,18 @@ def mock_services_healthy(mock_qdrant_health):
 # ============================================================================
 
 
+@pytest.fixture(autouse=True)
+def isolated_state_dir(tmp_path_factory, monkeypatch):
+    """Point XDG_STATE_HOME at a per-test directory.
+
+    The drain worker appends to <state>/arcaneum/hook.log. Without this, any test
+    that drives a drain (including ones that inject failures) writes into the
+    developer's real hook log, where the fake failures read as real ones.
+    Tests that set XDG_STATE_HOME themselves still override this.
+    """
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path_factory.mktemp("xdg-state")))
+
+
 @pytest.fixture
 def clean_env():
     """Provide a clean environment without Arcaneum env vars."""

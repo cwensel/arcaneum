@@ -647,6 +647,51 @@ class MetadataBasedSync:
         if delete_source:
             self.delete_file_manifest(collection_name, source_path)
 
+    def rebuild_file_manifest(
+        self, collection_name: str, file_path: str, *, store_type: str
+    ) -> bool:
+        """Recreate a missing manifest for a path whose chunks are still stored.
+
+        Reads one chunk's payload; the file was indexed but its manifest was
+        never written or was lost. Recording it avoids re-embedding content
+        that is already searchable. Returns False, writing nothing, when no
+        chunk exists or the chunks lack the metadata a manifest needs.
+        """
+        points, _ = self.qdrant.scroll(
+            collection_name=collection_name,
+            scroll_filter=metadata_exclusion_filter(
+                Filter(must=[FieldCondition(key="file_path", match=MatchValue(value=file_path))])
+            ),
+            limit=1,
+            with_payload=[
+                "quick_hash",
+                "file_hash",
+                "chunk_count",
+                "file_size",
+                "store_type",
+                "indexing_policy",
+                "quality_manifest",
+            ],
+            with_vectors=False,
+        )
+        payload = points[0].payload if points and points[0].payload else {}
+        if any(payload.get(key) is None for key in ("quick_hash", "file_hash", "chunk_count")):
+            logger.warning("Cannot rebuild manifest from chunks for %s", file_path)
+            return False
+        manifest_metadata = {
+            "file_hash": payload["file_hash"],
+            "chunk_count": payload["chunk_count"],
+            "file_size": payload.get("file_size"),
+            "store_type": payload.get("store_type") or store_type,
+            "indexing_policy": payload.get("indexing_policy"),
+        }
+        if payload.get("quality_manifest") is not None:
+            manifest_metadata["quality_manifest"] = payload["quality_manifest"]
+        self.upsert_file_manifest(
+            collection_name, file_path, payload["quick_hash"], **manifest_metadata
+        )
+        return True
+
     def set_file_manifest_canonical_path(
         self, collection_name: str, file_path: str, canonical_path: str
     ) -> None:

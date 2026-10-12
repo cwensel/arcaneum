@@ -624,6 +624,12 @@ arc corpus parity MyCorpus --json
   - **Qdrant -> MeiliSearch**: Copies metadata from Qdrant (no file access needed)
   - **MeiliSearch -> Qdrant**: Re-chunks and embeds files (requires file access)
 - Files that don't exist on disk are skipped with a warning
+- Differences are checked against the chunks Qdrant actually stores, not just
+  its file records: an empty file (a record with no chunks) needs no
+  backfill, and a file whose chunks are stored but whose record is missing
+  gets the record rebuilt from those chunks instead of being re-embedded
+  (`would_rebuild_manifests` on `--dry-run`, `manifests_rebuilt` otherwise).
+  `arc corpus sync --parity` does the same
 - With `--prune-orphans`, MeiliSearch-only files that are also gone from disk
   have their MeiliSearch documents deleted. A file is pruned only when Qdrant
   holds no chunks for it and no manifest names it as a duplicate PDF's

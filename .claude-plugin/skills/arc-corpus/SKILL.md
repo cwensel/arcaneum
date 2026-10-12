@@ -116,6 +116,11 @@ command both ensure both systems hold the same content, but operate differently:
   Holds the corpus write lock; `--dry-run` does not. With no NAME, `--json`
   prints one summary document.
 
+Both parity commands check differences against the chunks Qdrant stores:
+empty files (a file record with no chunks) are not drift, and files whose
+chunks are stored without a file record get the record rebuilt instead of
+being re-embedded.
+
 Cross-system backfill direction (both commands):
 
 - **Qdrant -> MeiliSearch**: Copies metadata (fast, no file access needed)

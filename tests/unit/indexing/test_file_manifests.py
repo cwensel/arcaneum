@@ -341,6 +341,69 @@ def test_remove_alternate_path_preserves_canonical_chunk_identity():
     assert payload["quick_hash"] == "canonical"
 
 
+def test_rebuild_file_manifest_restores_a_missing_manifest_from_its_chunks():
+    """Chunks indexed without a manifest are re-recorded, not re-embedded."""
+    qdrant = MagicMock()
+    qdrant.get_collection.return_value = _collection_info()
+    qdrant.scroll.return_value = (
+        [
+            SimpleNamespace(
+                payload={
+                    "file_path": "/notes/a.md.zst",
+                    "quick_hash": "q1",
+                    "file_hash": "content",
+                    "chunk_count": 96,
+                    "file_size": 61946,
+                }
+            )
+        ],
+        None,
+    )
+
+    rebuilt = MetadataBasedSync(qdrant).rebuild_file_manifest(
+        "Notes", "/notes/a.md.zst", store_type="markdown"
+    )
+
+    assert rebuilt is True
+    scroll_filter = qdrant.scroll.call_args.kwargs["scroll_filter"]
+    assert FieldCondition(key="file_path", match=MatchValue(value="/notes/a.md.zst")) in (
+        scroll_filter.must
+    )
+    point = qdrant.upsert.call_args.kwargs["points"][0]
+    assert point.id == MetadataBasedSync.file_manifest_id("Notes", "/notes/a.md.zst")
+    assert point.payload["quick_hash"] == "q1"
+    assert point.payload["file_hash"] == "content"
+    assert point.payload["chunk_count"] == 96
+    assert point.payload["file_size"] == 61946
+    assert point.payload["store_type"] == "markdown"
+
+
+@pytest.mark.parametrize("missing", ["quick_hash", "file_hash", "chunk_count"])
+def test_rebuild_file_manifest_skips_chunks_missing_required_metadata(missing):
+    payload = {"quick_hash": "q1", "file_hash": "content", "chunk_count": 3, "file_size": 9}
+    del payload[missing]
+    qdrant = MagicMock()
+    qdrant.scroll.return_value = ([SimpleNamespace(payload=payload)], None)
+
+    rebuilt = MetadataBasedSync(qdrant).rebuild_file_manifest(
+        "Notes", "/notes/a.md", store_type="markdown"
+    )
+
+    assert rebuilt is False
+    qdrant.upsert.assert_not_called()
+
+
+def test_rebuild_file_manifest_without_chunks_writes_nothing():
+    qdrant = MagicMock()
+    qdrant.scroll.return_value = ([], None)
+
+    assert (
+        MetadataBasedSync(qdrant).rebuild_file_manifest("Notes", "/x.md", store_type="markdown")
+        is False
+    )
+    qdrant.upsert.assert_not_called()
+
+
 def test_rebuild_skips_chunks_missing_required_manifest_metadata():
     qdrant = MagicMock()
     qdrant.retrieve.return_value = []

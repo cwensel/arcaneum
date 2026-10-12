@@ -1,10 +1,15 @@
-"""Pruning MeiliSearch documents for files gone from Qdrant and disk (kata 96r3).
+"""How parity handles paths that differ between Qdrant and MeiliSearch.
 
-Parity can only re-embed MeiliSearch-only files that still exist on disk.
-When the source is gone too, `--prune-orphans` deletes the MeiliSearch
-documents, but only when nothing in Qdrant still points at the path and the
-file's directory exists (a missing directory is more likely an unmounted
-volume than a deletion; `--force-prune` overrides that guard).
+Pruning (kata 96r3): parity can only re-embed MeiliSearch-only files that
+still exist on disk. When the source is gone too, `--prune-orphans` deletes
+the MeiliSearch documents, but only when nothing in Qdrant still points at
+the path and the file's directory exists (a missing directory is more likely
+an unmounted volume than a deletion; `--force-prune` overrides that guard).
+
+Reconciliation (kata yn5w): Qdrant's side comes from file manifests, which
+can disagree with the stored chunks. A manifest with zero chunks (an empty
+file) is not drift, and chunks whose manifest is missing are not absent from
+Qdrant: their manifest is rebuilt instead of re-embedding the file.
 """
 
 from __future__ import annotations
@@ -58,6 +63,7 @@ class FakeSyncManager:
         self.indexed_paths = set(indexed_paths)
         self.manifests = manifests
         self.alias_paths = set(alias_paths)
+        self.rebuilt = []
 
     def _get_indexed_file_paths_set(self, _corpus):
         return set(self.indexed_paths)
@@ -67,6 +73,10 @@ class FakeSyncManager:
 
     def get_file_manifest_snapshot(self, _corpus):
         return self.manifests
+
+    def rebuild_file_manifest(self, _corpus, path, *, store_type):
+        self.rebuilt.append((path, store_type))
+        return True
 
 
 @pytest.fixture
@@ -119,18 +129,27 @@ def test_classify_force_prune_overrides_missing_directory_guard(layout):
 
 
 def _run_parity(monkeypatch, layout, **options):
-    qdrant = FakeQdrant({layout.has_chunks: 3})
-    meili = FakeMeili([layout.gone, layout.unmounted, layout.has_chunks, layout.canonical])
-    sync_manager = FakeSyncManager(
-        [layout.alias],
-        {layout.alias: {"canonical_path": layout.canonical}},
-        alias_paths=[layout.alias],
-    )
+    return _parity(
+        monkeypatch,
+        points={layout.has_chunks: 3},
+        meili_paths=[layout.gone, layout.unmounted, layout.has_chunks, layout.canonical],
+        sync_manager=FakeSyncManager(
+            [layout.alias],
+            {layout.alias: {"canonical_path": layout.canonical}},
+            alias_paths=[layout.alias],
+        ),
+        **options,
+    )[:3]
+
+
+def _parity(monkeypatch, *, points, meili_paths, sync_manager, corpus_type="pdf", **options):
+    qdrant = FakeQdrant(points)
+    meili = FakeMeili(meili_paths)
     monkeypatch.setattr(sync_module, "create_qdrant_client", lambda **_kwargs: qdrant)
     monkeypatch.setattr(sync_module, "get_meili_client", lambda: meili)
     monkeypatch.setattr(sync_module, "MetadataBasedSync", lambda _qdrant: sync_manager)
     monkeypatch.setattr(sync_module, "file_manifests_ready", lambda *_args: True)
-    monkeypatch.setattr(sync_module, "get_collection_type", lambda *_args: "pdf")
+    monkeypatch.setattr(sync_module, "get_collection_type", lambda *_args: corpus_type)
     monkeypatch.setattr(sync_module, "get_collection_metadata", lambda *_args: {"model": "x"})
     monkeypatch.setattr(
         sync_module,
@@ -155,7 +174,7 @@ def _run_parity(monkeypatch, layout, **options):
             all_corpora_mode=True,
             **options,
         )
-    return qdrant, meili, docs
+    return qdrant, meili, docs, sync_manager
 
 
 def test_parity_prunes_only_safe_orphans(monkeypatch, layout):
@@ -177,11 +196,98 @@ def test_parity_dry_run_previews_pruning(monkeypatch, layout):
 
 
 def test_parity_without_flag_deletes_nothing_and_hints(monkeypatch, layout, capsys):
-    qdrant, meili, _docs = _run_parity(monkeypatch, layout, output_json=False)
+    def no_classification(*_args, **_kwargs):
+        raise AssertionError("orphans are only classified with --prune-orphans")
+
+    monkeypatch.setattr(sync_module, "_classify_meili_orphans", no_classification)
+    _qdrant, meili, _docs = _run_parity(monkeypatch, layout, output_json=False)
 
     assert meili.deleted == []
-    assert qdrant.count_calls == 0
     assert "--prune-orphans" in capsys.readouterr().out
+
+
+def test_reconcile_splits_manifest_and_chunk_disagreements():
+    # Qdrant's side: a real file, an empty file (manifest, zero chunks), and an alias.
+    # MeiliSearch's side: a file whose chunks lost their manifest, and a true gap.
+    sync_manager = FakeSyncManager(
+        ["/d/a.md", "/d/empty.md", "/d/alias.md"], {}, alias_paths=["/d/alias.md"]
+    )
+    qdrant = FakeQdrant({"/d/a.md": 4, "/d/no-manifest.md": 96})
+
+    result = sync_module._reconcile_parity_paths(
+        qdrant,
+        sync_manager,
+        "Docs",
+        qdrant_file_paths={"/d/a.md", "/d/empty.md", "/d/alias.md"},
+        meili_file_paths={"/d/no-manifest.md", "/d/only-meili.md"},
+    )
+
+    assert result == {
+        "missing_from_meili": {"/d/a.md"},
+        "missing_from_qdrant": {"/d/only-meili.md"},
+        "empty_files": {"/d/empty.md"},
+        "manifest_missing": {"/d/no-manifest.md"},
+    }
+
+
+def _manifest_drift(monkeypatch, tmp_path, **options):
+    """StateMachineRes/Claude shape: an empty file and chunks without a manifest."""
+    empty = tmp_path / "_index.md"
+    empty.write_text("---\ntitle: Docs\n---\n")
+    unrecorded = tmp_path / "session.md"
+    unrecorded.write_text("indexed long ago")
+    return (
+        _parity(
+            monkeypatch,
+            points={str(unrecorded): 96},
+            meili_paths=[str(unrecorded)],
+            sync_manager=FakeSyncManager([str(empty)], {str(empty): {"chunk_count": 0}}),
+            corpus_type="markdown",
+            **options,
+        ),
+        str(empty),
+        str(unrecorded),
+    )
+
+
+def test_parity_dry_run_reports_no_backfill_for_manifest_drift(monkeypatch, tmp_path):
+    (_q, _m, docs, sync_manager), _empty, unrecorded = _manifest_drift(
+        monkeypatch, tmp_path, dry_run=True
+    )
+
+    data = docs[-1]["data"]
+    assert data["would_backfill_to_meili"] == 0
+    assert data["would_backfill_to_qdrant"] == 0
+    assert data["would_rebuild_manifests"] == [unrecorded]
+    assert sync_manager.rebuilt == []
+
+
+def test_parity_rebuilds_missing_manifests_instead_of_reembedding(monkeypatch, tmp_path):
+    def no_reembedding(*_args, **_kwargs):
+        raise AssertionError("files with stored chunks must not be re-embedded")
+
+    monkeypatch.setattr(sync_module, "_backfill_meili_to_qdrant", no_reembedding)
+    (_q, _m, docs, sync_manager), _empty, unrecorded = _manifest_drift(monkeypatch, tmp_path)
+
+    assert sync_manager.rebuilt == [(unrecorded, "markdown")]
+    data = docs[-1]["data"]
+    assert data["manifests_rebuilt"] == [unrecorded]
+    assert data["qdrant_backfilled"] == 0
+    assert data["meili_backfilled"] == 0
+
+
+def test_parity_reports_already_in_parity_for_empty_files_only(monkeypatch, tmp_path):
+    empty = tmp_path / "_index.md"
+    empty.write_text("---\n---\n")
+    _q, _m, docs, _sm = _parity(
+        monkeypatch,
+        points={},
+        meili_paths=[],
+        sync_manager=FakeSyncManager([str(empty)], {str(empty): {"chunk_count": 0}}),
+        corpus_type="markdown",
+    )
+
+    assert docs[-1]["message"] == "Indexes are already in parity"
 
 
 @pytest.fixture
@@ -230,3 +336,33 @@ def test_repair_cli_passes_prune_flags_to_parity(isolated_locks):
 
     assert result.exit_code == 0, result.output
     assert seen["flags"] == (True, False)
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_sync_parity_plan_skips_empty_files_and_rebuilds_missing_manifests(tmp_path, dry_run):
+    """`arc corpus sync --parity` shares the reconciliation."""
+    real = tmp_path / "real.md"
+    real.write_text("content")
+    empty = tmp_path / "_index.md"
+    empty.write_text("---\n---\n")
+    unrecorded = tmp_path / "session.md"
+    unrecorded.write_text("indexed long ago")
+    only_meili = tmp_path / "only-meili.md"
+    only_meili.write_text("needs embedding")
+    sync_manager = FakeSyncManager([str(real), str(empty)], {})
+    qdrant = FakeQdrant({str(real): 2, str(unrecorded): 96})
+
+    meili_backfill, qdrant_backfill = sync_module._plan_parity_backfill(
+        qdrant,
+        sync_manager,
+        "Docs",
+        "markdown",
+        qdrant_file_paths={str(real), str(empty)},
+        meili_file_paths={str(unrecorded), str(only_meili)},
+        dry_run=dry_run,
+        output_json=True,
+    )
+
+    assert meili_backfill == [str(real)]
+    assert qdrant_backfill == [str(only_meili)]
+    assert sync_manager.rebuilt == ([] if dry_run else [(str(unrecorded), "markdown")])

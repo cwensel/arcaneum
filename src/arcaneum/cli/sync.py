@@ -3046,28 +3046,27 @@ def _sync_directory_locked(
             meili_file_paths = meili.get_all_file_paths(corpus)
             qdrant_file_paths = sync_manager._get_indexed_file_paths_set(corpus)
 
-            # Calculate set operations
+            # Calculate set operations; backfill only what the stored chunks
+            # show is really missing from one system
             in_both_systems = qdrant_file_paths & meili_file_paths
-            missing_from_meili = _qdrant_paths_missing_from_meili(
-                sync_manager, corpus, qdrant_file_paths, meili_file_paths
+            meili_backfill_paths, qdrant_backfill_paths = _plan_parity_backfill(
+                qdrant,
+                sync_manager,
+                corpus,
+                corpus_type,
+                qdrant_file_paths,
+                meili_file_paths,
+                dry_run=dry_run,
+                output_json=output_json,
             )
-            missing_from_qdrant = meili_file_paths - qdrant_file_paths
-
-            # Files in Qdrant but not in MeiliSearch need backfill
-            if missing_from_meili:
-                meili_backfill_paths = [p for p in missing_from_meili if Path(p).exists()]
-                if not output_json and meili_backfill_paths:
-                    print_info(
-                        f"Found {len(meili_backfill_paths)} files in Qdrant missing from MeiliSearch"
-                    )
-
-            # Files in MeiliSearch but not in Qdrant need backfill
-            if missing_from_qdrant:
-                qdrant_backfill_paths = [p for p in missing_from_qdrant if Path(p).exists()]
-                if not output_json and qdrant_backfill_paths:
-                    print_info(
-                        f"Found {len(qdrant_backfill_paths)} files in MeiliSearch missing from Qdrant"
-                    )
+            if not output_json and meili_backfill_paths:
+                print_info(
+                    f"Found {len(meili_backfill_paths)} files in Qdrant missing from MeiliSearch"
+                )
+            if not output_json and qdrant_backfill_paths:
+                print_info(
+                    f"Found {len(qdrant_backfill_paths)} files in MeiliSearch missing from Qdrant"
+                )
 
             # Check for new/modified files not in either system
             # Convert discovered files to absolute path strings for comparison
@@ -4665,6 +4664,98 @@ def _qdrant_paths_missing_from_meili(
     return qdrant_file_paths - meili_file_paths - sync_manager.get_alias_file_paths(corpus)
 
 
+def _qdrant_point_count(qdrant, corpus: str, path: str) -> int:
+    """Exact number of chunk points stored under one file_path."""
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+    return qdrant.count(
+        collection_name=corpus,
+        count_filter=metadata_exclusion_filter(
+            Filter(must=[FieldCondition(key="file_path", match=MatchValue(value=path))])
+        ),
+        exact=True,
+    ).count
+
+
+def _reconcile_parity_paths(
+    qdrant,
+    sync_manager,
+    corpus: str,
+    qdrant_file_paths: Set[str],
+    meili_file_paths: Set[str],
+) -> Dict[str, Set[str]]:
+    """Split the path differences between the systems by what Qdrant really stores.
+
+    When manifests are authoritative, qdrant_file_paths holds manifest paths,
+    which disagree with the stored chunks in two ways:
+
+    - empty_files: a manifest with no chunks (an empty file). Neither system
+      holds content for it, so there is nothing to backfill.
+    - manifest_missing: chunks whose manifest was never written or was lost.
+      The content is in Qdrant; it needs its manifest rebuilt, not a re-embed.
+
+    The remaining differences are missing_from_meili and missing_from_qdrant.
+    Only candidate paths are counted, so this stays cheap when in parity.
+    """
+    candidates_for_meili = _qdrant_paths_missing_from_meili(
+        sync_manager, corpus, qdrant_file_paths, meili_file_paths
+    )
+    candidates_for_qdrant = meili_file_paths - qdrant_file_paths
+    result: Dict[str, Set[str]] = {
+        "missing_from_meili": set(),
+        "missing_from_qdrant": set(),
+        "empty_files": set(),
+        "manifest_missing": set(),
+    }
+    for path in candidates_for_meili:
+        has_chunks = _qdrant_point_count(qdrant, corpus, path) > 0
+        result["missing_from_meili" if has_chunks else "empty_files"].add(path)
+    for path in candidates_for_qdrant:
+        has_chunks = _qdrant_point_count(qdrant, corpus, path) > 0
+        result["manifest_missing" if has_chunks else "missing_from_qdrant"].add(path)
+    return result
+
+
+def _plan_parity_backfill(
+    qdrant,
+    sync_manager,
+    corpus: str,
+    corpus_type: str,
+    qdrant_file_paths: Set[str],
+    meili_file_paths: Set[str],
+    *,
+    dry_run: bool,
+    output_json: bool,
+) -> Tuple[List[str], List[str]]:
+    """Choose the files `sync --parity` backfills in each direction.
+
+    Reconciles manifests with stored chunks first: empty files need no
+    backfill, and files whose chunks lost their manifest get the manifest
+    rebuilt (skipped on dry runs) rather than being re-embedded. Only files
+    still on disk are backfilled. Returns (to MeiliSearch, to Qdrant).
+    """
+    reconciled = _reconcile_parity_paths(
+        qdrant, sync_manager, corpus, qdrant_file_paths, meili_file_paths
+    )
+    manifest_missing = sorted(reconciled["manifest_missing"])
+    if manifest_missing:
+        if dry_run:
+            if not output_json:
+                print_info(f"Would rebuild {len(manifest_missing)} file records from stored chunks")
+        else:
+            rebuilt = [
+                path
+                for path in manifest_missing
+                if sync_manager.rebuild_file_manifest(corpus, path, store_type=corpus_type)
+            ]
+            if not output_json:
+                print_info(f"Rebuilt {len(rebuilt)} file records from stored chunks")
+    return (
+        sorted(p for p in reconciled["missing_from_meili"] if Path(p).exists()),
+        sorted(p for p in reconciled["missing_from_qdrant"] if Path(p).exists()),
+    )
+
+
 def _classify_meili_orphans(
     qdrant,
     sync_manager,
@@ -4681,8 +4772,6 @@ def _classify_meili_orphans(
     unmounted volume than a deletion, unless force_prune is set. The rest
     are "prunable".
     """
-    from qdrant_client.models import FieldCondition, Filter, MatchValue
-
     canonical_paths = set()
     if file_manifests_ready(qdrant, corpus):
         canonical_paths = {
@@ -4693,14 +4782,7 @@ def _classify_meili_orphans(
 
     result: Dict[str, List[str]] = {"prunable": [], "dir_missing": [], "referenced": []}
     for path in sorted(paths):
-        chunk_count = qdrant.count(
-            collection_name=corpus,
-            count_filter=metadata_exclusion_filter(
-                Filter(must=[FieldCondition(key="file_path", match=MatchValue(value=path))])
-            ),
-            exact=True,
-        ).count
-        if path in canonical_paths or chunk_count > 0:
+        if path in canonical_paths or _qdrant_point_count(qdrant, corpus, path) > 0:
             result["referenced"].append(path)
         elif not force_prune and not Path(path).parent.exists():
             result["dir_missing"].append(path)
@@ -6267,12 +6349,25 @@ def _parity_single_corpus(
         qdrant_file_paths = sync_manager._get_indexed_file_paths_set(corpus)
         meili_file_paths = meili.get_all_file_paths(corpus)
 
-        # Calculate set operations
+        # Calculate set operations, checking differences against stored chunks
         in_both = qdrant_file_paths & meili_file_paths
-        missing_from_meili = _qdrant_paths_missing_from_meili(
-            sync_manager, corpus, qdrant_file_paths, meili_file_paths
+        reconciled = _reconcile_parity_paths(
+            qdrant, sync_manager, corpus, qdrant_file_paths, meili_file_paths
         )
-        missing_from_qdrant = meili_file_paths - qdrant_file_paths
+        missing_from_meili = reconciled["missing_from_meili"]
+        missing_from_qdrant = reconciled["missing_from_qdrant"]
+        manifest_missing = sorted(reconciled["manifest_missing"])
+        if not output_json and (reconciled["empty_files"] or manifest_missing):
+            if reconciled["empty_files"]:
+                console.print(
+                    f"[dim]{len(reconciled['empty_files'])} indexed files are empty "
+                    "(no chunks in either system); nothing to backfill[/dim]"
+                )
+            if manifest_missing:
+                console.print(
+                    f"[dim]{len(manifest_missing)} files have chunks in Qdrant but no file "
+                    "record; rebuilding the record instead of re-embedding[/dim]"
+                )
 
         # Verify chunk counts if requested
         chunk_mismatches = []
@@ -6431,7 +6526,20 @@ def _parity_single_corpus(
                     for p in prunable_orphans if verbose else prunable_orphans[:10]:
                         console.print(f"  {p}")
 
-                if not meili_backfill_paths and not qdrant_backfill_paths and not prunable_orphans:
+                if manifest_missing:
+                    console.print(
+                        f"\nWould rebuild file records from stored chunks: "
+                        f"{len(manifest_missing)} files"
+                    )
+                    for p in manifest_missing if verbose else manifest_missing[:10]:
+                        console.print(f"  {p}")
+
+                if (
+                    not meili_backfill_paths
+                    and not qdrant_backfill_paths
+                    and not prunable_orphans
+                    and not manifest_missing
+                ):
                     if qdrant_skip_paths:
                         console.print("\n[yellow]Nothing to backfill[/yellow]")
                     else:
@@ -6447,6 +6555,7 @@ def _parity_single_corpus(
                     "skipped_files": qdrant_skip_paths,
                     "would_prune_orphans": prunable_orphans,
                     "orphans_kept_dir_missing": kept_orphans,
+                    "would_rebuild_manifests": manifest_missing,
                 }
                 print_json("success", "Dry run complete", data=data)
 
@@ -6470,6 +6579,7 @@ def _parity_single_corpus(
             not meili_backfill_paths
             and not qdrant_backfill_paths
             and not prunable_orphans
+            and not manifest_missing
             and not repair_metadata
         ):
             # Unreachable MeiliSearch-only files mean the indexes still differ.
@@ -6521,6 +6631,20 @@ def _parity_single_corpus(
                 )
             meili.delete_documents_by_file_paths(corpus, prunable_orphans)
             pruned_orphans = prunable_orphans
+
+        # Rebuild file records for content already in Qdrant (no re-embedding)
+        manifests_rebuilt: List[str] = []
+        if manifest_missing:
+            if not output_json:
+                console.print(
+                    f"\n[dim]Rebuilding {len(manifest_missing)} file records from stored "
+                    "chunks...[/dim]"
+                )
+            manifests_rebuilt = [
+                path
+                for path in manifest_missing
+                if sync_manager.rebuild_file_manifest(corpus, path, store_type=corpus_type)
+            ]
 
         # Backfill MeiliSearch from Qdrant
         meili_backfilled = 0
@@ -6641,6 +6765,7 @@ def _parity_single_corpus(
             "skipped_files": qdrant_skip_paths,
             "pruned_orphans": pruned_orphans,
             "orphans_kept_dir_missing": kept_orphans,
+            "manifests_rebuilt": manifests_rebuilt,
             "metadata_repaired": metadata_repaired,
             "metadata_repair_failed": metadata_repair_failed,
         }
@@ -6666,6 +6791,13 @@ def _parity_single_corpus(
 
             if pruned_orphans:
                 console.print(f"   Pruned from MeiliSearch:   {len(pruned_orphans)} files")
+
+            if manifest_missing:
+                status = f"{len(manifests_rebuilt)} files"
+                if len(manifests_rebuilt) < len(manifest_missing):
+                    failed = len(manifest_missing) - len(manifests_rebuilt)
+                    status += f" [yellow]({failed} lacked the metadata to rebuild)[/yellow]"
+                console.print(f"   File records rebuilt:      {status}")
 
             still_skipped = len(qdrant_skip_paths) - len(pruned_orphans)
             if still_skipped:

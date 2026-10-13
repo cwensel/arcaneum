@@ -150,6 +150,7 @@ arc corpus sync NAME PATH [PATH...]             # Sync one or more directories
 arc corpus sync NAME PATH --order newest        # Index recent files first
 arc corpus sync NAME PATH --parity              # Also detect renames, remove files no longer on disk
 arc corpus sync NAME PATH --include-stale-policy # Migrate stale/legacy indexing policies
+arc corpus sync NAME --from-index method=pymupdf_normalized # Re-extract files selected by stored metadata
 arc corpus items NAME                           # List items with parity status
 arc corpus verify NAME                          # Verify corpus health across both systems
 arc corpus doctor                               # Check all corpora, list the commands that fix them

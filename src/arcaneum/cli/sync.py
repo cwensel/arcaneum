@@ -2241,6 +2241,84 @@ def _report_deferred_policy_hint(
         )
 
 
+def _resolve_from_index(
+    qdrant,
+    corpus: str,
+    selector: str,
+    *,
+    dry_run: bool,
+    output_json: bool,
+) -> Optional[List[Path]]:
+    """Resolve `--from-index` to the on-disk files to re-index.
+
+    Returns None when the sync should stop: nothing matched, nothing matched
+    is still on disk, or this is a dry run (which lists the selection).
+    Files gone from disk are reported and skipped, never deleted; removal
+    stays with --parity and `repair --prune-orphans`.
+    """
+    from ..indexing.index_selector import IndexSelectorError, select_indexed_paths
+
+    try:
+        matched = select_indexed_paths(qdrant, corpus, selector)
+    except IndexSelectorError as e:
+        raise InvalidArgumentError(str(e)) from e
+
+    existing = [str(Path(p).resolve()) for p in matched if Path(p).exists()]
+    missing = [p for p in matched if not Path(p).exists()]
+
+    if not output_json:
+        if missing:
+            noun = "file no longer exists" if len(missing) == 1 else "files no longer exist"
+            console.print(f"[yellow]⚠ {len(missing)} {noun} on disk (skipped)[/yellow]")
+            for p in missing[:5]:
+                console.print(f"  [dim]{p}[/dim]")
+            if len(missing) > 5:
+                console.print(f"  [dim]... and {len(missing) - 5} more[/dim]")
+        if existing:
+            console.print(f"[blue]Found {len(existing)} files matching {selector}[/blue]")
+            for p in existing:
+                console.print(f"  [dim]{p}[/dim]")
+
+    if not existing:
+        message = (
+            f"No indexed files match {selector}"
+            if not matched
+            else f"No on-disk files match {selector}"
+        )
+        if output_json:
+            print_json(
+                "success",
+                message,
+                data={
+                    "selector": selector,
+                    "matched": len(matched),
+                    "missing_from_disk": missing,
+                    "reindexed": 0,
+                },
+            )
+        else:
+            console.print(f"[yellow]{message}[/yellow]")
+        return None
+
+    if dry_run:
+        if output_json:
+            print_json(
+                "success",
+                "Dry run complete",
+                data={
+                    "selector": selector,
+                    "would_reindex": len(existing),
+                    "files": existing,
+                    "missing_from_disk": missing,
+                },
+            )
+        else:
+            console.print("[dim]Dry run: would re-index the above files[/dim]")
+        return None
+
+    return sorted(Path(p) for p in existing)
+
+
 def sync_directory_command(
     corpus: str,
     paths: tuple,
@@ -2272,6 +2350,7 @@ def sync_directory_command(
     lock_timeout: Optional[float] = None,
     removed_paths: Optional[List[str]] = None,
     skip_unsupported: bool = False,
+    from_index: Optional[str] = None,
 ):
     """Sync to a corpus while holding that corpus's write lock (kata htmw).
 
@@ -2322,6 +2401,7 @@ def sync_directory_command(
                 order=order,
                 removed_paths=removed_paths,
                 skip_unsupported=skip_unsupported,
+                from_index=from_index,
             )
     except CorpusLockUnavailable as e:
         print_error(str(e), output_json)
@@ -2357,6 +2437,7 @@ def _sync_directory_locked(
     order: str = "path",
     removed_paths: Optional[List[str]] = None,
     skip_unsupported: bool = False,
+    from_index: Optional[str] = None,
 ):
     """Sync directories or files to both Qdrant and MeiliSearch.
 
@@ -2396,6 +2477,9 @@ def _sync_directory_locked(
         skip_unsupported: Skip individual files the corpus type cannot index
                instead of rejecting the sync. For git-derived paths (the hook
                spool, `--changed-since`), which name every touched file.
+        from_index: Selector over stored metadata (`--from-index`). The matching
+               files are re-indexed unconditionally, since their source is
+               unchanged and change detection would skip them.
     """
     # Calculate effective text workers
     if text_workers is None:
@@ -2419,6 +2503,7 @@ def _sync_directory_locked(
         models=models,
         file_types=file_types,
         from_file=from_file,
+        from_index=from_index,
     )
 
     embedding_clients = []
@@ -2441,6 +2526,8 @@ def _sync_directory_locked(
         if not output_json:
             if repair and not all_input_paths:
                 print_info(f"Repairing incomplete files in corpus '{corpus}'")
+            elif from_index:
+                print_info(f"Selecting files in corpus '{corpus}' matching {from_index}")
             elif all_input_paths:
                 source_info = " (from file)" if from_file else ""
                 if len(single_files) == 1 and not dir_paths:
@@ -2773,6 +2860,17 @@ def _sync_directory_locked(
 
             # Set up for re-indexing: use incomplete files as single_files with force
             single_files = sorted(Path(p).resolve() for p in existing_repairable)
+            dir_paths = []
+            force = True
+
+        if from_index:
+            selected_files = _resolve_from_index(
+                qdrant, corpus, from_index, dry_run=dry_run, output_json=output_json
+            )
+            if selected_files is None:
+                interaction_logger.finish(result_count=0)
+                return
+            single_files = selected_files
             dir_paths = []
             force = True
 

@@ -276,6 +276,18 @@ Qdrant and disk are reported but kept; add `--prune-orphans` to delete them
 (PDFs whose directory is also missing, such as on an unmounted drive, are kept
 unless `--force-prune`).
 
+Repair selects files the verifier finds unhealthy. When an extractor fix should
+reach PDFs that were indexed cleanly but with the older behavior, select them by
+their stored quality manifest instead:
+
+```bash
+arc corpus sync pdf-docs --from-index method=pymupdf_normalized --dry-run
+arc corpus sync pdf-docs --from-index method=pymupdf_normalized
+```
+
+The selected files are re-extracted even though they are unchanged on disk. See
+the [CLI reference](cli-reference.md) for the selector keys.
+
 ## Extraction Quality and Provenance
 
 Arcaneum evaluates PDF extraction per page. When raster OCR clearly scores

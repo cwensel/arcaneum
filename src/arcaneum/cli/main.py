@@ -1425,6 +1425,13 @@ def _drain_corpus_spool(corpus, *, max_batches, sync_kwargs):
 @click.argument("paths", nargs=-1, type=click.Path(exists=True), required=False)
 @click.option("--from-file", help='Read paths from file (one per line, or "-" for stdin)')
 @click.option(
+    "--from-index",
+    metavar="SELECTOR",
+    default=None,
+    help="Re-index the files whose stored metadata matches SELECTOR (e.g. "
+    "method=pymupdf_normalized, version<0.10.0); always re-extracts them",
+)
+@click.option(
     "--models",
     default=None,
     help="Embedding models (comma-separated; default uses corpus metadata)",
@@ -1559,6 +1566,7 @@ def sync_directory(
     corpus,
     paths,
     from_file,
+    from_index,
     models,
     file_types,
     force,
@@ -1599,6 +1607,16 @@ def sync_directory(
         find . -name "*.pdf" | arc corpus sync MyCorpus --from-file -
         arc corpus sync MyCorpus --changed-since HEAD
         arc corpus sync MyCorpus /repo --changed-since ORIG_HEAD..HEAD
+        arc corpus sync MyCorpus --from-index method=pymupdf_normalized --dry-run
+
+    --from-index selects already-indexed files by their stored metadata and
+    re-extracts them, for when extraction improves but the files have not
+    changed. SELECTOR is comma-separated terms that must all match. Shorthand
+    keys: method (extraction method, matching any part of a combined method),
+    fallback (why the preferred extractor was skipped), ocr (why OCR ran),
+    warning (a recorded quality warning), version (arc version that indexed
+    the file; supports < <= > >=). Any other key is a dotted payload path,
+    e.g. quality_manifest.page_coverage.page_count=3.
 
     Use --text-workers to parallelize AST chunking for code corpora.
 
@@ -1612,6 +1630,24 @@ def sync_directory(
     """
     # Resolve skip prefixes: --no-skip-dir-prefix disables all, otherwise use provided prefixes
     effective_prefixes = () if no_skip_dir_prefix else skip_dir_prefix
+
+    if from_index:
+        conflicts = [
+            name
+            for name, given in (
+                ("PATH", paths),
+                ("--from-file", from_file),
+                ("--changed-since", changed_since),
+                ("--drain-spool", drain_spool),
+                ("--parity", parity),
+            )
+            if given
+        ]
+        if conflicts:
+            raise click.UsageError(
+                f"--from-index selects its own files and cannot be combined with "
+                f"{', '.join(conflicts)}"
+            )
 
     if drain_spool:
         if paths or from_file or changed_since:
@@ -1680,8 +1716,8 @@ def sync_directory(
             return
 
     # Validate that at least one of paths or from_file is provided
-    if not paths and not from_file and not changed_since:
-        raise click.UsageError("Either PATH(s) or --from-file must be provided")
+    if not paths and not from_file and not changed_since and not from_index:
+        raise click.UsageError("Either PATH(s), --from-file, or --from-index must be provided")
 
     # Validate mutually exclusive git flags
     if git_update and git_version:
@@ -1732,6 +1768,7 @@ def sync_directory(
         lock_timeout=lock_timeout,
         removed_paths=removed_paths,
         include_stale_policy=include_stale_policy,
+        from_index=from_index,
         # git names every touched file, not only ones this corpus type indexes.
         skip_unsupported=bool(changed_since),
     )

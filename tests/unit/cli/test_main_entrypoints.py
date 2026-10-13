@@ -187,7 +187,7 @@ def test_main_json_formats_corpus_sync_validation_errors(capsys):
     payload = json.loads(captured.out)
     assert exit_code == 2
     assert payload["status"] == "error"
-    assert "Either PATH(s) or --from-file" in payload["message"]
+    assert "Either PATH(s), --from-file, or --from-index" in payload["message"]
 
 
 def test_main_json_formats_corpus_sync_git_flag_conflict(capsys):

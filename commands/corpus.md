@@ -55,6 +55,9 @@ full-text search (MeiliSearch) for the same content.
   modification first; this changes processing order, not search ranking
 - --include-stale-policy: Also re-index otherwise unchanged files whose indexing
   policy is stale or missing
+- --from-index SELECTOR: Instead of paths, re-extract the indexed files whose
+  stored metadata matches SELECTOR (e.g. method=pymupdf_normalized,
+  version<0.10.0); shorthand keys are method, fallback, ocr, warning, version
 - --no-wait: Fail instead of queueing when another sync of this corpus is running
 - --lock-timeout: Seconds to wait for the corpus write lock (default: 600)
 
@@ -144,6 +147,7 @@ files gone from both Qdrant and disk are only reported; pass `--prune-orphans`
 /corpus repair PapersFast --include-stale-policy
 /corpus repair PapersFast --quality-threshold 0.5
 /corpus sync CodeBase --changed-since HEAD
+/corpus sync PapersFast --from-index method=pymupdf_normalized --dry-run
 /corpus sync CodeBase ~/projects --order newest
 /corpus hook install
 /corpus hook install CodeBase

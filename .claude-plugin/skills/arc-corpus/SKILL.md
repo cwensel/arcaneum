@@ -46,6 +46,11 @@ arc corpus hook uninstall MyCorpus                    # Remove just this corpus'
 arc corpus sync MyCorpus --changed-since HEAD              # Last commit
 arc corpus sync MyCorpus --changed-since ORIG_HEAD..HEAD   # Since a pull
 
+# Re-extract unchanged files chosen by stored metadata (after an extractor fix)
+arc corpus sync MyCorpus --from-index method=pymupdf_normalized --dry-run
+arc corpus sync MyCorpus --from-index method=pymupdf_normalized
+arc corpus sync MyCorpus --from-index 'version<0.10.0'
+
 # Check health: content quality plus Qdrant/MeiliSearch parity
 arc corpus verify MyCorpus                            # Human-readable report
 arc corpus verify MyCorpus --json                     # parity_status: synced | mismatch | unknown
@@ -95,6 +100,20 @@ arc corpus parity --create-missing --confirm   # Create and sync all
 - **Use Corpus**: When you need both semantic search (conceptual queries) AND full-text search (exact phrases)
 - **Use Collection alone**: When you only need semantic/conceptual search
 - **Use Index alone**: When you only need exact keyword/phrase search
+
+## Re-indexing by Stored Metadata
+
+`arc corpus sync <corpus> --from-index SELECTOR` re-extracts the indexed files
+whose stored metadata matches SELECTOR, even though they are unchanged on disk.
+Use it when an extraction fix should reach files indexed before the fix; run
+with `--dry-run` first to see the selection. Terms are comma-separated and must
+all match. Shorthand keys: `method` (extraction method, matching any part of a
+combined method), `fallback` (why the preferred extractor was skipped), `ocr`
+(why OCR ran), `warning` (a recorded quality warning), and `version` (arc
+version that indexed the file, with `<`, `<=`, `>`, `>=`). Any other key is a
+dotted payload path such as `quality_manifest.page_coverage.page_count=3`. A
+key no chunk records is an error, not an empty selection. Missing files are
+skipped, never deleted.
 
 ## Parity Behavior
 

@@ -70,6 +70,11 @@ arc corpus sync MyCorpus /path/to/files --parity
 # Preview parity changes without writing
 arc corpus sync MyCorpus /path/to/files --parity --dry-run
 
+# Re-extract unchanged files selected by stored metadata, e.g. after an
+# extractor fix (shorthand keys: method, fallback, ocr, warning, version)
+arc corpus sync MyCorpus --from-index method=pymupdf_normalized --dry-run
+arc corpus sync MyCorpus --from-index method=pymupdf_normalized
+
 # Check every corpus (read-only) and list the commands that fix each one
 arc corpus doctor
 

@@ -233,6 +233,35 @@ arc corpus sync MyCorpus /path --models arctic-m           # Use specific model
 arc corpus sync MyCorpus /path --max-embedding-batch 8     # Limit batch size (OOM recovery)
 arc corpus sync MyCorpus /path --verbose                   # Detailed progress
 arc corpus sync MyCorpus --from-file paths.txt             # Read paths from file (or "-" for stdin)
+arc corpus sync MyCorpus --from-index method=pymupdf_normalized --dry-run  # Preview re-extraction by stored metadata
+arc corpus sync MyCorpus --from-index method=pymupdf_normalized            # Re-extract the selected files
+```
+
+**Selecting files by stored metadata:**
+
+`--from-index` takes comma-separated terms that must all match. Shorthand keys
+name the fields worth re-indexing by:
+
+| Key | Stored field | Matches |
+| --- | --- | --- |
+| `method` | `quality_manifest.extraction_method` | Any part of a combined method, so `method=pymupdf_normalized` also selects `pymupdf4llm_markdown+pymupdf_normalized` |
+| `fallback` | `quality_manifest.fallback_reason` | Why the preferred extractor was skipped: `LayoutConversionError`, `LayoutWorkerTimeout`, `LayoutWorkerCrashed`, `dropout_recovered` |
+| `ocr` | `quality_manifest.ocr.reason` | Why OCR ran: `garbled`, `quality`, `empty`, `forced` |
+| `warning` | `quality_manifest.quality_warnings` | A recorded warning, e.g. `low_text_pages`, `empty_pages` |
+| `version` | `app_version` | The arc version that indexed the file; supports `=`, `<`, `<=`, `>`, `>=` |
+
+Any other key is read as a dotted payload path, for example
+`quality_manifest.page_coverage.page_count=3`. Matching is case-insensitive.
+A key that no indexed chunk records is an error rather than an empty
+selection: it is either a typo or a field this corpus type (or the arc version
+that indexed it) does not store. `fallback` is recorded only by files indexed
+after it was introduced.
+
+```bash
+arc corpus sync Papers --from-index method=pymupdf_normalized
+arc corpus sync Papers --from-index fallback=LayoutWorkerTimeout --dry-run
+arc corpus sync Notes --from-index 'version<0.10.0'
+arc corpus sync Papers --from-index 'method=pymupdf_normalized,version<0.10.0'
 ```
 
 **Git-Aware Sync Options (for code corpora):**
@@ -265,6 +294,13 @@ arc corpus sync MyCorpus /path/to/repo --git-version       # Keep multiple versi
 - `--models`: Embedding models to use (comma-separated; default comes from corpus metadata)
 - `--file-types`: Comma-separated extensions to index (e.g., `.py,.md`)
 - `--from-file`: Read paths from a file (one per line), or `-` for stdin
+- `--from-index SELECTOR`: Re-index the already-indexed files whose stored
+  metadata matches SELECTOR. Use it when extraction improves but the source
+  files have not changed, so ordinary change detection would skip them. The
+  selected files are always re-extracted (no `--force` needed); files gone from
+  disk are reported and skipped, never deleted. Cannot be combined with PATH,
+  `--from-file`, `--changed-since`, `--drain-spool`, or `--parity`. See
+  "Selecting files by stored metadata" above for the selector syntax.
 - `--max-embedding-batch`: Cap embedding batch size (use 8-16 for OOM recovery)
 - `--text-workers`: Parallel workers for code AST chunking (default: auto)
 - `--order`: Order files are indexed in: `path` (default, alphabetical), `newest`

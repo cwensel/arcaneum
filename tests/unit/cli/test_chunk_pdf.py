@@ -543,3 +543,19 @@ def test_quality_manifest_without_fallback_has_no_reason(tmp_path):
     assert manifest["fallback_reason"] is None
     assert manifest["fallback_detail"] is None
 
+
+def test_quality_manifest_repair_command_is_runnable(tmp_path):
+    """The stored hint once suggested a `--repair` flag sync never had."""
+    source = tmp_path / "With Spaces" / "paper.pdf"
+    source.parent.mkdir()
+    source.write_bytes(b"%PDF-1.4\n")
+
+    manifest = _build_quality_manifest(
+        file_path=source,
+        corpus_type="pdf",
+        source_hash="abc123",
+        chunk_count=1,
+        metadata={"extraction_method": "pymupdf4llm_markdown"},
+    )
+
+    assert manifest["repair_command"] == f"arc corpus sync <corpus> '{source}' --force"

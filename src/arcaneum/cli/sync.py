@@ -4611,7 +4611,9 @@ def _sync_directory_locked(
                             "after OCR; automatic recovery is exhausted[/yellow]"
                         )
                     if repairable_paths:
-                        console.print("[dim]Re-run with --repair to re-index eligible files[/dim]")
+                        console.print(
+                            f"[dim]Run 'arc corpus repair {corpus}' to re-index eligible files[/dim]"
+                        )
 
             data["verification"] = {
                 "is_healthy": verification_result.is_healthy,

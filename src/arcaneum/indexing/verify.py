@@ -33,7 +33,7 @@ from arcaneum.indexing.collection_metadata import (
     persisted_schema_issues,
     user_point_count,
 )
-from arcaneum.indexing.common.sync import MetadataBasedSync
+from arcaneum.indexing.common.sync import MetadataBasedSync, repair_command_for
 from arcaneum.indexing.policy import build_indexing_policy, policy_is_current
 
 logger = logging.getLogger(__name__)
@@ -703,7 +703,7 @@ class CollectionVerifier:
                             "failures": payload.get("ocr_pages_failed"),
                         },
                         "quality_warnings": [],
-                        "repair_command": f"arc corpus sync <corpus> {file_path} --repair",
+                        "repair_command": repair_command_for(file_path),
                         "verify_command": "arc corpus verify <corpus> --json",
                     }
 

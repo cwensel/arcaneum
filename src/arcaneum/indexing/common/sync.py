@@ -3,6 +3,7 @@
 import logging
 import multiprocessing as mp
 import os
+import shlex
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
@@ -35,6 +36,11 @@ logger = logging.getLogger(__name__)
 
 FILE_MANIFEST_POINT_SCHEMA_VERSION = 1
 _FILE_MANIFEST_NAMESPACE = uuid.UUID("2f63291c-85b8-4f5b-9178-f9fd31982b56")
+
+
+def repair_command_for(file_path: Any) -> str:
+    """Return the command that re-extracts one indexed file in place."""
+    return f"arc corpus sync <corpus> {shlex.quote(str(file_path))} --force"
 
 
 def build_quality_manifest(
@@ -160,7 +166,7 @@ def build_quality_manifest(
         "dropped_chunk_count": 0,
         "dropped_chunk_reason": None,
         "quality_warnings": sorted(set(warnings)),
-        "repair_command": f"arc corpus sync <corpus> {file_path} --repair",
+        "repair_command": repair_command_for(file_path),
         "verify_command": "arc corpus verify <corpus> --json",
     }
     if corpus_type == "pdf":

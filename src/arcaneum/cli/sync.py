@@ -3869,22 +3869,27 @@ def _sync_directory_locked(
                                         _set_phase("idle")
                                         continue
 
-                            # In repair mode, extract BEFORE deleting so we can compare quality.
-                            # In normal force mode, delete first to avoid duplicates during indexing.
-                            if force and not repair:
+                            # Force and repair replace the file's existing chunks, but only
+                            # once the new ones are ready: deleting first left a file that
+                            # failed or was interrupted mid-extraction with no chunks at all.
+                            replace_path = (
+                                str(file_path.absolute()) if force and not repair else None
+                            )
+
+                            def _drop_replaced_chunks() -> None:
+                                if replace_path is None:
+                                    return
                                 if verbose and not output_json:
                                     progress.console.print(
-                                        f"[dim]Deleting existing chunks for {file_path.name}...[/dim]"
+                                        f"[dim]  Replacing existing chunks for {file_path.name}...[/dim]"
                                     )
-                                # Delete from Qdrant
-                                dual_indexer.delete_by_file_path(file_path_str)
-                                # Delete from MeiliSearch
-                                meili.delete_documents_by_file_paths(corpus, [file_path_str])
+                                dual_indexer.delete_by_file_path(replace_path)
+                                meili.delete_documents_by_file_paths(corpus, [replace_path])
                                 _delete_file_manifests(
                                     manifest_sync_manager,
                                     corpus,
                                     corpus_type,
-                                    [file_path_str],
+                                    [replace_path],
                                 )
 
                             # Chunk file based on corpus type
@@ -3908,6 +3913,7 @@ def _sync_directory_locked(
                                             f"exceeds {format_size(_MAX_CODE_FILE_SIZE)} limit "
                                             f"(likely generated/data file)[/yellow]"
                                         )
+                                    _drop_replaced_chunks()
                                     progress.advance(task, file_progress_weight)
                                     continue
 
@@ -3953,6 +3959,7 @@ def _sync_directory_locked(
                                 continue
 
                             if not chunks:
+                                _drop_replaced_chunks()
                                 _upsert_file_manifest(
                                     manifest_sync_manager,
                                     corpus,
@@ -4009,19 +4016,8 @@ def _sync_directory_locked(
                                         (file_path.name, None, None, "incomplete")
                                     )
 
-                                # Now safe to delete old chunks before indexing
-                                if verbose and not output_json:
-                                    progress.console.print(
-                                        f"[dim]  Deleting old chunks for {file_path.name}...[/dim]"
-                                    )
-                                dual_indexer.delete_by_file_path(file_path_str)
-                                meili.delete_documents_by_file_paths(corpus, [file_path_str])
-                                _delete_file_manifests(
-                                    manifest_sync_manager,
-                                    corpus,
-                                    corpus_type,
-                                    [file_path_str],
-                                )
+                                # The new chunks win; replace the old ones once embedded
+                                replace_path = file_path_str
 
                             if verbose and not output_json:
                                 progress.console.print(
@@ -4184,6 +4180,7 @@ def _sync_directory_locked(
                                     )
 
                                 _set_phase(f"indexing:{file_path.name}")
+                                _drop_replaced_chunks()
                                 qdrant_count, meili_count = dual_indexer.index_batch(documents)
                                 _upsert_file_manifest(
                                     manifest_sync_manager,

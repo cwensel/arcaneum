@@ -288,7 +288,8 @@ arc corpus sync MyCorpus /path/to/repo --git-version       # Keep multiple versi
   indexing a directory, use [`arc corpus parity`](#corpus-parity) instead.
 - `--dry-run`: Show what would be synced, renamed, or removed without making
   changes. Pairs well with `--parity` to preview cleanup.
-- `--force`: Force reindex all files (deletes existing chunks first)
+- `--force`: Force reindex all files (replaces existing chunks once the new ones
+  are embedded, so a failed or interrupted file keeps its old chunks)
 - `--include-stale-policy`: Re-index otherwise unchanged files whose indexing
   policy is stale or missing. Ordinary sync reports and skips these files so a
   legacy corpus is never migrated implicitly.

@@ -1,7 +1,9 @@
-"""A forced re-index keeps a file's old chunks until its new ones are ready.
+"""Re-indexing a file replaces its old chunks once its new ones are ready.
 
-Deleting first left an interrupted or failed file with no chunks at all, and
-with its stored metadata gone `--from-index` could no longer select it.
+Force deleted first, which left an interrupted or failed file with no chunks
+and, with its stored metadata gone, unselectable by `--from-index`. Normal
+sync never deleted at all, so an edited file kept its old chunks beside the
+new ones.
 """
 
 from __future__ import annotations
@@ -42,9 +44,20 @@ class _FakeDualIndexer:
         return len(documents), len(documents)
 
 
-def _force_sync(tmp_path, *, chunks, embed_error=None):
-    source = tmp_path / "note.md"
+def _sync(
+    tmp_path,
+    *,
+    chunks=(),
+    force=True,
+    embed_error=None,
+    already_indexed=False,
+    corpus_type="markdown",
+    content_paths=None,
+    git_version=False,
+):
+    source = tmp_path / ("paper.pdf" if corpus_type == "pdf" else "note.md")
     source.write_text("# Note\n\nbody\n")
+    source_path = str(source.resolve())
     recorder = _Recorder()
 
     meili = MagicMock()
@@ -57,11 +70,22 @@ def _force_sync(tmp_path, *, chunks, embed_error=None):
     manifests.delete_file_manifest.side_effect = lambda *a, **k: recorder.events.append(
         "delete_manifest"
     )
+    manifests.get_unindexed_files.return_value = ([source.resolve()], [])
+    manifests._get_indexed_file_paths_set.return_value = {source_path} if already_indexed else set()
+    if content_paths is not None:
+        # First lookup finds the content already indexed elsewhere; the second
+        # confirms this path registered as its alias.
+        manifests.find_file_by_content_hash.side_effect = [
+            content_paths,
+            [*content_paths, source_path],
+        ]
+    else:
+        manifests.find_file_by_content_hash.return_value = []
 
     targets = {
         "create_qdrant_client": MagicMock(return_value=MagicMock()),
         "get_meili_client": MagicMock(return_value=meili),
-        "get_collection_type": MagicMock(return_value="markdown"),
+        "get_collection_type": MagicMock(return_value=corpus_type),
         "get_collection_metadata": MagicMock(return_value={"model": "arctic-m"}),
         "_maybe_backfill_legacy_prompt_policy": MagicMock(
             side_effect=lambda q, c, t, m, metadata, o: (metadata, [])
@@ -74,7 +98,8 @@ def _force_sync(tmp_path, *, chunks, embed_error=None):
         "_report_embedding_backend": MagicMock(),
         "_finalize_embedding_clients": MagicMock(),
         "DualIndexer": MagicMock(return_value=_FakeDualIndexer(recorder)),
-        "chunk_markdown_file": MagicMock(return_value=chunks),
+        "chunk_markdown_file": MagicMock(return_value=list(chunks)),
+        "chunk_pdf_file": MagicMock(return_value=list(chunks)),
         "interaction_logger": MagicMock(),
     }
     with ExitStack() as stack:
@@ -87,7 +112,7 @@ def _force_sync(tmp_path, *, chunks, embed_error=None):
                 None,
                 "arctic-m",
                 None,
-                True,  # force
+                force,
                 False,
                 None,
                 None,
@@ -95,14 +120,18 @@ def _force_sync(tmp_path, *, chunks, embed_error=None):
                 None,
                 False,
                 True,  # output_json
+                git_version=git_version,
             )
         except SystemExit:
             pass
     return recorder.events
 
 
+_BODY = [{"text": "body", "metadata": {}}]
+
+
 def test_force_deletes_old_chunks_only_after_embedding(tmp_path):
-    events = _force_sync(tmp_path, chunks=[{"text": "body", "metadata": {}}])
+    events = _sync(tmp_path, chunks=_BODY)
 
     assert "index_batch" in events
     first_delete = events.index("delete_qdrant")
@@ -111,11 +140,7 @@ def test_force_deletes_old_chunks_only_after_embedding(tmp_path):
 
 
 def test_force_keeps_old_chunks_when_embedding_fails(tmp_path):
-    events = _force_sync(
-        tmp_path,
-        chunks=[{"text": "body", "metadata": {}}],
-        embed_error=RuntimeError("embedding failed"),
-    )
+    events = _sync(tmp_path, chunks=_BODY, embed_error=RuntimeError("embedding failed"))
 
     assert "embed" in events
     assert "delete_qdrant" not in events
@@ -125,7 +150,48 @@ def test_force_keeps_old_chunks_when_embedding_fails(tmp_path):
 
 def test_force_still_clears_old_chunks_when_file_yields_no_text(tmp_path):
     # The file is recorded with zero chunks, so its old chunks must go too.
-    events = _force_sync(tmp_path, chunks=[])
+    events = _sync(tmp_path, chunks=[])
 
     assert "delete_qdrant" in events
     assert "delete_meili" in events
+
+
+def test_edited_file_replaces_its_old_chunks_after_embedding(tmp_path):
+    events = _sync(tmp_path, chunks=_BODY, force=False, already_indexed=True)
+
+    assert "index_batch" in events
+    first_delete = events.index("delete_qdrant")
+    assert events.index("embed") < first_delete < events.index("index_batch")
+    assert events.index("delete_meili") < events.index("index_batch")
+
+
+def test_new_file_has_no_old_chunks_to_delete(tmp_path):
+    events = _sync(tmp_path, chunks=_BODY, force=False, already_indexed=False)
+
+    assert "index_batch" in events
+    assert "delete_qdrant" not in events
+    assert "delete_meili" not in events
+
+
+def test_edited_pdf_that_became_an_alias_drops_its_old_chunks(tmp_path):
+    # Its own stale chunks must not outlive its registration as an alias.
+    events = _sync(
+        tmp_path,
+        force=False,
+        already_indexed=True,
+        corpus_type="pdf",
+        content_paths=["/papers/original.pdf"],
+    )
+
+    assert "embed" not in events
+    assert "delete_qdrant" in events
+    assert "delete_meili" in events
+
+
+def test_git_version_keeps_other_versions_of_an_edited_file(tmp_path):
+    # --git-version keeps every indexed version under the same file_path.
+    events = _sync(tmp_path, chunks=_BODY, force=False, already_indexed=True, git_version=True)
+
+    assert "index_batch" in events
+    assert "delete_qdrant" not in events
+    assert "delete_meili" not in events

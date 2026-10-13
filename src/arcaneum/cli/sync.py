@@ -3704,6 +3704,16 @@ def _sync_directory_locked(
                 qdrant_client=qdrant, meili_client=meili, collection_name=corpus, index_name=corpus
             )
 
+            # A file already indexed at its path was edited since: its old chunks
+            # must be replaced, not left beside the new ones. New files have none,
+            # and --git-version keeps every version under the same path.
+            previously_indexed_paths: Set[str] = (
+                manifest_sync_manager._get_indexed_file_paths_set(corpus)
+                & {str(f.absolute()) for f in files}
+                if files and not force and not git_version
+                else set()
+            )
+
             # Install memory-diagnostic SIGUSR1 handler and take baseline snapshot.
             # kill -USR1 <pid> during a suspected hang dumps mem + thread stacks.
             from arcaneum.embeddings.memory_probe import (
@@ -3821,9 +3831,14 @@ def _sync_directory_locked(
                                     canonical_path = indexed_content_paths[0]
                                     if file_path_str != canonical_path:
                                         # Existing duplicate chunk sets are removed during
-                                        # repair/force. Normal sync reaches this branch for a
-                                        # newly discovered alias, which has no chunks yet.
-                                        if repair or force:
+                                        # repair/force, as are the stale chunks of a file
+                                        # edited into a copy of another. A newly discovered
+                                        # alias has no chunks yet.
+                                        if (
+                                            repair
+                                            or force
+                                            or file_path_str in previously_indexed_paths
+                                        ):
                                             dual_indexer.delete_by_file_path(file_path_str)
                                             meili.delete_documents_by_file_paths(
                                                 corpus, [file_path_str]
@@ -3869,11 +3884,15 @@ def _sync_directory_locked(
                                         _set_phase("idle")
                                         continue
 
-                            # Force and repair replace the file's existing chunks, but only
-                            # once the new ones are ready: deleting first left a file that
-                            # failed or was interrupted mid-extraction with no chunks at all.
+                            # Force, repair, and edited files replace the file's existing
+                            # chunks, but only once the new ones are ready: deleting first
+                            # left a file that failed or was interrupted mid-extraction
+                            # with no chunks at all.
                             replace_path = (
-                                str(file_path.absolute()) if force and not repair else None
+                                file_path_str
+                                if (force and not repair)
+                                or file_path_str in previously_indexed_paths
+                                else None
                             )
 
                             def _drop_replaced_chunks() -> None:

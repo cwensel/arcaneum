@@ -46,9 +46,10 @@ arc corpus hook uninstall MyCorpus                    # Remove just this corpus'
 arc corpus sync MyCorpus --changed-since HEAD              # Last commit
 arc corpus sync MyCorpus --changed-since ORIG_HEAD..HEAD   # Since a pull
 
-# Re-extract unchanged files chosen by stored metadata (after an extractor fix)
-arc corpus sync MyCorpus --from-index method=pymupdf_normalized --dry-run
-arc corpus sync MyCorpus --from-index method=pymupdf_normalized
+# Re-extract unchanged files chosen by stored metadata (after an extractor fix);
+# `!fallback` selects only PDFs not yet re-extracted since the column-order fix
+arc corpus sync MyCorpus --from-index 'method=pymupdf_normalized,!fallback' --dry-run
+arc corpus sync MyCorpus --from-index 'method=pymupdf_normalized,!fallback'
 arc corpus sync MyCorpus --from-index 'version<0.10.0'
 
 # Check health: content quality plus Qdrant/MeiliSearch parity

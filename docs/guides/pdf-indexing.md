@@ -281,12 +281,16 @@ reach PDFs that were indexed cleanly but with the older behavior, select them by
 their stored quality manifest instead:
 
 ```bash
-arc corpus sync pdf-docs --from-index method=pymupdf_normalized --dry-run
-arc corpus sync pdf-docs --from-index method=pymupdf_normalized
+arc corpus sync pdf-docs --from-index 'method=pymupdf_normalized,!fallback' --dry-run
+arc corpus sync pdf-docs --from-index 'method=pymupdf_normalized,!fallback'
 ```
 
-The selected files are re-extracted even though they are unchanged on disk. See
-the [CLI reference](cli-reference.md) for the selector keys.
+The selected files are re-extracted even though they are unchanged on disk.
+Prefer a selector that stops matching a file once it is re-extracted: every
+extraction since the column-order fix records `fallback_reason`, so `!fallback`
+selects only PDFs still awaiting that fix and an interrupted run resumes where
+it stopped. `method=pymupdf_normalized` alone also matches files already
+re-extracted. See the [CLI reference](cli-reference.md) for the selector keys.
 
 ## Extraction Quality and Provenance
 

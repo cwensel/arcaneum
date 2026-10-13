@@ -136,3 +136,30 @@ def test_invalid_selector_is_an_invalid_argument():
         sync_mod._resolve_from_index(
             qdrant, "Notes", "method=pymupdf_normalized", dry_run=False, output_json=False
         )
+
+
+@pytest.mark.parametrize(
+    ("count", "kwargs", "expected"),
+    [
+        (
+            48,
+            {"from_index": "method=pymupdf_normalized"},
+            "the 48 files matching method=pymupdf_normalized",
+        ),
+        (3, {"repair": True}, "the 3 files flagged for repair"),
+        (120, {"full_directory": True}, "all 120 files"),
+        (1, {}, "the 1 given file"),
+        (None, {"from_index": "version<0.10.0"}, "the files matching version<0.10.0"),
+        (None, {"full_directory": True}, "all files"),
+    ],
+)
+def test_force_scope_names_the_narrowed_selection(count, kwargs, expected):
+    # A forced run over a selection must not read as a whole-corpus reindex.
+    scope = sync_mod._force_scope(
+        count,
+        from_index=kwargs.get("from_index"),
+        repair=kwargs.get("repair", False),
+        full_directory=kwargs.get("full_directory", False),
+    )
+
+    assert scope == expected

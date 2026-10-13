@@ -2241,6 +2241,29 @@ def _report_deferred_policy_hint(
         )
 
 
+def _force_scope(
+    file_count: Optional[int],
+    *,
+    from_index: Optional[str],
+    repair: bool,
+    full_directory: bool,
+) -> str:
+    """Name the files a forced re-index covers.
+
+    --from-index, repair, and explicit paths force only a selection, which must
+    not read as a reindex of the whole corpus.
+    """
+    count = "" if file_count is None else f"{file_count} "
+    noun = "file" if file_count == 1 else "files"
+    if from_index:
+        return f"the {count}{noun} matching {from_index}"
+    if repair:
+        return f"the {count}{noun} flagged for repair"
+    if full_directory:
+        return f"all {count}{noun}"
+    return f"the {count}given {noun}"
+
+
 def _resolve_from_index(
     qdrant,
     corpus: str,
@@ -2901,7 +2924,13 @@ def _sync_directory_locked(
                 if repair:
                     print_info("Sync mode: repair (re-index incomplete files)")
                 elif force:
-                    print_info("Sync mode: force (reindex all files)")
+                    scope = _force_scope(
+                        None,
+                        from_index=from_index,
+                        repair=repair,
+                        full_directory=not from_file and not single_files and bool(dir_paths),
+                    )
+                    print_info(f"Sync mode: force (reindex {scope})")
                 elif git_update:
                     print_info("Sync mode: git commit-skip (--git-update)")
                     print_info("  - Repos with unchanged HEAD commits are skipped entirely")
@@ -3139,7 +3168,13 @@ def _sync_directory_locked(
 
         if force:
             if not output_json:
-                print_info("Force mode: reindexing all files")
+                scope = _force_scope(
+                    len(files),
+                    from_index=from_index,
+                    repair=repair,
+                    full_directory=full_directory_count_sync,
+                )
+                print_info(f"Force mode: reindexing {scope} (change detection bypassed)")
         elif parity:
             # Full parity check: scroll all paths from both systems (slower but thorough)
             # Detects renames, stale paths, and cross-system backfill needs

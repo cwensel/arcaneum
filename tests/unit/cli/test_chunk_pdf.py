@@ -488,3 +488,58 @@ def test_all_replacement_text_keeps_an_auditable_manifest(
     assert result.quality_manifest["replacement_omissions"]["degraded"] is True
     assert result.quality_manifest["replacement_omissions"]["hard_boundary_count"] == 0
     assert result.quality_manifest["replacement_omissions"]["normalized_run_count"] == 1
+
+
+def test_quality_manifest_records_why_layout_extraction_fell_back(tmp_path):
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"%PDF-1.4\n")
+
+    manifest = _build_quality_manifest(
+        file_path=source,
+        corpus_type="pdf",
+        source_hash="abc123",
+        chunk_count=1,
+        metadata={
+            "extraction_method": "pymupdf_normalized",
+            "layout_fallback_reason": "LayoutWorkerTimeout",
+            "layout_fallback_detail": "PDF layout worker exceeded 300s timeout",
+        },
+    )
+
+    assert manifest["fallback_method"] == "pymupdf_normalized"
+    assert manifest["fallback_reason"] == "LayoutWorkerTimeout"
+    assert manifest["fallback_detail"] == "PDF layout worker exceeded 300s timeout"
+
+
+def test_quality_manifest_records_dropout_recovery_as_fallback_reason(tmp_path):
+    source = tmp_path / "scan.pdf"
+    source.write_bytes(b"%PDF-1.4\n")
+
+    manifest = _build_quality_manifest(
+        file_path=source,
+        corpus_type="pdf",
+        source_hash="abc123",
+        chunk_count=1,
+        metadata={"extraction_method": "pymupdf_normalized", "dropout_recovered": True},
+    )
+
+    assert manifest["fallback_method"] == "pymupdf_normalized"
+    assert manifest["fallback_reason"] == "dropout_recovered"
+
+
+def test_quality_manifest_without_fallback_has_no_reason(tmp_path):
+    source = tmp_path / "clean.pdf"
+    source.write_bytes(b"%PDF-1.4\n")
+
+    manifest = _build_quality_manifest(
+        file_path=source,
+        corpus_type="pdf",
+        source_hash="abc123",
+        chunk_count=1,
+        metadata={"extraction_method": "pymupdf4llm_markdown"},
+    )
+
+    assert manifest["fallback_method"] is None
+    assert manifest["fallback_reason"] is None
+    assert manifest["fallback_detail"] is None
+

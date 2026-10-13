@@ -288,6 +288,8 @@ Each indexed PDF has a quality manifest containing:
 
 - covered, empty, and low-text pages
 - OCR trigger, confidence, failures, and selected extraction candidates
+- the fallback extractor used, if any, and why the preferred one was skipped
+  (`fallback_method`, `fallback_reason`, `fallback_detail`)
 - omitted replacement-character counts and fidelity warnings
 - extraction and chunking policy identities
 

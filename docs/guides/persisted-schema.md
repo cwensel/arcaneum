@@ -26,8 +26,9 @@ representation is stale. Ordinary sync and repair report policy-only staleness
 without rewriting the file; `--include-stale-policy` opts into that migration.
 
 PDF quality manifests use schema version 1 and record page coverage, OCR
-provenance, extraction candidates, replacement-character omissions, warnings,
-and the active indexing policy. Content-identical PDFs also retain their source
+provenance, extraction candidates, the fallback extractor and why it was used
+(`fallback_reason`, `fallback_detail`), replacement-character omissions,
+warnings, and the active indexing policy. Content-identical PDFs also retain their source
 paths as aliases of one canonical searchable document. These are optional,
 backward-compatible fields: legacy records remain readable and verification
 reports the missing evidence until an explicit migration or reindex.

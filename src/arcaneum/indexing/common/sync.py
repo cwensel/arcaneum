@@ -103,10 +103,19 @@ def build_quality_manifest(
         warnings.append("replacement_fidelity_degraded")
 
     method = extraction_method or metadata.get("extraction_method") or metadata.get("method")
+    # fallback_reason records why the preferred extractor was not used, so the
+    # files a later extractor fix would improve can be selected from the index.
+    fallback_reason = None
+    fallback_detail = None
     if corpus_type == "code":
         fallback_method = "line_based" if method == "line_based" else None
+    elif metadata.get("layout_fallback_reason"):
+        fallback_method = "pymupdf_normalized"
+        fallback_reason = metadata["layout_fallback_reason"]
+        fallback_detail = metadata.get("layout_fallback_detail")
     elif metadata.get("dropout_recovered"):
         fallback_method = metadata.get("extraction_method")
+        fallback_reason = "dropout_recovered"
     elif metadata.get("extraction_floor"):
         fallback_method = "normalized_bypass_no_improvement"
     else:
@@ -125,6 +134,8 @@ def build_quality_manifest(
         "extractor_version": "arcaneum.quality_manifest.v1",
         "extraction_method": method,
         "fallback_method": fallback_method,
+        "fallback_reason": fallback_reason,
+        "fallback_detail": fallback_detail,
         "chunk_count": chunk_count,
         "page_coverage": {
             "page_count": page_count,

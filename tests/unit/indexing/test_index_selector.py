@@ -166,3 +166,46 @@ def test_present_field_with_no_matching_value_selects_nothing():
 def test_malformed_selectors_are_rejected(expression, message):
     with pytest.raises(IndexSelectorError, match=message):
         parse_index_selector(expression)
+
+
+def test_negated_key_selects_points_that_do_not_record_the_field():
+    """`!fallback` means the field is absent, as in Kubernetes label selectors.
+
+    Manifests written before fallback_reason existed lack the key entirely,
+    which is how stale normalized extractions are told apart from files that
+    fell back after the column-order fix.
+    """
+    qdrant = _FakeQdrant(
+        [
+            _chunk("/p/before-fix.pdf", "pymupdf_normalized"),
+            _chunk("/p/after-fix.pdf", "pymupdf_normalized", fallback_reason="LayoutWorkerTimeout"),
+            _chunk("/p/clean.pdf", "pymupdf4llm_markdown", fallback_reason=None),
+        ]
+    )
+
+    assert select_indexed_paths(qdrant, "Papers", "method=pymupdf_normalized,!fallback") == [
+        "/p/before-fix.pdf"
+    ]
+
+
+def test_negated_key_absent_everywhere_is_not_an_error():
+    qdrant = _FakeQdrant([_chunk("/p/a.pdf", "pymupdf_normalized")])
+
+    assert select_indexed_paths(qdrant, "Papers", "!fallback") == ["/p/a.pdf"]
+
+
+def test_negated_key_takes_no_value():
+    with pytest.raises(IndexSelectorError, match="no value"):
+        parse_index_selector("!fallback=LayoutWorkerTimeout")
+
+
+def test_negated_key_needs_the_record_that_would_hold_the_field():
+    # A point without any quality manifest says nothing about fallback_reason.
+    qdrant = _FakeQdrant(
+        [
+            {"file_path": "/p/no-manifest.pdf", "app_version": "0.10.0"},
+            _chunk("/p/old.pdf", "pymupdf_normalized"),
+        ]
+    )
+
+    assert select_indexed_paths(qdrant, "Papers", "!fallback") == ["/p/old.pdf"]

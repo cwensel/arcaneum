@@ -1616,7 +1616,8 @@ def sync_directory(
     fallback (why the preferred extractor was skipped), ocr (why OCR ran),
     warning (a recorded quality warning), version (arc version that indexed
     the file; supports < <= > >=). Any other key is a dotted payload path,
-    e.g. quality_manifest.page_coverage.page_count=3.
+    e.g. quality_manifest.page_coverage.page_count=3. !key selects files that
+    do not record key; quote the selector so the shell leaves ! alone.
 
     Use --text-workers to parallelize AST chunking for code corpora.
 

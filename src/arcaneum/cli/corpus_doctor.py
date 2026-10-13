@@ -55,7 +55,7 @@ def diagnose_corpus(
     Each finding has a severity: "error" (a check failed), "action" (needs a
     fix), "optional" (a deliberate choice, e.g. policy migration), or "info".
     """
-    from ..indexing.verify import file_verification_breakdown
+    from ..indexing.verify import STALE_EXTRACTION_SELECTOR, file_verification_breakdown
 
     findings: List[Dict[str, Any]] = []
     orphans = orphans or {"prunable": [], "dir_missing": [], "referenced": []}
@@ -92,7 +92,13 @@ def diagnose_corpus(
                 count=len(verification.errors),
             )
         breakdown = file_verification_breakdown(verification, include_stale_policy=False)
-        if breakdown["repairable_files"]:
+        # Files whose only defect is a pre-fix normalized extraction get a
+        # targeted re-extract; repair would also fix them, but scans for more.
+        stale_extraction_only = set(breakdown.get("stale_extraction_only_paths", []))
+        other_repairable = [
+            p for p in breakdown["repairable_paths"] if p not in stale_extraction_only
+        ]
+        if other_repairable:
             details = {
                 counter: getattr(verification, counter, 0)
                 for counter in _REPAIR_DETAIL_COUNTERS
@@ -101,10 +107,19 @@ def diagnose_corpus(
             add(
                 "repairable_files",
                 "action",
-                f"{breakdown['repairable_files']} files need re-indexing",
-                count=breakdown["repairable_files"],
+                f"{len(other_repairable)} files need re-indexing",
+                count=len(other_repairable),
                 command=repair,
                 details=details,
+            )
+        if stale_extraction_only:
+            add(
+                "stale_extraction",
+                "action",
+                f"{len(stale_extraction_only)} PDFs were extracted before the column-order "
+                "fix, so two-column pages are indexed as interleaved lines; re-extract them",
+                count=len(stale_extraction_only),
+                command=f"arc corpus sync {name} --from-index '{STALE_EXTRACTION_SELECTOR}'",
             )
         if breakdown["policy_only_files"]:
             add(

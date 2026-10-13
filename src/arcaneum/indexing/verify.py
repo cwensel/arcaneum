@@ -17,6 +17,7 @@ Usage:
 import hashlib
 import logging
 import os
+import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,6 +43,24 @@ logger = logging.getLogger(__name__)
 # evidence; code chunking method). Markdown is read as-is with nothing to
 # describe, so only these types count a missing manifest as a defect.
 QUALITY_MANIFEST_TYPES = frozenset({"pdf", "code"})
+
+# Selects the files `extraction_predates_column_fix` flags. Kept beside the
+# rule so the command doctor prints re-extracts exactly what verify reports.
+STALE_EXTRACTION_SELECTOR = "method=pymupdf_normalized,!fallback"
+
+
+def extraction_predates_column_fix(manifest: Optional[dict]) -> bool:
+    """Return whether a PDF manifest came from the pre-fix normalized extractor.
+
+    Normalized extraction used to sort text by vertical position, merging
+    side-by-side columns. Every manifest written since the fix records
+    fallback_reason (possibly null), so a normalized extraction without that
+    key predates it.
+    """
+    if not isinstance(manifest, dict) or "fallback_reason" in manifest:
+        return False
+    method = manifest.get("extraction_method")
+    return isinstance(method, str) and "pymupdf_normalized" in re.split(r"[+:]", method)
 
 
 def _manifest_fidelity_state(
@@ -147,6 +166,8 @@ class FileVerificationResult:
     repair_recommended: bool = False  # safe to enqueue for automatic repair
     stale_policy: bool = False  # source is unchanged but indexing policy is obsolete
     policy_only_repair: bool = False  # repair is recommended only to migrate indexing policy
+    stale_extraction: bool = False  # extracted by the pre-fix normalized extractor
+    stale_extraction_only: bool = False  # stale extraction is the only content defect
     dropped_chunk_count: int = 0  # chunks intentionally omitted during extraction cleanup
     sub_floor_chunk_count: int = 0  # non-sole chunks below the active fragment floor
     quality_manifest_missing: bool = False
@@ -200,6 +221,7 @@ class CollectionVerificationResult:
     duplicate_items: int = 0  # files holding more than one point per chunk_index
     duplicate_source_groups: int = 0  # content hashes with multiple searchable documents
     stale_policy_items: int = 0
+    stale_extraction_items: int = 0
     dropped_chunks: int = 0  # legacy v1 manifests that omitted whole chunks
     sub_floor_chunks: int = 0
     quality_manifest_gaps: int = 0
@@ -242,15 +264,20 @@ def file_verification_breakdown(
     recovery_exhausted = [
         file.file_path for file in files if getattr(file, "recovery_exhausted", False)
     ]
+    stale_extraction_only = [
+        file.file_path for file in files if getattr(file, "stale_extraction_only", False)
+    ]
     return {
         "repairable_paths": repairable,
         "policy_only_paths": policy_only,
         "degraded_paths": degraded,
         "recovery_exhausted_paths": recovery_exhausted,
+        "stale_extraction_only_paths": stale_extraction_only,
         "repairable_files": len(repairable),
         "policy_only_files": len(policy_only),
         "degraded_files": len(degraded),
         "recovery_exhausted_files": len(recovery_exhausted),
+        "stale_extraction_only_files": len(stale_extraction_only),
     }
 
 
@@ -719,6 +746,7 @@ class CollectionVerifier:
         dropout_at_floor = 0
         duplicate_count = 0
         stale_policy_count = 0
+        stale_extraction_count = 0
         dropped_chunk_count = 0
         sub_floor_chunk_count = 0
         quality_manifest_gap_count = 0
@@ -872,6 +900,18 @@ class CollectionVerifier:
                 manifest["quality_warnings"] = sorted(warnings)
                 file_data["quality_manifest"] = manifest
 
+            stale_extraction = bool(
+                collection_type == "pdf"
+                and file_data["has_persisted_quality_manifest"]
+                and extraction_predates_column_fix(manifest)
+            )
+            if stale_extraction:
+                stale_extraction_count += 1
+                warnings = set(manifest.get("quality_warnings", []))
+                warnings.add("stale_extraction")
+                manifest["quality_warnings"] = sorted(warnings)
+                file_data["quality_manifest"] = manifest
+
             dropped_for_file = 0
             if isinstance(manifest, dict):
                 value = manifest.get("dropped_chunk_count", 0)
@@ -934,7 +974,7 @@ class CollectionVerifier:
                 manifest["quality_warnings"] = sorted(warnings)
                 file_data["quality_manifest"] = manifest
 
-            non_policy_repair_recommended = (
+            other_content_repair = (
                 not is_complete
                 or (has_garbled and not recovery_exhausted)
                 or suspected_dropout
@@ -946,8 +986,10 @@ class CollectionVerifier:
                 or sub_floor_for_file > 0
                 or dropped_for_file > 0
             )
+            non_policy_repair_recommended = other_content_repair or stale_extraction
             repair_recommended = non_policy_repair_recommended or stale_policy
             policy_only_repair = stale_policy and not non_policy_repair_recommended
+            stale_extraction_only = stale_extraction and not other_content_repair
 
             file_is_healthy = (
                 is_complete
@@ -959,6 +1001,7 @@ class CollectionVerifier:
                 and not fidelity_degraded
                 and not stale_policy
                 and not quality_manifest_missing
+                and not stale_extraction
                 and sub_floor_for_file == 0
                 and dropped_for_file == 0
             )
@@ -991,6 +1034,8 @@ class CollectionVerifier:
                     repair_recommended=repair_recommended,
                     stale_policy=stale_policy,
                     policy_only_repair=policy_only_repair,
+                    stale_extraction=stale_extraction,
+                    stale_extraction_only=stale_extraction_only,
                     dropped_chunk_count=dropped_for_file,
                     sub_floor_chunk_count=sub_floor_for_file,
                     quality_manifest_missing=quality_manifest_missing,
@@ -1010,6 +1055,7 @@ class CollectionVerifier:
             duplicate_items=duplicate_count,
             duplicate_source_groups=len(duplicate_source_groups),
             stale_policy_items=stale_policy_count,
+            stale_extraction_items=stale_extraction_count,
             dropped_chunks=dropped_chunk_count,
             sub_floor_chunks=sub_floor_chunk_count,
             quality_manifest_gaps=quality_manifest_gap_count,
@@ -1020,6 +1066,7 @@ class CollectionVerifier:
                 and duplicate_count == 0
                 and not duplicate_source_groups
                 and stale_policy_count == 0
+                and stale_extraction_count == 0
                 and dropped_chunk_count == 0
                 and sub_floor_chunk_count == 0
                 and quality_manifest_gap_count == 0

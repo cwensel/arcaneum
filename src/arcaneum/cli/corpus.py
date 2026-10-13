@@ -1990,6 +1990,7 @@ def corpus_verify_command(
                 "sub_floor_chunks": getattr(qdrant_result, "sub_floor_chunks", 0),
                 "duplicate_source_groups": getattr(qdrant_result, "duplicate_source_groups", 0),
                 "stale_policy_files": getattr(qdrant_result, "stale_policy_items", 0),
+                "stale_extraction_files": getattr(qdrant_result, "stale_extraction_items", 0),
                 "incomplete_files": qdrant_result.incomplete_items,
                 "quality_manifest_gaps": getattr(qdrant_result, "quality_manifest_gaps", 0),
             }

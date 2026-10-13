@@ -252,6 +252,9 @@ name the fields worth re-indexing by:
 
 Any other key is read as a dotted payload path, for example
 `quality_manifest.page_coverage.page_count=3`. Matching is case-insensitive.
+`!key` (no value) selects files whose record does not store that field at all,
+as in Kubernetes label selectors; quote the selector so the shell leaves `!`
+alone.
 A key that no indexed chunk records is an error rather than an empty
 selection: it is either a typo or a field this corpus type (or the arc version
 that indexed it) does not store. `fallback` is recorded only by files indexed
@@ -262,6 +265,7 @@ arc corpus sync Papers --from-index method=pymupdf_normalized
 arc corpus sync Papers --from-index fallback=LayoutWorkerTimeout --dry-run
 arc corpus sync Notes --from-index 'version<0.10.0'
 arc corpus sync Papers --from-index 'method=pymupdf_normalized,version<0.10.0'
+arc corpus sync Papers --from-index 'method=pymupdf_normalized,!fallback'  # What doctor suggests
 ```
 
 **Git-Aware Sync Options (for code corpora):**
@@ -829,14 +833,22 @@ arc corpus verify MyCorpus --deep --strict --json
 - **Parity status**: Reports whether both systems have the corpus
 - **Detailed diagnostics**: Shows warnings for configuration issues
 - **PDF quality by default**: Reports garbled/dropout files, dropped or
-  sub-floor chunks, duplicate sources, stale policies, incomplete files, and
-  missing quality manifests from persisted index state
+  sub-floor chunks, duplicate sources, stale policies, stale extractions,
+  incomplete files, and missing quality manifests from persisted index state
 - **Deep verification**: `--deep` additionally compares source hashes and PDF
   page counts with files on disk
 
 Verification reports issues with exit status 0 by default so it remains useful
 as an interactive diagnostic. Pass `--strict` to return status 1 for any quality
 or service issue in CI and agent workflows.
+
+`stale_extraction_files` counts PDFs whose stored manifest names the
+`pymupdf_normalized` extractor but has no `fallback_reason` field. Every
+manifest written since the column-order fix records that field, so these were
+extracted while normalized extraction still merged side-by-side columns into
+one line. They are unhealthy and repairable; `arc corpus repair` re-extracts
+them, and `arc corpus sync NAME --from-index 'method=pymupdf_normalized,!fallback'`
+re-extracts only them.
 
 `dropped_chunks` is a legacy-v1 fidelity counter for indexes that omitted whole
 replacement-heavy chunks. Current indexers preserve nearby text and therefore
@@ -947,6 +959,7 @@ Findings map to commands:
 | Finding | Command |
 | --- | --- |
 | Files need re-indexing (incomplete, duplicate, degraded) | `arc corpus repair NAME` |
+| PDFs extracted before the column-order fix, with no other defect | `arc corpus sync NAME --from-index 'method=pymupdf_normalized,!fallback'` |
 | Items differ between Qdrant and MeiliSearch | `arc corpus repair NAME` |
 | MeiliSearch documents for files gone from Qdrant and disk | `arc corpus repair NAME --prune-orphans` |
 | Corpus exists only in Qdrant | `arc corpus parity NAME --create-missing` |

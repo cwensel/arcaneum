@@ -57,7 +57,8 @@ full-text search (MeiliSearch) for the same content.
   policy is stale or missing
 - --from-index SELECTOR: Instead of paths, re-extract the indexed files whose
   stored metadata matches SELECTOR (e.g. method=pymupdf_normalized,
-  version<0.10.0); shorthand keys are method, fallback, ocr, warning, version
+  version<0.10.0); shorthand keys are method, fallback, ocr, warning, version;
+  `!key` selects files that do not record key
 - --no-wait: Fail instead of queueing when another sync of this corpus is running
 - --lock-timeout: Seconds to wait for the corpus write lock (default: 600)
 
@@ -115,7 +116,9 @@ full-text search (MeiliSearch) for the same content.
 
 `/corpus doctor` writes nothing. Required fixes are combined per corpus (for
 example `arc corpus repair NAME --prune-orphans`); policy migration and pruning
-files whose directory is missing are listed separately as optional.
+files whose directory is missing are listed separately as optional. PDFs whose
+only defect is extraction from before the column-order fix get a targeted
+`arc corpus sync NAME --from-index 'method=pymupdf_normalized,!fallback'`.
 
 **Repair Behavior:**
 

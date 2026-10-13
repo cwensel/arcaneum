@@ -112,8 +112,15 @@ combined method), `fallback` (why the preferred extractor was skipped), `ocr`
 (why OCR ran), `warning` (a recorded quality warning), and `version` (arc
 version that indexed the file, with `<`, `<=`, `>`, `>=`). Any other key is a
 dotted payload path such as `quality_manifest.page_coverage.page_count=3`. A
-key no chunk records is an error, not an empty selection. Missing files are
-skipped, never deleted.
+key no chunk records is an error, not an empty selection. `!key` selects files
+whose record lacks the field (quote the selector so the shell leaves `!`
+alone). Missing files are skipped, never deleted.
+
+`arc corpus verify` reports `stale_extraction_files`: PDFs extracted before the
+column-order fix, whose two-column pages are indexed as interleaved lines.
+`arc corpus doctor` lists the targeted fix,
+`arc corpus sync <corpus> --from-index 'method=pymupdf_normalized,!fallback'`;
+`arc corpus repair` also re-extracts them.
 
 ## Parity Behavior
 

@@ -2741,6 +2741,13 @@ def _sync_directory_locked(
                     f"extraction floor — skipped[/dim]"
                 )
 
+            stale_extraction_count = getattr(verification_result, "stale_extraction_items", 0)
+            if stale_extraction_count > 0 and not output_json:
+                console.print(
+                    f"[yellow]⚠ Found {stale_extraction_count} PDFs extracted before the "
+                    "column-order fix (two-column pages read as interleaved lines)[/yellow]"
+                )
+
             # Report duplicated files: the same chunk stored more than once,
             # from a re-index that appended instead of overwriting.
             duplicate_count = verification_result.duplicate_items

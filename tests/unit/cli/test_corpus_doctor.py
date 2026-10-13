@@ -15,13 +15,21 @@ from arcaneum.cli.corpus_doctor import diagnose_corpus
 from arcaneum.cli.main import cli
 
 
-def _verification(repairable=(), policy_only=(), recovery_exhausted=(), errors=(), **counts):
+def _verification(
+    repairable=(),
+    policy_only=(),
+    recovery_exhausted=(),
+    stale_extraction_only=(),
+    errors=(),
+    **counts,
+):
     files = [
         SimpleNamespace(
             file_path=path,
             policy_only_repair=path in policy_only,
             fidelity_degraded=False,
             recovery_exhausted=path in recovery_exhausted,
+            stale_extraction_only=path in stale_extraction_only,
         )
         for path in {*repairable, *policy_only, *recovery_exhausted}
     ]
@@ -288,3 +296,45 @@ def test_check_corpus_classifies_only_meili_only_files_missing_from_disk(tmp_pat
 
     assert classified["paths"] == [gone]
     assert result["commands"] == ["arc corpus repair Docs --prune-orphans"]
+
+
+def test_stale_extraction_only_files_get_a_targeted_reextract_command():
+    stale = ["/d/a.pdf", "/d/b.pdf"]
+
+    result = diagnose_corpus(
+        "Docs",
+        "both",
+        _verification(repairable=stale, stale_extraction_only=stale, stale_extraction_items=2),
+        _synced(),
+        None,
+    )
+
+    assert result["status"] == "needs_action"
+    assert result["commands"] == [
+        "arc corpus sync Docs --from-index 'method=pymupdf_normalized,!fallback'"
+    ]
+    assert [(f["code"], f["count"]) for f in result["findings"]] == [("stale_extraction", 2)]
+
+
+def test_other_defects_keep_repair_and_add_the_targeted_command():
+    result = diagnose_corpus(
+        "Docs",
+        "both",
+        _verification(
+            repairable=["/d/broken.pdf", "/d/stale.pdf"],
+            stale_extraction_only=["/d/stale.pdf"],
+            incomplete_items=1,
+            stale_extraction_items=1,
+        ),
+        _synced(),
+        None,
+    )
+
+    assert result["commands"] == [
+        "arc corpus repair Docs",
+        "arc corpus sync Docs --from-index 'method=pymupdf_normalized,!fallback'",
+    ]
+    assert [(f["code"], f["count"]) for f in result["findings"]] == [
+        ("repairable_files", 1),
+        ("stale_extraction", 1),
+    ]

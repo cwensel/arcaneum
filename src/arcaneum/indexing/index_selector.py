@@ -5,10 +5,12 @@ be selected. Each term compares one stored payload field:
 
     method=pymupdf_normalized
     method=pymupdf_normalized,version<0.10.0
+    method=pymupdf_normalized,!fallback
     quality_manifest.page_coverage.page_count=3
 
-Shorthand keys name the fields worth re-indexing by; any other key is read as
-a dotted payload path. Matching happens client-side over a full scroll so that
+`!key` selects records that do not store the field at all, as in Kubernetes
+label selectors. Shorthand keys name the fields worth re-indexing by; any
+other key is read as a dotted payload path. Matching happens client-side over a full scroll so that
 combined extraction methods and version ordering compare correctly.
 """
 
@@ -40,6 +42,7 @@ SHORTHANDS: Dict[str, _Field] = {
 }
 
 _TERM = re.compile(r"^\s*([A-Za-z_][\w.]*)\s*(<=|>=|=|<|>)\s*(.*?)\s*$")
+_ABSENT_TERM = re.compile(r"^\s*!\s*([A-Za-z_][\w.]*)\s*$")
 _MISSING = object()
 _PATH_KEYS = {"file_path", "canonical_path", FILE_MANIFEST_PAYLOAD_KEY}
 
@@ -59,6 +62,18 @@ def parse_index_selector(expression: str) -> List[SelectorTerm]:
 
     terms = []
     for raw in expression.split(","):
+        if raw.strip().startswith("!"):
+            absent = _ABSENT_TERM.match(raw)
+            if not absent:
+                raise IndexSelectorError(
+                    f"Selector term {raw.strip()!r} takes no value; !key selects records "
+                    "that do not store key"
+                )
+            key = absent.group(1)
+            terms.append(
+                SelectorTerm(key=key, field=SHORTHANDS.get(key, _Field(key)), op="!", value="")
+            )
+            continue
         found = _TERM.match(raw)
         if not found:
             raise IndexSelectorError(
@@ -107,16 +122,24 @@ def select_indexed_paths(
             source = _source_path(payload)
             if not source:
                 continue
-            values = [_lookup(payload, t.field.path) for t in terms]
+            values = [
+                (
+                    _lookup_absence(payload, t.field.path)
+                    if t.op == "!"
+                    else _lookup(payload, t.field.path)
+                )
+                for t in terms
+            ]
             for term, value in zip(terms, values):
-                if value is not _MISSING:
+                if term.op != "!" and value is not _MISSING:
                     seen_fields.add(term.field.path)
             if all(_matches(t, v) for t, v in zip(terms, values)):
                 selected.add(source)
         if offset is None:
             break
 
-    absent = [t for t in terms if t.field.path not in seen_fields]
+    # A field no record stores is the expected case for !key, not a typo.
+    absent = [t for t in terms if t.op != "!" and t.field.path not in seen_fields]
     if absent:
         names = ", ".join(
             f"{t.field.path} ({t.key}=)" if t.key in SHORTHANDS else t.field.path for t in absent
@@ -144,7 +167,20 @@ def _lookup(payload: Dict[str, Any], path: str) -> Any:
     return value
 
 
+def _lookup_absence(payload: Dict[str, Any], path: str) -> bool:
+    """Return True when the record holding the field exists without the field.
+
+    A point with no quality manifest at all says nothing about whether its
+    manifest records fallback_reason, so it does not match `!fallback`.
+    """
+    parent_path, _, leaf = path.rpartition(".")
+    parent = _lookup(payload, parent_path) if parent_path else payload
+    return isinstance(parent, dict) and leaf not in parent
+
+
 def _matches(term: SelectorTerm, value: Any) -> bool:
+    if term.op == "!":
+        return bool(value)
     if value is _MISSING:
         return False
     if term.field.match == "version":

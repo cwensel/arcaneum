@@ -318,7 +318,9 @@ arc corpus verify pdf-docs --json
 ```
 
 Verification reports incomplete or duplicated chunks, extraction dropout,
-quality-manifest gaps, duplicate sources, and stale policies. Use `repair
+quality-manifest gaps, duplicate sources, stale policies, and stale extractions
+(PDFs extracted before normalized extraction stopped merging side-by-side
+columns). Use `repair
 --dry-run` to inspect the actionable selection before re-indexing.
 
 ## GPU Acceleration

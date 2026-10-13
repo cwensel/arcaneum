@@ -198,6 +198,7 @@ def test_corpus_verify_json_exposes_dropped_chunk_manifest(monkeypatch):
         dropped_chunks=2,
         sub_floor_chunks=1,
         stale_policy_items=1,
+        stale_extraction_items=3,
         quality_manifest_gaps=1,
         schema_version=1,
         app_version="test",
@@ -244,6 +245,7 @@ def test_corpus_verify_json_exposes_dropped_chunk_manifest(monkeypatch):
         "sub_floor_chunks": 1,
         "duplicate_source_groups": 1,
         "stale_policy_files": 1,
+        "stale_extraction_files": 3,
         "incomplete_files": 0,
         "quality_manifest_gaps": 1,
         "warnings": [
@@ -253,6 +255,7 @@ def test_corpus_verify_json_exposes_dropped_chunk_manifest(monkeypatch):
             {"code": "sub_floor_chunks", "count": 1},
             {"code": "duplicate_source_groups", "count": 1},
             {"code": "stale_policy_files", "count": 1},
+            {"code": "stale_extraction_files", "count": 3},
             {"code": "quality_manifest_gaps", "count": 1},
         ],
         "mode": "persisted",
@@ -588,9 +591,9 @@ class TestCorpusCollectionMetadata:
         from arcaneum.indexing.collection_metadata import CollectionType
 
         values = set(CollectionType.values())
-        assert {"pdf", "code", "markdown"}.issubset(values), (
-            f"CollectionType missing required values: {values}"
-        )
+        assert {"pdf", "code", "markdown"}.issubset(
+            values
+        ), f"CollectionType missing required values: {values}"
 
 
 class TestCorpusDefaultModels:

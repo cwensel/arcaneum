@@ -368,6 +368,72 @@ def list_models(output_json):
     list_models_command(output_json)
 
 
+@models.command("serve")
+@click.option(
+    "--port", type=int, default=7300, show_default=True, envvar="ARC_EMBED_PORT", help="TCP port"
+)
+@click.option(
+    "--bind",
+    default="all",
+    show_default=True,
+    envvar="ARC_EMBED_BIND",
+    help="'all', 'tailscale' (the host's Tailscale address), or an IP address",
+)
+@click.option(
+    "--models",
+    "served_models",
+    envvar="ARC_EMBED_MODELS",
+    help="Comma-separated models to serve (default: every revision-pinned model)",
+)
+@click.option(
+    "--batch-size",
+    "batch_sizes",
+    envvar="ARC_EMBED_BATCH_SIZES",
+    help="Encode batch sizes as MODEL=N[,MODEL=N] (default: arcaneum's CPU batching)",
+)
+@click.option(
+    "--idle-grace",
+    type=float,
+    default=60.0,
+    show_default=True,
+    envvar="ARC_EMBED_IDLE_GRACE",
+    help="Seconds a resident model must be idle before another model may take over",
+)
+@click.option(
+    "--turn-length",
+    type=float,
+    default=600.0,
+    show_default=True,
+    envvar="ARC_EMBED_TURN_LENGTH",
+    help="Seconds a busy resident model keeps the endpoint while another model waits",
+)
+@click.option(
+    "--cache-dir", envvar="ARC_EMBED_CACHE_DIR", help="Model cache directory (default: arcaneum's)"
+)
+def serve_models(served_models, batch_sizes, port, bind, idle_grace, turn_length, cache_dir):
+    """Serve document embedding to remote arcaneum clients (RDR-025).
+
+    Runs on a worker machine, normally inside the container `arc models deploy`
+    creates. The optional shared authkey is read from ARC_EMBED_AUTHKEY. The
+    protocol uses pickle and is meant for a trusted LAN or tailnet only; do not
+    expose a `--bind all` port beyond it.
+    """
+    from arcaneum.cli.remote_embedding import serve_command
+
+    try:
+        serve_command(
+            port=port,
+            bind=bind,
+            served_models=served_models,
+            batch_sizes=batch_sizes,
+            idle_grace=idle_grace,
+            turn_length=turn_length,
+            cache_dir=cache_dir,
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+
+
 # Indexing commands (RDR-004, RDR-005, RDR-010)
 @cli.group(
     cls=HelpfulGroup,

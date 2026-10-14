@@ -171,6 +171,46 @@ class ConnectionChannel:
             pass
 
 
+def encode_request(payload: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
+    """Validate an ``encode`` payload and return its texts and options."""
+    texts = payload.get("texts")
+    if not isinstance(texts, list) or not all(isinstance(t, str) for t in texts):
+        raise ValueError("encode texts must be a list of strings")
+    options = payload.get("options", {})
+    if not isinstance(options, dict):
+        raise ValueError("encode options must be a mapping")
+    return texts, options
+
+
+def encoded_message(request_id: str, embeddings: Any, **extra: Any) -> dict[str, Any]:
+    """Build an ``encoded`` reply carrying independently owned float32 data."""
+    result = np.array(embeddings, dtype=np.float32, copy=True, order="C")
+    # A plain nested list is independently owned CPU data on the wire.
+    return make_message(
+        MessageType.ENCODED,
+        request_id,
+        embeddings=result.tolist(),
+        shape=list(result.shape),
+        dtype=str(result.dtype),
+        **extra,
+    )
+
+
+def decode_embeddings(payload: dict[str, Any]) -> np.ndarray:
+    """Convert an ``encoded`` payload to an owned C-contiguous float32 array.
+
+    Raises WorkerProtocolError when the array data and its metadata disagree.
+    """
+    try:
+        shape = tuple(payload["shape"])
+        result = np.array(payload["embeddings"], dtype=np.dtype(payload["dtype"]), copy=True)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise WorkerProtocolError("encoded reply has invalid array data") from exc
+    if result.shape != shape or result.dtype != np.float32:
+        raise WorkerProtocolError("encoded reply metadata does not match array data")
+    return np.array(result, copy=True, order="C")
+
+
 def _load_factory(path: str):
     module_name, separator, attribute = path.rpartition(":")
     if not separator or not module_name or not attribute:
@@ -233,25 +273,10 @@ def _worker_main(
             kind = MessageType(command["type"])
             try:
                 if kind is MessageType.ENCODE:
-                    texts = command["payload"].get("texts")
-                    if not isinstance(texts, list) or not all(isinstance(t, str) for t in texts):
-                        raise ValueError("encode texts must be a list of strings")
-                    options = command["payload"].get("options", {})
-                    if not isinstance(options, dict):
-                        raise ValueError("encode options must be a mapping")
-                    result = np.array(
-                        backend.encode(texts, **options), dtype=np.float32, copy=True, order="C"
-                    )
-                    # A plain nested list is independently owned CPU data on the wire.
+                    texts, options = encode_request(command["payload"])
+                    result = backend.encode(texts, **options)
                     channel.send(
-                        make_message(
-                            MessageType.ENCODED,
-                            request_id,
-                            embeddings=result.tolist(),
-                            shape=list(result.shape),
-                            dtype=str(result.dtype),
-                            backend=_backend_health(backend),
-                        )
+                        encoded_message(request_id, result, backend=_backend_health(backend))
                     )
                 elif kind is MessageType.HEARTBEAT:
                     channel.send(
@@ -344,15 +369,10 @@ class AcceleratorWorkerSession:
         payload = reply["payload"]
         self._cache_backend_health(payload)
         try:
-            shape = tuple(payload["shape"])
-            result = np.array(payload["embeddings"], dtype=np.dtype(payload["dtype"]), copy=True)
-        except (KeyError, TypeError, ValueError) as exc:
+            return decode_embeddings(payload)
+        except WorkerProtocolError:
             self._reap()
-            raise WorkerProtocolError("encoded reply has invalid array data") from exc
-        if result.shape != shape or result.dtype != np.float32:
-            self._reap()
-            raise WorkerProtocolError("encoded reply metadata does not match array data")
-        return np.array(result, copy=True, order="C")
+            raise
 
     def health(self, *, timeout: float = 1.0) -> dict[str, Any]:
         with self._request_lock:

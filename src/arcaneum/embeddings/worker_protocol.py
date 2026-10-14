@@ -104,6 +104,73 @@ def _validate_message(value: Any) -> dict[str, Any]:
     return value
 
 
+class EnvelopeChannel(Protocol):
+    """One end of a transport that carries validated protocol envelopes."""
+
+    def send(self, message: dict[str, Any]) -> None: ...
+
+    def receive(self, timeout: float | None = None) -> dict[str, Any] | None:
+        """Return the next validated envelope, or None when ``timeout`` elapses."""
+        ...
+
+    def close(self) -> None: ...
+
+
+class QueueChannel:
+    """Envelope channel over a pair of multiprocessing (or thread) queues.
+
+    The queues belong to whoever created them; closing the channel leaves them open.
+    """
+
+    def __init__(self, outgoing: Any, incoming: Any, *, block: bool = True) -> None:
+        self._outgoing = outgoing
+        self._incoming = incoming
+        self._block = block
+
+    def send(self, message: dict[str, Any]) -> None:
+        if self._block:
+            self._outgoing.put(message)
+        else:
+            self._outgoing.put_nowait(message)
+
+    def receive(self, timeout: float | None = None) -> dict[str, Any] | None:
+        try:
+            raw = self._incoming.get() if timeout is None else self._incoming.get(timeout=timeout)
+        except queue.Empty:
+            return None
+        return _validate_message(raw)
+
+    def close(self) -> None:
+        return None
+
+
+class ConnectionChannel:
+    """Envelope channel over a ``multiprocessing.connection.Connection``.
+
+    Sends are serialized so several threads may reply on one connection. A closed
+    peer surfaces from ``receive`` as ``EOFError``.
+    """
+
+    def __init__(self, connection: Any) -> None:
+        self._connection = connection
+        self._send_lock = threading.Lock()
+
+    def send(self, message: dict[str, Any]) -> None:
+        with self._send_lock:
+            self._connection.send(message)
+
+    def receive(self, timeout: float | None = None) -> dict[str, Any] | None:
+        if timeout is not None and not self._connection.poll(max(0.0, timeout)):
+            return None
+        return _validate_message(self._connection.recv())
+
+    def close(self) -> None:
+        try:
+            self._connection.close()
+        except OSError:
+            pass
+
+
 def _load_factory(path: str):
     module_name, separator, attribute = path.rpartition(":")
     if not separator or not module_name or not attribute:
@@ -140,17 +207,18 @@ def _worker_main(
 ) -> None:
     """Child entry point. Keep all backend/native runtime state in this function."""
     signal.signal(signal.SIGINT, signal.SIG_IGN)
+    channel = QueueChannel(replies, commands)
     backend: WorkerBackend | None = None
     try:
-        init = _validate_message(commands.get())
+        init = channel.receive()
         if init["type"] != MessageType.INITIALIZE:
             raise WorkerProtocolError("first worker command must initialize the backend")
         try:
             backend = _load_factory(config.backend_factory)(config.backend_config)
         except BaseException as exc:
-            replies.put(_error(init["request_id"], "initialization_failed", exc))
+            channel.send(_error(init["request_id"], "initialization_failed", exc))
             return
-        replies.put(
+        channel.send(
             make_message(
                 MessageType.INITIALIZED,
                 init["request_id"],
@@ -160,7 +228,7 @@ def _worker_main(
         )
 
         while True:
-            command = _validate_message(commands.get())
+            command = channel.receive()
             request_id = command["request_id"]
             kind = MessageType(command["type"])
             try:
@@ -175,7 +243,7 @@ def _worker_main(
                         backend.encode(texts, **options), dtype=np.float32, copy=True, order="C"
                     )
                     # A plain nested list is independently owned CPU data on the wire.
-                    replies.put(
+                    channel.send(
                         make_message(
                             MessageType.ENCODED,
                             request_id,
@@ -186,7 +254,7 @@ def _worker_main(
                         )
                     )
                 elif kind is MessageType.HEARTBEAT:
-                    replies.put(
+                    channel.send(
                         make_message(
                             MessageType.HEALTH,
                             request_id,
@@ -198,17 +266,17 @@ def _worker_main(
                 elif kind is MessageType.SHUTDOWN:
                     backend.close()
                     backend = None
-                    replies.put(make_message(MessageType.SHUTDOWN_COMPLETE, request_id))
+                    channel.send(make_message(MessageType.SHUTDOWN_COMPLETE, request_id))
                     return
                 else:
                     raise WorkerProtocolError(f"unexpected command: {kind.value}")
             except BaseException as exc:
-                replies.put(_error(request_id, "backend_error", exc))
+                channel.send(_error(request_id, "backend_error", exc))
     except (EOFError, KeyboardInterrupt):
         pass
     except BaseException as exc:
         try:
-            replies.put(_error("worker", "protocol_error", exc))
+            channel.send(_error("worker", "protocol_error", exc))
         except BaseException:
             pass
     finally:
@@ -233,6 +301,7 @@ class AcceleratorWorkerSession:
         self._context = mp.get_context("spawn")
         self._commands: mp.Queue[dict[str, Any]] | None = None
         self._replies: mp.Queue[dict[str, Any]] | None = None
+        self._channel: QueueChannel | None = None
         self._process: BaseProcess | None = None
         self._in_flight = False
         self._request_lock = threading.RLock()
@@ -252,6 +321,7 @@ class AcceleratorWorkerSession:
             raise RuntimeError("worker session has already been started")
         self._commands = self._context.Queue(maxsize=self.config.queue_size)
         self._replies = self._context.Queue(maxsize=self.config.queue_size)
+        self._channel = QueueChannel(self._commands, self._replies, block=False)
         self._queues_closed = False
         self._process = self._context.Process(
             target=_worker_main,
@@ -325,14 +395,14 @@ class AcceleratorWorkerSession:
             self._reap(graceful=True)
 
     def _send(self, kind: MessageType, **payload: Any) -> str:
-        if self._commands is None or self._process is None or not self._process.is_alive():
+        if self._channel is None or self._process is None or not self._process.is_alive():
             self._reap()
             raise WorkerCrashedError("accelerator worker is not running")
         if self._in_flight:
             raise RuntimeError("only one request may be in flight per worker")
         request_id = uuid.uuid4().hex
         try:
-            self._commands.put_nowait(make_message(kind, request_id, **payload))
+            self._channel.send(make_message(kind, request_id, **payload))
         except (OSError, ValueError) as exc:
             self._reap()
             raise WorkerCrashedError("accelerator worker command queue is closed") from exc
@@ -340,20 +410,18 @@ class AcceleratorWorkerSession:
         return request_id
 
     def _receive(self, request_id: str, expected: MessageType, timeout: float) -> dict[str, Any]:
-        assert self._replies is not None
+        assert self._channel is not None
         deadline = time.monotonic() + timeout
         try:
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise queue.Empty
-                try:
-                    raw = self._replies.get(timeout=min(remaining, 0.05))
+                reply = self._channel.receive(timeout=min(remaining, 0.05))
+                if reply is not None:
                     break
-                except queue.Empty:
-                    if self._process is None or not self._process.is_alive():
-                        raise WorkerCrashedError("accelerator worker exited without a reply")
-            reply = _validate_message(raw)
+                if self._process is None or not self._process.is_alive():
+                    raise WorkerCrashedError("accelerator worker exited without a reply")
             if reply["request_id"] != request_id:
                 raise WorkerProtocolError("worker reply request identifier does not match")
             if reply["type"] == MessageType.ERROR:
@@ -391,6 +459,7 @@ class AcceleratorWorkerSession:
         self._process = None
         self._commands = None
         self._replies = None
+        self._channel = None
 
     def _close_queues(self, *, forced: bool) -> None:
         """Close queue endpoints without waiting on feeders after forced teardown."""

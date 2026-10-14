@@ -308,6 +308,9 @@ EMBEDDING_MODELS = {
     },
     "arctic-m": {
         "name": "snowflake/snowflake-arctic-embed-m",
+        # fastembed has no revision parameter of its own; a pinned revision is
+        # downloaded by arcaneum and loaded via specific_model_path (RDR-025).
+        "revision": "fc74610d18462d218e312aa986ec5c8a75a98152",
         "dimensions": 768,
         "backend": "fastembed",
         "description": "Snowflake Arctic Embed M (768D, stable retrieval default)",
@@ -428,6 +431,43 @@ def _sentence_transformer_load_kwargs(
         "revision": revision,
         "trust_remote_code": trust_remote_code,
     }
+
+
+# Files fastembed itself fetches for every model, besides the model file and the
+# description's additional files (fastembed/common/model_management.py).
+_FASTEMBED_BASE_FILES = [
+    "config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "special_tokens_map.json",
+    "preprocessor_config.json",
+]
+
+
+def _snapshot_download(**kwargs) -> str:
+    from huggingface_hub import snapshot_download
+
+    return snapshot_download(**kwargs)
+
+
+def model_revision(model_key: str) -> Optional[str]:
+    """Return the pinned model revision, or None when the model is not pinned.
+
+    Every SentenceTransformers model pins a revision; a fastembed model is pinned
+    only when its registry entry carries one (RDR-025).
+    """
+    if model_key not in EMBEDDING_MODELS:
+        raise _unknown_model_error(model_key)
+    return EMBEDDING_MODELS[model_key].get("revision") or None
+
+
+def _fastembed_description(model_path: str) -> Dict[str, Any]:
+    import fastembed
+
+    for description in fastembed.TextEmbedding.list_supported_models():
+        if description.get("model") == model_path:
+            return description
+    raise ValueError(f"fastembed does not support model '{model_path}'")
 
 
 def _unknown_model_error(model_name: str) -> ValueError:
@@ -1198,7 +1238,9 @@ class EmbeddingClient:
         if model_name not in self._models:
             backend = config.get("backend", "fastembed")
 
-            if backend == "fastembed":
+            if backend == "fastembed" and config.get("revision"):
+                self._models[model_name] = self._load_pinned_fastembed_model(model_name)
+            elif backend == "fastembed":
                 # Check if model is cached to avoid unnecessary network calls
                 is_cached = self.is_model_cached(model_name)
 
@@ -1407,6 +1449,56 @@ class EmbeddingClient:
                             raise
 
         return self._models[model_name]
+
+    def unload_model(self, model_name: str) -> None:
+        """Drop this client's references to a loaded model so its memory can be freed."""
+        self._models.pop(model_name, None)
+        self._cpu_fallback_models.pop(model_name, None)
+        self._drop_accelerator_worker(model_name)
+
+    def _pinned_fastembed_snapshot(self, model_name: str) -> str:
+        """Return a local snapshot of a pinned fastembed model, downloading it if needed.
+
+        fastembed resolves the repository's current HEAD when it downloads, so a
+        pinned revision is fetched here (the same files fastembed would fetch) and
+        handed to fastembed as ``specific_model_path``.
+        """
+        config = EMBEDDING_MODELS[model_name]
+        description = _fastembed_description(config["name"])
+        model_file = description["model_file"]
+        request = {
+            "repo_id": description["sources"]["hf"],
+            "revision": config["revision"],
+            "cache_dir": self.cache_dir,
+            "allow_patterns": [
+                *_FASTEMBED_BASE_FILES,
+                model_file,
+                *description.get("additional_files", []),
+            ],
+        }
+        try:
+            snapshot = _snapshot_download(local_files_only=True, **request)
+            if os.path.isfile(os.path.join(snapshot, model_file)):
+                return snapshot
+        except Exception:
+            logger.debug("Pinned snapshot of %s is not cached", model_name, exc_info=True)
+        print("   Downloading model files...", flush=True, file=sys.stderr)
+        snapshot = _snapshot_download(local_files_only=False, **request)
+        if not os.path.isfile(os.path.join(snapshot, model_file)):
+            raise RuntimeError(
+                f"Pinned snapshot of '{model_name}' at {config['revision']} has no {model_file}"
+            )
+        return snapshot
+
+    def _load_pinned_fastembed_model(self, model_name: str):
+        config = EMBEDDING_MODELS[model_name]
+        snapshot = self._pinned_fastembed_snapshot(model_name)
+        return TextEmbedding(
+            model_name=config["name"],
+            cache_dir=self.cache_dir,
+            specific_model_path=snapshot,
+            providers=self._resolve_fastembed_providers(model_name),
+        )
 
     def embed(
         self,
@@ -2368,6 +2460,22 @@ class EmbeddingClient:
 
             # Both main cache and transformers_modules exist, model is fully cached
             return True
+        elif config.get("revision"):
+            # Pinned fastembed models live at exactly one snapshot of their source repo.
+            try:
+                description = _fastembed_description(model_path)
+            except ValueError:
+                return False
+            repo = description["sources"]["hf"].replace("/", "--")
+            return os.path.isfile(
+                os.path.join(
+                    self.cache_dir,
+                    f"models--{repo}",
+                    "snapshots",
+                    config["revision"],
+                    description["model_file"],
+                )
+            )
         else:
             # FastEmbed uses HuggingFace cache structure with models-- prefix
             # The actual cached model name may differ from config (e.g., qdrant/bge-large-en-v1.5-onnx)

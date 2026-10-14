@@ -379,6 +379,20 @@ def test_failed_verification_removes_the_container_and_keeps_the_image(tmp_path)
     assert harness.verified == [("dev-0:7300", ["qwen3-embed", "arctic-m"])]
 
 
+def test_successful_verification_reports_each_models_minimum_cosine(tmp_path):
+    harness = Harness(tmp_path, endpoints("dev-0"))
+    harness.verify_results["dev-0:7300"] = [
+        VerifyResult("qwen3-embed", 0.9999987, {}, {}),
+        VerifyResult("arctic-m", 1.0, {}, {}),
+    ]
+
+    assert harness.deployer.deploy() is True
+
+    text = "\n".join(harness.output)
+    assert "qwen3-embed min cosine 0.999999" in text
+    assert "arctic-m min cosine 1.000000" in text
+
+
 def test_no_verify_skips_verification(tmp_path):
     harness = Harness(tmp_path, endpoints("dev-0"), verify=False)
 

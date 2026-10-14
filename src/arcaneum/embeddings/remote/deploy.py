@@ -702,6 +702,7 @@ class Deployer:
         models = self.config.endpoint_models(endpoint)
         self.out(f"  verifying vector parity on {endpoint.name}: {', '.join(models)}")
         results = self.verifier(endpoint, self.config, models)
+        self.out("  " + "; ".join(f"{r.model} min cosine {r.min_cosine:.6f}" for r in results))
         failed = [result for result in results if not result.ok]
         if not failed:
             return

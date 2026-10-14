@@ -110,6 +110,12 @@ class FakeEmbeddingClient:
     def get_model(self, model_name):
         return object()
 
+    def embeds_remotely(self, model_name):
+        return False
+
+    def prepare_model(self, model_name):
+        return True
+
     def _clear_gpu_cache(self):  # pragma: no cover - not used (use_gpu False)
         pass
 

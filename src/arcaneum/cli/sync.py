@@ -197,6 +197,9 @@ from ..embeddings.client import (
     EmbeddingClient,
     prompt_policy_model_key_for_name,
 )
+from ..embeddings.remote.config import RemoteEmbeddingConfigError
+from ..embeddings.remote.errors import RemoteEmbeddingUnavailable
+from ..embeddings.remote.routing import configure_remote_embedding
 from ..fulltext.client import FullTextClient
 from ..indexing.collection_metadata import (
     METADATA_PAYLOAD_KEY,
@@ -2342,6 +2345,15 @@ def _resolve_from_index(
     return sorted(Path(p) for p in existing)
 
 
+def _configure_remote_embedding(embed_mode: str, output_json: bool) -> None:
+    """Install this invocation's remote embedding routing, or exit on bad configuration."""
+    try:
+        configure_remote_embedding(embed_mode)
+    except RemoteEmbeddingConfigError as e:
+        print_error(f"Invalid remote_embedding configuration: {e}", output_json)
+        sys.exit(1)
+
+
 def sync_directory_command(
     corpus: str,
     paths: tuple,
@@ -2374,6 +2386,7 @@ def sync_directory_command(
     removed_paths: Optional[List[str]] = None,
     skip_unsupported: bool = False,
     from_index: Optional[str] = None,
+    embed_mode: str = "default",
 ):
     """Sync to a corpus while holding that corpus's write lock (kata htmw).
 
@@ -2387,7 +2400,11 @@ def sync_directory_command(
     sync the user is trying to inspect.
 
     See `_sync_directory_locked` for the full parameter documentation.
+    `embed_mode` routes document embedding to the remote worker pool (RDR-025):
+    "default" (configured `remote` models), "remote" (--remote-embed, adds
+    `on-request` models) or "local" (--local-embed).
     """
+    _configure_remote_embedding(embed_mode, output_json)
     lock_ctx = (
         contextlib.nullcontext()
         if dry_run
@@ -4284,6 +4301,9 @@ def _sync_directory_locked(
                             except Exception:
                                 logger.debug("memory probe failed", exc_info=True)
 
+                        except RemoteEmbeddingUnavailable:
+                            # The `fail` policy ends the run (RDR-025).
+                            raise
                         except Exception as e:
                             files_failed += 1
                             logger.error(f"Failed to process {file_path}: {e}")
@@ -4587,6 +4607,9 @@ def _sync_directory_locked(
 
                         qdrant_backfilled += 1
 
+                    except RemoteEmbeddingUnavailable:
+                        # The `fail` policy ends the run (RDR-025).
+                        raise
                     except Exception as e:
                         qdrant_backfill_failed += 1
                         logger.error(f"Failed to backfill {file_path_str} to Qdrant: {e}")
@@ -5937,6 +5960,9 @@ def _backfill_meili_to_qdrant(
 
             files_success += 1
 
+        except RemoteEmbeddingUnavailable:
+            # The `fail` policy ends the run (RDR-025).
+            raise
         except Exception as e:
             files_failed += 1
             logger.error(f"Failed to backfill {file_path_str} to Qdrant: {e}")
@@ -7010,6 +7036,7 @@ def parity_command(
     output_json: bool,
     prune_orphans: bool = False,
     force_prune: bool = False,
+    embed_mode: str = "default",
 ):
     """Check and restore parity between Qdrant and MeiliSearch.
 
@@ -7036,6 +7063,8 @@ def parity_command(
         verbose: If True, show detailed progress
         output_json: If True, output JSON format
     """
+    _configure_remote_embedding(embed_mode, output_json)
+
     # Calculate effective workers
     if text_workers is None:
         effective_text_workers = max(1, cpu_count() // 2)
@@ -7106,6 +7135,7 @@ def repair_corpus_command(
     output_json: bool,
     prune_orphans: bool = False,
     force_prune: bool = False,
+    embed_mode: str = "default",
 ):
     """Repair verifier-selected files, then restore cross-system parity.
 
@@ -7135,6 +7165,7 @@ def repair_corpus_command(
                 output_json,
                 prune_orphans=prune_orphans,
                 force_prune=force_prune,
+                embed_mode=embed_mode,
             )
     except CorpusLockUnavailable as e:
         print_error(str(e), output_json)
@@ -7153,6 +7184,7 @@ def _repair_corpus_locked(
     output_json: bool,
     prune_orphans: bool = False,
     force_prune: bool = False,
+    embed_mode: str = "default",
 ):
     content_docs: List[Dict[str, Any]] = []
     try:
@@ -7179,6 +7211,7 @@ def _repair_corpus_locked(
                 repair=True,
                 repair_stale_policy=include_stale_policy,
                 quality_threshold=quality_threshold,
+                embed_mode=embed_mode,
             )
     except BaseException:
         # Content repair already reported its failure. Parity would compare a
@@ -7205,6 +7238,7 @@ def _repair_corpus_locked(
                 output_json=output_json,
                 prune_orphans=prune_orphans,
                 force_prune=force_prune,
+                embed_mode=embed_mode,
             )
         parity_doc = parity_docs[-1] if parity_docs else {"status": "success", "message": ""}
         parity = {

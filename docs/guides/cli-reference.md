@@ -145,6 +145,8 @@ arc log tail --lines 50    # Print recent log lines, then follow new entries
 ```bash
 arc doctor                                 # Verify setup and prerequisites
 arc models list                            # List available embedding models
+arc models workers                         # Show remote embedding workers
+arc models serve                           # Run an embedding worker (on a worker host)
 arc store <file> --collection <name>       # Store agent content for long-term memory
 ```
 
@@ -307,6 +309,11 @@ arc corpus sync MyCorpus /path/to/repo --git-version       # Keep multiple versi
   `--from-file`, `--changed-since`, `--drain-spool`, or `--parity`. See
   "Selecting files by stored metadata" above for the selector syntax.
 - `--max-embedding-batch`: Cap embedding batch size (use 8-16 for OOM recovery)
+- `--remote-embed`: Also send `on-request` models (by default `qwen3-embed`) to
+  the configured remote embedding workers for this run. See
+  [Remote Embedding Workers](#remote-embedding-workers).
+- `--local-embed`: Embed every model locally for this run, ignoring configured
+  remote workers
 - `--text-workers`: Parallel workers for code AST chunking (default: auto)
 - `--order`: Order files are indexed in: `path` (default, alphabetical), `newest`
   (most recently modified first), or `oldest`. Affects processing order only, not
@@ -525,6 +532,8 @@ arc corpus repair MyCorpus --verbose                  # Show per-file quality sc
   directory is missing
 - `--gpu`: Opt into accelerator embedding. CPU is the stable default.
 - `--max-embedding-batch`: Cap embedding batch size
+- `--remote-embed` / `--local-embed`: Route this repair's document embedding as
+  for `arc corpus sync` (see [Remote Embedding Workers](#remote-embedding-workers))
 - `--verbose`: Show per-file old → new quality scores
 - `--json`: Output JSON format
 
@@ -1665,6 +1674,10 @@ credentials can also be stored in `~/.config/arcaneum/config.yaml` under
 `~/.arcaneum/config.yaml` is copied to the XDG config path if the XDG file does
 not already exist.
 
+`ARC_EMBED_ENDPOINTS=host[:port],...` replaces the configured remote embedding
+endpoints for one process (empty disables the pool), and `ARC_EMBED_AUTHKEY`
+sets their shared key. See [Remote Embedding Workers](#remote-embedding-workers).
+
 Note: `MEILISEARCH_API_KEY` is auto-generated on first `arc container start` and stored
 in `~/.config/arcaneum/meilisearch.key`. You only need to set it manually if you want
 to use a custom key or share the same key across machines.
@@ -2278,6 +2291,80 @@ arc models list --json    # Machine-readable output
 - `--json`: Output JSON format
 
 See [Model Selection](#model-selection) for guidance on which model to use.
+
+### Remote Embedding Workers
+
+Document embedding for selected models can run on spare machines on the local
+network or tailnet instead of the workstation (RDR-025). Each worker runs
+`arc models serve` in a Docker container; the workstation routes **document**
+embedding for configured models to them and keeps query embedding local.
+Vectors match local CPU embedding, so remote and local vectors share a
+collection.
+
+Configure endpoints in `~/.config/arcaneum/config.yaml`:
+
+```yaml
+remote_embedding:
+  unavailable: wait          # wait (default) | local | fail
+  authkey: shared-secret     # optional; ARC_EMBED_AUTHKEY overrides
+  routing:                   # defaults shown; every other model stays local
+    arctic-m: remote         # sent to the pool whenever endpoints exist
+    qwen3-embed: on-request  # sent only with --remote-embed
+  endpoints:
+    - host: dev-0            # resolved normally; also the SSH target by default
+      port: 7300
+      bind: tailscale        # all (default) | tailscale | an IP address
+    - host: dev-1
+      bind: tailscale
+      models: [arctic-m]     # default: every remote/on-request model
+      batch_size: {arctic-m: 64}
+```
+
+Routing applies to `arc corpus sync`, `arc corpus repair`, `arc corpus parity`
+and the `arc index` commands. `--remote-embed` adds `on-request` models for one
+sync or repair; `--local-embed` routes nothing. Only fastembed models with a
+pinned revision can be routed (`arctic-m` is pinned). When no endpoint can
+serve a routed model, `unavailable` decides: `wait` blocks and keeps probing,
+`local` embeds locally, `fail` ends the run.
+
+```bash
+arc models workers          # State, versions, fingerprint, resident model per worker
+arc models workers --json   # Machine-readable output
+```
+
+`arc models workers` opens status-only connections, which never load or
+switch a model. A worker whose code fingerprint differs from the workstation's
+is reported as `mismatch` and is not used.
+
+`arc models serve` runs the worker itself (normally inside the container that
+deploy creates):
+
+```bash
+arc models serve --bind tailscale --port 7300
+arc models serve --models arctic-m --batch-size arctic-m=64
+```
+
+**Options (`serve`):**
+
+- `--port`: TCP port (default: 7300; env `ARC_EMBED_PORT`)
+- `--bind`: `all`, `tailscale` (the host's Tailscale address, waited for at
+  boot), or an IP address (env `ARC_EMBED_BIND`)
+- `--models`: Comma-separated models to serve (default: every revision-pinned
+  model; env `ARC_EMBED_MODELS`)
+- `--batch-size`: Encode batch sizes as `MODEL=N[,MODEL=N]` (env
+  `ARC_EMBED_BATCH_SIZES`)
+- `--idle-grace`: Seconds a resident model must be idle before another model
+  may take over (default: 60)
+- `--turn-length`: Seconds a busy resident model keeps the worker while another
+  model waits (default: 600)
+- `--cache-dir`: Model cache directory (env `ARC_EMBED_CACHE_DIR`)
+
+The protocol uses pickle and is meant for a trusted LAN or tailnet only; never
+expose a `--bind all` port beyond it.
+
+**Options (`workers`):**
+
+- `--json`: Output JSON format
 
 ## Store
 

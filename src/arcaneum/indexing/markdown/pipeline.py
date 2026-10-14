@@ -572,7 +572,9 @@ class MarkdownIndexingPipeline:
             print()
 
         # Pre-load model to avoid "hang" during first file processing
-        is_cached = self.embeddings.is_model_cached(model_name)
+        is_cached = self.embeddings.embeds_remotely(model_name) or (
+            self.embeddings.is_model_cached(model_name)
+        )
         if not is_cached and not verbose:
             print(f"⬇️  Downloading {model_name} model (first time only)...", flush=True)
         elif not is_cached and verbose:
@@ -583,7 +585,7 @@ class MarkdownIndexingPipeline:
             print(f"📦 Loading model...", flush=True)
 
         # Load model now (separate phase from file processing)
-        self.embeddings.get_model(model_name)
+        self.embeddings.prepare_model(model_name)
 
         if not verbose:
             print(" ✓\n")  # Add newline to prevent overwriting

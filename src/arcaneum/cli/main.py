@@ -346,6 +346,41 @@ def collection_import(file, target_name, attach_root, remaps, output_json):
     import_collection_command(file, target_name, attach_root, remaps, output_json)
 
 
+def _embed_mode_options(func):
+    """--remote-embed / --local-embed: per-invocation remote embedding routing (RDR-025)."""
+    func = click.option(
+        "--local-embed",
+        is_flag=True,
+        help="Embed documents locally for this run, ignoring configured remote workers",
+    )(func)
+    func = click.option(
+        "--remote-embed",
+        is_flag=True,
+        help=(
+            "Also send on-request models (e.g. qwen3-embed) to the configured remote "
+            "embedding workers for this run"
+        ),
+    )(func)
+    return func
+
+
+def _embed_mode(remote_embed: bool, local_embed: bool) -> str:
+    if remote_embed and local_embed:
+        raise click.UsageError("--remote-embed and --local-embed are mutually exclusive")
+    return "remote" if remote_embed else "local" if local_embed else "default"
+
+
+def _configure_index_remote_embedding() -> None:
+    """`arc index` commands follow configuration only: `remote` models, never on-request."""
+    from arcaneum.embeddings.remote import routing
+    from arcaneum.embeddings.remote.config import RemoteEmbeddingConfigError
+
+    try:
+        routing.configure_remote_embedding("default")
+    except RemoteEmbeddingConfigError as exc:
+        raise click.UsageError(f"Invalid remote_embedding configuration: {exc}") from exc
+
+
 # Models commands
 @cli.group(
     cls=HelpfulGroup,
@@ -432,6 +467,19 @@ def serve_models(served_models, batch_sizes, port, bind, idle_grace, turn_length
         )
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
+
+
+@models.command("workers")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
+def models_workers(output_json):
+    """Show remote embedding workers: state, versions, fingerprint, resident model.
+
+    Connects to each configured endpoint over a status-only connection, which
+    never loads or switches a model.
+    """
+    from arcaneum.cli.remote_embedding import workers_command
+
+    workers_command(output_json)
 
 
 # Indexing commands (RDR-004, RDR-005, RDR-010)
@@ -555,6 +603,7 @@ def index_pdf(
     # Validate that exactly one of path or from_file is provided
     validate_path_or_from_file(path, from_file)
 
+    _configure_index_remote_embedding()
     from arcaneum.cli.index_pdfs import index_pdfs_command
 
     streaming = not no_streaming  # Default is streaming=True (--no-streaming disables it)
@@ -670,6 +719,7 @@ def index_code(
     # Validate that exactly one of path or from_file is provided
     validate_path_or_from_file(path, from_file)
 
+    _configure_index_remote_embedding()
     from arcaneum.cli.index_source import index_source_command
 
     streaming = not no_streaming  # Default is streaming=True (--no-streaming disables it)
@@ -788,6 +838,7 @@ def index_markdown(
     # Validate that exactly one of path or from_file is provided
     validate_path_or_from_file(path, from_file)
 
+    _configure_index_remote_embedding()
     from arcaneum.cli.index_markdown import index_markdown_command
 
     streaming = not no_streaming  # Default is streaming=True (--no-streaming disables it)
@@ -1528,6 +1579,7 @@ def _drain_corpus_spool(corpus, *, max_batches, sync_kwargs):
     default=True,
     help="Use CPU by default; pass --gpu to opt into accelerator embedding",
 )
+@_embed_mode_options
 @click.option(
     "--cpu-workers",
     type=int,
@@ -1642,6 +1694,8 @@ def sync_directory(
     text_workers,
     max_embedding_batch,
     no_gpu,
+    remote_embed,
+    local_embed,
     cpu_workers,
     verbose,
     output_json,
@@ -1716,6 +1770,8 @@ def sync_directory(
                 f"{', '.join(conflicts)}"
             )
 
+    embed_mode = _embed_mode(remote_embed, local_embed)
+
     if drain_spool:
         if paths or from_file or changed_since:
             raise click.UsageError(
@@ -1741,6 +1797,7 @@ def sync_directory(
                 git_version=git_version,
                 skip_dir_prefixes=effective_prefixes,
                 qdrant_timeout=timeout,
+                embed_mode=embed_mode,
                 order=order,
                 lock_wait=not no_wait,
                 lock_timeout=lock_timeout,
@@ -1838,6 +1895,7 @@ def sync_directory(
         from_index=from_index,
         # git names every touched file, not only ones this corpus type indexes.
         skip_unsupported=bool(changed_since),
+        embed_mode=embed_mode,
     )
 
 
@@ -2209,6 +2267,7 @@ FORCE_PRUNE_HELP = "Like --prune-orphans, but also prune files whose directory i
     default=True,
     help="Use CPU by default; pass --gpu to opt into accelerator embedding",
 )
+@_embed_mode_options
 @click.option(
     "--max-embedding-batch",
     type=int,
@@ -2229,6 +2288,8 @@ def corpus_repair(
     quality_threshold,
     dry_run,
     no_gpu,
+    remote_embed,
+    local_embed,
     max_embedding_batch,
     include_stale_policy,
     prune_orphans,
@@ -2264,6 +2325,8 @@ def corpus_repair(
     from arcaneum.cli.utils import create_qdrant_client
     from arcaneum.indexing.collection_metadata import get_collection_metadata
 
+    embed_mode = _embed_mode(remote_embed, local_embed)
+
     # Read configured models from corpus metadata instead of hardcoding.
     # sync_directory_command also reads metadata and overrides `models`, but
     # passing the right value up front avoids a misleading CLI log line and
@@ -2287,6 +2350,7 @@ def corpus_repair(
         output_json=output_json,
         prune_orphans=prune_orphans,
         force_prune=force_prune,
+        embed_mode=embed_mode,
     )
 
 

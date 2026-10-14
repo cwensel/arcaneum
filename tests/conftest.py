@@ -346,6 +346,23 @@ def isolated_state_dir(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path_factory.mktemp("xdg-state")))
 
 
+@pytest.fixture(autouse=True)
+def no_remote_embedding(monkeypatch):
+    """Keep document embedding local unless a test configures remote workers.
+
+    Sync and index commands install remote embedding routing from the user's
+    config (RDR-025). An empty ARC_EMBED_ENDPOINTS replaces any configured
+    endpoints, so no test sends work to a developer's real workers. Tests that
+    set ARC_EMBED_ENDPOINTS themselves still override this.
+    """
+    monkeypatch.setenv("ARC_EMBED_ENDPOINTS", "")
+    monkeypatch.delenv("ARC_EMBED_AUTHKEY", raising=False)
+    yield
+    from arcaneum.embeddings.remote.routing import install_router
+
+    install_router(None)
+
+
 @pytest.fixture
 def clean_env():
     """Provide a clean environment without Arcaneum env vars."""

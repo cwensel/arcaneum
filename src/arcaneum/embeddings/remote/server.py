@@ -65,7 +65,8 @@ class EmbeddingClientHost:
     """
 
     def __init__(self, cache_dir: Optional[str] = None) -> None:
-        self.client = EmbeddingClient(cache_dir=cache_dir, use_gpu=False)
+        # The server always embeds locally, whatever router its process has.
+        self.client = EmbeddingClient(cache_dir=cache_dir, use_gpu=False, remote_routing=False)
 
     def load(self, model: str) -> None:
         self.client.get_model(model)
@@ -175,10 +176,11 @@ def resolve_bind_address(
 
     started = clock()
     next_log = started
+    waited = False
     while True:
         address = lookup()
         if address is not None:
-            if clock() > started:
+            if waited:
                 logger.info(
                     "Binding %s after waiting %.0f s for it to appear", address, clock() - started
                 )
@@ -189,6 +191,7 @@ def resolve_bind_address(
             logger.info("Waiting for %s to appear on this host before binding", describe)
             next_log += log_interval
         sleep(poll_interval)
+        waited = True
 
 
 # --- Scheduling --------------------------------------------------------------------
@@ -263,6 +266,10 @@ class _Scheduler:
     def resident(self) -> Optional[str]:
         with self._cond:
             return self._resident
+
+    def loading(self) -> Optional[str]:
+        with self._cond:
+            return self._loading
 
     def state_of(self, connection: "_ServerConnection") -> str:
         with self._cond:
@@ -409,7 +416,7 @@ class _ServerConnection:
         model = payload.get("model")
         status_only = model is None
         known = isinstance(model, str) and model in EMBEDDING_MODELS
-        identity = local_identity(model if known else None)
+        identity = self._server.identity(model if known else None)
         if status_only or not known:
             self.compatible = False
         else:
@@ -473,13 +480,14 @@ class _ServerConnection:
         self._server._scheduler.submit(request)
 
     def _health(self) -> dict[str, Any]:
-        identity = local_identity(None)
+        identity = self._server.identity(None)
         scheduler = self._server._scheduler
         return {
             "pid": os.getpid(),
             "arcaneum_version": identity["arcaneum_version"],
             "code_fingerprint": identity["code_fingerprint"],
             "resident_model": scheduler.resident(),
+            "loading_model": scheduler.loading(),
             "busy": scheduler.busy(),
             "state": scheduler.state_of(self),
             "dependencies": dependency_versions(),
@@ -531,8 +539,11 @@ class EmbeddingServer:
         host: Optional[ModelHost] = None,
         clock: Callable[[], float] = time.monotonic,
         resolve_address: Callable[[str], str] = resolve_bind_address,
+        identity: Callable[[Optional[str]], dict[str, Any]] = local_identity,
     ) -> None:
         self.settings = settings
+        # Handshake fields as this server's code defines them (injectable for tests).
+        self.identity = identity
         self._host = host or EmbeddingClientHost(settings.cache_dir)
         self._resolve_address = resolve_address
         self._scheduler = _Scheduler(self._host, settings, clock)

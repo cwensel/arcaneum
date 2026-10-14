@@ -78,7 +78,8 @@ def get_cached_model(
             use_gpu=use_gpu,
             allow_experimental_coreml=allow_experimental_coreml,
         )
-        client.get_model(model_name)
+        # Pre-load unless documents for this model go to remote workers (RDR-025).
+        client.prepare_model(model_name)
 
         _model_cache[cache_key] = client
         return client

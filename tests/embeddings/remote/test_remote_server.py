@@ -6,10 +6,10 @@ import logging
 import socket
 import threading
 import time
-from multiprocessing.connection import Client
 
 import numpy as np
 import pytest
+from remote_fakes import FakeClock, FakeHost, RawClient, wait_for
 
 from arcaneum.embeddings.remote.identity import dependency_versions, local_identity
 from arcaneum.embeddings.remote.server import (
@@ -21,106 +21,11 @@ from arcaneum.embeddings.remote.server import (
 )
 from arcaneum.embeddings.worker_protocol import (
     AcceleratorWorkerSession,
-    ConnectionChannel,
-    DeterministicFakeBackend,
     MessageType,
     WorkerConfig,
-    make_message,
 )
 
 FACTORY = "arcaneum.embeddings.worker_protocol:create_deterministic_fake_backend"
-
-
-class FakeClock:
-    def __init__(self) -> None:
-        self.now = 1000.0
-
-    def __call__(self) -> float:
-        return self.now
-
-
-class FakeHost:
-    """Model host with gates so tests decide when loads and encodes finish."""
-
-    def __init__(self) -> None:
-        self.backend = DeterministicFakeBackend({"dimension": 3})
-        self.loads: list[str] = []
-        self.unloads: list[str] = []
-        self.encodes: list[tuple[str, list[str]]] = []
-        self.load_gate: threading.Event | None = None
-        self.encode_permits: dict[str, threading.Semaphore] = {}
-        self.encode_started = threading.Event()
-        self.active = 0
-        self.max_active = 0
-        self._lock = threading.Lock()
-
-    def load(self, model: str) -> None:
-        self.loads.append(model)
-        if self.load_gate is not None:
-            assert self.load_gate.wait(5)
-
-    def encode(self, model: str, texts: list[str]) -> np.ndarray:
-        with self._lock:
-            self.active += 1
-            self.max_active = max(self.max_active, self.active)
-        try:
-            self.encode_started.set()
-            permits = self.encode_permits.get(model)
-            if permits is not None:
-                assert permits.acquire(timeout=5)
-            self.encodes.append((model, list(texts)))
-            return self.backend.encode(texts)
-        finally:
-            with self._lock:
-                self.active -= 1
-
-    def unload(self, model: str) -> None:
-        self.unloads.append(model)
-
-
-class RawClient:
-    """Minimal protocol client that buffers replies by request ID."""
-
-    def __init__(self, address, model=None, *, authkey=None, identity=None) -> None:
-        self.channel = ConnectionChannel(Client(address, authkey=authkey))
-        self._replies: dict[str, dict] = {}
-        self._counter = 0
-        payload = local_identity(model) if identity is None else identity
-        self.initialized = self.wait(self.send(MessageType.INITIALIZE, **payload))
-
-    def send(self, kind: MessageType, **payload) -> str:
-        self._counter += 1
-        request_id = f"r{self._counter}"
-        self.channel.send(make_message(kind, request_id, **payload))
-        return request_id
-
-    def wait(self, request_id: str, timeout: float = 5.0) -> dict:
-        deadline = time.monotonic() + timeout
-        while request_id not in self._replies:
-            reply = self.channel.receive(timeout=max(0.0, deadline - time.monotonic()))
-            if reply is None:
-                raise TimeoutError(request_id)
-            self._replies[reply["request_id"]] = reply
-        return self._replies.pop(request_id)
-
-    def heartbeat(self) -> dict:
-        reply = self.wait(self.send(MessageType.HEARTBEAT))
-        assert reply["type"] == MessageType.HEALTH
-        return reply["payload"]
-
-    def encode(self, texts: list[str]) -> str:
-        return self.send(MessageType.ENCODE, texts=texts)
-
-    def close(self) -> None:
-        self.channel.close()
-
-
-def wait_for(predicate, timeout: float = 5.0) -> None:
-    deadline = time.monotonic() + timeout
-    while not predicate():
-        if time.monotonic() > deadline:
-            raise AssertionError("condition not met in time")
-        time.sleep(0.005)
 
 
 @pytest.fixture

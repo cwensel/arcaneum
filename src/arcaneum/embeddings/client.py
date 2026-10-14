@@ -581,6 +581,7 @@ class EmbeddingClient:
         use_gpu: bool = False,
         cpu_workers: int = None,
         allow_experimental_coreml: bool = False,
+        remote_routing: bool = True,
     ):
         """Initialize embedding client.
 
@@ -595,6 +596,9 @@ class EmbeddingClient:
                         explicitly opted into GPU (e.g., passed --gpu); paths that
                         enable GPU implicitly should leave this False so CoreML
                         stays gated behind ARC_EXPERIMENTAL_COREML.
+            remote_routing: Follow the process's remote embedding router (RDR-025).
+                        The embedding server's own client passes False so it always
+                        embeds locally.
 
         GPU Support (RDR-013):
             - SentenceTransformers models (stella, jina-code): MPS on Apple Silicon, CUDA on NVIDIA
@@ -612,6 +616,10 @@ class EmbeddingClient:
         self._warn_if_previous_coreml_session_killed()
         self._device = self._detect_device() if use_gpu else "cpu"
         self._backend_selections: dict[str, BackendSelection] = {}
+        # Models this client has loaded locally (RDR-025: remote-routed work loads none).
+        self._local_models: set[str] = set()
+        self._remote_fallback_noted: set[str] = set()
+        self._remote_routing = remote_routing
         self._backend_fallback_reasons: dict[str, str] = {}
         self._worker_restart_count = 0
         self._worker_failure_count = 0
@@ -853,6 +861,7 @@ class EmbeddingClient:
         if model_name in self._cpu_fallback_models:
             return self._cpu_fallback_models[model_name]
 
+        self._local_models.add(model_name)
         config = EMBEDDING_MODELS[model_name]
         try:
             from sentence_transformers import SentenceTransformer
@@ -1035,6 +1044,7 @@ class EmbeddingClient:
                 "local_files_only": self.is_model_cached(model_name),
             },
         )
+        self._local_models.add(model_name)
         worker = AcceleratorWorkerSession(config, startup_timeout=120.0).start()
         self._accelerator_workers[model_name] = worker
         return worker
@@ -1448,7 +1458,58 @@ class EmbeddingClient:
                             # Re-raise other errors as-is
                             raise
 
+        self._local_models.add(model_name)
         return self._models[model_name]
+
+    def embeds_remotely(self, model_name: str) -> bool:
+        """Whether this process sends this model's document embedding to remote workers."""
+        return self._remote_router(model_name, "document") is not None
+
+    def prepare_model(self, model_name: str) -> bool:
+        """Load a model ahead of document embedding unless it is remote-routed.
+
+        Returns True when the model was loaded locally (RDR-025).
+        """
+        if self.embeds_remotely(model_name):
+            return False
+        self.get_model(model_name)
+        return True
+
+    @property
+    def local_models(self) -> List[str]:
+        """Models this client has loaded locally, for the memory probe (RDR-025)."""
+        return sorted(self._local_models)
+
+    def _remote_router(self, model_name: str, prompt_type: str):
+        """The installed remote router if it routes this call, else None (RDR-025)."""
+        if not getattr(self, "_remote_routing", True):
+            return None
+        from arcaneum.embeddings.remote.routing import active_router
+
+        router = active_router()
+        if router is not None and router.routes(model_name, prompt_type):
+            return router
+        return None
+
+    def _embed_remote(self, router, texts: List[str], model_name: str):
+        """Embed documents on the remote pool; None when the policy says embed locally."""
+        from arcaneum.embeddings.remote.errors import RemoteEmbeddingFallback
+
+        try:
+            return router.embed(
+                list(texts),
+                model_name,
+                validate=lambda rows, count: self._validate_embeddings(rows, count, model_name),
+            )
+        except RemoteEmbeddingFallback as exc:
+            if model_name not in self._remote_fallback_noted:
+                self._remote_fallback_noted.add(model_name)
+                message = (
+                    f"Remote embedding unavailable for {model_name}; embedding locally ({exc})"
+                )
+                logger.warning(message)
+                print(f"   {message}", file=sys.stderr, flush=True)
+            return None
 
     def unload_model(self, model_name: str) -> None:
         """Drop this client's references to a loaded model so its memory can be freed."""
@@ -1527,6 +1588,13 @@ class EmbeddingClient:
         Raises:
             ValueError: If model_name is not recognized
         """
+        # Remote routing is decided before any local model is constructed (RDR-025).
+        router = self._remote_router(model_name, prompt_type)
+        if router is not None:
+            result = self._embed_remote(router, texts, model_name)
+            if result is not None:
+                return result
+
         # No lock needed - single-threaded embedding is faster for GPU models
         # GPU parallelism is via large batches (256-512), not thread-level parallelism
         return self._embed_impl(
@@ -1923,8 +1991,9 @@ class EmbeddingClient:
             ...     upload_to_qdrant(embeddings)
             >>> client.embed_parallel(texts, "stella", on_batch_complete=handle_batch, accumulate=False)
         """
-        # Get model once
-        _ = self.get_model(model_name)
+        # Get model once, unless documents route to the remote pool (RDR-025)
+        if self._remote_router(model_name, "document") is None:
+            _ = self.get_model(model_name)
 
         # Use adaptive batch sizing if not explicitly provided (arcaneum-i7oa)
         if batch_size is None:

@@ -63,6 +63,8 @@ class MemorySnapshot:
     disk_free_bytes: int = 0
     disk_total_bytes: int = 0
     disk_path: str = ""
+    # Models the embedding client loaded in this process (RDR-025).
+    local_models: tuple[str, ...] = ()
 
     def delta(self, prev: "MemorySnapshot") -> dict:
         # Δdrv/Δsys_used are the actual leak signal on Apple Silicon — Metal
@@ -190,6 +192,7 @@ def snapshot(embedding_client=None) -> MemorySnapshot:
         disk_free_bytes=disk_free,
         disk_total_bytes=disk_total,
         disk_path=disk_path,
+        local_models=tuple(getattr(embedding_client, "local_models", None) or ()),
     )
 
 
@@ -341,6 +344,7 @@ def format_snapshot_jsonl(snap: MemorySnapshot, phase: str = "") -> str:
             else 0.0
         ),
         "disk_path": snap.disk_path,
+        "local_models": list(snap.local_models),
     }
     return json.dumps(obj, separators=(",", ":"))
 

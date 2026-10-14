@@ -23,7 +23,7 @@ def test_cached_model_reuses_same_cache_directory(monkeypatch, tmp_path):
 
     assert second is first
     assert len(clients) == 1
-    first.get_model.assert_called_once_with("stella")
+    first.prepare_model.assert_called_once_with("stella")
 
 
 def test_cached_model_isolates_different_cache_directories(monkeypatch, tmp_path):
@@ -54,7 +54,7 @@ def test_cached_model_isolates_different_cache_directories(monkeypatch, tmp_path
         str(tmp_path / "models-a"),
         str(tmp_path / "models-b"),
     ]
-    assert [client.get_model.call_args.args for client in clients] == [("stella",), ("stella",)]
+    assert [client.prepare_model.call_args.args for client in clients] == [("stella",), ("stella",)]
 
 
 def test_cached_model_isolates_gpu_mode(monkeypatch, tmp_path):

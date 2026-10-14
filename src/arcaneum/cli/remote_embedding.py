@@ -1,4 +1,4 @@
-"""Remote embedding worker commands: `arc models serve` (RDR-025)."""
+"""Remote embedding worker commands: `arc models serve`, `workers`, `deploy` (RDR-025)."""
 
 from __future__ import annotations
 
@@ -6,9 +6,11 @@ import logging
 import os
 import signal
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from arcaneum.embeddings.client import EMBEDDING_MODELS, model_revision
+from arcaneum.embeddings.remote.pool import probe_endpoint
 from arcaneum.embeddings.remote.server import EmbeddingServer, ServerSettings
 
 
@@ -85,3 +87,129 @@ def serve_command(
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
+
+
+# --- arc models workers ------------------------------------------------------------
+
+DEPENDENCY_COLUMNS = (
+    ("torch", "torch"),
+    ("onnxruntime", "onnxruntime"),
+    ("fastembed", "fastembed"),
+    ("sentence-transformers", "s-t"),
+    ("transformers", "transformers"),
+)
+
+
+def _short_fingerprint(value: Optional[str]) -> str:
+    return value[:12] if value else "-"
+
+
+def _load_config_or_exit(output_json: bool):
+    from arcaneum.cli.output import print_error
+    from arcaneum.embeddings.remote.config import (
+        RemoteEmbeddingConfigError,
+        load_remote_embedding_config,
+    )
+
+    try:
+        return load_remote_embedding_config()
+    except RemoteEmbeddingConfigError as exc:
+        print_error(f"Invalid remote_embedding configuration: {exc}", output_json)
+        sys.exit(1)
+
+
+NO_ENDPOINTS = (
+    "No remote embedding endpoints are configured. Add them under "
+    "remote_embedding.endpoints in ~/.config/arcaneum/config.yaml or set ARC_EMBED_ENDPOINTS."
+)
+
+
+def workers_command(output_json: bool) -> None:
+    """Report each configured endpoint's state, versions and resident model."""
+    from rich.console import Console
+    from rich.table import Table
+
+    from arcaneum.cli.output import print_json
+    from arcaneum.embeddings.remote.identity import dependency_versions, local_identity
+
+    config = _load_config_or_exit(output_json)
+    identity = local_identity(None)
+    local = {
+        "arcaneum_version": identity["arcaneum_version"],
+        "code_fingerprint": identity["code_fingerprint"],
+        "dependencies": dependency_versions(),
+    }
+    if not config.endpoints:
+        if output_json:
+            print_json("success", NO_ENDPOINTS, data={"local": local, "workers": []})
+        else:
+            Console().print(NO_ENDPOINTS)
+        return
+
+    with ThreadPoolExecutor(max_workers=len(config.endpoints)) as executor:
+        statuses = list(executor.map(lambda e: probe_endpoint(e, config), config.endpoints))
+
+    workers = [
+        {
+            "endpoint": status.endpoint,
+            "state": status.state,
+            "reason": status.reason,
+            "arcaneum_version": status.arcaneum_version,
+            "code_fingerprint": status.code_fingerprint,
+            "resident_model": status.resident_model,
+            "loading_model": status.loading_model,
+            "busy": status.busy,
+            "dependencies": status.dependencies,
+            "bind": endpoint.bind,
+            "models": config.endpoint_models(endpoint),
+        }
+        for endpoint, status in zip(config.endpoints, statuses)
+    ]
+    healthy = all(worker["state"] == "up" for worker in workers)
+    summary = f"{sum(w['state'] == 'up' for w in workers)} of {len(workers)} workers up"
+    if output_json:
+        status = "success" if healthy else "warning"
+        print_json(status, summary, data={"local": local, "workers": workers})
+        return
+
+    console = Console()
+    console.print(
+        f"Workstation: arcaneum {local['arcaneum_version']} "
+        f"fingerprint {_short_fingerprint(local['code_fingerprint'])}"
+    )
+    table = Table(title="Remote embedding workers")
+    for column in ("Endpoint", "State", "Version", "Fingerprint", "Resident", "Busy"):
+        table.add_column(column, no_wrap=column in ("Endpoint", "State"))
+    styles = {"up": "green", "mismatch": "yellow", "unreachable": "red"}
+    for worker in workers:
+        state = worker["state"]
+        resident = worker["resident_model"] or (
+            f"loading {worker['loading_model']}" if worker["loading_model"] else "-"
+        )
+        busy = "-" if worker["busy"] is None else ("yes" if worker["busy"] else "no")
+        table.add_row(
+            worker["endpoint"],
+            f"[{styles.get(state, 'white')}]{state}[/]",
+            worker["arcaneum_version"] or "-",
+            _short_fingerprint(worker["code_fingerprint"]),
+            resident,
+            busy,
+        )
+    console.print(table)
+    for worker in workers:
+        details = [f"models {','.join(worker['models'])}", f"bind {worker['bind']}"]
+        if worker["dependencies"]:
+            details.append(
+                " ".join(
+                    f"{label} {worker['dependencies'].get(name) or '-'}"
+                    for name, label in DEPENDENCY_COLUMNS
+                )
+            )
+        if worker["reason"]:
+            details.append(worker["reason"])
+        console.print(f"  {worker['endpoint']}: {'; '.join(details)}", soft_wrap=True)
+    if not healthy:
+        console.print(
+            "Run `arc models deploy` to install or update workers "
+            "(`arc models deploy --dry-run` shows what would change)."
+        )

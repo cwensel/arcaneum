@@ -337,16 +337,17 @@ def index_pdfs_command(
         )
 
         # Pre-load model to avoid "hang" during first file processing (similar to markdown indexing)
+        remote = embeddings.embeds_remotely(model)
         if not output_json:
-            # Check if model is cached
-            is_cached = embeddings.is_model_cached(model)
-            if not is_cached:
+            if remote:
+                console.print(f"🌐 Embedding {model} on remote workers", style="blue")
+            elif not embeddings.is_model_cached(model):
                 console.print(f"⬇️  Downloading {model} model (first time only)...", style="yellow")
             else:
                 console.print(f"📦 Loading {model} model from cache...", style="blue")
 
         # Load model now (separate phase from file processing)
-        embeddings.get_model(model)
+        embeddings.prepare_model(model)
 
         if not output_json:
             console.print()

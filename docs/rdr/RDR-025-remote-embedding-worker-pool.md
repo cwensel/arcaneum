@@ -6,7 +6,7 @@
 ## Metadata
 
 - **Date**: 2026-10-14
-- **Status**: Final
+- **Status**: Draft
 - **Type**: Architecture
 - **Priority**: Medium
 - **Related Issues**: Extends RDR-022 (spawned accelerator worker
@@ -99,7 +99,54 @@ the sentence-transformers accelerator path (`client.py:980-1000`,
 always in-process. A remote backend placed behind the accelerator worker
 would therefore miss every encode on this workstation. The boundary has to
 be "embed these document texts with model M", at
-`EmbeddingClient.embed()` / `embed_parallel()`.
+`EmbeddingClient.embed()` / `embed_parallel()`. Two details of those entry
+points matter: query embedding for sentence-transformers models also goes
+through `embed()` with `prompt_type="query"`
+(`src/arcaneum/search/embedder.py:130`), and `embed_parallel()` constructs
+the local model with `get_model()` before batching (`client.py:1835`).
+
+**Existing worker loop.** `_worker_main` (`worker_protocol.py:138`) loads
+its single backend synchronously when it receives `initialize`, then
+serves one command at a time. It cannot answer heartbeats while a model
+loads and cannot switch models; `encoded` carries the result as a nested
+list plus `shape` and `dtype` (`worker_protocol.py:176`).
+
+**Observability.** The memory-probe JSONL records phase, RSS, MPS, swap and
+accelerator-worker fields (`memory_probe.py:306-335`); nothing in it shows
+which models the process has loaded, and fastembed always runs in-process,
+so `worker_rss` does not reveal it either.
+
+**Distribution.** arcaneum is installed from the GitHub release wheel
+(`README.md:9`), not PyPI, and unreleased working trees report the same
+version string as the last release. Wheels are built by the setuptools
+backend (`pyproject.toml`); the release workflow runs `python -m build`,
+and development checkouts carry a `uv.lock`, so `uv build --wheel` builds
+the same wheel from a source tree.
+
+**Worker access (2026-10-14).** `ssh -o BatchMode=yes` reaches `dev-0`
+and `dev-1` as a user in the `docker` group, so the remote `docker` CLI
+runs without sudo or prompts. Both are x86_64 with Docker 29.8.1 and
+110 GB / 163 GB free, with no containers or named volumes present. `dev-1`
+has no ufw; Docker's published ports bypass host firewall rules in any
+case (Docker documentation, "Docker and ufw").
+
+**Tailscale (2026-10-14).** The workstation, `dev-0` and `dev-1` share a
+tailnet with MagicDNS enabled (search domain `tail27d7.ts.net`, resolver
+`100.100.100.100`). On the workstation, `socket.getaddrinfo("dev-0")`
+already returns only `dev-0`'s Tailscale address (`100.84.12.108`; `dev-1`
+likewise), so SSH and any client using the bare name go over the tailnet.
+The workers run tailscaled 1.102.4 in kernel mode with a `tailscale0`
+interface. A node's Tailscale address is stable; the problem at boot is
+that it does not exist yet when services start: `docker.service` is not
+ordered after `tailscaled`, and `net.ipv4.ip_nonlocal_bind` is 0, so
+binding that address fails until tailscaled has configured it. A
+Docker-published port on that address is bound when the container starts,
+so the container fails to start after a reboot and is not retried
+(**Assumed**, from commonly reported behavior; not reproduced). Fixing
+that on the host (systemd ordering, the sysctl) or configuring
+`tailscale serve` (no serve config or operator user is set) requires sudo
+on each worker, which is password-protected on `dev-0`. `psutil`, already
+an arcaneum dependency, lists interface addresses.
 
 **Model revisions.** sentence-transformers registry entries pin a commit
 hash and refuse to load without one (`client.py:406-408`). fastembed
@@ -180,8 +227,21 @@ an idle baseline).
   `qwen3-embed`.
 - **Documented**: the remote boundary must wrap `EmbeddingClient`'s
   document path, not the RDR-022 accelerator worker (`client.py:1716`).
+- **Documented**: routing must key on `prompt_type="document"` and run
+  before `embed_parallel()`'s `get_model()` call, or queries go remote and
+  remote-routed work still loads a local model.
+- **Documented**: the RDR-022 serve loop cannot report `loading` or switch
+  models; only its envelopes carry over to a socket server.
 - **Documented**: fastembed cannot pin a revision itself, but arcaneum can
   download a pinned snapshot and pass it as `specific_model_path`.
+- **Verified**: both workers can be managed from the workstation with
+  non-interactive SSH and the remote `docker` CLI.
+- **Verified**: bare worker names already resolve to Tailscale addresses
+  on the workstation, so a server bound only to its Tailscale address is
+  reachable as `dev-0` with no client-side configuration.
+- **Documented**: binding a Tailscale address at boot needs the binding
+  process to wait for the address; Docker port publishing cannot wait, and
+  host-level fixes need sudo on every worker.
 - **Verified**: `qwen3-embed` search latency is dominated by local model
   load; `arctic-m` search latency is not.
 
@@ -208,38 +268,62 @@ models to a pool of those servers over the local network.
 
 1. **Server (`arc models serve`)**: a long-lived process wrapping a CPU
    `EmbeddingClient`. It accepts RDR-022 envelopes over
-   `multiprocessing.connection.Listener` on a LAN port, loads a model
-   lazily on first request (downloading the pinned revision into a mounted
-   cache volume), and keeps it resident.
-2. **Container**: stock `python:3.12-slim` image. At startup a script
-   installs a pinned arcaneum version into a cached venv volume,
-   reinstalling only when the requested version changes, then runs
-   `arc models serve`. No arcaneum-specific image is built or distributed;
-   model weights live in a cache volume, not in an image.
+   `multiprocessing.connection.Listener` on a port of the host's LAN or
+   Tailscale address, loads the model a
+   connection names in its `initialize` message (downloading the pinned
+   revision into a mounted cache volume), and keeps it resident.
+2. **Worker image**: built on each worker, never published. It is the
+   stock `python:3.12-slim` base plus a standard `pip install` of an
+   arcaneum wheel with its `sentence-transformers` extra (CPU-only
+   torch), the same install the workstation has; the container's command
+   is `arc models serve`. Model weights live in a named cache volume, not
+   in the image.
 3. **Client pool**: a configured list of `host:port` endpoints. One request
-   in flight per endpoint (RDR-022's rule, applied per endpoint). An
-   `embed()` call is split into sub-batches dispatched to whichever
-   endpoints are idle and serve the model; results are reassembled in
-   order by request ID.
+   in flight per endpoint per client (RDR-022's rule, applied per
+   endpoint). An `embed()` call is split into sub-batches, spread evenly
+   across the idle endpoints that serve the model and no larger than the
+   server's encode batch size; results are reassembled in order by request
+   ID.
 4. **Routing**: per-model configuration decides whether a model's document
-   embedding is remote. Phase 1 defaults: `arctic-m` remote whenever
-   endpoints are configured; `qwen3-embed` local unless the command is run
-   with `--remote-embed`.
+   embedding is remote. Only `prompt_type="document"` calls are routed;
+   query embedding stays local regardless of configuration. Phase 1
+   defaults: `arctic-m` remote whenever endpoints are configured;
+   `qwen3-embed` local unless the command is run with `--remote-embed`.
+5. **Deployment (`arc models deploy`)**: one idempotent command, run on the
+   workstation, that installs, upgrades, updates, refreshes and
+   reconfigures the worker on each configured endpoint over SSH, building
+   the image there and verifying vector parity before the pool uses it.
 
-Security is an explicit non-goal: the pool runs on a trusted local network,
-pickle over the socket is acceptable because both ends run the same pinned
-arcaneum, and an optional static `authkey` is the only access control.
+Security is an explicit non-goal: the pool runs on a trusted local network
+or tailnet, pickle over the socket is acceptable because both ends run the
+same pinned arcaneum, and an optional static `authkey` (plus Tailscale
+access controls when `bind: tailscale`) is the only access control.
 
 ### Technical Design
 
 **Handshake.** The first message on a connection is `initialize`, carrying
-protocol version, arcaneum version, model key, pinned model revision,
-prompt-policy version, and expected dimensions. The server loads the model
-(downloading the pinned revision if needed) and replies `initialized` with
-the same fields as resolved on its side. Any mismatch excludes that endpoint
-for that model. While a download or load is in progress the server answers
-heartbeats with a `loading` state; encode deadlines start only after
-`initialized`, so first use never trips a timeout.
+protocol version, arcaneum version, code fingerprint, model key, pinned
+model revision, prompt-policy version, and expected dimensions. The code
+fingerprint is a hash of the installed `arcaneum` package's Python
+sources, computed the same way on both sides, so a development build that
+still reports the last release's version is distinguished from that
+release. The server loads the model (downloading the pinned revision if
+needed) and replies `initialized` with the same fields as resolved on its
+side. Any mismatch excludes that endpoint for that model. An `initialize`
+without a model key opens a status-only connection that loads nothing;
+`arc models workers` and `arc models deploy` use it. Heartbeat replies on
+any connection report the server's arcaneum version, code fingerprint,
+resident model and state, and the installed versions of torch,
+onnxruntime, fastembed, sentence-transformers and transformers.
+
+**Server concurrency.** The server reads each connection on its own
+thread, so heartbeats are answered at any time, and runs model loads and
+encodes on a single executor, so encodes from several clients (for
+example a git-hook sync during a repair) are serialized in arrival order.
+Heartbeat replies report the connection's state: `loading` while its
+model downloads or loads, `queued` while its request waits behind another
+client's, `encoding` while it runs. The client's encode deadline counts
+only time in `encoding`, so first use and queueing never trip a timeout.
 
 **fastembed revision pinning.** fastembed registry entries gain a
 `revision` field (`arctic-m`: `fc74610d18462d218e312aa986ec5c8a75a98152`).
@@ -248,16 +332,21 @@ server obtain that snapshot themselves and construct `TextEmbedding` with
 `specific_model_path` pointing at it. fastembed models without a pinned
 revision are not eligible for remote routing.
 
-**Encode.** `encode` carries document texts and model key; `encoded`
-returns an independently owned C-contiguous float32 array, validated with
-the existing `_validate_embeddings` checks before use.
+**Encode.** `encode` carries document texts and model key; `encoded` keeps
+the existing envelope (nested list plus `shape` and `dtype`), which the
+client converts to an independently owned C-contiguous float32 array and
+validates with the existing `_validate_embeddings` checks before use.
 
 **Model placement.** A 16 GB worker holds one resident model comfortably,
-not two. Each endpoint keeps at most one model resident; a request for
-another model evicts the first. Endpoint configuration may restrict which
-models an endpoint serves so that, if desired, a long `qwen3-embed` run
-can be confined to one box while the other keeps serving `arctic-m`. The
-server's encode batch size is configurable to bound peak RSS.
+not two. Each endpoint keeps at most one model resident. A request for
+another model evicts the resident one only after the resident model has
+had no queued or running encode for an eviction grace period (default
+60 s), so two clients using different models do not reload on every
+batch; the waiting client sees `queued`. Endpoint configuration may
+restrict which models an endpoint serves so that, if desired, a long
+`qwen3-embed` run can be confined to one box while the other keeps serving
+`arctic-m`. The server's encode batch size is configurable to bound peak
+RSS.
 
 **Pool behavior.**
 
@@ -269,7 +358,18 @@ server's encode batch size is configurable to bound peak RSS.
 - When no endpoint can serve a remote-routed model, a configured policy
   applies: `wait` (default; block and keep probing, reporting the
   unreachable endpoints), `local` (embed locally, today's behavior), or
-  `fail` (stop before writing that file's chunks).
+  `fail` (end the run; the file being embedded gets no chunks written,
+  files already completed keep theirs).
+- An endpoint excluded by a handshake mismatch counts as unable to serve
+  that model. Under `wait` the client re-handshakes on each probe, so
+  redeploying the worker with a matching wheel resumes the run; the wait
+  message shows both sides' versions and fingerprints and names
+  `arc models deploy` to update the workers and `--local-embed` to proceed
+  without them.
+- Routing is decided before any local model is constructed: a
+  remote-routed `embed_parallel()` call skips its up-front `get_model()`.
+  The client records which models it has loaded locally; the memory-probe
+  JSONL gains a `local_models` field listing them.
 
 ```text
 // Illustrative — verify API signatures during implementation
@@ -281,28 +381,142 @@ RemoteEmbeddingPool(endpoints: list[Endpoint], unavailable: "wait"|"local"|"fail
 **Configuration.** Endpoints, per-model routing and the unavailable policy
 live in arcaneum config, with an environment override for endpoints
 (following the `ARC_QDRANT_URL` pattern), e.g.
-`ARC_EMBED_ENDPOINTS=dev-0:7300,dev-1:7300`. `arc corpus sync` and
+`ARC_EMBED_ENDPOINTS=dev-0:7300,dev-1:7300`. Configured routing applies to
+every command that embeds documents through `EmbeddingClient`: `arc corpus
+sync` and `arc corpus repair`, and the `arc index` commands through the
+shared model cache (`embeddings/model_cache.py`). `arc corpus sync` and
 `arc corpus repair` gain `--remote-embed` (route every model in the run to
 the pool) and `--local-embed` (route none), overriding configuration for
-that invocation.
+that invocation; the `arc index` commands follow configuration only in
+Phase 1.
+
+Each configured endpoint describes both how to reach the worker and how
+to run it: `host` (a name such as `dev-0`, resolved normally by the
+client), `port`, `ssh` (SSH target for deployment, default the host, so
+`~/.ssh/config` applies), `bind` (see Listening address), the models it
+serves, and its encode batch size. The `authkey` is shared by all
+endpoints. Endpoints given only through `ARC_EMBED_ENDPOINTS` use the
+defaults.
+
+**Listening address.** The worker container uses host networking, so the
+server binds host addresses itself and Docker publishes no ports. `bind`
+selects the address:
+
+- `all` (default): all interfaces.
+- `tailscale`: the host's Tailscale IPv4 address, found at startup with
+  `psutil.net_if_addrs()` as the address in `100.64.0.0/10` on
+  `tailscale0` (or on any interface if `tailscale0` is absent).
+- A literal IP address.
+
+For `tailscale` or a literal address, the server waits until the address
+exists on the host, polling every 2 s and logging once a minute that it
+is waiting, then binds. After a reboot the container starts at once and
+the server binds as soon as tailscaled has configured the address,
+whatever the service start order, with no host changes. The server
+re-checks every 30 s and rebinds if the Tailscale address changes. On the
+client, an endpoint whose `bind` is `tailscale` and whose `host` resolves
+outside `100.64.0.0/10` is reported by name with the resolved address
+and a pointer to Tailscale or MagicDNS on the workstation, instead of
+showing only as unreachable.
+
+**Deployment (`arc models deploy [HOST...]`).** Brings the worker on each
+named endpoint (default: all configured endpoints, one at a time) to the
+desired state, using the system `ssh` and `scp` in batch mode to run the
+remote `docker` CLI as the SSH user. The desired state has three parts:
+
+- **Wheel.** Workers always run the workstation's code, so the wheel must
+  have the workstation's code fingerprint, which deploy computes from the
+  wheel's contents. By default deploy uses the release wheel for the
+  workstation's own arcaneum version, downloaded from GitHub releases into
+  arcaneum's local cache. `--build` instead builds one with
+  `uv build --wheel` from the source tree the running arcaneum was
+  imported from (the worktree development loop), and `--wheel PATH` uses
+  a given wheel. A wheel whose fingerprint differs is refused; when the
+  workstation runs an unreleased or modified build, the message names
+  `--build`.
+- **Image.** Built on the worker from a Dockerfile generated by deploy:
+  `FROM python:3.12-slim`, CPU-only torch from the PyTorch CPU index in
+  its own layer (cached across wheel changes), then
+  `pip install <wheel>[sentence-transformers]`, with `arc models serve` as
+  the command. Tagged `arcaneum-embed:<fingerprint prefix>` and labeled
+  with arcaneum version, fingerprint and wheel SHA-256. The build is
+  skipped when an image with that wheel's label exists; deploy keeps the
+  current and previous image and removes older ones.
+- **Container.** `arcaneum-embed-<port>`, `--restart unless-stopped`,
+  `--network host`, the named volume `arcaneum-embed-models` mounted as
+  the model cache, and the endpoint's port, `bind`, other settings and
+  `authkey` passed as environment. Labeled with a hash of the full run
+  specification.
+
+Deploy compares that desired state with the worker's current container
+and image labels, and the same command covers every lifecycle case:
+
+| Situation | Command | Action |
+| --- | --- | --- |
+| First install | `arc models deploy` | Build image, create container |
+| Upgrade (workstation now runs a new release) | `arc models deploy` | Build image, replace container |
+| Downgrade (workstation reverted to the previous release) | `arc models deploy` | Reuse retained image, replace container |
+| Update (development build) | `arc models deploy --build` or `--wheel PATH` | Build image, replace container |
+| Reconfigure (endpoint settings changed) | `arc models deploy` | Replace container, reuse image |
+| Refresh (base image or dependency updates, suspect worker) | `arc models deploy --refresh` | `docker build --pull --no-cache`, replace container |
+| Container stopped or missing | `arc models deploy` | Start or create container |
+| Nothing changed | `arc models deploy` | None; reports up to date |
+
+Per host the order is: preflight (SSH in batch mode, remote
+`docker version`); copy the wheel and Dockerfile to a build directory on
+the host, skipped when the SHA-256 matches; build the image; only then
+replace the container (`docker rm -f -v` of the old one, `docker run -d`),
+so a failed build leaves the running worker untouched; wait until a
+status-only connection reports the expected fingerprint, printing the
+container's log tail on timeout or exit; then verify. A host that fails
+is reported and skipped, the remaining hosts proceed, and deploy exits
+non-zero. `--dry-run` shows each host's current and desired version,
+fingerprint and action without changing anything.
+
+**Deploy verification.** The fingerprint covers arcaneum's code but not
+the dependency versions pip resolves when the image is built, so after
+start deploy checks parity directly unless `--no-verify` is given: for
+each remote-eligible model the endpoint serves, it handshakes (which also
+downloads and loads the pinned revision, warming the cache), embeds a
+fixed probe set shipped with arcaneum (including markdown-emphasis text,
+the spike's one tokenization outlier) remotely and locally, and requires
+cosine ≥ 0.9999 per text. Verification runs whenever deploy creates or
+replaces a container. On failure deploy removes the new container
+(keeping its image) and exits non-zero, naming the model, the minimum
+cosine and both sides' dependency versions. Because the container is
+removed rather than stopped, a later deploy recreates and re-verifies it
+instead of restarting it; until then the worker is down, so syncs follow
+the unavailable policy rather than mixing drifted vectors into a
+collection.
+
+Deploy does not drain in-flight work. Replacing a container drops its
+connections, which the pool handles like any endpoint restart: the
+in-flight batch is retried elsewhere and the endpoint rejoins after a
+successful re-handshake.
 
 ### Existing Infrastructure Audit
 
 | Proposed Component | Existing Module | Decision |
 | --- | --- | --- |
 | Message envelopes, validation | `embeddings/worker_protocol.py` (`make_message`, `_validate_message`, `MessageType`) | Reuse: same envelope and version field over a socket transport |
-| Worker serve loop | `worker_protocol._worker_main` | Extend: run over a connection-like object so queue and socket transports share it |
+| Worker serve loop | `worker_protocol._worker_main` | Keep for the spawn-queue transport; the server gets its own loop (per-connection reader threads, single encode executor, model switching) because `_worker_main` loads synchronously and serves one fixed backend |
+| Message transport | `AcceleratorWorkerSession` queue send/receive | Extend: factor envelope send/receive behind a connection-like interface so queues and sockets share validation |
+| Load observability | `embeddings/memory_probe.py` snapshot JSONL | Extend: add `local_models` from the client's loaded-model set |
 | Server-side encoding | `EmbeddingClient` CPU path | Reuse: the server embeds through the same client so preprocessing and prompt policy are identical |
 | Output validation | `EmbeddingClient._validate_embeddings` | Reuse on the client side for remote results |
 | fastembed model loading | `EmbeddingClient` fastembed construction and cache checks (`client.py:2377-2441`) | Extend: pinned snapshot plus `specific_model_path` when a revision is set |
 | Thread sizing | `client.py:1024-1040` | Reuse on the server; the server sizes threads to its own cores |
 | Command options | `--no-gpu`, `--max-embedding-batch` on sync and repair | Extend: add `--remote-embed` / `--local-embed` alongside |
+| Docker invocation | `cli/docker.py` (`shutil.which` check, `subprocess.run` with timeouts and captured output) | Reuse the pattern for remote `docker` commands run through `ssh` |
+| Wheel build | setuptools backend; release workflow `python -m build` | Reuse: `--build` runs `uv build --wheel` on the same backend |
+| Local cache directories | `paths.py` | Reuse for downloaded release wheels |
 
 ### Decision Rationale
 
 The spike shows the existing CPU path runs unchanged on the candidate
 machines with vectors equal to within 6e-7, so the only new parts are a
-transport, a pool, a server entry point, and fastembed revision pinning.
+transport, a pool, a server entry point, fastembed revision pinning, and
+a deploy command.
 Running arcaneum's own code on the server keeps preprocessing, truncation
 and prompt policy identical to local embedding, which is what lets remote
 and local vectors share a collection. `multiprocessing.connection` is the
@@ -310,9 +524,19 @@ smallest transport that carries the existing envelopes unchanged on a
 trusted network.
 
 Starting with `arctic-m` puts the frequent, small `Claude` corpus syncs on
-the workers, where two boxes run at about half the workstation's rate.
+the workers. Two busy boxes run at about half the workstation's rate, but
+embedding is dispatched per file, so a file with fewer chunks than one
+sub-batch per endpoint keeps only one box busy (about a quarter of the
+workstation's rate) until cross-file batching (Deferred Work) lands.
 `qwen3-embed` is 14× slower per box, so it is routed remotely only when
 asked, for long unattended runs where wall-clock does not matter.
+
+Workers must run exactly the workstation's code, so the workstation is
+the natural place to drive their deployment: `arc models deploy` derives
+the wheel from what the workstation runs, builds the image where it is
+used (no registry, no per-release publishing), and checks vector parity
+before the pool can use a new build. One idempotent command covers first
+install, upgrades, development updates and refreshes.
 
 ## Alternatives Considered
 
@@ -386,8 +610,34 @@ the LAN (e.g. the `arcaneum#tpcs` cloud path).
   are corpus identity, and git hooks trigger syncs locally.
 - **Thread caps only (`OMP_NUM_THREADS`)**: lowers peak contention but keeps
   all the work and the resident model local; worth doing separately.
-- **Prebuilt arcaneum image**: requires building and shipping an image per
-  release; install-at-startup with a cached venv avoids that.
+- **Published arcaneum image**: needs a registry and an image build per
+  release, and cannot follow development builds; `arc models deploy`
+  builds the same image on each worker instead.
+- **Install into a venv volume at container start** (the spike's setup):
+  works, but pip runs whenever the wheel changes at start, the install
+  lives in a mutable volume, and a restart may need PyPI; an image built
+  on the worker makes container start do nothing but serve.
+- **Docker over SSH (`docker -H ssh://`, Docker contexts)**: still needs a
+  way to get the wheel to the host; plain `ssh` and `scp` cover both with
+  one tool the workstation already has.
+- **Workers updating themselves from GitHub releases**: cannot follow
+  development builds, and the workstation, not the latest release, is the
+  version the workers must match.
+- **Ansible or Compose for deployment**: a new dependency for two hosts
+  and one container each.
+- **Docker-published port on the Tailscale address**
+  (`-p 100.x.y.z:7300:7300`): fails at boot when Docker starts before
+  tailscaled has configured the address; fixing that needs systemd
+  ordering or `net.ipv4.ip_nonlocal_bind=1` set with sudo on every worker.
+- **`tailscale serve --tcp` forwarding to a loopback listener**: the
+  Tailscale-native way to expose a port only on the tailnet, and immune to
+  boot order, but needs sudo or an operator user on every worker, keeps
+  its configuration outside what deploy can see and reconcile, and makes
+  every client appear as `127.0.0.1` in server logs.
+- **Tailscale sidecar container** (`tailscale/tailscale`, sharing its
+  network namespace): gives each worker its own tailnet node, which needs
+  an auth key and state volume and changes the name clients use from
+  `dev-0` to a new node name.
 
 ## Trade-offs
 
@@ -399,42 +649,81 @@ the LAN (e.g. the `arcaneum#tpcs` cloud path).
   unattended without loading the workstation.
 - Positive: the server and pool are the shape the cloud path
   (`arcaneum#tpcs`, `clusterless#2cy0`) needs for fan-out.
+- Positive: one idempotent command keeps workers in step with the
+  workstation through upgrades, development updates and refreshes; worker
+  containers restart after a reboot without network access.
+- Negative: deployment needs key-based SSH to each worker as a user in the
+  `docker` group (true for `dev-0` and `dev-1`), and an image build takes
+  minutes (the torch layer is cached across wheel changes).
 - Negative: sync wall-clock depends on worker speed: about 2× longer for
-  `arctic-m` across two workers, and hours rather than minutes for
+  `arctic-m` when both workers are busy, up to about 4× for corpora of
+  small files that keep only one busy, and hours rather than minutes for
   `qwen3-embed` with `--remote-embed`.
 - Negative: with the default `wait` policy, a sync stalls while all
-  workers are down instead of falling back.
+  workers are down or version-mismatched (for example after upgrading the
+  workstation but not the workers) instead of falling back.
 
 ### Risks and Mitigations
 
 - **Risk**: A worker loads different weights or code than the workstation
   and silently mixes incompatible vectors into a collection.
-  **Mitigation**: Handshake rejects any version, revision, prompt-policy or
-  dimension mismatch; fastembed models are remote-eligible only with a
-  pinned revision.
-- **Risk**: First-use model download or arcaneum reinstall makes a worker
-  look hung.
-  **Mitigation**: `loading` heartbeat state; deadlines start after
-  `initialized`.
+  **Mitigation**: Handshake rejects any version, code-fingerprint,
+  revision, prompt-policy or dimension mismatch; fastembed models are
+  remote-eligible only with a pinned revision; deploy refuses wheels
+  whose fingerprint differs from the workstation's.
+- **Risk**: The image build resolves dependency versions (torch,
+  onnxruntime, tokenizers) whose output differs from the workstation's,
+  which the code fingerprint cannot detect.
+  **Mitigation**: Deploy verification compares remote and local probe
+  vectors before the worker serves and removes the container on failure;
+  heartbeat health and `arc models workers` show dependency versions.
+- **Risk**: First-use model download or another client's queued work
+  makes a worker look hung.
+  **Mitigation**: `loading` and `queued` heartbeat states; deadlines count
+  only time in `encoding`.
 - **Risk**: A `--remote-embed` `qwen3-embed` run evicts `arctic-m` on both
-  workers and stalls routine syncs.
-  **Mitigation**: Per-endpoint model restriction confines `qwen3-embed` to
+  workers and stalls routine syncs, or two clients with different models
+  reload on every batch.
+  **Mitigation**: Eviction waits for the resident model to go idle for the
+  grace period; per-endpoint model restriction confines `qwen3-embed` to
   one worker when desired.
 - **Risk**: Pickle deserialization from the network.
-  **Mitigation**: Accepted for a trusted LAN; bind to the LAN interface and
-  document that the port must not be exposed.
+  **Mitigation**: Accepted for a trusted network. With host networking no
+  Docker-published port bypasses the host firewall. `bind: tailscale`
+  makes the server reachable only over the tailnet, where Tailscale
+  access controls decide who can connect; document that a `bind: all`
+  port must not be exposed beyond the LAN.
+- **Risk**: After a reboot, a worker bound to its Tailscale address
+  starts before tailscaled has configured that address.
+  **Mitigation**: The server waits for the address and then binds;
+  meanwhile the pool sees the endpoint as down and probes it.
 
 ### Failure Modes
 
 - All endpoints down during sync: `wait` blocks visibly, naming the
-  unreachable endpoints; `fail` stops before writing that file's chunks;
-  `local` logs that it fell back.
+  unreachable endpoints; `fail` ends the run with no chunks written for
+  the file being embedded; `local` logs that it fell back.
 - Endpoint dies mid-batch: batch retried elsewhere; logged with endpoint
   and request ID.
-- Handshake mismatch: endpoint excluded for that model; shown by
-  `arc models workers`.
-- Diagnosis: `arc models workers` reports each endpoint's state, versions
-  and resident model; the existing memory-probe log shows whether the
+- Handshake mismatch: endpoint excluded for that model and treated as
+  unable to serve it under the unavailable policy; shown by
+  `arc models workers` with both sides' versions and fingerprints.
+- Deploy preflight or build fails on a host: that host's running worker
+  is left untouched, the remaining hosts proceed, and deploy exits
+  non-zero naming the host and failing step.
+- Deploy verification fails: the new container is removed, the worker is
+  down until a deploy verifies, and syncs follow the unavailable policy.
+- Worker's Tailscale address absent (tailscaled stopped or logged out):
+  the server keeps waiting and logging; the pool sees the endpoint as
+  down; deploy's health wait times out with the log tail showing the wait.
+- Workstation resolves a `bind: tailscale` worker's name to a
+  non-Tailscale address: the client reports the endpoint, the resolved
+  address and the likely cause (Tailscale or MagicDNS off on the
+  workstation).
+- Diagnosis: `arc models workers` reports each endpoint's state, versions,
+  fingerprint, dependency versions and resident model;
+  `arc models deploy --dry-run` reports each host's deployed and desired
+  build; the memory-probe log's `local_models` field shows whether the
   workstation process loaded a model.
 
 ## Implementation Plan
@@ -443,27 +732,43 @@ the LAN (e.g. the `arcaneum#tpcs` cloud path).
 
 - [x] All Critical Assumptions verified
 - [x] Docker available on each worker (Docker 29.8.1 on `dev-0`, `dev-1`)
+- [x] Key-based SSH to each worker as a `docker`-group user (verified for
+  `dev-0`, `dev-1`)
+- [x] For `bind: tailscale`: workstation and workers on one tailnet with
+  MagicDNS, worker names resolving to Tailscale addresses (verified)
 
 ### Minimum Viable Validation
 
-With `dev-0` and `dev-1` configured and the unavailable policy set to
-`fail`:
+With `dev-0` and `dev-1` configured as `host: dev-0` / `host: dev-1` with
+`bind: tailscale`, deployed from the implementation branch with
+`arc models deploy --build`, and the unavailable policy set to `fail`:
 
 1. `arc corpus sync` of a scratch `arctic-m` corpus of a few markdown files
-   completes, the workstation's memory-probe log shows no local model load,
-   and stored vectors match a local CPU re-embedding at cosine ≥ 0.9999.
+   completes, the workstation's memory-probe log shows an empty
+   `local_models` throughout, and stored vectors match a local CPU
+   re-embedding at cosine ≥ 0.9999.
 2. `arc corpus sync --remote-embed --force` of a scratch `qwen3-embed`
    corpus of two small PDFs completes with the same checks.
 3. `arc search semantic` against both scratch corpora (local query
    embedding) returns the same top results as when the corpora are indexed
    locally.
+4. Deploy lifecycle: the first `--build` deploy creates and verifies both
+   workers; an immediate rerun reports up to date; a code change followed
+   by `--build` replaces both workers and `arc models workers` shows the
+   new fingerprint; `--refresh` rebuilds without cache and verifies.
+5. Listening address: a connection to a worker's LAN address is refused
+   while `dev-0` connects; after the operator reboots one worker, it
+   rejoins the pool with no intervention and its log shows the wait for
+   the Tailscale address.
 
 ### Phase 1: Code Implementation
 
-#### Step 1: Transport-neutral worker loop
+#### Step 1: Transport-neutral envelopes
 
-Run `_worker_main` over a connection-like object; keep the spawn-queue
-transport passing its existing tests.
+Factor envelope send/receive and validation behind a connection-like
+interface used by both the spawn-queue session and a socket connection;
+keep the spawn-queue transport passing its existing tests. Add the code
+fingerprint helper.
 
 #### Step 2: fastembed revision pinning
 
@@ -472,36 +777,49 @@ pinned snapshots via `specific_model_path` on both sides.
 
 #### Step 3: `arc models serve`
 
-Server entry point: listener, handshake with `loading` state, lazy model
-load with single-resident eviction, encode, heartbeat.
+Server entry point: listener, per-connection reader threads, single encode
+executor, handshake, `loading` / `queued` / `encoding` heartbeat states,
+model load on `initialize` with single-resident eviction after the grace
+period, encode, and the listening address (`all`, `tailscale` or a
+literal address; wait for it, bind, rebind on change).
 
 #### Step 4: Remote pool client and routing
 
-Endpoint config, handshake, sub-batch dispatch, retry, health probing,
-unavailable policy, per-model routing in `EmbeddingClient.embed()` and
-`embed_parallel()`, and `--remote-embed` / `--local-embed` on
+Endpoint config, handshake with re-handshake on probe, even sub-batch
+dispatch, retry, health probing, unavailable policy, document-only
+per-model routing in `EmbeddingClient.embed()` and `embed_parallel()`
+(before `get_model()`), the client's loaded-model set and the memory
+probe's `local_models` field, and `--remote-embed` / `--local-embed` on
 `arc corpus sync` and `arc corpus repair`.
 
 #### Step 5: `arc models workers`
 
-List configured endpoints with state, versions and resident model.
+List configured endpoints with state, versions, fingerprint, dependency
+versions and resident model over status-only connections.
 
-#### Step 6: Container startup script
+#### Step 6: `arc models deploy`
 
-Installs a pinned arcaneum version into a cached venv volume and runs the
-server; documented `docker run` invocation.
+Wheel resolution (release download, `--build`, `--wheel`) with
+fingerprint-from-wheel check; generated Dockerfile and image build on the
+host; container specification and labels; desired-versus-current plan for
+every lifecycle case, `--dry-run` and `--refresh`; preflight, copy,
+build-then-replace order and health wait; verification with the probe set
+and `--no-verify`.
 
 ### Phase 2: Operational Activation
 
-#### Activation Step 1: Start workers
+#### Activation Step 1: Configure the workstation
 
-Run the documented container on `dev-0` and `dev-1` with cache and venv
-volumes and the LAN port published.
+Set the endpoints in arcaneum config (`host: dev-0` / `dev-1`, `port`,
+`bind: tailscale`, served models, batch size, `authkey`; `ssh` only if it
+differs from the host).
 
-#### Activation Step 2: Configure the workstation
+#### Activation Step 2: Deploy workers
 
-Set the endpoints in arcaneum config and confirm with
-`arc models workers`.
+Run `arc models deploy` with the released arcaneum to build, start and
+verify `dev-0` and `dev-1`, then confirm with `arc models workers`. After
+each later upgrade of arcaneum on the workstation, run
+`arc models deploy` again.
 
 ### Deferred Work
 
@@ -511,21 +829,28 @@ Set the endpoints in arcaneum config and confirm with
   memory.
 - **Cross-file batching** for embedding (the RDR-024 shape), so corpora of
   small files keep more than one endpoint busy.
+- **Worker removal command** (`arc models undeploy`): until then,
+  `docker rm -f -v arcaneum-embed-<port>` and `docker image rm` on the
+  host.
 
 ### Day 2 Operations
 
 | Resource | List | Info | Delete | Verify | Backup |
 | --- | --- | --- | --- | --- | --- |
 | Endpoint config | In scope (`arc models workers`) | In scope (state, versions, resident model) | In scope (config edit) | In scope (handshake + heartbeat) | N/A |
-| Worker cache and venv volumes | Deferred | Deferred | Deferred (`docker volume rm`) | N/A | N/A |
+| Worker images and containers | In scope (`arc models deploy --dry-run`) | In scope (labels: version, fingerprint, wheel SHA-256) | Deferred (`docker rm -f -v`, `docker image rm`) | In scope (deploy verification) | N/A |
+| Worker model cache volume | Deferred | Deferred | Deferred (`docker volume rm arcaneum-embed-models`) | N/A | N/A |
 
-The volumes hold re-downloadable caches; Docker's own commands suffice
-initially.
+Images are rebuilt from the wheel and the volume holds re-downloadable
+models; Docker's own commands suffice for removal initially.
 
 ### New Dependencies
 
-None on the workstation. Workers need Docker and network access to PyPI
-and Hugging Face on first start.
+No Python dependencies. On the workstation, `arc models deploy` uses the
+system OpenSSH client (`ssh`, `scp`), and `--build` uses `uv`. Workers
+need Docker and, when an image is built, network access to Docker Hub
+(base image), PyPI and the PyTorch CPU index; model downloads need
+Hugging Face. A built worker restarts without network access.
 
 ## Validation
 
@@ -535,7 +860,7 @@ and Hugging Face on first start.
    backend.
    **Expected**: Same results and error envelopes as the queue transport.
 2. **Scenario**: Handshake with mismatched protocol version, arcaneum
-   version, revision, prompt policy or dimension.
+   version, code fingerprint, revision, prompt policy or dimension.
    **Expected**: Endpoint excluded for that model; no encode sent.
 3. **Scenario**: Server still downloading or loading a model.
    **Expected**: Client sees `loading`, does not time out, and proceeds
@@ -543,13 +868,60 @@ and Hugging Face on first start.
 4. **Scenario**: Endpoint killed mid-batch with a second endpoint healthy.
    **Expected**: Batch retried; result identical and in order.
 5. **Scenario**: All endpoints down under each policy.
-   **Expected**: `wait` blocks and recovers, `fail` stops before writing
-   chunks, `local` embeds locally.
-6. **Scenario**: fastembed model without a pinned revision configured for
+   **Expected**: `wait` blocks and recovers, `fail` ends the run with no
+   chunks written for the file being embedded, `local` embeds locally.
+6. **Scenario**: Every endpoint mismatched under `wait`, then one is
+   redeployed with a matching wheel.
+   **Expected**: Wait message shows both sides' versions; the run resumes
+   after re-handshake.
+7. **Scenario**: Two clients on one endpoint, same model and then
+   different models.
+   **Expected**: Encodes serialized; the waiting client sees `queued` and
+   does not time out; no eviction while the resident model has work
+   within the grace period.
+8. **Scenario**: Query embedding (`prompt_type="query"`) for a model
+   configured as remote.
+   **Expected**: Embedded locally; no request sent to the pool.
+9. **Scenario**: Remote-routed `embed()` and `embed_parallel()`.
+   **Expected**: No local model constructed; `local_models` stays empty.
+10. **Scenario**: fastembed model without a pinned revision configured for
    remote routing.
    **Expected**: Refused with a message naming the missing revision.
-7. **Scenario**: `--remote-embed` and `--local-embed` on sync and repair.
+11. **Scenario**: `--remote-embed` and `--local-embed` on sync and repair.
    **Expected**: Override per-model routing for that invocation only.
+12. **Scenario**: Deploy plan for each lifecycle case (first install,
+   upgrade, downgrade with retained image, update, reconfigure, refresh,
+   stopped or missing container, nothing changed) against a fake remote
+   runner.
+   **Expected**: The table's action for each; `--dry-run` issues no
+   changing remote command.
+13. **Scenario**: Default deploy while the workstation runs a modified
+   source tree; and a wheel built from that tree.
+   **Expected**: Release wheel refused with a message naming `--build`;
+   the fingerprint computed from the built wheel equals the installed
+   tree's.
+14. **Scenario**: Image build fails on one of two hosts.
+   **Expected**: That host's running container is untouched; the other
+   host deploys; exit non-zero.
+15. **Scenario**: Verification probe below cosine 0.9999.
+   **Expected**: New container removed, image kept, exit non-zero naming
+   the model, minimum cosine and dependency versions; the next deploy
+   recreates and re-verifies rather than restarting.
+16. **Scenario**: Status-only connection to a running server.
+   **Expected**: No model loaded; heartbeat reports version, fingerprint,
+   dependency versions, resident model and state.
+17. **Scenario**: `bind: tailscale` with no Tailscale address present,
+   which then appears, then changes (fake interface table).
+   **Expected**: Server waits and logs, binds when the address appears,
+   and rebinds to the new address.
+18. **Scenario**: `bind: all`, `tailscale` and a literal address.
+   **Expected**: Listener on `0.0.0.0`, the Tailscale address, and the
+   literal address respectively; deploy passes `--network host` and
+   publishes no ports.
+19. **Scenario**: Client endpoint with `bind: tailscale` whose host
+   resolves outside `100.64.0.0/10`.
+   **Expected**: Error names the endpoint, the resolved address and the
+   Tailscale or MagicDNS cause.
 
 ### Performance Expectations
 
@@ -564,7 +936,19 @@ is in the feasibility spike above; no throughput target is set.
 No contradictions found between research findings, design principles, and
 proposed solution. The earlier draft proposed remote query embedding for
 all models; the local profile showed it would not help `arctic-m` search,
-so query routing moved to Deferred Work.
+so query routing moved to Deferred Work. A review against the code then
+found that routing at `embed()` would also catch queries, that the RDR-022
+serve loop cannot report `loading` or switch models, that the memory probe
+cannot show model loads, that version strings do not distinguish
+development builds, and that concurrent clients and per-file dispatch
+were unaddressed; the design now covers each. Deployment then moved from
+a manual `docker run` with install at container start to
+`arc models deploy`, which builds the image on each worker; pre-staging a
+different version was dropped because a worker that does not match the
+workstation can neither be verified nor used by the pool. Binding to a
+Tailscale address moved from Docker port publishing, which fails at boot
+before tailscaled configures the address, to host networking with the
+server waiting for and binding the address itself.
 
 ### Assumption Verification
 
@@ -581,25 +965,32 @@ and transport framing by source search of the Python 3.12 stdlib.
 | `TextEmbedding(..., specific_model_path=...)` | fastembed 0.8.0 | Source Search |
 | `snapshot_download(repo_id, revision=..., cache_dir=...)` | huggingface_hub | Source Search (fastembed's own call site); exercised in Step 2 tests |
 | `EmbeddingClient.embed()` on CPU in a Linux container | arcaneum | Spike |
+| `ssh -o BatchMode=yes <host> docker version` | OpenSSH, Docker 29.8.1 | Verified on `dev-0`, `dev-1` |
+| `uv build --wheel` on the setuptools backend | uv | Exercised in Step 6 tests |
 
 ### Scope Verification
 
-The Minimum Viable Validation is in scope: the three checks run against
+The Minimum Viable Validation is in scope: the five checks run against
 `dev-0` and `dev-1` as the last step of Phase 1, before activation.
 
 ### Cross-Cutting Concerns
 
-- **Versioning**: Handshake carries protocol and arcaneum versions; the
-  container reinstalls on version change.
-- **Build tool compatibility**: N/A
+- **Versioning**: Handshake carries protocol and arcaneum versions and a
+  code fingerprint; deploy builds a new image when the wheel changes and
+  refuses wheels that do not match the workstation.
+- **Build tool compatibility**: `--build` uses `uv build --wheel` on the
+  existing setuptools backend.
 - **Licensing**: N/A (no new dependencies)
-- **Deployment model**: Stock Python container, install at startup,
-  cache and venv volumes.
+- **Deployment model**: `arc models deploy` builds an unpublished image on
+  each worker from stock `python:3.12-slim` and runs it with a named model
+  cache volume.
 - **IDE compatibility**: N/A
 - **Incremental adoption**: Off unless endpoints are configured;
   `qwen3-embed` stays local unless `--remote-embed` is given.
-- **Secret/credential lifecycle**: N/A (trusted LAN; optional static
-  `authkey`)
+- **Secret/credential lifecycle**: Trusted LAN; the optional static
+  `authkey` is passed to the container as environment, visible to anyone
+  with Docker access on the worker. Deployment uses the operator's
+  existing SSH keys.
 - **Memory management**: The workstation loads no model for remote-routed
   work. Workers keep one resident model (6.0–7.1 GB peak measured) with a
   configurable batch size.
@@ -607,7 +998,10 @@ The Minimum Viable Validation is in scope: the three checks run against
 ### Proportionality
 
 Right-sized. The Ollama spike table is retained because it records why a
-lower-memory option was not chosen for Phase 1.
+lower-memory option was not chosen for Phase 1. Deploy is in Phase 1
+because workers must track the workstation's exact code through every
+upgrade and development build, which a manual `docker run` would leave to
+the operator; removal stays deferred.
 
 ## References
 

@@ -488,8 +488,8 @@ def _parse_container(stdout: str) -> Optional[ContainerState]:
     )
 
 
-def _parse_images(stdout: str) -> list[tuple[str, str]]:
-    """(image ID, repository:tag) for every worker image, including untagged ones."""
+def _parse_images(stdout: str) -> list[tuple[str, str, str]]:
+    """(image ID, repository:tag, created) for every worker image, including untagged ones."""
     images = []
     for line in stdout.splitlines():
         line = line.strip()
@@ -499,7 +499,13 @@ def _parse_images(stdout: str) -> list[tuple[str, str]]:
             entry = json.loads(line)
         except ValueError:
             continue
-        images.append((entry.get("ID", ""), f"{entry.get('Repository')}:{entry.get('Tag')}"))
+        images.append(
+            (
+                entry.get("ID", ""),
+                f"{entry.get('Repository')}:{entry.get('Tag')}",
+                entry.get("CreatedAt", ""),
+            )
+        )
     return images
 
 
@@ -566,7 +572,7 @@ class Deployer:
         inspected = runner.run(["docker", "container", "inspect", name], check=False)
         container = _parse_container(inspected.stdout) if inspected.returncode == 0 else None
         images = self._images(runner)
-        tags = {tag for _, tag in images}
+        tags = {tag for _, tag, _ in images}
         status = self.probe(endpoint, self.config) if container and container.running else None
         resolution = (
             tailscale_resolution_problem(endpoint)
@@ -619,14 +625,13 @@ class Deployer:
         if plan.build or plan.container in ("create", "replace"):
             previous = container.fingerprint if container else None
             self._prune(
-                runner,
-                {image_tag(desired.fingerprint)} | ({image_tag(previous)} if previous else set()),
+                runner, image_tag(desired.fingerprint), image_tag(previous) if previous else None
             )
         self.out(
             f"✓ {endpoint.name}: running arcaneum {desired.version} {desired.fingerprint[:12]}"
         )
 
-    def _images(self, runner: RemoteRunner) -> list[tuple[str, str]]:
+    def _images(self, runner: RemoteRunner) -> list[tuple[str, str, str]]:
         listed = runner.run(
             ["docker", "image", "ls", "--filter", f"label={ROLE_LABEL}", "--format", "{{json .}}"],
             check=False,
@@ -636,7 +641,7 @@ class Deployer:
     def _build(self, runner: RemoteRunner, endpoint: EndpointConfig) -> None:
         self.out(
             f"  building {image_tag(self.wheel.fingerprint)} on {endpoint.ssh_target} "
-            "(the first build downloads torch and can take several minutes)"
+            "(can take several minutes; a first or --refresh build downloads torch)"
         )
         try:
             directory = runner.run(
@@ -719,9 +724,22 @@ class Deployer:
     def _versions(dependencies: dict) -> str:
         return ", ".join(f"{k} {v}" for k, v in sorted(dependencies.items()) if v) or "unknown"
 
-    def _prune(self, runner: RemoteRunner, keep_tags: set[str]) -> None:
-        """Keep the current and previous fingerprint's images; remove the rest."""
+    def _prune(self, runner: RemoteRunner, current: str, previous: Optional[str]) -> None:
+        """Keep the current and previous fingerprint's images; remove the rest.
+
+        The previous fingerprint is the replaced container's; when that was already
+        the current one (a refresh or reconfigure), it is the newest other tagged
+        worker image, so a downgrade can still reuse it.
+        """
         images = self._images(runner)
-        keep_ids = {image_id for image_id, tag in images if tag in keep_tags}
-        for image_id in sorted({image_id for image_id, _ in images} - keep_ids):
+        if previous is None or previous == current:
+            others = [
+                (created, tag)
+                for _, tag, created in images
+                if tag != current and not tag.endswith(":<none>")
+            ]
+            previous = max(others)[1] if others else None
+        keep = {current, previous}
+        keep_ids = {image_id for image_id, tag, _ in images if tag in keep}
+        for image_id in sorted({image_id for image_id, _, _ in images} - keep_ids):
             runner.run(["docker", "image", "rm", image_id], check=False)

@@ -49,6 +49,7 @@ class FakeDockerHost:
         self.images[image_id] = {
             "tags": {image_tag(fingerprint)},
             "labels": {"arcaneum.role": "embed-worker", "arcaneum.fingerprint": fingerprint},
+            "created": self._created(),
         }
         return image_id
 
@@ -80,6 +81,9 @@ class FakeDockerHost:
             raise DeployError(f"{' '.join(args[:3])} failed: {result.stderr}")
         return result
 
+    def _created(self) -> str:
+        return f"2026-10-14 16:{self._ids // 60:02d}:{self._ids % 60:02d} +0000 UTC"
+
     def copy(self, local: Path, remote: str) -> None:
         self.copies.append((Path(local).name, remote))
 
@@ -105,7 +109,14 @@ class FakeDockerHost:
                 for tag in tags:
                     repository, _, tag_name = tag.partition(":")
                     lines.append(
-                        json.dumps({"ID": image_id, "Repository": repository, "Tag": tag_name})
+                        json.dumps(
+                            {
+                                "ID": image_id,
+                                "Repository": repository,
+                                "Tag": tag_name,
+                                "CreatedAt": image["created"],
+                            }
+                        )
                     )
             return CommandResult(0, "\n".join(lines), "")
         if args[:2] == ["docker", "build"]:
@@ -116,7 +127,11 @@ class FakeDockerHost:
             for image in self.images.values():
                 image["tags"].discard(tag)
             self._ids += 1
-            self.images[f"sha256:{self.name}{self._ids:04d}"] = {"tags": {tag}, "labels": labels}
+            self.images[f"sha256:{self.name}{self._ids:04d}"] = {
+                "tags": {tag},
+                "labels": labels,
+                "created": self._created(),
+            }
             return ok
         if args[:2] == ["docker", "rm"]:
             self.containers.pop(args[-1], None)
@@ -271,6 +286,21 @@ def test_refresh_rebuilds_without_cache_and_prunes_the_superseded_image(tmp_path
     assert "--pull" in build and "--no-cache" in build
     assert not first_ids & set(host.images)
     assert len(host.images) == 1
+
+
+def test_refresh_after_an_upgrade_keeps_the_previous_fingerprints_image(tmp_path):
+    harness = Harness(tmp_path, endpoints("dev-0"))
+    host = harness.hosts["dev-0"]
+    host.add_image("e" * 64)
+    host.add_container(7300, OLD, "old-spec")
+    harness.deployer.deploy()
+    harness.deployer.refresh = True
+
+    assert harness.deployer.deploy() is True
+
+    tags = {tag for image in host.images.values() for tag in image["tags"]}
+    assert tags == {image_tag(FINGERPRINT), image_tag(OLD)}
+    assert len(host.images) == 2
 
 
 def test_upgrade_keeps_the_previous_image_and_removes_older_ones(tmp_path):

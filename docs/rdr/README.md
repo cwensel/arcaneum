@@ -38,7 +38,7 @@ implementation.
 | 019 | [Package Distribution](RDR-019-package-distribution.md) | Recommendation | High |
 | 020 | [GPU Fallback Stability for Unattended Indexing](RDR-020-gpu-fallback-stability.md) | Final | High |
 | 021 | [Contextual Embedding Enrichment](RDR-021-contextual-embedding-enrichment.md) | Final | Medium |
-| 025 | [Remote Embedding Worker Pool](RDR-025-remote-embedding-worker-pool.md) | Draft | Medium |
+| 025 | [Remote Embedding Worker Pool](RDR-025-remote-embedding-worker-pool.md) | Final | Medium |
 
 ## Workflow
 

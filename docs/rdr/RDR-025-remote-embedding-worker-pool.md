@@ -6,7 +6,7 @@
 ## Metadata
 
 - **Date**: 2026-10-14
-- **Status**: Draft
+- **Status**: Final
 - **Type**: Architecture
 - **Priority**: Medium
 - **Related Issues**: Extends RDR-022 (spawned accelerator worker

@@ -7,9 +7,11 @@ import os
 import signal
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Optional
 
 from arcaneum.embeddings.client import EMBEDDING_MODELS, model_revision
+from arcaneum.embeddings.remote.deploy import Deployer, DeployError, resolve_wheel
 from arcaneum.embeddings.remote.pool import probe_endpoint
 from arcaneum.embeddings.remote.server import EmbeddingServer, ServerSettings
 
@@ -213,3 +215,50 @@ def workers_command(output_json: bool) -> None:
             "Run `arc models deploy` to install or update workers "
             "(`arc models deploy --dry-run` shows what would change)."
         )
+
+
+# --- arc models deploy -------------------------------------------------------------
+
+
+def deploy_command(
+    hosts: tuple[str, ...],
+    *,
+    build: bool,
+    wheel_path: Optional[Path],
+    refresh: bool,
+    dry_run: bool,
+    no_verify: bool,
+) -> None:
+    """Bring each configured worker to the workstation's code; exit 1 if any host fails."""
+    import click
+
+    config = _load_config_or_exit(False)
+    if not config.endpoints:
+        click.echo(NO_ENDPOINTS, err=True)
+        sys.exit(1)
+    if build and wheel_path is not None:
+        raise click.UsageError("--build and --wheel are mutually exclusive")
+    try:
+        wheel = resolve_wheel(build=build, wheel=wheel_path)
+    except DeployError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    click.echo(
+        f"Deploying arcaneum {wheel.version} (fingerprint {wheel.fingerprint[:12]}) "
+        f"from {wheel.path}" + (" [dry run]" if dry_run else "")
+    )
+    deployer = Deployer(
+        config,
+        wheel,
+        dry_run=dry_run,
+        refresh=refresh,
+        verify=not no_verify,
+        out=click.echo,
+    )
+    try:
+        ok = deployer.deploy(hosts)
+    except DeployError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    if not ok:
+        sys.exit(1)

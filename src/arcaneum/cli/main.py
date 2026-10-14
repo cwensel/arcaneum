@@ -482,6 +482,54 @@ def models_workers(output_json):
     workers_command(output_json)
 
 
+@models.command("deploy")
+@click.argument("hosts", nargs=-1)
+@click.option(
+    "--build",
+    is_flag=True,
+    help="Build the wheel from the source tree this arcaneum runs from (uv build --wheel)",
+)
+@click.option(
+    "--wheel",
+    "wheel_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Deploy this wheel (its code fingerprint must match the workstation's)",
+)
+@click.option(
+    "--refresh",
+    is_flag=True,
+    help="Rebuild the image with docker build --pull --no-cache and replace the container",
+)
+@click.option("--dry-run", is_flag=True, help="Show each host's current and desired state only")
+@click.option("--no-verify", is_flag=True, help="Skip the vector parity check after a deploy")
+def models_deploy(hosts, build, wheel_path, refresh, dry_run, no_verify):
+    """Install, upgrade or reconfigure remote embedding workers over SSH (RDR-025).
+
+    Brings each configured endpoint (or the HOSTS named) to the workstation's
+    code: by default the release wheel for this arcaneum version, --build for an
+    unreleased source tree, or --wheel. The image is built on each worker,
+    the container replaced only after a successful build, and vector parity
+    checked before the pool uses it. Idempotent: rerun after every upgrade.
+
+    \b
+    Examples:
+        arc models deploy --dry-run
+        arc models deploy
+        arc models deploy dev-1 --build
+        arc models deploy --refresh
+    """
+    from arcaneum.cli.remote_embedding import deploy_command
+
+    deploy_command(
+        hosts,
+        build=build,
+        wheel_path=wheel_path,
+        refresh=refresh,
+        dry_run=dry_run,
+        no_verify=no_verify,
+    )
+
+
 # Indexing commands (RDR-004, RDR-005, RDR-010)
 @cli.group(
     cls=HelpfulGroup,

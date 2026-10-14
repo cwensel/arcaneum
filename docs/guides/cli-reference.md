@@ -146,6 +146,7 @@ arc log tail --lines 50    # Print recent log lines, then follow new entries
 arc doctor                                 # Verify setup and prerequisites
 arc models list                            # List available embedding models
 arc models workers                         # Show remote embedding workers
+arc models deploy                          # Install or update remote embedding workers
 arc models serve                           # Run an embedding worker (on a worker host)
 arc store <file> --collection <name>       # Store agent content for long-term memory
 ```
@@ -2335,6 +2336,42 @@ arc models workers --json   # Machine-readable output
 `arc models workers` opens status-only connections, which never load or
 switch a model. A worker whose code fingerprint differs from the workstation's
 is reported as `mismatch` and is not used.
+
+`arc models deploy` installs, upgrades and reconfigures the workers from the
+workstation over SSH, so workers always run the workstation's code. It needs
+key-based SSH to each worker as a user in the `docker` group, builds the image
+on the worker (never published), replaces the container only after a
+successful build, waits for the worker to report the new code fingerprint, and
+checks vector parity (cosine ≥ 0.9999 on a fixed probe set) before the pool
+uses it. Rerun it after every arcaneum upgrade on the workstation.
+
+```bash
+arc models deploy --dry-run       # Each host's current and desired state; changes nothing
+arc models deploy                 # Release wheel for this arcaneum version
+arc models deploy --build         # Wheel built from this source tree (development)
+arc models deploy dev-1           # Only the named host(s)
+arc models deploy --refresh       # Rebuild with --pull --no-cache (base image/dependency updates)
+```
+
+**Options (`deploy`):**
+
+- `HOSTS`: Endpoints to deploy (default: every configured endpoint, one at a time)
+- `--build`: Build the wheel from the source tree this arcaneum runs from
+  (`uv build --wheel`); required when the workstation runs an unreleased or
+  modified build
+- `--wheel PATH`: Deploy a given wheel; its code fingerprint must match the
+  workstation's
+- `--refresh`: Rebuild the image with `docker build --pull --no-cache` and
+  replace the container
+- `--dry-run`: Show each host's current and desired version, fingerprint and
+  action without changing anything
+- `--no-verify`: Skip the vector parity check
+
+Each worker runs as container `arcaneum-embed-<port>` (`--restart
+unless-stopped`, host networking, models cached in the
+`arcaneum-embed-models` volume). Deploy keeps the images for the current and
+previous fingerprint. To remove a worker, run
+`docker rm -f -v arcaneum-embed-<port>` and `docker image rm` on the host.
 
 `arc models serve` runs the worker itself (normally inside the container that
 deploy creates):

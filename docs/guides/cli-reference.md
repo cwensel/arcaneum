@@ -397,6 +397,11 @@ drains until the spool is empty, so a burst of commits pays one embedding-model
 cold start instead of one per commit. Deleted and renamed-away paths are removed
 from both Qdrant and MeiliSearch.
 
+Every drain, whether the hook or the `--service` watcher starts it, runs with
+`--background`, so indexing stays below compilers and tests on the same
+machine. Hooks installed before this change spawn drains without it; rerun
+`arc corpus hook install` to update them.
+
 The hook never blocks or fails a git operation: it runs detached, swallows
 errors, and exits 0 on every path.
 
@@ -423,7 +428,7 @@ doing instead:
 pip install 'arcaneum[proctitle]'
 ```
 
-Processes then read `arc corpus sync MyCorpus --drain-spool`, and a running
+Processes then read `arc corpus sync MyCorpus --drain-spool --background`, and a running
 drain reports its progress as `arc drain MyCorpus (batch 2, 18 files)`. Without
 the extra, everything behaves exactly as before.
 

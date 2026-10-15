@@ -171,3 +171,17 @@ def test_the_cap_can_be_disabled(isolated):
         spool_service.render_launchd_plist("Docs", arc_bin="/bin/arc", embedding_batch=None)
     )["ProgramArguments"]
     assert "--max-embedding-batch" not in args
+
+
+# --- hook drains run below interactive work -----------------------------------
+
+
+def test_launchd_drain_runs_in_the_background(isolated):
+    job = plistlib.loads(spool_service.render_launchd_plist("Docs", arc_bin="/bin/arc"))
+    argv = job["ProgramArguments"]
+    assert argv[argv.index("--drain-spool") + 1] == "--background"
+
+
+def test_systemd_drain_runs_in_the_background(isolated):
+    unit = spool_service.render_systemd_service_unit("Docs", arc_bin="/usr/bin/arc")
+    assert "--drain-spool --background" in unit

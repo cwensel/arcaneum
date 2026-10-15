@@ -362,7 +362,7 @@ if command -v flock >/dev/null 2>&1; then \\
 else \\
   '$_arc_py' '$_arc_probe' '$_arc_lock' 2>/dev/null && exit 0; \\
 fi; \\
-'$_arc_bin' corpus sync '$_arc_corpus' --drain-spool >>'$_arc_log' 2>&1"
+'$_arc_bin' corpus sync '$_arc_corpus' --drain-spool --background >>'$_arc_log' 2>&1"
 
     if command -v setsid >/dev/null 2>&1; then
         setsid sh -c "$_arc_spawn_body" >/dev/null 2>&1 < /dev/null &

@@ -179,6 +179,7 @@ def test_hook_spawns_when_no_worker_is_running(isolated, repo, tmp_path):
         time.sleep(0.25)
 
     assert "--drain-spool" in marker.read_text()
+    assert "--drain-spool --background" in marker.read_text()
 
 
 def test_hook_still_exits_zero_when_the_gate_is_hit(isolated, repo, tmp_path):

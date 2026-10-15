@@ -96,7 +96,7 @@ def _batch_flag(embedding_batch: Optional[int]) -> str:
 
 def _drain_argv(arc_bin: str, corpus: str, embedding_batch: Optional[int]) -> List[str]:
     """Argv for a background drain, with the memory cap unless disabled."""
-    argv = [arc_bin, "corpus", "sync", corpus, "--drain-spool"]
+    argv = [arc_bin, "corpus", "sync", corpus, "--drain-spool", "--background"]
     if embedding_batch is not None:
         argv += ["--max-embedding-batch", str(embedding_batch)]
     return argv
@@ -180,7 +180,7 @@ Description=Drain the Arcaneum sync spool for corpus {safe}
 Type=oneshot
 Nice=5
 IOSchedulingClass=idle
-ExecStart={arc_bin} corpus sync "{quoted}" --drain-spool{_batch_flag(embedding_batch)}
+ExecStart={arc_bin} corpus sync "{quoted}" --drain-spool --background{_batch_flag(embedding_batch)}
 StandardOutput=append:{hook_log_path()}
 StandardError=append:{hook_log_path()}
 """

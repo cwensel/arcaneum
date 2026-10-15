@@ -260,3 +260,58 @@ def test_endpoint_diff_rejects_a_flag_shaped_revision(repo):
 def test_endpoint_diff_rejects_an_unknown_revision(repo):
     with pytest.raises(InvalidArgumentError):
         git_changes.changes_between(repo, "HEAD", "nope-not-a-rev")
+
+
+# --- merge commits and branch state (kata vr9b) -------------------------------
+
+
+def _merge_feature_with_no_ff(repo: Path) -> None:
+    _git(repo, "checkout", "-q", "-b", "feature")
+    (repo / "merged.md").write_text("merged\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "feature work")
+    _git(repo, "checkout", "-q", "main")
+    (repo / "mainline.md").write_text("main\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "main work")
+    _git(repo, "merge", "-q", "--no-ff", "--no-edit", "feature")
+
+
+def test_changes_since_a_merge_commit_reports_what_the_merge_brought_in(repo):
+    """diff-tree on a merge commit prints nothing unless told which parent to use."""
+    _merge_feature_with_no_ff(repo)
+
+    changes = git_changes.changes_since(repo, "HEAD")
+
+    assert [Path(p).name for p in changes.changed] == ["merged.md"]
+
+
+def test_current_branch_names_the_checked_out_branch(repo):
+    assert git_changes.current_branch(repo) == "main"
+    _git(repo, "checkout", "-q", "-b", "topic/x")
+    assert git_changes.current_branch(repo) == "topic/x"
+
+
+def test_current_branch_is_none_when_head_is_detached(repo):
+    _git(repo, "checkout", "-q", "--detach")
+    assert git_changes.current_branch(repo) is None
+
+
+def test_current_branch_is_none_outside_a_repo(tmp_path):
+    assert git_changes.current_branch(tmp_path) is None
+
+
+def test_branch_tip_resolves_a_branch_to_its_commit(repo):
+    head = _git(repo, "rev-parse", "HEAD").strip()
+    assert git_changes.branch_tip(repo, "main") == head
+
+
+def test_branch_tip_is_none_for_a_missing_branch(repo):
+    assert git_changes.branch_tip(repo, "no-such-branch") is None
+
+
+def test_is_commit_rejects_unknown_and_flag_shaped_revisions(repo):
+    head = _git(repo, "rev-parse", "HEAD").strip()
+    assert git_changes.is_commit(repo, head)
+    assert not git_changes.is_commit(repo, "0" * 40)
+    assert not git_changes.is_commit(repo, "--output=/tmp/x")

@@ -46,21 +46,22 @@ def _run(*args):
     return CliRunner().invoke(cli, list(args), catch_exceptions=False)
 
 
-def _hook(repo: Path, name: str = "post-commit") -> Path:
+def _hook(repo: Path, name: str = "reference-transaction") -> Path:
     return repo / ".git" / "hooks" / name
 
 
 # --- install ------------------------------------------------------------------
 
 
-def test_install_writes_an_executable_post_commit_hook(repo):
+def test_install_writes_executable_default_hooks(repo):
     result = _run("corpus", "hook", "install", "Docs")
     assert result.exit_code == 0, result.output
 
-    hook = _hook(repo)
-    assert hook.exists()
-    assert hook.stat().st_mode & stat.S_IXUSR, "hook must be executable or git ignores it"
-    assert "Docs" in hook.read_text()
+    for name in hooks.default_hooks(repo):
+        hook = _hook(repo, name)
+        assert hook.exists()
+        assert hook.stat().st_mode & stat.S_IXUSR, "hook must be executable or git ignores it"
+        assert "Docs" in hook.read_text()
 
 
 def test_installed_hook_names_the_corpus_and_repo(repo):
@@ -107,7 +108,7 @@ def test_install_accepts_other_hook_points(repo):
     result = _run("corpus", "hook", "install", "Docs", "--hook", "post-merge")
     assert result.exit_code == 0, result.output
     assert _hook(repo, "post-merge").exists()
-    assert not _hook(repo, "post-commit").exists()
+    assert not _hook(repo).exists()
 
 
 def test_install_rejects_an_unsupported_hook_point(repo):
@@ -129,7 +130,7 @@ def test_install_respects_core_hookspath(repo):
 
     result = _run("corpus", "hook", "install", "Docs")
     assert result.exit_code == 0, result.output
-    assert (custom / "post-commit").exists()
+    assert (custom / "reference-transaction").exists()
     assert not _hook(repo).exists()
 
 
@@ -175,7 +176,7 @@ def test_status_reports_an_installed_hook(repo):
     result = _run("corpus", "hook", "status")
     assert result.exit_code == 0, result.output
     assert "Docs" in result.output
-    assert "post-commit" in result.output
+    assert "reference-transaction" in result.output
 
 
 def test_status_reports_nothing_installed(repo):
@@ -213,7 +214,11 @@ def test_hook_exits_zero_even_when_arc_is_missing(repo):
     env["HOME"] = str(repo)
     # Absolute sh, since PATH above hides the shell itself too.
     result = subprocess.run(
-        ["/bin/sh", str(_hook(repo))], cwd=repo, capture_output=True, text=True, env=env
+        ["/bin/sh", str(_hook(repo)), "committed"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=env,
     )
     assert result.returncode == 0, result.stderr
 

@@ -1,9 +1,16 @@
 """Install git hooks that keep a corpus in sync with a working repo (kata vq0n).
 
 Without this, an indexed repo drifts behind its source tree between manual
-`arc corpus sync` runs. The installed hook asks git which paths the commit
-touched — far cheaper than walking a large tree — spools them, and hands off to
-a background worker (`arc corpus sync --drain-spool`).
+`arc corpus sync` runs. The installed hook asks git which paths changed — far
+cheaper than walking a large tree — spools them, and hands off to a background
+worker (`arc corpus sync --drain-spool`).
+
+Each corpus is pinned to one branch (kata vr9b). Every hook point runs the same
+gate: when the repo has that branch checked out and its tip differs from the
+last spooled commit (the mark), spool the tree diff mark..tip and advance the
+mark. Asking "where is the branch now?" instead of "what did this event do?"
+makes every way a branch moves look alike -- commit, merge, rebase, reset, or a
+tool's `update-ref` -- and lets the next event catch up any that were missed.
 
 Two constraints shape the generated script:
 
@@ -21,12 +28,21 @@ import os
 import re
 import stat
 import subprocess
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from collections import Counter
 from typing import List, Optional, Union
 
+from . import spool
 from .errors import InvalidArgumentError
+from .git_changes import (
+    GitChanges,
+    branch_tip,
+    changes_between,
+    changes_since,
+    current_branch,
+    is_commit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,24 +51,22 @@ BLOCK_END = "# <<< arcaneum corpus sync ({corpus}) <<<"
 
 SHEBANG = "#!/bin/sh"
 
-# Hook points that fire *after* the ref moved, so HEAD (or ORIG_HEAD..HEAD)
-# names the change we want to index. Pre-hooks would index the wrong tree, and
-# a failing pre-hook aborts the git operation — which this must never do.
-SUPPORTED_HOOKS = ("post-commit", "post-merge", "post-checkout", "post-rewrite")
-
-# What each hook point should diff. Where git hands the hook the SHAs that
-# moved, use them: guessing with ORIG_HEAD..HEAD under-reports a branch switch
-# spanning several commits and misreports a rebase entirely (ORIG_HEAD there
-# points at the pre-rebase tip, not at what was rewritten).
+# Hook points that fire *after* refs moved, so the branch tip is final. Pre-hooks
+# would read a tree about to change, and a failing pre-hook aborts the git
+# operation -- which this must never do.
 #
-#   post-commit    no arguments;        HEAD is the new commit
-#   post-merge     $1=squash flag;      ORIG_HEAD..HEAD is the range that moved
-#   post-checkout  $1=old $2=new $3=branch-flag (0 for `git checkout -- file`)
-#   post-rewrite   $1=reason;           old/new SHA pairs arrive on stdin
-_HOOK_REVISIONS = {
-    "post-commit": "HEAD",
-    "post-merge": "ORIG_HEAD..HEAD",
-}
+# reference-transaction (git 2.28+) is the only hook that fires for every way a
+# branch moves, including plumbing (`commit-tree` + `update-ref`), `reset` and
+# `branch -f`, none of which run a post-* hook.
+SUPPORTED_HOOKS = (
+    "reference-transaction",
+    "post-commit",
+    "post-merge",
+    "post-checkout",
+    "post-rewrite",
+)
+
+REFERENCE_TRANSACTION_MIN_GIT = (2, 28)
 
 
 @dataclass(frozen=True)
@@ -62,6 +76,7 @@ class InstalledHook:
     corpus: str
     hook: str
     path: Path
+    branch: Optional[str] = None
 
 
 # Extensions that decide a repo's corpus type. Not exhaustive -- this only has
@@ -146,25 +161,51 @@ def infer_corpus_type(repo: Union[str, Path]) -> str:
     return counts.most_common(1)[0][0]
 
 
-def has_remote(repo: Union[str, Path]) -> bool:
-    """True when the repo has at least one configured remote."""
+def git_version() -> tuple:
+    """Installed git's version as a tuple of ints, or () when unknown."""
     try:
-        result = _run_git(repo, ["remote"])
+        result = subprocess.run(["git", "--version"], capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.TimeoutExpired):
-        return False
-    return result.returncode == 0 and bool(result.stdout.strip())
+        return ()
+    match = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", result.stdout)
+    if not match:
+        return ()
+    return tuple(int(part) for part in match.groups(default="0"))
 
 
-def suggested_hooks(repo: Union[str, Path]) -> List[str]:
-    """Hook points that will actually keep this repo current.
+def default_hooks(repo: Union[str, Path]) -> List[str]:
+    """Hook points that together see every way the pinned branch can move.
 
-    post-commit alone silently misses everything that arrives by `git pull`,
-    which is the failure people are least likely to notice -- the index just
-    quietly lags. So a repo with a remote gets post-merge as well.
+    reference-transaction sees each ref update. post-checkout and post-rewrite
+    back it up at the two moments HEAD re-attaches to the branch (checking it
+    out again, finishing a rebase), which older git may not run through a
+    transaction. Without reference-transaction, every post-* hook is needed;
+    plumbing and resets then go unseen until the next of them fires.
     """
-    if has_remote(repo):
-        return ["post-commit", "post-merge"]
-    return ["post-commit"]
+    if git_version() >= REFERENCE_TRANSACTION_MIN_GIT:
+        return ["reference-transaction", "post-checkout", "post-rewrite"]
+    return ["post-commit", "post-merge", "post-checkout", "post-rewrite"]
+
+
+def default_branch(repo: Union[str, Path]) -> str:
+    """The branch to index when none is named: the remote's default, else the current one.
+
+    Raises:
+        InvalidArgumentError: neither is known (no origin/HEAD, detached HEAD).
+    """
+    remote_head = _run_git(repo, ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"])
+    prefix = "refs/remotes/origin/"
+    ref = remote_head.stdout.strip()
+    if remote_head.returncode == 0 and ref.startswith(prefix):
+        return ref[len(prefix) :]
+
+    branch = current_branch(repo)
+    if branch:
+        return branch
+    raise InvalidArgumentError(
+        f"Could not tell which branch to index in {repo}: HEAD is detached and "
+        "origin/HEAD is not set. Pass --branch."
+    )
 
 
 def list_corpus_names() -> List[str]:
@@ -226,94 +267,45 @@ def repo_root(repo: Union[str, Path]) -> Path:
     return Path(result.stdout.strip())
 
 
-def _render_driver(hook: str) -> str:
-    """Shell that turns this hook's arguments into revisions to queue.
-
-    Each hook point learns what moved differently, so each gets its own reader
-    rather than a single guess that is wrong for half of them.
-    """
-    if hook == "post-checkout":
-        # $1=old $2=new $3=1 for a branch switch, 0 for `git checkout -- file`.
-        # A file checkout changes working-tree content with no commit range to
-        # diff, so there is nothing to queue; the next commit picks it up.
-        return """    [ "$3" = "1" ] || return 0
-    [ "$1" != "$2" ] || return 0
-    _arc_spool "$1..$2"
+def _render_prelude(hook: str) -> str:
+    """Shell that returns early when this invocation cannot have moved a branch."""
+    if hook == "reference-transaction":
+        # git runs this hook once per transaction phase. Only "committed"
+        # means refs moved; "prepared" may still abort.
+        return """    [ "$1" = committed ] || return 0
 """
-
-    if hook == "post-rewrite":
-        # Compare the pre-rewrite tip against the new tip as two trees.
-        #
-        # git hands this hook one old/new SHA pair per rewritten commit, but
-        # acting on them per-commit is both wasteful and wrong. Wasteful: a
-        # real rebase produced 1057 spool entries for 198 files, and indexing
-        # reads the working tree, so only the end state matters. Wrong in two
-        # directions:
-        #
-        #   - Walking `A..B` diffs each commit against its own parent, so a
-        #     file whose only commit the rebase *dropped* appears in no diff --
-        #     yet it just vanished from the working tree and must be
-        #     de-indexed. A tree comparison reports it as a deletion.
-        #   - Conversely, a commit that was merely replayed onto a new base
-        #     keeps an identical blob. Re-indexing it produces the same vectors
-        #     from the same bytes; the tree comparison omits it.
-        #
-        # ORIG_HEAD is the pre-rewrite tip, which git sets for rebase; the
-        # first pair's old SHA is the fallback when it is unset (amend).
-        return """    _arc_first_old=''
-    _arc_last_new=''
-    while read -r _arc_old _arc_new _arc_rest; do
-        [ -n "$_arc_new" ] || continue
-        [ -n "$_arc_first_old" ] || _arc_first_old="$_arc_old"
-        _arc_last_new="$_arc_new"
-    done
-    [ -n "$_arc_last_new" ] || return 0
-
-    # Pick the pre-rewrite tree. git passes the reason as $1, and the two
-    # reasons need different bases:
-    #   amend  -- ORIG_HEAD is a sticky ref that amend does NOT update, so on
-    #             any repo with a prior merge/rebase it points somewhere stale.
-    #             The single pair's old SHA *is* the pre-amend tip.
-    #   rebase -- ORIG_HEAD is exactly the pre-rebase tip, and the first pair's
-    #             old SHA is only the first rewritten commit, which would miss
-    #             commits dropped ahead of it.
-    _arc_base=''
-    if [ "$1" != "amend" ] \\
-       && git -C "$_arc_repo" rev-parse --verify --quiet ORIG_HEAD >/dev/null 2>&1; then
-        _arc_base=$(git -C "$_arc_repo" rev-parse ORIG_HEAD 2>/dev/null)
-    fi
-    [ -n "$_arc_base" ] || _arc_base="$_arc_first_old"
-    [ -n "$_arc_base" ] || return 0
-
-    "$_arc_bin" corpus hook spool "$_arc_corpus" --repo "$_arc_repo" \\
-        --between "$_arc_base" "$_arc_last_new" >>"$_arc_log" 2>&1 || return 0"""
-
-    revision = _HOOK_REVISIONS.get(hook, "HEAD")
-    if "ORIG_HEAD" in revision:
-        # ORIG_HEAD is absent on a fresh clone's first merge; fall back to HEAD.
-        return f"""    _arc_rev='{revision}'
-    git -C "$_arc_repo" rev-parse --verify --quiet ORIG_HEAD >/dev/null 2>&1 \\
-        || _arc_rev='HEAD'
-    _arc_spool "$_arc_rev"
-"""
-
-    return f"""    _arc_spool '{revision}'"""
+    return ""
 
 
-def render_block(corpus: str, hook: str, repo: Path, *, spawn: bool = True) -> str:
+def _sh_quote(value: str) -> str:
+    """Escape for a single-quoted sh string."""
+    return value.replace("'", "'\\''")
+
+
+def render_block(
+    corpus: str, hook: str, repo: Path, *, spawn: bool = True, branch: str = "main"
+) -> str:
     """Render the guarded shell block for one corpus in one hook script.
 
-    The script does only the cheap half inline: ask git for the touched paths
-    and spool them. Indexing is handed to a detached worker so the commit
-    returns immediately, and every failure mode is swallowed — a hook that
-    exits non-zero would break the user's git workflow.
+    The script does only the cheap half inline: check the branch, and spool
+    when its tip moved past the mark. Indexing is handed to a detached worker
+    so the git command returns immediately, and every failure mode is
+    swallowed — a hook that exits non-zero would break the user's git workflow.
     """
     start = BLOCK_START.format(corpus=corpus)
     end = BLOCK_END.format(corpus=corpus)
 
     # Single-quoted in the script, so a literal quote must be escaped for sh.
-    corpus_sh = corpus.replace("'", "'\\''")
-    repo_sh = str(repo).replace("'", "'\\''")
+    corpus_sh = _sh_quote(corpus)
+    repo_sh = _sh_quote(str(repo))
+    branch_sh = _sh_quote(branch)
+    # Data-dir relative, rebuilt from $XDG_DATA_HOME at run time exactly as
+    # the Python side does. Built from [A-Za-z0-9_.-] only, so safe unquoted.
+    mark_rel = spool.mark_relpath(corpus, repo, branch).as_posix()
+    queue_rel = spool.queue_relpath(corpus).as_posix()
+    deferred_rel = spool.deferred_relpath(corpus).as_posix()
+    lock_rel = (spool.queue_relpath(corpus).parent / "worker.lock").as_posix()
+    repo_id = spool.repo_id(repo)
 
     if spawn:
         # Two gates before spawning, both measured against a real rebase that
@@ -340,7 +332,15 @@ def render_block(corpus: str, hook: str, repo: Path, *, spawn: bool = True) -> s
         # The launchd/systemd watcher (`hook install --service`) is the safety
         # net for the narrow race where a worker exits between the probe and
         # its own final spool read.
-        spawn_lines = """    _arc_lock="$_arc_data/spool/$_arc_corpus/worker.lock"
+        spawn_lines = """    # Spawn only for queued work. Most gate passes queue nothing, and
+    # entries the worker deferred while the branch was away are picked up
+    # here once it is checked out again.
+    _arc_queued=''
+    for _arc_entry in "$_arc_queue"/*."$_arc_repo_id".json; do
+        [ -e "$_arc_entry" ] && _arc_queued=1
+        break
+    done
+    [ -n "$_arc_queued" ] || return 0
 
     # Exit 0 when a worker holds the lock, 1 otherwise.
     _arc_locked() {
@@ -374,42 +374,69 @@ fi; \\
         # drain on a schedule or via the OS watcher (`--service`).
         spawn_lines = "    : # --no-spawn: leave draining to the service or a manual run"
 
-    driver = _render_driver(hook)
+    prelude = _render_prelude(hook)
 
     return f"""{start}
 # Managed by `arc corpus hook`. Edit via that command, not by hand.
-# Queues the paths this operation touched, then drains them in the background.
+# Indexes one branch. When this repo has it checked out and its tip moved past
+# the last spooled commit, queues the files that changed in between, then
+# drains them in the background.
 # Every path exits 0: a hook must never fail the git command that ran it.
 _arc_corpus='{corpus_sh}'
 _arc_repo='{repo_sh}'
+_arc_branch='{branch_sh}'
 _arc_log="${{XDG_STATE_HOME:-$HOME/.local/state}}/arcaneum/hook.log"
 _arc_data="${{XDG_DATA_HOME:-$HOME/.local/share}}/arcaneum"
-# Seconds to wait before starting a worker, so a burst of commits (a rebase
-# fires this once per rewritten commit) coalesces into one worker instead of
-# a stampede of processes that each die on the lock.
+# Last spooled commit of the branch, the entry queue and parked entries (named
+# by repo id), and the worker lock.
+_arc_mark="$_arc_data/{mark_rel}"
+_arc_queue="$_arc_data/{queue_rel}"
+_arc_deferred="$_arc_data/{deferred_rel}"
+_arc_repo_id='{repo_id}'
+_arc_lock="$_arc_data/{lock_rel}"
+# Seconds to wait before starting a worker, so a burst of commits coalesces
+# into one worker instead of a stampede of processes that each die on the lock.
 _arc_debounce="${{ARC_HOOK_DEBOUNCE:-3}}"
 # Interpreter and probe script for the lock check on platforms without
 # flock(1). Written next to the spool at install time.
 _arc_py="${{ARC_HOOK_PYTHON:-python3}}"
 _arc_probe="$_arc_data/hook-probe-lock.py"
 
-# Queue one revision or range. Called once per range the hook was told about.
-_arc_spool() {{
-    [ -n "$1" ] || return 0
-    "$_arc_bin" corpus hook spool "$_arc_corpus" \\
-        --repo "$_arc_repo" --changed-since "$1" >>"$_arc_log" 2>&1 || return 0
-}}
-
 _arc_sync() {{
+{prelude}    # git exports variables such as GIT_DIR to some hooks. Left set, they
+    # would point the commands below at whichever repository fired the hook.
+    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_PREFIX \\
+        GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+
+    # Indexing reads the working tree, which holds the branch only while it is
+    # checked out. A move made elsewhere is caught up when it is checked out.
+    [ "$(git -C "$_arc_repo" symbolic-ref -q HEAD 2>/dev/null)" = "refs/heads/$_arc_branch" ] \\
+        || return 0
     _arc_bin=$(command -v arc 2>/dev/null) || return 0
     mkdir -p "$(dirname "$_arc_log")" 2>/dev/null || true
 
-{driver}
+    # Compared in shell first: most invocations (other refs, a second hook for
+    # the same commit) find the mark current and must not pay arc's startup.
+    _arc_tip=$(git -C "$_arc_repo" rev-parse -q --verify "refs/heads/$_arc_branch" 2>/dev/null) \\
+        || return 0
+    _arc_seen=''
+    [ -r "$_arc_mark" ] && IFS= read -r _arc_seen < "$_arc_mark"
+    if [ "$_arc_tip" != "$_arc_seen" ]; then
+        "$_arc_bin" corpus hook spool "$_arc_corpus" --repo "$_arc_repo" \\
+            --branch "$_arc_branch" >>"$_arc_log" 2>&1 || return 0
+    fi
+
+    # The worker parks entries outside the queue while the branch is away, so
+    # the --service watcher goes quiet. The branch is back: requeue them.
+    for _arc_entry in "$_arc_deferred"/*."$_arc_repo_id".json; do
+        [ -e "$_arc_entry" ] && mv -f "$_arc_entry" "$_arc_queue/" 2>/dev/null
+    done
 
 {spawn_lines}
 }}
 
-_arc_sync "$@" || true
+# A subshell, so the unset above cannot reach hook content after this block.
+( _arc_sync "$@" ) || true
 {end}
 """
 
@@ -457,35 +484,15 @@ def write_probe_script() -> Path:
     return path
 
 
-def install(
-    corpus: str,
-    repo: Union[str, Path],
-    hook: str = "post-commit",
-    *,
-    spawn: bool = True,
-) -> Path:
-    """Install (or refresh) the block for `corpus` in `hook`. Returns its path."""
-    if hook not in SUPPORTED_HOOKS:
-        raise InvalidArgumentError(
-            f"Unsupported hook {hook!r}. Choose one of: {', '.join(SUPPORTED_HOOKS)}."
-        )
-
-    root = repo_root(repo)
-    hooks_dir = resolve_hooks_dir(root)
-    hooks_dir.mkdir(parents=True, exist_ok=True)
-    hook_path = hooks_dir / hook
-
-    if spawn:
-        write_probe_script()
-
-    block = render_block(corpus, hook, root, spawn=spawn)
-
+def _write_block(hook_path: Path, corpus: str, block: str) -> None:
+    """Put `block` into `hook_path`, replacing this corpus's block if present."""
     if hook_path.exists():
         existing = hook_path.read_text()
         pattern = _block_pattern(corpus)
         if pattern.search(existing):
-            # Refresh in place so re-installing never duplicates the block.
-            body = pattern.sub(block, existing, count=1)
+            # Refresh in place so re-installing never duplicates the block. A
+            # function replacement, so the block's backslashes stay literal.
+            body = pattern.sub(lambda _match: block, existing, count=1)
         else:
             separator = "" if existing.endswith("\n") else "\n"
             body = f"{existing}{separator}\n{block}"
@@ -495,7 +502,90 @@ def install(
     hook_path.write_text(body)
     mode = hook_path.stat().st_mode
     hook_path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    return hook_path
+
+
+def install(
+    corpus: str,
+    repo: Union[str, Path],
+    hook: str = "reference-transaction",
+    *,
+    spawn: bool = True,
+    branch: Optional[str] = None,
+) -> Path:
+    """Install (or refresh) the block for `corpus` in `hook`. Returns its path.
+
+    `branch` defaults to `default_branch`. Every other block this corpus has
+    in the repo is re-rendered with the same branch, so no two hook points
+    ever disagree about what is indexed.
+
+    The mark starts at the branch tip: a hook indexes what changes from here
+    on, and history is a backfill's job. An existing mark is kept, so a
+    reinstall still catches up whatever moved since it was written.
+    """
+    if hook not in SUPPORTED_HOOKS:
+        raise InvalidArgumentError(
+            f"Unsupported hook {hook!r}. Choose one of: {', '.join(SUPPORTED_HOOKS)}."
+        )
+
+    root = repo_root(repo)
+    branch = branch or default_branch(root)
+    hooks_dir = resolve_hooks_dir(root)
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+
+    if spawn:
+        write_probe_script()
+
+    with spool.mark_lock(corpus, root, branch):
+        seen = spool.read_mark(corpus, root, branch)
+        if seen is None or not is_commit(root, seen):
+            tip = branch_tip(root, branch)
+            if tip:
+                spool.write_mark(corpus, root, branch, tip)
+
+    siblings = {h.hook for h in list_installed(root) if h.corpus == corpus}
+    for point in sorted(siblings | {hook}):
+        block = render_block(corpus, point, root, spawn=spawn, branch=branch)
+        _write_block(hooks_dir / point, corpus, block)
+    return hooks_dir / hook
+
+
+def catch_up(corpus: str, repo: Union[str, Path], branch: str) -> Optional[GitChanges]:
+    """Spool what `branch` gained since its mark, then advance the mark.
+
+    Returns None when the repo does not have `branch` checked out: its working
+    tree holds other content, so nothing is spooled and the mark stays put for
+    the next event to catch up from. Otherwise returns the spooled changes,
+    empty when the mark was already current.
+
+    With no usable mark (never set, or naming a commit gc has dropped), falls
+    back to the tip commit's own changes.
+    """
+    from .git_changes import repo_root as git_repo_root
+
+    root = git_repo_root(repo)
+    if root is None:
+        raise InvalidArgumentError(f"Not a git repository: {repo}")
+
+    with spool.mark_lock(corpus, root, branch):
+        if current_branch(root) != branch:
+            return None
+        tip = branch_tip(root, branch)
+        if tip is None:
+            return None
+        seen = spool.read_mark(corpus, root, branch)
+        if seen == tip:
+            return GitChanges()
+
+        if seen and is_commit(root, seen):
+            changes = changes_between(root, seen, tip)
+        else:
+            changes = changes_since(root, tip)
+        # Entry before mark: a crash between them re-spools, never loses.
+        spool.write_entry(
+            corpus, root, changed=changes.changed, removed=changes.removed, branch=branch
+        )
+        spool.write_mark(corpus, root, branch, tip)
+        return changes
 
 
 def uninstall(corpus: str, repo: Union[str, Path], hook: Optional[str] = None) -> List[Path]:
@@ -530,6 +620,11 @@ def uninstall(corpus: str, repo: Union[str, Path], hook: Optional[str] = None) -
             hook_path.unlink()
         changed.append(hook_path)
 
+    # The mark only means something while a hook keeps it current. Left behind,
+    # a later install would resume from it and spool everything in between.
+    if not any(h.corpus == corpus for h in list_installed(root)):
+        spool.clear_marks(corpus, root)
+
     return changed
 
 
@@ -558,5 +653,19 @@ def list_installed(repo: Union[str, Path]) -> List[InstalledHook]:
             logger.debug("Could not read %s: %s", hook_path, exc)
             continue
         for match in marker.finditer(body):
-            found.append(InstalledHook(corpus=match.group("corpus"), hook=name, path=hook_path))
+            corpus = match.group("corpus")
+            block = _block_pattern(corpus).search(body, match.start())
+            branch = _BRANCH_LINE.search(block.group(0)) if block else None
+            found.append(
+                InstalledHook(
+                    corpus=corpus,
+                    hook=name,
+                    path=hook_path,
+                    branch=branch.group(1).replace("'\\''", "'") if branch else None,
+                )
+            )
     return found
+
+
+# The `_arc_branch='...'` assignment in a rendered block; `'\''` is an escaped quote.
+_BRANCH_LINE = re.compile(r"^_arc_branch='((?:[^']|'\\\\'')*)'$", re.MULTILINE)

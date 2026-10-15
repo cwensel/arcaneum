@@ -192,3 +192,101 @@ def test_drain_skips_file_types_the_corpus_cannot_index(isolated, repo):
 
     assert result.exit_code == 0, result.output
     assert seen["skip_unsupported"] is True
+
+
+# --- branch pinning (kata vr9b) -----------------------------------------------
+
+
+def _git(repo, *args):
+    import subprocess
+
+    return subprocess.run(
+        ["git", "-c", "core.hooksPath=/dev/null", *args],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+
+@pytest.fixture
+def git_repo(repo):
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "config", "user.email", "t@e.com")
+    _git(repo, "config", "user.name", "T")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "init")
+    return repo
+
+
+def test_drain_keeps_a_batch_when_the_repo_left_the_branch_mid_index(isolated, git_repo):
+    """The files were read from another branch's working tree; redo them later."""
+    spool.write_entry("Docs", git_repo, changed=[str(git_repo / "a.py")], removed=[], branch="main")
+
+    def switch_branch_while_indexing(*a, **k):
+        _git(git_repo, "checkout", "-q", "-b", "feature")
+
+    result = _run(["corpus", "sync", "Docs", "--drain-spool"], switch_branch_while_indexing)
+
+    assert result.exit_code == 0, result.output
+    assert spool.has_pending("Docs"), "the entry must survive for a re-index on main"
+
+
+def test_drain_releases_a_batch_when_the_repo_stayed_on_the_branch(isolated, git_repo):
+    spool.write_entry("Docs", git_repo, changed=[str(git_repo / "a.py")], removed=[], branch="main")
+
+    result = _run(["corpus", "sync", "Docs", "--drain-spool"], lambda *a, **k: None)
+
+    assert result.exit_code == 0, result.output
+    assert not spool.has_pending("Docs")
+
+
+# --- the watched queue ends empty (kata 4j93) ---------------------------------
+
+
+def _queued():
+    queue = spool.queue_dir("Docs")
+    return sorted(p.name for p in queue.iterdir()) if queue.is_dir() else []
+
+
+def test_a_successful_drain_leaves_the_queue_empty(isolated, repo):
+    spool.write_entry("Docs", repo, changed=[str(repo / "a.py")], removed=[])
+    _run(["corpus", "sync", "Docs", "--drain-spool"], lambda *a, **k: None)
+    assert _queued() == []
+
+
+def test_a_failed_batch_goes_back_to_the_queue(isolated, repo):
+    """Claimed while indexing; a failure must return it, or the work is stranded."""
+    entry = spool.write_entry("Docs", repo, changed=[str(repo / "a.py")], removed=[])
+
+    def boom(*a, **k):
+        raise RuntimeError("services down")
+
+    with pytest.raises(RuntimeError):
+        _run(["corpus", "sync", "Docs", "--drain-spool"], boom)
+
+    assert _queued() == [entry.name]
+    assert not any(spool.claimed_dir("Docs").glob("*.json"))
+
+
+def test_a_drain_recovers_entries_a_dead_worker_claimed(isolated, repo):
+    spool.write_entry("Docs", repo, changed=[str(repo / "a.py")], removed=[])
+    spool.drain_batch("Docs", consume=False)  # claimed, then the worker died
+    calls = []
+
+    _run(["corpus", "sync", "Docs", "--drain-spool"], lambda c, paths, *a, **k: calls.append(paths))
+
+    assert calls == [(str(repo / "a.py"),)]
+    assert not spool.has_pending("Docs")
+
+
+def test_a_batch_whose_repo_left_the_branch_ends_deferred_not_queued(isolated, git_repo):
+    spool.write_entry("Docs", git_repo, changed=[str(git_repo / "a.py")], removed=[], branch="main")
+
+    def switch_branch_while_indexing(*a, **k):
+        _git(git_repo, "checkout", "-q", "-b", "feature")
+
+    _run(["corpus", "sync", "Docs", "--drain-spool"], switch_branch_while_indexing)
+
+    assert _queued() == [], "a parked entry in the queue would keep the watcher firing"
+    assert spool.has_pending("Docs")

@@ -89,8 +89,12 @@ full-text search (MeiliSearch) for the same content.
 - name: Corpus name. Omit it on `install` to be walked through picking or
   creating a corpus, choosing hook points, and backfilling.
 - --repo: Repository to act on (default: current directory)
-- --hook: Hook point - post-commit (default), post-merge, post-checkout, or
-  post-rewrite. On uninstall, defaults to all of them.
+- --branch: (install) Branch to follow - the remote's default branch unless
+  named; other branches and worktrees are never indexed
+- --hook: Hook point, repeatable - reference-transaction, post-commit,
+  post-merge, post-checkout, or post-rewrite. Install defaults to
+  reference-transaction, post-checkout and post-rewrite; uninstall defaults to
+  all of them.
 - --no-spawn: (install) Queue touched paths but start no background worker
 - --yes/-y: (install) Take the defaults instead of prompting
 - --service: Also register/remove an OS watcher that drains the spool after a
@@ -163,7 +167,7 @@ files gone from both Qdrant and disk are only reported; pass `--prune-orphans`
 /corpus sync CodeBase ~/projects --order newest
 /corpus hook install
 /corpus hook install CodeBase
-/corpus hook install CodeBase --hook post-merge
+/corpus hook install CodeBase --branch develop
 /corpus hook status
 /corpus hook uninstall CodeBase
 /corpus info MyDocs
@@ -223,16 +227,20 @@ This enables hybrid search strategies:
 
 **Keeping a Repo in Sync Automatically:**
 
-`/corpus hook install NAME` installs a git hook so an indexed repo stops
-drifting behind its source tree between manual syncs. On each commit the hook
-asks git which paths changed, queues them, and indexes them in the background —
-so a burst of commits pays one embedding-model load instead of one per commit.
-It never blocks or fails a git operation.
+`/corpus hook install NAME` installs git hooks so an indexed repo stops
+drifting behind its source tree between manual syncs. The corpus follows one
+branch (the remote's default unless `--branch` names another). Whenever that
+branch moves while checked out (commit, merge, pull, rebase, reset, or a tool's
+`update-ref`), the hook asks git which paths changed since the last commit it
+queued, queues them, and indexes them in the background, so a burst of commits
+pays one embedding-model load instead of one per commit. It never blocks or
+fails a git operation.
 
 Run `/corpus hook install` with no corpus name for a guided setup: it lists
 existing corpora or offers to create one (inferring the type from the repo's
-contents), suggests hook points, and offers the initial backfill. A hook only
-sees future commits, so already-committed files need one real sync.
+contents), suggests hook points, and offers the initial backfill at background
+priority. A hook only sees future commits, so already-committed files need one
+real sync.
 
 `/corpus sync NAME --changed-since HEAD` does the same thing on demand, without
 installing anything.

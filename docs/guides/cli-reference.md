@@ -215,7 +215,7 @@ arc corpus items <name>                                  # List indexed items wi
 arc corpus verify <name>                                 # Verify corpus health across both systems
 arc corpus doctor [<name>...]                            # Check all corpora, list commands to fix them
 arc corpus parity <name>                                 # Restore parity between indexes
-arc corpus hook install <name>                           # Auto-sync a git repo on commit
+arc corpus hook install <name>                           # Auto-sync a git repo's branch
 ```
 
 **Note:** If you already have a collection and index with the same name, you can
@@ -380,8 +380,8 @@ indexed repo drifts behind its source tree between manual syncs.
 
 ```bash
 arc corpus hook install                               # guided: pick/create a corpus, choose hooks
-arc corpus hook install MyCorpus                      # post-commit hook in the current repo
-arc corpus hook install MyCorpus --hook post-merge    # also stay current after pulls
+arc corpus hook install MyCorpus                      # follow the default branch of this repo
+arc corpus hook install MyCorpus --branch develop     # follow another branch
 arc corpus hook install MyCorpus --service            # plus an OS watcher (see below)
 arc corpus hook status                                # what is installed here
 arc corpus hook uninstall MyCorpus                    # remove just this corpus's block
@@ -389,23 +389,43 @@ arc corpus hook uninstall MyCorpus                    # remove just this corpus'
 
 **How it works:**
 
-The installed hook does only the cheap half inline. It asks git which paths the
-commit touched (`git diff-tree`, not a tree walk), writes them to a spool
-directory, and starts a detached worker that runs
-`arc corpus sync <name> --drain-spool`. The worker holds a per-corpus lock and
+Each corpus follows one branch of the repo: the remote's default branch
+(`origin/HEAD`), else the branch checked out at install time, or whatever
+`--branch` names. Commits on other branches, including those made in linked
+worktrees, are never indexed.
+
+The hook records the last commit of that branch it queued (the mark, under
+`~/.local/share/arcaneum/hook-marks/`). Every installed hook point runs the
+same check: when the repo has the branch checked out and its tip differs from
+the mark, it asks git which paths differ between the two (`git diff-tree`, not
+a tree walk), writes them to a spool directory, advances the mark, and starts a
+detached worker that runs `arc corpus sync <name> --drain-spool`. Because the
+check compares where the branch is with where it was, every way the branch
+moves looks the same: commit, merge (including a conflicted one), pull, rebase,
+amend, reset, or a tool writing it with `commit-tree` and `update-ref`. If an
+event is missed, the next one catches up from the mark.
+
+Indexing reads the working tree, so a branch that moves while another is
+checked out (`git branch -f`, a fetch into it) is caught up when it is checked
+out again. Queued entries are pinned to the branch the same way: the worker
+leaves them in the spool while the repo has another branch checked out, and
+keeps a batch for retry if the branch changed while it was indexing. The worker holds a per-corpus lock and
 drains until the spool is empty, so a burst of commits pays one embedding-model
 cold start instead of one per commit. Deleted and renamed-away paths are removed
 from both Qdrant and MeiliSearch.
 
 Every drain, whether the hook or the `--service` watcher starts it, runs with
 `--background`, so indexing stays below compilers and tests on the same
-machine. Hooks installed before this change spawn drains without it; rerun
+machine, and so does the backfill the guided install offers. Hooks installed
+before branch pinning queue whatever each commit touched on any branch; rerun
 `arc corpus hook install` to update them.
 
 The hook never blocks or fails a git operation: it runs detached, swallows
 errors, and exits 0 on every path.
 
-**Spawn gating:** before starting a worker the hook checks whether one already
+**Spawn gating:** the hook starts a worker only when this repo has queued
+entries; most invocations find the mark current and stop after two `git`
+calls. Before starting a worker the hook also checks whether one already
 holds the drain lock, and skips the spawn entirely when so — the
 paths are spooled either way, so the running worker picks them up on its next
 loop. Otherwise it waits briefly (`ARC_HOOK_DEBOUNCE`, default 3s) so a burst
@@ -443,9 +463,10 @@ the worker's output to the same file.
 Run `arc corpus hook install` with no corpus name to be walked through it. It
 lists existing corpora and lets you pick one — or create one, inferring the type
 from what the repo actually contains (mostly `.py`/`.ts` → `code`, mostly `.md`
-→ `markdown`, mostly `.pdf` → `pdf`). It then suggests which hook points to
-install, adding `post-merge` when the repo has a remote so `git pull` stays
-covered, and offers the initial backfill.
+→ `markdown`, mostly `.pdf` → `pdf`). It then suggests the default hook points
+and offers the initial backfill, which runs with `--background`. The backfill
+is offered only while the followed branch is checked out, since it reads the
+working tree.
 
 The corpus picker has no default on purpose: wiring a repo into the wrong corpus
 is not something that should happen by pressing Enter.
@@ -453,17 +474,18 @@ is not something that should happen by pressing Enter.
 **Install options:**
 
 - `--repo PATH`: Repository to install into (default: current directory)
-- `--hook NAME`: Hook point — `post-commit` (default), `post-merge`,
-  `post-checkout`, or `post-rewrite`. Install the others so pulls, checkouts,
-  and rebases stay in sync too. Each reads the range git actually hands it:
-  `post-checkout` diffs the old and new SHAs it is passed (skipping
-  `git checkout -- <file>`, which moves content with no commit range), and
-  `post-rewrite` reads the old/new SHA pairs from stdin and collapses them into
-  a single range (first pair's old parent to last pair's new SHA), so a
-  25-commit rebase queues one entry rather than 25. The range is also more
-  complete than the per-commit pairs: a rebase that drops a commit lists only
-  the surviving rewrites, so files touched solely by the dropped commit appear
-  in no pair — but they do appear in the range.
+- `--branch NAME`: Branch to follow (default: the remote's default branch,
+  else the current one). Reinstalling with another branch moves every hook
+  point for the corpus in that repo to it.
+- `--hook NAME`: Hook point to install; repeatable. The default is
+  `reference-transaction`, `post-checkout` and `post-rewrite`.
+  `reference-transaction` (git 2.28+) is the only hook git runs for every ref
+  update, plumbing and resets included; the other two cover the moments HEAD
+  re-attaches to the branch, which older git may not report through it. With
+  git older than 2.28 the default is `post-commit`, `post-merge`,
+  `post-checkout` and `post-rewrite`, and branch moves made by plumbing or
+  `reset` wait for the next of those to fire. Each hook point runs the same
+  check, so installing more than needed costs only a few milliseconds.
 - `--no-spawn`: Queue touched paths but start no worker. Drain on your own
   schedule with `arc corpus sync <name> --drain-spool`, or use `--service`.
 - `--yes` / `-y`: Take the defaults instead of prompting, for scripts and
@@ -478,6 +500,18 @@ is not something that should happen by pressing Enter.
   RSS. Registration is best-effort — an unsupported platform is reported, not
   fatal.
 
+  Both watchers relaunch the drain for as long as the watched directory holds
+  anything, so it holds queued entries and nothing else:
+  `~/.local/share/arcaneum/spool/<corpus>/queue/`. Entries a worker is
+  indexing move to `claimed/` (returned to the queue if the batch fails, or by
+  the next worker if one dies), and entries waiting for their branch move to
+  `deferred/` until the hook sees the branch checked out again. The worker
+  lock, temp files and the old per-repo layout (migrated on the next drain)
+  stay out of the queue. Watchers registered by an older arc watched the whole
+  corpus directory, which is never empty, and relaunched a drain about every
+  10 seconds indefinitely; `arc corpus hook install` re-registers an existing
+  watcher on the queue, with or without `--service`.
+
 **Uninstall options:**
 
 - `--repo PATH`: Repository to uninstall from (default: current directory)
@@ -489,11 +523,12 @@ hook that already exists, so your own hook keeps working, installing twice does
 not duplicate it, and uninstall removes only its own block. `core.hooksPath` is
 respected. One repo can feed several corpora.
 
-**Backfill:** a hook only sees future commits, so files already committed stay
-unindexed until you run one real sync:
+**Backfill:** a hook only sees future commits (install sets the mark to the
+branch tip), so files already committed stay unindexed until you run one real
+sync with the branch checked out:
 
 ```bash
-arc corpus sync MyCorpus /path/to/repo
+arc corpus sync MyCorpus /path/to/repo --background
 ```
 
 The guided install offers to do this for you.
@@ -505,16 +540,21 @@ arc corpus sync MyCorpus --changed-since HEAD              # last commit
 arc corpus sync MyCorpus --changed-since ORIG_HEAD..HEAD   # since a pull
 ```
 
-**Internal:** `arc corpus hook spool <name> --repo PATH --changed-since REV`
-queues paths without indexing them, and `--between OLD NEW` queues the
-difference between two commits' trees instead. The installed hook calls these;
-you should not need to.
+A merge commit given to `--changed-since` reports what the merge brought in:
+its diff from the first parent.
 
-`post-rewrite` uses `--between` because a history rewrite is a tree change, not
-a sequence of commit diffs: walking the rewritten commits misses a file whose
-only commit was dropped (it has vanished from the working tree and must be
-de-indexed) while re-reporting commits that were merely replayed with identical
-content.
+**Internal:** `arc corpus hook spool <name> --repo PATH --branch NAME` queues
+what the branch gained since the mark and advances it; it does nothing while
+another branch is checked out. With no usable mark (never written, or naming a
+commit gc has removed) it queues the tip commit's own changes. Hooks installed
+before branch pinning call `--changed-since REV` or `--between OLD NEW`
+instead. The installed hook calls these; you should not need to.
+
+The mark is compared as two trees, not as a walk of the commits in between,
+because a history rewrite is a tree change: walking the rewritten commits
+misses a file whose only commit was dropped (it has vanished from the working
+tree and must be de-indexed) while re-reporting commits that were merely
+replayed with identical content.
 
 ### Corpus Repair
 

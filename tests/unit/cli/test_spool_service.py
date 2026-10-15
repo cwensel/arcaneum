@@ -33,7 +33,9 @@ def test_launchd_plist_is_valid_and_watches_the_spool(isolated):
     parsed = plistlib.loads(body)
 
     assert parsed["Label"] == spool_service.service_label("Docs")
-    assert str(spool.corpus_spool_dir("Docs")) in parsed["QueueDirectories"]
+    # Only the queue: it is empty exactly when there is nothing to drain
+    # (kata 4j93). The corpus directory always holds the lock.
+    assert parsed["QueueDirectories"] == [str(spool.queue_dir("Docs"))]
     assert "--drain-spool" in parsed["ProgramArguments"]
     assert "Docs" in parsed["ProgramArguments"]
 
@@ -57,7 +59,7 @@ def test_systemd_path_unit_watches_the_spool_directory(isolated):
 
     unit = spool_service.render_systemd_path_unit("Docs")
     assert "DirectoryNotEmpty=" in unit
-    assert str(spool.corpus_spool_dir("Docs")) in unit
+    assert f"DirectoryNotEmpty={spool.queue_dir('Docs')}\n" in unit
 
 
 def test_systemd_service_unit_runs_the_drain(isolated):
@@ -185,3 +187,57 @@ def test_launchd_drain_runs_in_the_background(isolated):
 def test_systemd_drain_runs_in_the_background(isolated):
     unit = spool_service.render_systemd_service_unit("Docs", arc_bin="/usr/bin/arc")
     assert "--drain-spool --background" in unit
+
+
+# --- the watched directory (kata 4j93) ---------------------------------------
+
+
+def _fake_darwin(monkeypatch):
+    monkeypatch.setattr(spool_service.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(spool_service.shutil, "which", lambda _: "/usr/local/bin/arc")
+    monkeypatch.setattr(spool_service, "_run", lambda args: None)
+
+
+def test_install_creates_the_watched_queue(isolated, monkeypatch):
+    from arcaneum.cli import spool
+
+    _fake_darwin(monkeypatch)
+    spool_service.install("Docs")
+    assert spool.queue_dir("Docs").is_dir()
+
+
+def test_is_installed_reports_a_registered_watcher(isolated, monkeypatch):
+    _fake_darwin(monkeypatch)
+    assert not spool_service.is_installed("Docs")
+    spool_service.install("Docs")
+    assert spool_service.is_installed("Docs")
+
+
+def test_hook_install_moves_a_registered_watcher_to_the_queue(isolated, monkeypatch):
+    """A watcher registered before the queue existed watches a never-empty directory."""
+    import subprocess
+
+    from click.testing import CliRunner
+
+    from arcaneum.cli import spool
+    from arcaneum.cli.main import cli
+
+    _fake_darwin(monkeypatch)
+    repo = isolated / "repo"
+    repo.mkdir()
+    for args in (["init", "-q", "-b", "main"], ["commit", "-q", "--allow-empty", "-m", "i"]):
+        subprocess.run(
+            ["git", "-c", "user.email=t@e.com", "-c", "user.name=T", *args], cwd=repo, check=True
+        )
+    plist = spool_service.launchd_plist_path("Docs")
+    plist.parent.mkdir(parents=True)
+    plist.write_bytes(
+        plistlib.dumps({"Label": "x", "QueueDirectories": [str(spool.corpus_spool_dir("Docs"))]})
+    )
+
+    result = CliRunner().invoke(
+        cli, ["corpus", "hook", "install", "Docs", "--repo", str(repo), "--no-spawn"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert plistlib.loads(plist.read_bytes())["QueueDirectories"] == [str(spool.queue_dir("Docs"))]

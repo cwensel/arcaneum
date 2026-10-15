@@ -48,7 +48,7 @@ def repo(tmp_path, monkeypatch):
     return root
 
 
-def _hook(repo: Path, name: str = "post-commit") -> Path:
+def _hook(repo: Path, name: str = "reference-transaction") -> Path:
     return repo / ".git" / "hooks" / name
 
 
@@ -102,18 +102,6 @@ def test_inference_on_an_empty_tree_does_not_crash(tmp_path):
     root = tmp_path / "r"
     root.mkdir()
     assert hooks.infer_corpus_type(root) in {"code", "markdown", "pdf"}
-
-
-# --- suggested hook points ----------------------------------------------------
-
-
-def test_suggests_post_merge_when_the_repo_has_a_remote(repo):
-    _git(repo, "remote", "add", "origin", "https://example.com/r.git")
-    assert hooks.suggested_hooks(repo) == ["post-commit", "post-merge"]
-
-
-def test_suggests_only_post_commit_without_a_remote(repo):
-    assert hooks.suggested_hooks(repo) == ["post-commit"]
 
 
 # --- the interactive flow -----------------------------------------------------
@@ -182,14 +170,12 @@ def test_created_corpus_type_can_be_overridden(repo):
     assert created == [("MyRepo", "markdown")]
 
 
-def test_interactive_installs_the_suggested_hook_points(repo):
-    _git(repo, "remote", "add", "origin", "https://example.com/r.git")
-
+def test_interactive_installs_the_default_hook_points(repo):
     result = _invoke(["corpus", "hook", "install"], corpora=["Docs"], input_text="1\n\nn\n")
 
     assert result.exit_code == 0, result.output
-    assert _hook(repo, "post-commit").exists()
-    assert _hook(repo, "post-merge").exists(), "a repo with a remote should also cover pulls"
+    for name in hooks.default_hooks(repo):
+        assert _hook(repo, name).exists()
 
 
 def test_hook_points_can_be_overridden_at_the_prompt(repo):
@@ -315,14 +301,13 @@ def test_yes_with_no_corpora_errors(repo):
     assert result.exit_code != 0
 
 
-def test_yes_installs_the_suggested_hook_points(repo):
-    _git(repo, "remote", "add", "origin", "https://example.com/r.git")
+def test_yes_installs_the_default_hook_points(repo):
     with patch("arcaneum.cli.hooks.list_corpus_names", return_value=["Solo"]):
         result = CliRunner().invoke(cli, ["corpus", "hook", "install", "--yes"])
 
     assert result.exit_code == 0, result.output
-    assert _hook(repo, "post-commit").exists()
-    assert _hook(repo, "post-merge").exists()
+    for name in hooks.default_hooks(repo):
+        assert _hook(repo, name).exists()
 
 
 # --- interactive hook-point validation (roborev 6105) ------------------------
@@ -342,12 +327,11 @@ def test_a_typo_in_hook_points_installs_nothing(repo):
 
 def test_multi_hook_success_message_lists_every_path(repo):
     """Reporting one path while claiming several hooks is misleading."""
-    _git(repo, "remote", "add", "origin", "https://example.com/r.git")
     result = _invoke(["corpus", "hook", "install"], corpora=["Docs"], input_text="1\n\nn\n")
 
     assert result.exit_code == 0, result.output
-    assert "post-commit" in result.output
-    assert "post-merge" in result.output
+    for name in hooks.default_hooks(repo):
+        assert f"{name}: " in result.output
 
 
 def test_inference_does_not_walk_into_dot_directories(tmp_path):
@@ -376,3 +360,40 @@ def test_inference_does_not_walk_into_dot_directories(tmp_path):
         assert hooks.infer_corpus_type(root) == "markdown"
 
     assert not any(".venv" in v for v in visited), "dot-dirs must be pruned from the walk"
+
+
+# --- the backfill (kata vr9b) -------------------------------------------------
+
+
+def test_backfill_runs_at_background_priority(repo):
+    """Hook-triggered drains run --background; the largest sync of all should too."""
+    order = []
+    with patch(
+        "arcaneum.cli.background.enter_background",
+        side_effect=lambda: order.append("background") or [],
+    ):
+        with patch(
+            "arcaneum.cli.sync.sync_directory_command",
+            side_effect=lambda *a, **k: order.append("sync"),
+        ):
+            from arcaneum.cli.main import _run_backfill_sync
+
+            _run_backfill_sync("Docs", repo)
+
+    assert order == ["background", "sync"]
+
+
+def test_backfill_is_not_offered_off_the_pinned_branch(repo):
+    """It reads the working tree, which would index the other branch's files."""
+    calls = []
+    _git(repo, "checkout", "-q", "-b", "elsewhere")
+    result = _invoke(
+        ["corpus", "hook", "install", "--branch", "main"],
+        corpora=["Docs"],
+        input_text="1\n\n",
+        sync=lambda *a, **k: calls.append(a),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == []
+    assert "Check out 'main'" in result.output

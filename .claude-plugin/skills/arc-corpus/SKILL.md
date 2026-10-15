@@ -36,8 +36,8 @@ arc corpus sync MyCorpus /path/to/files --gpu               # Opt into experimen
 
 # Keep a git repo in sync automatically (installs a git hook)
 arc corpus hook install                               # Guided: pick/create corpus, choose hooks
-arc corpus hook install MyCorpus                      # Auto-sync on every commit
-arc corpus hook install MyCorpus --hook post-merge    # Also stay current after pulls
+arc corpus hook install MyCorpus                      # Auto-sync the default branch
+arc corpus hook install MyCorpus --branch develop     # Follow another branch
 arc corpus hook install MyCorpus --service            # Plus an OS watcher for reboot recovery
 arc corpus hook status                                # What is installed in this repo
 arc corpus hook uninstall MyCorpus                    # Remove just this corpus's hook
@@ -190,8 +190,12 @@ syncs. `arc corpus hook install <corpus>` closes that gap.
 
 How it works:
 
-- On each commit the hook asks git which paths changed (`git diff-tree`, not a
-  tree walk), queues them, and starts a background worker.
+- The corpus follows one branch: the remote's default unless `--branch` names
+  another. Commits on other branches and in linked worktrees are not indexed.
+- Whenever that branch moves while checked out (commit, merge, pull, rebase,
+  reset, or a tool's `update-ref`), the hook asks git which paths changed since
+  the last commit it queued (`git diff-tree`, not a tree walk), queues them,
+  and starts a background worker. A missed event is caught up by the next one.
 - The worker drains the queue until empty, so a burst of commits pays one
   embedding-model load instead of one per commit.
 - Deleted and renamed-away files are removed from both Qdrant and MeiliSearch.
@@ -200,7 +204,8 @@ How it works:
 
 Run `arc corpus hook install` with **no corpus name** to be walked through it:
 it lists existing corpora or offers to create one (inferring the type from the
-repo's contents), suggests hook points, and offers the initial backfill. Prefer
+repo's contents), suggests hook points, and offers the initial backfill (run at
+background priority, and only while the followed branch is checked out). Prefer
 this when the user has not said which corpus to use. Pass `--yes` to take the
 defaults without prompting.
 
@@ -212,8 +217,10 @@ comments and appended to any existing hook, so a user's own hook keeps working,
 installing twice does not duplicate it, and `uninstall` removes only its own
 block. `core.hooksPath` is respected, and one repo can feed several corpora.
 
-Use `--hook post-merge` / `post-checkout` / `post-rewrite` so pulls, checkouts,
-and rebases stay in sync too. Use `--service` to also register an OS watcher
+The default hook points (`reference-transaction`, `post-checkout`,
+`post-rewrite`) already cover pulls, checkouts and rebases; `--hook` picks
+others. Hooks installed before branch pinning should be reinstalled. Use
+`--service` to also register an OS watcher
 (launchd on macOS, systemd on Linux) that drains work left over after a reboot
 or a failed spawn.
 

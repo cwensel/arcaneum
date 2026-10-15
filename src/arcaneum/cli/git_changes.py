@@ -208,6 +208,12 @@ def changes_since(repo: Union[str, Path], revision: str) -> GitChanges:
             "Pass a commit, tag, branch, or range like 'ORIG_HEAD..HEAD'."
         )
 
+    # diff-tree prints no paths for a merge commit unless told which parent to
+    # compare against. What a merge brought into the branch is its diff from
+    # the first parent, the branch it was merged into.
+    if not is_range and is_commit(root, f"{revision}^2"):
+        return changes_between(root, f"{revision}^1", revision)
+
     # --root makes the initial commit diff against the empty tree, so a hook
     # firing on a repo's first commit still reports every file as added
     # instead of silently indexing nothing.
@@ -236,3 +242,41 @@ def changes_since(repo: Union[str, Path], revision: str) -> GitChanges:
         changed=[str(root / p) for p in relative.changed],
         removed=[str(root / p) for p in relative.removed],
     )
+
+
+def is_commit(repo: Union[str, Path], revision: str) -> bool:
+    """True when `revision` names a commit in `repo`. Never raises."""
+    if revision.startswith("-"):
+        return False
+    try:
+        result = _run_git(
+            Path(repo), ["rev-parse", "--verify", "--quiet", f"{revision}^{{commit}}"]
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def current_branch(repo: Union[str, Path]) -> Optional[str]:
+    """The branch checked out in `repo`, or None when HEAD is detached or unreadable."""
+    try:
+        result = _run_git(Path(repo), ["symbolic-ref", "--quiet", "HEAD"])
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    ref = result.stdout.strip()
+    if result.returncode != 0 or not ref.startswith("refs/heads/"):
+        return None
+    return ref[len("refs/heads/") :]
+
+
+def branch_tip(repo: Union[str, Path], branch: str) -> Optional[str]:
+    """The commit `branch` points at, or None when the branch does not exist."""
+    try:
+        result = _run_git(
+            Path(repo),
+            ["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}^{{commit}}"],
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    tip = result.stdout.strip()
+    return tip if result.returncode == 0 and tip else None

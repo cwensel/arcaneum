@@ -48,7 +48,7 @@ def test_write_entry_is_scoped_per_corpus_and_repo(isolated_spool):
     a = spool.write_entry("Docs", "/repo-one", changed=["/repo-one/a.py"], removed=[])
     b = spool.write_entry("Docs", "/repo-two", changed=["/repo-two/a.py"], removed=[])
     c = spool.write_entry("Other", "/repo-one", changed=["/repo-one/a.py"], removed=[])
-    assert a.parent != b.parent
+    assert a.name.split(".")[-2] != b.name.split(".")[-2], "the repo is in the entry name"
     assert a.parent != c.parent
 
 
@@ -119,7 +119,7 @@ def test_drain_batch_on_an_empty_spool_is_empty(isolated_spool):
 
 def test_a_corrupt_entry_is_discarded_not_fatal(isolated_spool):
     spool.write_entry("Docs", "/repo", changed=["/repo/a.py"], removed=[])
-    bad = spool.corpus_spool_dir("Docs") / "bad.json"
+    bad = spool.queue_dir("Docs") / "bad.json"
     bad.parent.mkdir(parents=True, exist_ok=True)
     bad.write_text("{not json")
 
@@ -238,7 +238,7 @@ def test_release_entries_tolerates_an_already_removed_file(isolated_spool):
 
 def test_deferred_drain_still_discards_malformed_entries(isolated_spool):
     """A malformed entry can never succeed; keeping it would loop forever."""
-    bad = spool.corpus_spool_dir("Docs") / "bad.json"
+    bad = spool.queue_dir("Docs") / "bad.json"
     bad.parent.mkdir(parents=True, exist_ok=True)
     bad.write_text("{not json")
 
@@ -247,3 +247,243 @@ def test_deferred_drain_still_discards_malformed_entries(isolated_spool):
     assert not batch
     assert not bad.exists()
     assert entries == []
+
+
+# --- branch pinning (kata vr9b) -----------------------------------------------
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-c", "core.hooksPath=/dev/null", *args],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+
+@pytest.fixture
+def git_repo(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    _git(root, "init", "-q", "-b", "main")
+    _git(root, "config", "user.email", "t@e.com")
+    _git(root, "config", "user.name", "T")
+    (root / "a.md").write_text("a\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "init")
+    return root
+
+
+def test_write_entry_records_the_branch_it_was_spooled_for(isolated_spool):
+    path = spool.write_entry("Docs", "/repo", changed=["/repo/a.py"], removed=[], branch="main")
+    assert json.loads(path.read_text())["branch"] == "main"
+
+
+def test_drain_defers_entries_whose_repo_left_the_branch(isolated_spool, git_repo):
+    """Indexing reads the working tree, which now holds another branch's files."""
+    spool.write_entry("Docs", git_repo, changed=[str(git_repo / "a.md")], removed=[], branch="main")
+    _git(git_repo, "checkout", "-q", "-b", "feature")
+
+    batch, entries = spool.drain_batch("Docs", consume=False)
+
+    assert not batch and entries == []
+    assert spool.has_pending("Docs"), "the entry waits for the branch to come back"
+
+    _git(git_repo, "checkout", "-q", "main")
+    batch = spool.drain_batch("Docs")
+    assert [Path(p).name for p in batch.changed] == ["a.md"]
+
+
+def test_drain_defers_entries_while_head_is_detached(isolated_spool, git_repo):
+    """A rebase in progress detaches HEAD; its working tree is in flux."""
+    spool.write_entry("Docs", git_repo, changed=[str(git_repo / "a.md")], removed=[], branch="main")
+    _git(git_repo, "checkout", "-q", "--detach")
+
+    assert not spool.drain_batch("Docs")
+    assert spool.has_pending("Docs")
+
+
+def test_drain_does_not_wedge_on_a_repo_that_no_longer_exists(isolated_spool, tmp_path):
+    """Branch state is unknowable there; deferring would keep the entry forever."""
+    gone = tmp_path / "gone-repo"
+    spool.write_entry("Docs", gone, changed=[], removed=[str(gone / "a.md")], branch="main")
+
+    batch = spool.drain_batch("Docs")
+
+    assert batch.removed == [str(gone / "a.md")]
+
+
+def test_unpinned_entries_drain_regardless_of_branch(isolated_spool, git_repo):
+    """Entries from hooks installed before pinning carry no branch."""
+    spool.write_entry("Docs", git_repo, changed=[str(git_repo / "a.md")], removed=[])
+    _git(git_repo, "checkout", "-q", "-b", "feature")
+
+    assert spool.drain_batch("Docs").changed == [str(git_repo / "a.md")]
+
+
+def test_batch_reports_the_branch_each_repo_was_pinned_to(isolated_spool, git_repo):
+    spool.write_entry("Docs", git_repo, changed=[str(git_repo / "a.md")], removed=[], branch="main")
+    assert spool.drain_batch("Docs").pins == {str(git_repo): "main"}
+
+
+def test_mark_round_trips(isolated_spool):
+    assert spool.read_mark("Docs", "/repo", "main") is None
+    spool.write_mark("Docs", "/repo", "main", "abc123")
+    assert spool.read_mark("Docs", "/repo", "main") == "abc123"
+
+
+def test_marks_are_scoped_per_corpus_repo_and_branch(isolated_spool):
+    spool.write_mark("Docs", "/repo", "main", "one")
+    assert spool.read_mark("Code", "/repo", "main") is None
+    assert spool.read_mark("Docs", "/other", "main") is None
+    assert spool.read_mark("Docs", "/repo", "dev") is None
+
+
+def test_branch_names_that_flatten_alike_get_separate_marks(isolated_spool):
+    spool.write_mark("Docs", "/repo", "a/b", "slash")
+    spool.write_mark("Docs", "/repo", "a_b", "underscore")
+    assert spool.read_mark("Docs", "/repo", "a/b") == "slash"
+
+
+def test_marks_live_outside_the_spool(isolated_spool):
+    """Nothing that scans for pending work may ever see a mark."""
+    spool.write_mark("Docs", "/repo", "main", "abc123")
+    assert not spool.has_pending("Docs")
+    assert spool.list_corpora_with_pending() == []
+    assert isolated_spool not in spool.mark_path("Docs", "/repo", "main").parents
+
+
+def test_clear_marks_removes_every_branch_for_the_repo(isolated_spool):
+    spool.write_mark("Docs", "/repo", "main", "one")
+    spool.write_mark("Docs", "/repo", "dev", "two")
+    spool.write_mark("Docs", "/other", "main", "three")
+
+    spool.clear_marks("Docs", "/repo")
+
+    assert spool.read_mark("Docs", "/repo", "main") is None
+    assert spool.read_mark("Docs", "/repo", "dev") is None
+    assert spool.read_mark("Docs", "/other", "main") == "three"
+
+
+def test_mark_path_is_data_dir_relative(isolated_spool, tmp_path):
+    """The hook rebuilds this path from $XDG_DATA_HOME at run time."""
+    relative = spool.mark_relpath("Docs", "/repo", "main")
+    assert not relative.is_absolute()
+    assert spool.mark_path("Docs", "/repo", "main") == tmp_path / "arcaneum" / relative
+
+
+# --- the queue directory is empty exactly when nothing is drainable (kata 4j93)
+#
+# launchd QueueDirectories and systemd DirectoryNotEmpty= relaunch the drain for
+# as long as the watched directory has any entry at all. A lock file, a temp
+# file, a subdirectory or a parked entry left there relaunches it every ~10s
+# forever: one real watcher had run 64737 times.
+
+
+def test_the_queue_holds_nothing_but_entries(isolated_spool):
+    path = spool.write_entry("Docs", "/repo", changed=["/repo/a.py"], removed=[])
+    lock = spool.try_acquire_worker_lock("Docs")
+    spool.release_worker_lock(lock)
+
+    assert list(spool.queue_dir("Docs").iterdir()) == [path]
+    assert spool.queue_dir("Docs") not in spool.worker_lock_path("Docs").parents
+
+
+def test_entry_names_carry_the_repo_id(isolated_spool):
+    """The hook finds its own repo's entries by name, without parsing them."""
+    path = spool.write_entry("Docs", "/repo", changed=["/repo/a.py"], removed=[])
+    assert path.name.endswith(f".{spool.repo_id('/repo')}.json")
+    assert spool.repo_id("/repo") != spool.repo_id("/other")
+
+
+def test_the_queue_is_empty_after_a_drain(isolated_spool):
+    spool.write_entry("Docs", "/repo", changed=["/repo/a.py"], removed=[])
+    spool.drain_batch("Docs")
+    assert spool.queue_dir("Docs").is_dir()
+    assert list(spool.queue_dir("Docs").iterdir()) == []
+
+
+def test_claimed_entries_leave_the_queue_while_they_are_indexed(isolated_spool):
+    """Otherwise the watcher relaunches a doomed drain every 10s of a long batch."""
+    spool.write_entry("Docs", "/repo", changed=["/repo/a.py"], removed=[])
+
+    batch, entries = spool.drain_batch("Docs", consume=False)
+
+    assert batch.changed == ["/repo/a.py"]
+    assert list(spool.queue_dir("Docs").iterdir()) == []
+    assert all(entry.exists() for entry in entries)
+
+
+def test_returned_entries_go_back_to_the_queue(isolated_spool):
+    spool.write_entry("Docs", "/repo", changed=["/repo/a.py"], removed=[])
+    _, entries = spool.drain_batch("Docs", consume=False)
+
+    spool.return_entries(entries)
+
+    assert spool.drain_batch("Docs").changed == ["/repo/a.py"]
+
+
+def test_entries_a_dead_worker_claimed_are_recovered(isolated_spool):
+    spool.write_entry("Docs", "/repo", changed=["/repo/a.py"], removed=[])
+    spool.drain_batch("Docs", consume=False)  # the worker dies here
+
+    spool.recover_claimed("Docs")
+
+    assert spool.drain_batch("Docs").changed == ["/repo/a.py"]
+
+
+def test_deferred_entries_leave_the_queue(isolated_spool, git_repo):
+    spool.write_entry("Docs", git_repo, changed=[str(git_repo / "a.md")], removed=[], branch="main")
+    _git(git_repo, "checkout", "-q", "-b", "feature")
+
+    spool.drain_batch("Docs")
+
+    assert list(spool.queue_dir("Docs").iterdir()) == []
+    assert spool.has_pending("Docs")
+
+
+def test_requeue_returns_a_repos_deferred_entries(isolated_spool, git_repo):
+    spool.write_entry("Docs", git_repo, changed=[str(git_repo / "a.md")], removed=[], branch="main")
+    spool.write_entry("Docs", "/other", changed=["/other/b.md"], removed=[], branch="main")
+    _git(git_repo, "checkout", "-q", "-b", "feature")
+    spool.drain_batch("Docs")  # /other is not a repo, so it drains; git_repo defers
+
+    spool.requeue_deferred("Docs", git_repo)
+
+    assert [p.name.split(".")[-2] for p in spool.queue_dir("Docs").iterdir()] == [
+        spool.repo_id(git_repo)
+    ]
+
+
+def test_a_drain_requeues_deferred_entries_whose_branch_is_back(isolated_spool, git_repo):
+    spool.write_entry("Docs", git_repo, changed=[str(git_repo / "a.md")], removed=[], branch="main")
+    _git(git_repo, "checkout", "-q", "-b", "feature")
+    spool.drain_batch("Docs")
+    _git(git_repo, "checkout", "-q", "main")
+
+    assert spool.drain_batch("Docs").changed == [str(git_repo / "a.md")]
+
+
+def test_entries_in_the_old_layout_are_migrated(isolated_spool):
+    """Spools written before the queue directory existed must still drain."""
+    legacy = spool.corpus_spool_dir("Docs") / "0123456789ab"
+    legacy.mkdir(parents=True)
+    (legacy / "1.000000-1-0.json").write_text(
+        json.dumps({"corpus": "Docs", "repo": "/repo", "changed": ["/repo/a.py"], "removed": []})
+    )
+
+    assert spool.drain_batch("Docs").changed == ["/repo/a.py"]
+    assert not legacy.exists()
+    assert sorted(p.name for p in spool.corpus_spool_dir("Docs").iterdir()) == ["queue"]
+
+
+def test_stray_files_in_the_queue_are_removed(isolated_spool):
+    """Anything that is not an entry would keep the watcher firing forever."""
+    spool.queue_dir("Docs").mkdir(parents=True)
+    (spool.queue_dir("Docs") / ".DS_Store").write_text("x")
+    (spool.queue_dir("Docs") / "subdir").mkdir()
+
+    spool.drain_batch("Docs")
+
+    assert list(spool.queue_dir("Docs").iterdir()) == []

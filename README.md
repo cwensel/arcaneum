@@ -170,7 +170,7 @@ arc corpus repair NAME --include-stale-policy   # Also migrate stale/legacy inde
 arc corpus repair NAME --prune-orphans          # Also delete docs for files gone from Qdrant and disk
 arc corpus sync NAME --changed-since HEAD       # Sync only what the last commit touched
 arc corpus hook install                         # Guided setup: pick/create a corpus, choose hooks
-arc corpus hook install NAME                    # Auto-sync a git repo on every commit
+arc corpus hook install NAME                    # Auto-sync a git repo's default branch
 arc corpus hook status                          # Show hooks installed in this repo
 arc corpus hook uninstall NAME                  # Remove this corpus's hook
 arc corpus update NAME --description "..."      # Update corpus metadata

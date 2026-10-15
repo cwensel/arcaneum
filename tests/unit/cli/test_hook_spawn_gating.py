@@ -68,23 +68,26 @@ def test_gated_hooks_are_valid_shell(hook, tmp_path):
 # --- the lock path the shell computes must match the worker's ----------------
 
 
-def test_shell_and_python_agree_on_the_worker_lock_path(isolated, tmp_path):
+def test_shell_and_python_agree_on_every_path(isolated, tmp_path):
     """A divergence here makes the gate silently never fire."""
-    body = hooks.render_block("Docs", "post-commit", tmp_path, spawn=True)
-
-    # Extract the shell's computed lock path by running just that assignment.
+    body = hooks.render_block("Docs", "post-commit", tmp_path, spawn=True, branch="main")
+    names = ("_arc_data", "_arc_lock", "_arc_mark", "_arc_queue", "_arc_deferred", "_arc_repo_id")
+    assignments = [
+        line for line in body.splitlines() if line.startswith(tuple(f"{n}=" for n in names))
+    ]
     script = tmp_path / "probe.sh"
     script.write_text(
-        "#!/bin/sh\n"
-        f"_arc_corpus='Docs'\n"
-        f'_arc_data="${{XDG_DATA_HOME:-$HOME/.local/share}}/arcaneum"\n'
-        f'echo "$_arc_data/spool/$_arc_corpus/worker.lock"\n'
+        "#!/bin/sh\n" + "\n".join(assignments) + "\n" + "".join(f'echo "${n}"\n' for n in names[1:])
     )
     out = subprocess.run(
         ["/bin/sh", str(script)], capture_output=True, text=True, env=dict(os.environ)
-    ).stdout.strip()
+    ).stdout.split("\n")
 
-    assert Path(out) == spool.worker_lock_path("Docs")
+    assert Path(out[0]) == spool.worker_lock_path("Docs")
+    assert Path(out[1]) == spool.mark_path("Docs", tmp_path, "main")
+    assert Path(out[2]) == spool.queue_dir("Docs")
+    assert Path(out[3]) == spool.deferred_dir("Docs")
+    assert out[4] == spool.repo_id(tmp_path)
 
 
 # --- end to end: a held lock suppresses the spawn ----------------------------
@@ -114,9 +117,38 @@ def repo(tmp_path, monkeypatch):
     return root
 
 
+def _install_armed(repo: Path) -> None:
+    """Install, then leave work for the gate to find.
+
+    The gate calls `arc corpus hook spool` only when the branch moved past the
+    mark, and spawns only when entries are queued. Clearing the mark and
+    seeding an entry makes both true, so each test exercises the spawn path
+    rather than passing because the gate never got that far.
+    """
+    hooks.install("Docs", repo, "post-commit", spawn=True)
+    root = hooks.repo_root(repo)
+    for branch in {h.branch for h in hooks.list_installed(root)}:
+        spool.mark_path("Docs", root, branch).unlink()
+    spool.write_entry("Docs", root, changed=[str(root / "a.md")], removed=[])
+
+
+def test_hook_spawns_nothing_without_queued_work(isolated, repo, tmp_path):
+    hooks.install("Docs", repo, "post-commit", spawn=True)
+    bin_dir = tmp_path / "bin"
+    marker = tmp_path / "calls.txt"
+    _fake_arc(bin_dir, marker)
+    env = _env_without_flock(tmp_path, bin_dir)
+
+    result = _run_hook(repo / ".git" / "hooks" / "post-commit", env)
+    _wait_past_debounce()
+
+    assert result.returncode == 0, result.stderr
+    assert not marker.exists(), "the mark is current and nothing is queued"
+
+
 def test_hook_skips_the_spawn_while_a_worker_holds_the_lock(isolated, repo, tmp_path):
     """The core fix: no wasted process when a worker is already draining."""
-    hooks.install("Docs", repo, "post-commit", spawn=True)
+    _install_armed(repo)
     hook_script = repo / ".git" / "hooks" / "post-commit"
 
     env = dict(os.environ)
@@ -140,7 +172,7 @@ def test_hook_skips_the_spawn_while_a_worker_holds_the_lock(isolated, repo, tmp_
 
 
 def test_hook_spawns_when_no_worker_is_running(isolated, repo, tmp_path):
-    hooks.install("Docs", repo, "post-commit", spawn=True)
+    _install_armed(repo)
     hook_script = repo / ".git" / "hooks" / "post-commit"
 
     env = dict(os.environ)
@@ -183,7 +215,7 @@ def test_hook_spawns_when_no_worker_is_running(isolated, repo, tmp_path):
 
 
 def test_hook_still_exits_zero_when_the_gate_is_hit(isolated, repo, tmp_path):
-    hooks.install("Docs", repo, "post-commit", spawn=True)
+    _install_armed(repo)
     hook_script = repo / ".git" / "hooks" / "post-commit"
     env = dict(os.environ)
     env["XDG_DATA_HOME"] = str(tmp_path / "data")
@@ -266,7 +298,7 @@ def _wait_past_debounce() -> None:
 
 def test_gate_holds_without_flock(isolated, repo, tmp_path, monkeypatch):
     """With a worker holding the lock, no drain may be spawned even sans flock."""
-    hooks.install("Docs", repo, "post-commit", spawn=True)
+    _install_armed(repo)
     hook_script = repo / ".git" / "hooks" / "post-commit"
     bin_dir = tmp_path / "bin"
     marker = tmp_path / "calls.txt"
@@ -294,7 +326,7 @@ def test_gate_holds_without_flock(isolated, repo, tmp_path, monkeypatch):
 
 def test_spawn_still_happens_without_flock_when_idle(isolated, repo, tmp_path):
     """The gate must not become a blanket suppression."""
-    hooks.install("Docs", repo, "post-commit", spawn=True)
+    _install_armed(repo)
     hook_script = repo / ".git" / "hooks" / "post-commit"
     bin_dir = tmp_path / "bin"
     marker = tmp_path / "calls.txt"
@@ -310,7 +342,7 @@ def test_spawn_still_happens_without_flock_when_idle(isolated, repo, tmp_path):
 
 def test_the_nohup_fallback_path_is_gated_too(isolated, repo, tmp_path):
     """CI always has setsid, so exercise the other branch explicitly."""
-    hooks.install("Docs", repo, "post-commit", spawn=True)
+    _install_armed(repo)
     hook_script = repo / ".git" / "hooks" / "post-commit"
     bin_dir = tmp_path / "bin"
     marker = tmp_path / "calls.txt"
@@ -376,7 +408,7 @@ def test_probe_script_on_a_missing_lock_reports_free(isolated, tmp_path):
 
 
 def test_install_writes_the_probe_script(isolated, repo):
-    hooks.install("Docs", repo, "post-commit", spawn=True)
+    _install_armed(repo)
     assert hooks.probe_script_path().exists()
 
 
@@ -415,7 +447,7 @@ def test_flock_is_the_fast_path_when_available(isolated, repo, tmp_path):
     a comment would satisfy it. Observe instead that the python probe is never
     reached: point ARC_HOOK_PYTHON at a recorder and assert it stays unused.
     """
-    hooks.install("Docs", repo, "post-commit", spawn=True)
+    _install_armed(repo)
     hook_script = repo / ".git" / "hooks" / "post-commit"
     bin_dir = tmp_path / "bin"
     marker = tmp_path / "calls.txt"
@@ -454,7 +486,7 @@ def test_the_flockless_gate_depends_on_the_installed_probe(isolated, repo, tmp_p
     Deleting it must make the gate fall through to a spawn rather than silently
     suppress work -- which also proves the probe is genuinely load-bearing.
     """
-    hooks.install("Docs", repo, "post-commit", spawn=True)
+    _install_armed(repo)
     hook_script = repo / ".git" / "hooks" / "post-commit"
     bin_dir = tmp_path / "bin"
     marker = tmp_path / "calls.txt"

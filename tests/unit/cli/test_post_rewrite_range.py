@@ -1,18 +1,19 @@
-"""post-rewrite should spool one range, not one entry per rewritten commit.
+"""A history rewrite should spool one tree comparison, not one entry per commit.
 
 Measured on a real rebase: 1057 spool entries for 198 distinct files -- ~5x
 redundancy, because the hook fired once per rewritten commit and each spooled
 that commit's diff. Indexing reads the working tree, so per-commit granularity
 buys nothing: only the final tree state matters.
 
-A range from the first rewrite's old parent to the last rewrite's new SHA is
-also strictly more correct. Verified against real git: a rebase that drops a
-commit reports only the surviving pairs on stdin, so files touched solely by
-the dropped commit appear in no pair -- but they do appear in the range.
+Comparing the pre-rewrite tree (the mark) with the new tip is also strictly
+more correct. Verified against real git: a rebase that drops a commit reports
+only the surviving pairs on stdin, so files touched solely by the dropped
+commit appear in no pair -- but they do appear in the tree comparison.
 """
 
 from __future__ import annotations
 
+import os
 import platform
 import subprocess
 from pathlib import Path
@@ -28,9 +29,14 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+VENV_BIN = Path(__file__).resolve().parents[3] / ".venv" / "bin"
+
+
 def _git(repo: Path, *args: str) -> str:
+    # The hooks call `arc`; it must be this checkout's, not one on the user's PATH.
+    env = {**os.environ, "PATH": f"{VENV_BIN}:{os.environ['PATH']}"}
     return subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        ["git", *args], cwd=repo, capture_output=True, text=True, check=True, env=env
     ).stdout
 
 
@@ -57,13 +63,6 @@ def repo(tmp_path):
 # --- the generated shell ------------------------------------------------------
 
 
-def test_post_rewrite_compares_endpoints_not_a_walked_range(tmp_path):
-    body = hooks.render_block("Docs", "post-rewrite", tmp_path, spawn=False)
-    # A walked range would miss a dropped commit's file; endpoints do not.
-    assert "--between" in body
-    assert ".." not in body.split("--between")[1].split("\n")[0]
-
-
 def test_post_rewrite_shell_is_valid(tmp_path):
     body = hooks.render_block("Docs", "post-rewrite", tmp_path, spawn=False)
     script = tmp_path / "h.sh"
@@ -75,61 +74,60 @@ def test_post_rewrite_shell_is_valid(tmp_path):
 # --- end to end ---------------------------------------------------------------
 
 
+def _install(repo: Path) -> None:
+    """The default hook set: commits must advance the mark, or a rewrite's
+    comparison would also span them."""
+    for hook in hooks.default_hooks(repo):
+        hooks.install("Docs", repo, hook, spawn=False)
+
+
 def _drain_names(corpus: str):
     batch = spool.drain_batch(corpus)
     return sorted(Path(p).name for p in batch.changed)
 
 
-def test_a_multi_commit_rebase_spools_one_entry(isolated, repo):
-    """The redundancy fix: N rewritten commits must not mean N spool entries."""
-    hooks.install("Docs", repo, "post-rewrite", spawn=False)
-
-    _git(repo, "checkout", "-q", "-b", "feature")
+def _rebase_main_onto_upstream(repo: Path) -> None:
+    """Rebase three local commits on the pinned branch onto new upstream work."""
+    _git(repo, "branch", "upstream")
     for name in ("f1.md", "f2.md", "f3.md"):
         (repo / name).write_text(f"{name}\n")
         _git(repo, "add", "-A")
         _git(repo, "commit", "-q", "-m", name)
 
-    _git(repo, "checkout", "-q", "main")
+    _git(repo, "checkout", "-q", "upstream")
     (repo / "on-main.md").write_text("main\n")
     _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "-m", "main work")
-    _git(repo, "checkout", "-q", "feature")
+    _git(repo, "commit", "-q", "-m", "upstream work")
+    _git(repo, "checkout", "-q", "main")
     spool.drain_batch("Docs")
 
-    _git(repo, "rebase", "main")
+    _git(repo, "rebase", "upstream")
+
+
+def test_a_multi_commit_rebase_spools_one_entry(isolated, repo):
+    """The redundancy fix: N rewritten commits must not mean N spool entries."""
+    _install(repo)
+
+    _rebase_main_onto_upstream(repo)
 
     entries = list(spool.corpus_spool_dir("Docs").rglob("*.json"))
     assert len(entries) == 1, f"expected one entry for the whole rebase, got {len(entries)}"
 
 
 def test_the_single_entry_covers_what_actually_changed_on_disk(isolated, repo):
-    hooks.install("Docs", repo, "post-rewrite", spawn=False)
+    _install(repo)
 
-    _git(repo, "checkout", "-q", "-b", "feature")
-    for name in ("f1.md", "f2.md", "f3.md"):
-        (repo / name).write_text(f"{name}\n")
-        _git(repo, "add", "-A")
-        _git(repo, "commit", "-q", "-m", name)
-
-    _git(repo, "checkout", "-q", "main")
-    (repo / "on-main.md").write_text("main\n")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "-m", "main work")
-    _git(repo, "checkout", "-q", "feature")
-    spool.drain_batch("Docs")
-
-    _git(repo, "rebase", "main")
+    _rebase_main_onto_upstream(repo)
 
     names = _drain_names("Docs")
     # f1-f3 were replayed with identical blobs, so their on-disk content did
     # not change and re-indexing them would be waste. What did change is the
     # file the rebase brought in from the new base.
-    assert "on-main.md" in names, f"the rebase's real disk change is missing: {names}"
+    assert names == ["on-main.md"], f"the rebase's real disk change is missing: {names}"
 
 
 def test_an_amend_still_reports_its_files(isolated, repo):
-    hooks.install("Docs", repo, "post-rewrite", spawn=False)
+    _install(repo)
     (repo / "work.md").write_text("work\n")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "work")
@@ -150,7 +148,7 @@ def test_a_dropped_commit_is_still_covered(isolated, repo):
     the working tree. A per-commit walk of the surviving rewrites never
     mentions it; comparing the two tip trees reports it as a deletion.
     """
-    hooks.install("Docs", repo, "post-rewrite", spawn=False)
+    _install(repo)
 
     for name in ("keep1.md", "dropme.md", "keep2.md"):
         (repo / name).write_text(f"{name}\n")
@@ -172,7 +170,7 @@ def test_a_dropped_commit_is_still_covered(isolated, repo):
 
 def test_a_pure_resign_rewrite_spools_nothing(isolated, repo):
     """Re-signing rewrites every SHA but no tree: there is nothing to re-index."""
-    hooks.install("Docs", repo, "post-rewrite", spawn=False)
+    _install(repo)
     (repo / "work.md").write_text("work\n")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "work")
@@ -185,7 +183,7 @@ def test_a_pure_resign_rewrite_spools_nothing(isolated, repo):
 
 
 def test_post_rewrite_never_fails_the_git_command(isolated, repo):
-    hooks.install("Docs", repo, "post-rewrite", spawn=False)
+    _install(repo)
     script = repo / ".git" / "hooks" / "post-rewrite"
     import os
 
@@ -205,7 +203,7 @@ def test_post_rewrite_never_fails_the_git_command(isolated, repo):
 
 def test_empty_stdin_spools_nothing(isolated, repo):
     """A post-rewrite with no pairs must not spool a bogus range."""
-    hooks.install("Docs", repo, "post-rewrite", spawn=False)
+    _install(repo)
     script = repo / ".git" / "hooks" / "post-rewrite"
     import os
 
@@ -230,7 +228,7 @@ def test_amend_ignores_a_stale_orig_head(isolated, repo):
     that stale ref -- and if the amend reverts a file to its ORIG_HEAD value,
     the diff reports nothing and the index is left stale.
     """
-    hooks.install("Docs", repo, "post-rewrite", spawn=False)
+    _install(repo)
 
     # A merge sets ORIG_HEAD to the pre-merge tip and brings in sidefile.md.
     _git(repo, "checkout", "-q", "-b", "side")
@@ -255,7 +253,7 @@ def test_amend_ignores_a_stale_orig_head(isolated, repo):
 
 def test_amend_that_reverts_to_the_orig_head_value_is_still_reported(isolated, repo):
     """The correctness half: a revert-to-ORIG_HEAD must not vanish from the diff."""
-    hooks.install("Docs", repo, "post-rewrite", spawn=False)
+    _install(repo)
 
     (repo / "f.md").write_text("v1\n")
     _git(repo, "add", "-A")
@@ -281,23 +279,3 @@ def test_amend_that_reverts_to_the_orig_head_value_is_still_reported(isolated, r
     assert "f.md" in _drain_names("Docs"), (
         "the working tree changed back to v1; the index still holds v2"
     )
-
-
-def test_rebase_still_uses_the_pre_rewrite_tip(isolated, repo):
-    """rebase does set ORIG_HEAD, and it is the right base there."""
-    hooks.install("Docs", repo, "post-rewrite", spawn=False)
-
-    _git(repo, "checkout", "-q", "-b", "feature")
-    (repo / "feat.md").write_text("feat\n")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "-m", "feat")
-    _git(repo, "checkout", "-q", "main")
-    (repo / "on-main.md").write_text("m\n")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "-m", "mainwork")
-    _git(repo, "checkout", "-q", "feature")
-    spool.drain_batch("Docs")
-
-    _git(repo, "rebase", "main")
-
-    assert "on-main.md" in _drain_names("Docs")

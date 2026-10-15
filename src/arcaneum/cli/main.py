@@ -1537,10 +1537,13 @@ def _drain_corpus_spool(corpus, *, max_batches, sync_kwargs):
     total_changed = 0
     total_removed = 0
     try:
+        # Holding the lock, so any claimed entry belongs to a worker that died.
+        spool.recover_claimed(corpus)
         while max_batches is None or batches < max_batches:
             # consume=False: indexing can fail (services down, model load
             # failure, OOM). Removing the entries up front would drop that work
             # permanently, since only a fresh commit re-reports those paths.
+            # They are claimed instead: out of the watched queue, still on disk.
             batch, entries = spool.drain_batch(corpus, consume=False)
             if not batch:
                 spool.release_entries(entries)
@@ -1582,7 +1585,23 @@ def _drain_corpus_spool(corpus, *, max_batches, sync_kwargs):
                     f"{len(changed)} changed / {len(batch.removed)} removed: "
                     f"{type(exc).__name__}: {detail}"
                 )
+                spool.return_entries(entries)
                 raise
+            # Indexing read the working tree. If a pinned repo switched branch
+            # meanwhile, some files came from the wrong branch: return the
+            # entries, which the next pass defers until the branch is back.
+            strayed = sorted(
+                repo
+                for repo, branch in batch.pins.items()
+                if not spool.repo_is_on_branch(repo, branch)
+            )
+            if strayed:
+                hook_log.write(
+                    f"[{corpus}] batch {batches} kept for retry: "
+                    f"{', '.join(strayed)} left its pinned branch while indexing"
+                )
+                spool.return_entries(entries)
+                continue
             # Indexed cleanly: only now is it safe to forget the entries.
             spool.release_entries(entries)
             hook_log.write(
@@ -1981,23 +2000,31 @@ def sync_directory(
 def corpus_hook():
     """Keep a corpus in sync with a git repo automatically.
 
-    Installs a git hook that queues the files each commit touches and indexes
-    them in the background, so an indexed repo stops drifting behind its
-    source tree between manual syncs.
+    Installs git hooks that follow one branch (the remote's default unless
+    --branch names another). Whenever that branch moves while checked out --
+    commit, merge, pull, rebase, reset, or a tool's update-ref -- the files
+    that changed are queued and indexed in the background, so an indexed repo
+    stops drifting behind its source tree between manual syncs.
 
     Examples:
 
     \b
         arc corpus hook install MyCorpus
-        arc corpus hook install MyCorpus --hook post-merge
+        arc corpus hook install MyCorpus --branch develop
         arc corpus hook status
         arc corpus hook uninstall MyCorpus
     """
 
 
 def _run_backfill_sync(corpus, path, **kwargs):
-    """Index what is already committed. A hook only sees future commits."""
+    """Index what is already committed. A hook only sees future commits.
+
+    Runs at background priority, like the drains the hook starts: a first
+    index of a whole repo is the longest of them.
+    """
     from arcaneum.cli.sync import sync_directory_command
+
+    _enter_background(False)
 
     sync_directory_command(
         corpus,
@@ -2087,10 +2114,16 @@ def _resolve_corpus_interactively(repo, assume_yes):
 )
 @click.option(
     "--hook",
-    "hook_name",
+    "hook_names",
     type=click.Choice(hook_utils.SUPPORTED_HOOKS),
-    default="post-commit",
-    help="Hook point to install into (default: post-commit)",
+    multiple=True,
+    help="Hook point to install into; repeatable (default: reference-transaction, "
+    "post-checkout and post-rewrite, which together see every way a branch moves)",
+)
+@click.option(
+    "--branch",
+    default=None,
+    help="Branch to index (default: the remote's default branch, else the current one)",
 )
 @click.option(
     "--no-spawn",
@@ -2112,31 +2145,32 @@ def _resolve_corpus_interactively(repo, assume_yes):
     help="Take the defaults instead of prompting (for scripts and agents)",
 )
 @click.option("--json", "output_json", is_flag=True, help="Output JSON format")
-def corpus_hook_install(corpus, repo, hook_name, no_spawn, service, assume_yes, output_json):
-    """Install the sync hook for CORPUS into a repository.
+def corpus_hook_install(
+    corpus, repo, hook_names, branch, no_spawn, service, assume_yes, output_json
+):
+    """Install the sync hooks for CORPUS into a repository.
 
     Run without CORPUS to be walked through it: pick or create a corpus,
     choose which hook points to cover, and backfill what is already committed.
     """
+    from arcaneum.cli.git_changes import current_branch
     from arcaneum.cli.output import print_json
 
-    # Fail on a non-repo before prompting for anything.
+    # Fail on a non-repo, or one with no branch to follow, before prompting.
     repo_root = hook_utils.repo_root(repo)
+    branch = branch or hook_utils.default_branch(repo_root)
 
     interactive = corpus is None
-    hook_points = [hook_name]
+    suggested = hook_utils.default_hooks(repo_root)
+    hook_points = list(dict.fromkeys(hook_names)) or suggested
 
     if interactive:
         if output_json:
             raise click.UsageError("--json requires CORPUS; it cannot prompt.")
         corpus = _resolve_corpus_interactively(repo_root, assume_yes)
 
-        # --hook was left at its default, so suggest what actually keeps this
-        # repo current: post-commit alone misses `git pull`.
-        suggested = hook_utils.suggested_hooks(repo_root)
-        if assume_yes:
-            hook_points = suggested
-        else:
+        # Offer the default set unless --hook already chose.
+        if not hook_names and not assume_yes:
             answer = click.prompt(
                 "Hook points to install (comma-separated)",
                 default=",".join(suggested),
@@ -2154,35 +2188,49 @@ def corpus_hook_install(corpus, repo, hook_name, no_spawn, service, assume_yes, 
             )
 
     installed_paths = [
-        hook_utils.install(corpus, repo, point, spawn=not no_spawn) for point in hook_points
+        hook_utils.install(corpus, repo, point, spawn=not no_spawn, branch=branch)
+        for point in hook_points
     ]
     hook_path = installed_paths[-1] if installed_paths else None
 
-    service_result = None
-    if service:
-        from arcaneum.cli import spool_service
+    from arcaneum.cli import spool_service
 
+    service_result = None
+    # A watcher registered by an older arc may watch a path that is never
+    # empty and relaunch a drain every ~10s forever; re-registering moves it
+    # to the current queue directory.
+    if service or spool_service.is_installed(corpus):
         service_result = spool_service.install(corpus)
 
     if output_json:
         print_json(
             "success",
-            f"Installed {hook_name} hook for corpus '{corpus}'",
+            f"Installed {len(hook_points)} hook(s) for corpus '{corpus}' on branch '{branch}'",
             data={
                 "corpus": corpus,
-                "hook": hook_name,
-                "path": str(hook_path),
+                "branch": branch,
+                "hooks": hook_points,
+                "paths": [str(p) for p in installed_paths],
+                "hook": hook_points[0],
+                "path": str(installed_paths[0]),
                 "service": service_result,
             },
         )
         return
 
     if len(installed_paths) == 1:
-        click.echo(f"Installed {hook_points[0]} hook for corpus '{corpus}': {hook_path}")
+        click.echo(
+            f"Installed {hook_points[0]} hook for corpus '{corpus}' "
+            f"on branch '{branch}': {hook_path}"
+        )
     else:
-        click.echo(f"Installed {len(installed_paths)} hooks for corpus '{corpus}':")
+        click.echo(
+            f"Installed {len(installed_paths)} hooks for corpus '{corpus}' on branch '{branch}':"
+        )
         for point, path in zip(hook_points, installed_paths):
             click.echo(f"  {point}: {path}")
+    if current_branch(repo_root) != branch:
+        click.echo(f"'{branch}' is not checked out here, so nothing is indexed until it is.")
     if service_result:
         click.echo(f"Registered spool watcher: {service_result}")
     if no_spawn:
@@ -2193,8 +2241,12 @@ def corpus_hook_install(corpus, repo, hook_name, no_spawn, service, assume_yes, 
 
     # The hook only sees future commits, so everything already committed stays
     # unindexed unless we say so. This is the sharpest edge in the whole flow.
-    backfill_cmd = f"arc corpus sync {corpus} {repo_root}"
+    backfill_cmd = f"arc corpus sync {corpus} {repo_root} --background"
     do_backfill = False
+    if current_branch(repo_root) != branch:
+        # A backfill reads the working tree, which holds another branch now.
+        click.echo(f"Check out '{branch}', then index the existing files: {backfill_cmd}")
+        return
     if not assume_yes:
         click.echo(
             "\nThe hook indexes future commits only; files already committed are not indexed yet."
@@ -2272,7 +2324,8 @@ def corpus_hook_status(repo, output_json):
             f"{len(installed)} hook(s) installed",
             data={
                 "installed": [
-                    {"corpus": h.corpus, "hook": h.hook, "path": str(h.path)} for h in installed
+                    {"corpus": h.corpus, "hook": h.hook, "branch": h.branch, "path": str(h.path)}
+                    for h in installed
                 ],
                 "pending_spools": pending,
             },
@@ -2283,7 +2336,8 @@ def corpus_hook_status(repo, output_json):
         click.echo("No arcaneum sync hooks installed in this repository.")
     else:
         for entry in installed:
-            click.echo(f"{entry.corpus}: {entry.hook} ({entry.path})")
+            branch = f"branch {entry.branch}" if entry.branch else "no branch pinned; reinstall"
+            click.echo(f"{entry.corpus}: {entry.hook}, {branch} ({entry.path})")
     if pending:
         click.echo(f"\nCorpora with queued work: {', '.join(pending)}")
 
@@ -2299,11 +2353,34 @@ def corpus_hook_status(repo, output_json):
     default=None,
     help="Compare two commits' trees directly (OLD NEW), for history rewrites",
 )
-def corpus_hook_spool(corpus, repo, changed_since, between):
-    """Queue the paths a revision touched. Invoked by the installed hook."""
+@click.option(
+    "--branch",
+    default=None,
+    help="Queue what BRANCH gained since the last spooled commit, if checked out",
+)
+def corpus_hook_spool(corpus, repo, changed_since, between, branch):
+    """Queue the paths a revision touched. Invoked by the installed hook.
+
+    Hooks installed before branch pinning pass --changed-since or --between;
+    current ones pass --branch.
+    """
     from arcaneum.cli import spool
     from arcaneum.cli.errors import InvalidArgumentError
     from arcaneum.cli.git_changes import changes_between, changes_since, repo_root
+
+    if branch:
+        try:
+            changes = hook_utils.catch_up(corpus, repo, branch)
+        except InvalidArgumentError as exc:
+            # A hook must never fail the git command that ran it.
+            click.echo(f"arc: skipping spool: {exc}", err=True)
+            return
+        if changes:
+            click.echo(
+                f"Queued {len(changes.changed)} changed and "
+                f"{len(changes.removed)} removed path(s) for '{corpus}' from '{branch}'"
+            )
+        return
 
     try:
         if between:

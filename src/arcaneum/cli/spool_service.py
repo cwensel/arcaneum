@@ -3,9 +3,11 @@
 The git hook spawns a drain worker itself, which covers the normal case. Two
 cases it cannot cover: the machine rebooted with entries still spooled, and the
 spawn failed (no `arc` on PATH at hook time, a killed worker). Registering the
-spool directory with the OS closes both — launchd's `QueueDirectories` and
-systemd's `DirectoryNotEmpty=` both fire when the directory stops being empty,
-which is exactly the condition the hook creates. This is the same pattern
+spool's queue directory with the OS closes both — launchd's `QueueDirectories`
+and systemd's `DirectoryNotEmpty=` both fire when the directory stops being
+empty, which is exactly the condition the hook creates. Both also keep firing
+until it is empty again, so the queue holds entries and nothing else (kata
+4j93); see `spool`. This is the same pattern
 `git maintenance start` uses to register itself.
 
 Registration is best-effort: an unsupported platform, a missing `arc`, or a
@@ -78,7 +80,7 @@ def render_launchd_plist(
         "ProgramArguments": _drain_argv(arc_bin, corpus, embedding_batch),
         # Fire when the hook drops an entry in, not when the agent loads:
         # RunAtLoad would sync on every login for no reason.
-        "QueueDirectories": [str(spool.corpus_spool_dir(corpus))],
+        "QueueDirectories": [str(spool.queue_dir(corpus))],
         "RunAtLoad": False,
         "LowPriorityIO": True,
         "Nice": 5,
@@ -106,7 +108,7 @@ def _install_launchd(corpus: str, arc_bin: str) -> Optional[str]:
     path = launchd_plist_path(corpus)
     path.parent.mkdir(parents=True, exist_ok=True)
     # The directory must exist before launchd watches it.
-    spool.corpus_spool_dir(corpus).mkdir(parents=True, exist_ok=True)
+    spool.queue_dir(corpus).mkdir(parents=True, exist_ok=True)
     path.write_bytes(render_launchd_plist(corpus, arc_bin=arc_bin))
 
     try:
@@ -155,7 +157,7 @@ def render_systemd_path_unit(corpus: str) -> str:
 Description=Watch the Arcaneum sync spool for corpus {safe}
 
 [Path]
-DirectoryNotEmpty={spool.corpus_spool_dir(corpus)}
+DirectoryNotEmpty={spool.queue_dir(corpus)}
 Unit={service_label(corpus)}.service
 
 [Install]
@@ -189,7 +191,7 @@ StandardError=append:{hook_log_path()}
 def _install_systemd(corpus: str, arc_bin: str) -> Optional[str]:
     unit_dir = systemd_unit_dir()
     unit_dir.mkdir(parents=True, exist_ok=True)
-    spool.corpus_spool_dir(corpus).mkdir(parents=True, exist_ok=True)
+    spool.queue_dir(corpus).mkdir(parents=True, exist_ok=True)
 
     service_path = systemd_service_unit_path(corpus)
     path_path = systemd_path_unit_path(corpus)
@@ -248,6 +250,16 @@ def install(corpus: str) -> Optional[str]:
 
     logger.warning("No spool service integration for %s; skipping.", system)
     return None
+
+
+def is_installed(corpus: str) -> bool:
+    """True when a watcher for this corpus is registered on this platform."""
+    system = platform.system()
+    if system == "Darwin":
+        return launchd_plist_path(corpus).exists()
+    if system == "Linux":
+        return systemd_path_unit_path(corpus).exists()
+    return False
 
 
 def uninstall(corpus: str) -> None:

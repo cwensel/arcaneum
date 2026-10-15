@@ -174,8 +174,9 @@ arc search text "async def process_payment" --corpus MyCode
 
 ### Keep a Git Repository Current Automatically
 
-After the initial sync, install a non-blocking hook to queue changed paths after
-commits. A background drain coalesces bursts and serializes writes to the corpus:
+After the initial sync, install non-blocking hooks that queue changed paths
+whenever the repo's default branch moves (pass `--branch` to follow another).
+A background drain coalesces bursts and serializes writes to the corpus:
 
 ```bash
 arc corpus hook install MyCode

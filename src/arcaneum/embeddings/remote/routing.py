@@ -8,10 +8,14 @@ query embedding, the server's own client, and library use stay local.
 
 from __future__ import annotations
 
+import logging
+import sys
 import threading
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from arcaneum.embeddings.remote.config import RemoteEmbeddingConfig, load_remote_embedding_config
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     import numpy as np
@@ -100,4 +104,12 @@ def configure_remote_embedding(mode: str = "default") -> Optional[RemoteRouter]:
         return current
     router = RemoteRouter(config, mode=mode)
     install_router(router)
+    models = [model for model in config.routed_models() if router.routes(model, "document")]
+    if models:
+        message = (
+            f"Remote embedding: {', '.join(models)} on "
+            f"{', '.join(endpoint.name for endpoint in config.endpoints)}"
+        )
+        logger.info(message)
+        print(f"   {message}", file=sys.stderr, flush=True)
     return router

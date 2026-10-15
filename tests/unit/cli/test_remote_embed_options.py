@@ -230,6 +230,33 @@ def test_endpoints_install_a_router_with_the_invocation_mode(monkeypatch):
     assert router.routes("qwen3-embed", "document")
 
 
+@pytest.mark.parametrize(
+    ("mode", "models"),
+    [("default", "arctic-m"), ("remote", "qwen3-embed, arctic-m")],
+)
+def test_run_start_names_the_remote_models_and_workers_once(monkeypatch, capsys, mode, models):
+    from arcaneum.embeddings.remote.routing import configure_remote_embedding
+
+    monkeypatch.setenv("ARC_EMBED_ENDPOINTS", "dev-0:7300,dev-1:7300")
+    configure_remote_embedding(mode)
+    configure_remote_embedding(mode)  # repair's parity pass reuses the router
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    lines = [line for line in captured.err.splitlines() if "Remote embedding" in line]
+    assert lines == [f"   Remote embedding: {models} on dev-0:7300, dev-1:7300"]
+
+
+@pytest.mark.parametrize("environment", ["", "dev-0:7300"])
+def test_runs_that_route_nothing_print_nothing(monkeypatch, capsys, environment):
+    from arcaneum.embeddings.remote.routing import configure_remote_embedding
+
+    monkeypatch.setenv("ARC_EMBED_ENDPOINTS", environment)
+    configure_remote_embedding("local")
+
+    assert "Remote embedding" not in capsys.readouterr().err
+
+
 def test_router_embed_delegates_to_its_pool():
     router = RemoteRouter(RemoteEmbeddingConfig(endpoints=[EndpointConfig(host="dev-0")]))
     pool = MagicMock()

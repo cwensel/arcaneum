@@ -61,6 +61,23 @@ remote_embedding:
     assert config.unavailable == "fail"
 
 
+@pytest.mark.parametrize(
+    "priority, shares", [(None, 128), ("idle", 2), ("low", 128), ("normal", 1024)]
+)
+def test_endpoint_cpu_priority_maps_to_docker_cpu_shares(priority, shares):
+    endpoint = (
+        EndpointConfig(host="dev-0")
+        if priority is None
+        else EndpointConfig(host="dev-0", cpu_priority=priority)
+    )
+    assert endpoint.cpu_shares == shares
+
+
+def test_unknown_cpu_priority_is_rejected():
+    with pytest.raises(ValueError):
+        EndpointConfig(host="dev-0", cpu_priority="high")
+
+
 def test_default_routing_sends_arctic_m_remote_and_qwen3_on_request():
     config = RemoteEmbeddingConfig()
 

@@ -244,6 +244,29 @@ def test_container_uses_host_networking_and_publishes_no_ports(tmp_path):
     assert any(a.startswith("arcaneum-embed-models:") for a in args)
 
 
+def test_container_yields_cpu_to_other_host_work_by_default(tmp_path):
+    harness = Harness(tmp_path, endpoints("dev-0"))
+    harness.deployer.deploy()
+
+    args = harness.hosts["dev-0"].containers[container_name(7300)]["args"]
+    assert args[args.index("--cpu-shares") + 1] == "128"
+
+
+def test_changing_cpu_priority_replaces_the_container_and_reuses_the_image(tmp_path):
+    harness = Harness(tmp_path, endpoints("dev-0"))
+    harness.deployer.deploy()
+    host = harness.hosts["dev-0"]
+    host.commands.clear()
+    harness.config.endpoints[0].cpu_priority = "normal"
+
+    assert harness.deployer.deploy() is True
+
+    assert not [c for c in host.commands if c[:2] == ["docker", "build"]]
+    assert ["docker", "rm", "-f", "-v", container_name(7300)] in host.commands
+    args = host.containers[container_name(7300)]["args"]
+    assert args[args.index("--cpu-shares") + 1] == "1024"
+
+
 def test_second_deploy_reports_up_to_date_without_changes(tmp_path):
     harness = Harness(tmp_path, endpoints("dev-0"))
     harness.deployer.deploy()

@@ -13,6 +13,7 @@ Lives in the ``remote_embedding`` section of ``~/.config/arcaneum/config.yaml``:
           ssh: dev-0                  # deploy target; default: host
           models: [arctic-m]          # default: every remote/on-request model
           batch_size: {qwen3-embed: 8}
+          cpu_priority: low           # idle | low | normal, against other host work
 
 ``ARC_EMBED_ENDPOINTS=host[:port],...`` replaces the configured endpoint list for
 one process (endpoints given that way use default settings; empty disables the pool).
@@ -32,6 +33,11 @@ from arcaneum.embeddings.remote import DEFAULT_PORT
 
 Routing = Literal["remote", "on-request", "local"]
 Unavailable = Literal["wait", "local", "fail"]
+CpuPriority = Literal["idle", "low", "normal"]
+
+# docker --cpu-shares per priority; runc >= 1.3 maps them to cgroup v2 cpu.weight
+# 1, 21 and 100, where other services default to 100.
+CPU_SHARES: dict[str, int] = {"idle": 2, "low": 128, "normal": 1024}
 
 DEFAULT_ROUTING: dict[str, Routing] = {"arctic-m": "remote", "qwen3-embed": "on-request"}
 ENDPOINTS_ENV = "ARC_EMBED_ENDPOINTS"
@@ -51,10 +57,17 @@ class EndpointConfig(BaseModel):
     bind: str = "all"
     models: Optional[list[str]] = None
     batch_size: dict[str, int] = Field(default_factory=dict)
+    # The worker uses idle CPU freely; under contention it yields to host work
+    # such as CI runners according to this priority.
+    cpu_priority: CpuPriority = "low"
 
     @property
     def name(self) -> str:
         return f"{self.host}:{self.port}"
+
+    @property
+    def cpu_shares(self) -> int:
+        return CPU_SHARES[self.cpu_priority]
 
     @property
     def ssh_target(self) -> str:

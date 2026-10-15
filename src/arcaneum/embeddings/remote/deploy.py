@@ -248,6 +248,7 @@ def spec_hash(endpoint: EndpointConfig, config: RemoteEmbeddingConfig) -> str:
         "name": container_name(endpoint.port),
         "network": "host",
         "restart": "unless-stopped",
+        "cpu_shares": endpoint.cpu_shares,
         "volume": f"{MODEL_VOLUME}:{CACHE_MOUNT}",
         "env": container_environment(endpoint, config),
     }
@@ -265,6 +266,8 @@ def run_arguments(
         container_name(endpoint.port),
         "--restart",
         "unless-stopped",
+        "--cpu-shares",
+        str(endpoint.cpu_shares),
         "--network",
         "host",
         "-v",

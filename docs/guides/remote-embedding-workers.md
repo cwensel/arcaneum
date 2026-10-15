@@ -134,6 +134,7 @@ remote_embedding:
       models: [arctic-m]       # default: every remote and on-request model
       batch_size:              # encode batch size per model on this worker
         arctic-m: 64
+      cpu_priority: low        # idle | low (default) | normal, against other host work
 ```
 
 ### Endpoint Settings
@@ -146,6 +147,26 @@ remote_embedding:
 | `ssh` | `host` | SSH target for `arc models deploy` |
 | `models` | routed models | Models this worker serves; confines a model to chosen workers |
 | `batch_size` | 100 (fastembed), 8 (SentenceTransformers) | Largest sub-batch the worker encodes at once; bounds its peak memory |
+| `cpu_priority` | `low` | Worker's CPU priority against other work on the host (see [CPU Priority](#cpu-priority)) |
+
+### CPU Priority
+
+`cpu_priority` matters only when the CPU is contended; an otherwise idle
+machine gives the worker all of it at every level. Under contention, each
+level sets the worker's share against another busy service, such as a CI
+runner or a build:
+
+| Level | Under contention | `docker run --cpu-shares` |
+| --- | --- | --- |
+| `idle` | Worker gets about 1%; it runs on spare CPU only | 2 |
+| `low` (default) | Other service gets about five times the worker's CPU | 128 |
+| `normal` | Equal shares, as for any container | 1024 |
+
+The shares become cgroup v2 `cpu.weight` 1, 21 and 100 under runc 1.3 or
+later; older runc maps them lower but in the same order. A worker starved long
+enough can exceed its `encode_per_chunk` deadline and be marked down until it
+answers again; raise its priority or the deadline if that happens. Changing the
+priority replaces the container on the next `arc models deploy`.
 
 ### Unavailable Policy
 

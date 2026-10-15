@@ -60,6 +60,7 @@ arc corpus repair <name>                      # Repair verifier-selected unhealt
 arc corpus items <name>                       # List items with parity status
 arc corpus verify <name>                      # Verify corpus health
 arc corpus doctor [<name>...]                 # Check all corpora; list fix commands
+arc corpus jobs                               # List running syncs/drains and queued hook work
 arc corpus parity <name>                      # Check/restore parity
 arc corpus delete <name>                      # Delete both collection and index
 ```
@@ -1051,6 +1052,33 @@ JSON output is one document: `data.corpora` holds each corpus's `status`,
 `findings` (`code`, `severity`, `message`, `count`, `command`), `commands`, and
 `optional_commands`; `data.summary` counts statuses; `data.commands` and
 `data.optional_commands` collect them across corpora.
+
+### Corpus Jobs
+
+List the indexing work running on this machine, and hook work still queued.
+Read-only: it never takes a lock, so it cannot delay or block the jobs it lists.
+
+```bash
+arc corpus jobs           # Table of running jobs, then queued hook work
+arc corpus jobs --json    # data.jobs and data.queued
+```
+
+```text
+CORPUS    KIND   PID    ELAPSED  COMMAND
+arcaneum  write  48211  4m 12s   arc corpus sync arcaneum /path/to/arcaneum --parity
+Claude    drain  50102  31s      arc drain Claude (batch 2, 14 files)
+
+Queued hook work:
+  arcaneum: 3 queued
+```
+
+A `write` job holds the corpus write lock (`sync`, `repair`, `delete`,
+`parity`); a `drain` job is a hook-spawned worker draining the spool. Jobs are
+read from the pid records those locks keep, and listed only while the pid is
+alive and is still the process that wrote the record, so a crashed job or a
+reused pid never shows as running. Queued work counts spool entries as
+`queued`, `claimed` (being indexed; `orphaned` when no drain is running, and
+the next drain reclaims them), and `deferred` (waiting for a pinned branch).
 
 ### Corpus Delete
 

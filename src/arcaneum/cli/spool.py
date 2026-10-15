@@ -41,6 +41,7 @@ import logging
 import os
 import platform
 import re
+import sys
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -50,6 +51,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Union
 from ..paths import get_data_dir
 from .git_changes import current_branch
 from .git_changes import repo_root as git_repo_root
+from .proctitle import title_from_argv
 
 logger = logging.getLogger(__name__)
 
@@ -418,9 +420,15 @@ def try_acquire_worker_lock(corpus: str) -> Optional[int]:
         os.close(fd)
         return None
 
+    record = {
+        "pid": os.getpid(),
+        "corpus": corpus,
+        "started": time.time(),
+        "command": title_from_argv(sys.argv),
+    }
     try:
         os.ftruncate(fd, 0)
-        os.write(fd, json.dumps({"pid": os.getpid(), "started": time.time()}).encode())
+        os.write(fd, json.dumps(record).encode())
     except OSError as exc:
         logger.debug("Could not stamp worker lock: %s", exc)
     return fd
@@ -429,6 +437,11 @@ def try_acquire_worker_lock(corpus: str) -> Optional[int]:
 def release_worker_lock(fd: Optional[int]) -> None:
     if fd is None:
         return
+    try:
+        # Unstamp first so `arc corpus jobs` stops listing this worker.
+        os.ftruncate(fd, 0)
+    except OSError as exc:
+        logger.debug("Could not unstamp worker lock: %s", exc)
     try:
         import fcntl
 
@@ -440,6 +453,38 @@ def release_worker_lock(fd: Optional[int]) -> None:
             os.close(fd)
         except OSError:
             pass
+
+
+def spool_dirname(corpus: str) -> str:
+    """Name of `corpus`'s directory under the spool root."""
+    return _safe_name(corpus)
+
+
+def pending_counts() -> Dict[str, Dict[str, int]]:
+    """Entry counts by state for each spool directory holding any. Creates nothing.
+
+    Keyed by directory name (see `spool_dirname`), each value maps "queued",
+    "claimed" and "deferred" to a count. Legacy per-repo directories count as
+    queued: the next drain migrates and drains them.
+    """
+    root = get_data_dir() / "spool"
+    if not root.is_dir():
+        return {}
+    states = {_QUEUE: "queued", _CLAIMED: "claimed", _DEFERRED: "deferred"}
+    result: Dict[str, Dict[str, int]] = {}
+    for corpus_dir in sorted(root.iterdir()):
+        if not corpus_dir.is_dir():
+            continue
+        counts = dict.fromkeys(states.values(), 0)
+        for child in corpus_dir.iterdir():
+            state = states.get(child.name)
+            if state is None and _LEGACY_REPO_DIR.fullmatch(child.name):
+                state = "queued"
+            if state is not None and child.is_dir():
+                counts[state] += len(_entries_in(child))
+        if any(counts.values()):
+            result[corpus_dir.name] = counts
+    return result
 
 
 def list_corpora_with_pending() -> List[str]:

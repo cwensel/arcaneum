@@ -1,6 +1,6 @@
 ---
 description: Manage dual-index corpora (recommended)
-argument-hint: <create|list|update|delete|sync|repair|hook|info|items|parity|verify|doctor> <name> [paths...] [options]
+argument-hint: <create|list|update|delete|sync|repair|hook|jobs|info|items|parity|verify|doctor> <name> [paths...] [options]
 ---
 
 **Recommended for most users.** Manage corpora that combine both vector search (Qdrant) and
@@ -18,6 +18,8 @@ full-text search (MeiliSearch) for the same content.
 - `repair`: Selectively repair verifier-selected unhealthy files and PDF duplicates,
   then restore parity
 - `hook`: Install a git hook that auto-syncs a repo on every commit
+- `jobs`: List running syncs, repairs, and hook drains, plus queued hook work
+  (read-only; takes no locks)
 - `info`: Show corpus details (both systems)
 - `items`: List indexed items with parity status
 - `parity`: Check and restore parity between systems

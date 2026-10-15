@@ -40,6 +40,7 @@ arc corpus hook install MyCorpus                      # Auto-sync the default br
 arc corpus hook install MyCorpus --branch develop     # Follow another branch
 arc corpus hook install MyCorpus --service            # Plus an OS watcher for reboot recovery
 arc corpus hook status                                # What is installed in this repo
+arc corpus jobs                                       # Running syncs/drains and queued hook work
 arc corpus hook uninstall MyCorpus                    # Remove just this corpus's hook
 
 # Sync only what a commit touched, without installing a hook

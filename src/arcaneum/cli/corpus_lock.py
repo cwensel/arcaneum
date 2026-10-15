@@ -32,8 +32,9 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
 
-from .errors import CorpusLockUnavailable
 from ..paths import get_data_dir
+from .errors import CorpusLockUnavailable
+from .proctitle import title_from_argv
 
 logger = logging.getLogger(__name__)
 
@@ -89,9 +90,10 @@ def read_lock_holder(lock_path: Path) -> Optional[Dict[str, Any]]:
     The record can lag reality in two ways, both harmless because nothing
     depends on it for correctness:
 
-    - Empty, when a holder is between its `flock` grant and its write.
-    - Stale, naming the *previous* holder: a new holder writes its record only
-      after acquiring, so a waiter reading in that window sees the old pid.
+    - Empty, when a holder is between its `flock` grant and its write, or has
+      released the lock.
+    - Stale, naming a holder that died without releasing: the OS drops the
+      flock but nothing clears the record. Check the pid before trusting it.
     """
     try:
         raw = lock_path.read_text().strip()
@@ -119,13 +121,30 @@ def _describe_holder(lock_path: Path, corpus: str) -> str:
 
 
 def _write_holder_record(fd: int, corpus: str) -> None:
-    record = json.dumps({"pid": os.getpid(), "corpus": corpus, "started": time.time()})
+    record = json.dumps(
+        {
+            "pid": os.getpid(),
+            "corpus": corpus,
+            "started": time.time(),
+            "command": title_from_argv(sys.argv),
+            "endpoints": _service_endpoints(),
+        }
+    )
     try:
         os.ftruncate(fd, 0)
         os.lseek(fd, 0, os.SEEK_SET)
         os.write(fd, record.encode())
     except OSError as exc:  # diagnostics only — never fail the sync over this
         logger.debug("Could not write lock holder record: %s", exc)
+
+
+def _clear_holder_record(fd: int) -> None:
+    # Cleared before unlock so `arc corpus jobs` does not report a finished
+    # write as running while its process lives on (e.g. parity over all corpora).
+    try:
+        os.ftruncate(fd, 0)
+    except OSError as exc:
+        logger.debug("Could not clear lock holder record: %s", exc)
 
 
 @contextlib.contextmanager
@@ -209,6 +228,7 @@ def acquire_corpus_lock(
             yield
         finally:
             _held.pop(key, None)
+            _clear_holder_record(fd)
             try:
                 fcntl.flock(fd, fcntl.LOCK_UN)
             except OSError as exc:

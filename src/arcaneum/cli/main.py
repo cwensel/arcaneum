@@ -1441,6 +1441,19 @@ def list_corpora(details, output_json):
     list_corpora_command(details, output_json)
 
 
+@corpus.command("jobs")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
+def corpus_jobs(output_json):
+    """List running syncs, repairs, and hook drains, and queued hook work.
+
+    Read-only: reads the records the corpus locks keep and never takes a lock,
+    so it cannot get in the way of the jobs it lists.
+    """
+    from arcaneum.cli.jobs import jobs_command
+
+    jobs_command(output_json)
+
+
 @corpus.command("create")
 @click.argument("name")
 @click.option(

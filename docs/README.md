@@ -14,6 +14,8 @@
 - **[Persisted Schema Guide](guides/persisted-schema.md)** - Persisted payload,
   file-manifest, quality-manifest, and indexing-policy contracts
 - **[MeiliSearch Tuning](guides/meilisearch-tuning.md)** - Container sizing for slow indexing and sync timeout warnings
+- **[Remote Embedding Workers](guides/remote-embedding-workers.md)** - Optional: run
+  document embedding on spare machines over the LAN or a tailnet
 
 ## Testing
 
@@ -48,7 +50,8 @@ docs/
 │   ├── pdf-indexing.md
 │   ├── claude-code-plugin.md
 │   ├── persisted-schema.md
-│   └── qdrant-migration.md
+│   ├── qdrant-migration.md
+│   └── remote-embedding-workers.md
 ├── testing/               # Testing documentation
 │   ├── test-commands.md
 │   ├── testing.md

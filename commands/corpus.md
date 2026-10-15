@@ -49,6 +49,10 @@ full-text search (MeiliSearch) for the same content.
 - --models: Embedding models (default: use corpus metadata)
 - --file-types: File extensions to index (e.g., .py,.md)
 - --gpu: Opt into accelerator embedding (CPU is the stable default)
+- --remote-embed: Also send on-request models (e.g. qwen3-embed) to the
+  configured remote embedding workers for this run
+- --local-embed: Embed every model locally for this run, ignoring configured
+  remote embedding workers
 - --changed-since REV: Sync only what a git commit or range touched (e.g. HEAD,
   ORIG_HEAD..HEAD), removing the files it deleted
 - --order: Process files by path (default), newest modification first, or oldest
@@ -70,6 +74,8 @@ full-text search (MeiliSearch) for the same content.
 - --include-stale-policy: Also re-index files whose only issue is stale or
   missing indexing policy
 - --gpu: Opt into accelerator embedding (CPU is the stable default)
+- --remote-embed / --local-embed: Route this repair's document embedding as for
+  sync (remote embedding workers)
 - --verbose: Show per-file quality scores and details
 - --json: Output in JSON format
 

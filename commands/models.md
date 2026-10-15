@@ -1,26 +1,46 @@
 ---
-description: Manage embedding models
-argument-hint: list [--json]
+description: Manage embedding models and remote embedding workers
+argument-hint: <list|workers|deploy|serve> [options]
 ---
 
-Manage and view available embedding models for vector search.
+Manage and view available embedding models for vector search, and the optional
+remote embedding workers that embed documents on spare machines.
 
-**IMPORTANT:** You must specify a subcommand (currently only `list` is available).
+**IMPORTANT:** You must specify a subcommand.
 
 **Subcommands (required):**
 
 - `list`: List all available embedding models with details
+- `workers`: Show each configured remote embedding worker's state, version,
+  code fingerprint, resident model and dependency versions
+- `deploy [HOSTS...]`: Install, upgrade or reconfigure remote embedding workers
+  over SSH, then check their vectors match this workstation's
+- `serve`: Run a remote embedding worker (normally inside the container
+  `deploy` creates; not for use on the workstation)
 
 **Options:**
 
-- --json: Output in JSON format
+- --json: Output in JSON format (`list`, `workers`)
+- --dry-run: Show each worker's current and desired state without changes (`deploy`)
+- --build: Deploy a wheel built from this source tree (`deploy`; needed for
+  source checkouts and unreleased builds)
+- --wheel PATH: Deploy a given wheel (`deploy`)
+- --refresh: Rebuild the worker image without cache (`deploy`)
+- --no-verify: Skip the vector parity check (`deploy`)
 
 **Examples:**
 
 ```text
 /models list
 /models list --json
+/models workers
+/models deploy --dry-run
+/models deploy --build
 ```
+
+Remote embedding workers are optional and configured under `remote_embedding`
+in `~/.config/arcaneum/config.yaml`; see
+`docs/guides/remote-embedding-workers.md`. Query embedding always stays local.
 
 **Execution:**
 

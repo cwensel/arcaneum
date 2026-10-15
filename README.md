@@ -90,6 +90,16 @@ model registry.
 See [Embedding acceleration and PDF layout workers](docs/guides/accelerators.md)
 for the capability matrix, worker fallback behavior, diagnostics, and evidence.
 
+### Remote Embedding Workers (Optional)
+
+- Move document embedding, the largest CPU and memory load, to spare machines
+  on the LAN or a Tailscale tailnet; query embedding stays local
+- Workers run arcaneum's own code in Docker, so their vectors match local ones
+- `arc models deploy` installs and updates workers over SSH and checks vector
+  parity before they are used; `arc models workers` shows their state
+
+See [Remote Embedding Workers](docs/guides/remote-embedding-workers.md).
+
 ### CLI-First Design
 
 - All operations via command-line interface

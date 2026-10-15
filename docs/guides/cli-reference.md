@@ -2296,7 +2296,10 @@ See [Model Selection](#model-selection) for guidance on which model to use.
 ### Remote Embedding Workers
 
 Document embedding for selected models can run on spare machines on the local
-network or tailnet instead of the workstation (RDR-025). Each worker runs
+network or tailnet instead of the workstation (RDR-025). The
+[Remote Embedding Workers guide](remote-embedding-workers.md) covers the
+topology, setup, how work is distributed, operations and troubleshooting; this
+section is the command reference. Each worker runs
 `arc models serve` in a Docker container; the workstation routes **document**
 embedding for configured models to them and keeps query embedding local.
 Vectors match local CPU embedding, so remote and local vectors share a

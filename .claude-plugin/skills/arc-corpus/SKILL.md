@@ -228,6 +228,26 @@ default; `--no-wait` fails immediately instead, and `--lock-timeout <seconds>`
 bounds the wait. Different corpora never block each other, and `--dry-run` takes
 no lock.
 
+## Remote Embedding Workers (Optional)
+
+When `remote_embedding` endpoints are configured in
+`~/.config/arcaneum/config.yaml`, document embedding for selected models runs
+on spare worker machines instead of this one; query embedding always stays
+local. By default `arctic-m` goes to the workers and `qwen3-embed` only on
+request. A run that uses them prints `Remote embedding: <models> on <workers>`
+at the start.
+
+```bash
+arc corpus sync DevRef ~/papers --remote-embed    # also send qwen3-embed to the workers
+arc corpus repair PapersFast --local-embed        # this run entirely local
+arc models workers                                # worker state, versions, resident model
+arc models deploy --build                         # update workers after code changes
+```
+
+Workers must run the same code as this machine; after an upgrade (or a commit,
+for a source checkout) they report `mismatch` until `arc models deploy` runs.
+See `docs/guides/remote-embedding-workers.md`.
+
 ## GPU Acceleration and Apple Silicon
 
 By default, corpus sync uses GPU acceleration (MPS on Apple Silicon, CUDA on NVIDIA).

@@ -706,7 +706,21 @@ class Deployer:
     def _verify(self, runner: RemoteRunner, endpoint: EndpointConfig) -> None:
         models = self.config.endpoint_models(endpoint)
         self.out(f"  verifying vector parity on {endpoint.name}: {', '.join(models)}")
-        results = self.verifier(endpoint, self.config, models)
+        name = container_name(endpoint.port)
+        try:
+            results = self.verifier(endpoint, self.config, models)
+        except Exception as exc:
+            # A worker that crashed or disconnected mid-check is unverified; Docker
+            # would restart it and the pool would use it, so remove it.
+            logs = runner.run(["docker", "logs", "--tail", "40", name], check=False)
+            self.out(
+                f"  {name} log on {endpoint.ssh_target}:\n{(logs.stdout + logs.stderr).rstrip()}"
+            )
+            runner.run(["docker", "rm", "-f", "-v", name], check=False)
+            raise DeployError(
+                "vector parity check could not complete "
+                f"({type(exc).__name__}: {exc}); container removed (image kept)"
+            ) from exc
         self.out("  " + "; ".join(f"{r.model} min cosine {r.min_cosine:.6f}" for r in results))
         failed = [result for result in results if not result.ok]
         if not failed:

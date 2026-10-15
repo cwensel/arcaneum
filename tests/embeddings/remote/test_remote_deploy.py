@@ -409,6 +409,30 @@ def test_failed_verification_removes_the_container_and_keeps_the_image(tmp_path)
     assert harness.verified == [("dev-0:7300", ["qwen3-embed", "arctic-m"])]
 
 
+def test_verification_that_cannot_complete_removes_the_container(tmp_path):
+    """A worker that crashes mid-verification must not stay up unverified."""
+    from arcaneum.embeddings.remote.errors import RemoteEmbeddingUnavailable
+
+    harness = Harness(tmp_path, endpoints("dev-0", "dev-1"))
+
+    def verify(endpoint, config, models):
+        if endpoint.name == "dev-0:7300":
+            raise RemoteEmbeddingUnavailable("dev-0:7300 disconnected ()")
+        return [VerifyResult(model, 1.0, {}, {}) for model in models]
+
+    harness.deployer.verifier = verify
+    host = harness.hosts["dev-0"]
+
+    assert harness.deployer.deploy() is False
+
+    assert container_name(7300) not in host.containers
+    assert any(image_tag(FINGERPRINT) in i["tags"] for i in host.images.values())
+    assert ["docker", "logs", "--tail", "40", container_name(7300)] in host.commands
+    text = "\n".join(harness.output)
+    assert "disconnected" in text and "could not complete" in text
+    assert harness.hosts["dev-1"].containers[container_name(7300)]["running"]
+
+
 def test_successful_verification_reports_each_models_minimum_cosine(tmp_path):
     harness = Harness(tmp_path, endpoints("dev-0"))
     harness.verify_results["dev-0:7300"] = [

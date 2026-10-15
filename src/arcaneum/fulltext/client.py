@@ -144,15 +144,26 @@ class FullTextClient:
                 return False
             raise
 
-    def list_indexes(self) -> List[Dict[str, Any]]:
-        """List all indexes with their configurations."""
-        result = self.client.get_indexes()
+    _INDEX_PAGE_SIZE = 100
 
-        # Extract the list of indexes from the response
-        if isinstance(result, dict):
-            index_list = result.get("results", [])
-        else:
-            index_list = result
+    def list_indexes(self) -> List[Dict[str, Any]]:
+        """List all indexes with their configurations.
+
+        MeiliSearch pages index listings (20 per page by default), so read
+        every page rather than only the first.
+        """
+        index_list = []
+        offset = 0
+        while True:
+            result = self.client.get_indexes({"offset": offset, "limit": self._INDEX_PAGE_SIZE})
+            if not isinstance(result, dict):
+                index_list.extend(result)
+                break
+            page = result.get("results", [])
+            index_list.extend(page)
+            offset += len(page)
+            if not page or offset >= result.get("total", offset):
+                break
 
         # Convert Index objects to dicts
         indexes = []

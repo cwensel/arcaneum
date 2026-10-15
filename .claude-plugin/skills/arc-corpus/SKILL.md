@@ -32,7 +32,7 @@ arc corpus sync MyCorpus /path/to/files --parity --dry-run  # Preview parity cha
 arc corpus sync MyCorpus /path/to/files --force             # Force reindex
 arc corpus sync MyCorpus /path/to/files --verify            # Verify after sync
 arc corpus sync MyCorpus /path/to/files --verbose           # Show progress
-arc corpus sync MyCorpus /path/to/files --no-gpu            # CPU-only mode (stable on Apple Silicon)
+arc corpus sync MyCorpus /path/to/files --gpu               # Opt into experimental accelerator (CPU is default)
 
 # Keep a git repo in sync automatically (installs a git hook)
 arc corpus hook install                               # Guided: pick/create corpus, choose hooks
@@ -250,17 +250,21 @@ See `docs/guides/remote-embedding-workers.md`.
 
 ## GPU Acceleration and Apple Silicon
 
-By default, corpus sync uses GPU acceleration (MPS on Apple Silicon, CUDA on NVIDIA).
+Corpus sync embeds on the CPU by default, the stable path. `--gpu` opts into an
+experimental accelerator (MPS on Apple Silicon or CUDA on NVIDIA); it does not
+guarantee GPU placement or a speedup, and no accelerator combination is
+currently stable.
 
-**Large models on Apple Silicon:** Models like `jina-code-1.5b` (1.5B params) may cause system
-instability on Macs with limited memory. If you experience lockups:
+**Large models on Apple Silicon:** with `--gpu`, models like `jina-code-1.5b`
+(1.5B params) may cause system instability on Macs with limited memory. If you
+experience lockups:
 
 ```bash
-# Use CPU-only mode (slower but stable)
-arc corpus sync MyCorpus /path --no-gpu
+# Drop --gpu to return to the stable CPU default
+arc corpus sync MyCorpus /path
 
-# Or use the environment variable
-ARC_NO_GPU=1 arc corpus sync MyCorpus /path
+# Or force CPU even when --gpu is passed (e.g. by a script or hook)
+ARC_NO_GPU=1 arc corpus sync MyCorpus /path --gpu
 
 # Or use a smaller model (bge is 0.3B params)
 arc corpus sync MyCorpus /path --models bge

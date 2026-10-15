@@ -162,7 +162,16 @@ class ConnectionChannel:
     def receive(self, timeout: float | None = None) -> dict[str, Any] | None:
         if timeout is not None and not self._connection.poll(max(0.0, timeout)):
             return None
-        return _validate_message(self._connection.recv())
+        try:
+            value = self._connection.recv()
+        except (EOFError, OSError):
+            raise
+        except Exception as exc:
+            # An authentication challenge read as a message is the usual cause.
+            raise WorkerProtocolError(
+                f"undecodable message ({exc}); check that both ends use the same authkey"
+            ) from exc
+        return _validate_message(value)
 
     def close(self) -> None:
         try:

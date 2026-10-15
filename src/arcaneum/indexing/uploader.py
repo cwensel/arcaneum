@@ -15,6 +15,7 @@ from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wai
 
 from ..cli.output import timestamp
 from ..embeddings.client import EmbeddingClient
+from ..embeddings.remote.errors import RemoteEmbeddingUnavailable
 from ..monitoring.cpu_stats import create_monitor
 from ..schema.document import persisted_metadata_fields
 from ..utils.formatting import format_duration
@@ -644,6 +645,9 @@ class PDFBatchUploader:
             # uploaded_count is used for stats
             return ([], uploaded_count, None, ocr_stats)
 
+        except RemoteEmbeddingUnavailable:
+            # The `fail` policy ends the run (RDR-025).
+            raise
         except RuntimeError as e:
             # Check if this is a GPU OOM error
             error_msg = str(e)

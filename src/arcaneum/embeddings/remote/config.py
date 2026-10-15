@@ -28,11 +28,11 @@ import yaml
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from arcaneum.embeddings.client import EMBEDDING_MODELS, model_revision
+from arcaneum.embeddings.remote import DEFAULT_PORT
 
 Routing = Literal["remote", "on-request", "local"]
 Unavailable = Literal["wait", "local", "fail"]
 
-DEFAULT_PORT = 7300
 DEFAULT_ROUTING: dict[str, Routing] = {"arctic-m": "remote", "qwen3-embed": "on-request"}
 ENDPOINTS_ENV = "ARC_EMBED_ENDPOINTS"
 AUTHKEY_ENV = "ARC_EMBED_AUTHKEY"
@@ -123,9 +123,6 @@ class RemoteEmbeddingConfig(BaseModel):
 
     def endpoint_models(self, endpoint: EndpointConfig) -> list[str]:
         return list(endpoint.models) if endpoint.models else self.routed_models()
-
-    def endpoint_batch_size(self, endpoint: EndpointConfig, model: str) -> Optional[int]:
-        return endpoint.batch_size.get(model)
 
     @property
     def authkey_bytes(self) -> Optional[bytes]:

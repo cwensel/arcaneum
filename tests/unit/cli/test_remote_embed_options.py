@@ -239,3 +239,15 @@ def test_router_embed_delegates_to_its_pool():
     router.embed(["x"], "arctic-m")
 
     pool.embed.assert_called_once_with(["x"], "arctic-m", validate=None)
+
+
+def test_unchanged_configuration_reuses_the_router_and_its_connections(monkeypatch):
+    from arcaneum.embeddings.remote.routing import configure_remote_embedding
+
+    monkeypatch.setenv("ARC_EMBED_ENDPOINTS", "dev-0:7300")
+    first = configure_remote_embedding("default")
+    pool = first.pool
+
+    assert configure_remote_embedding("default") is first
+    assert first.pool is pool
+    assert configure_remote_embedding("remote") is not first

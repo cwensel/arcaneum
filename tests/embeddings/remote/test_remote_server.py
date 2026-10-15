@@ -440,3 +440,25 @@ def test_real_server_vectors_match_local_cpu_embedding():
     remote = np.array(reply["payload"]["embeddings"], dtype=np.float32)
     expected = np.asarray(local.embed(texts, "arctic-m"), dtype=np.float32)
     np.testing.assert_allclose(remote, expected, atol=1e-6)
+
+
+def test_open_listener_without_an_authkey_warns(host, clock, caplog):
+    server = EmbeddingServer(ServerSettings(port=0, bind="all"), host=host, clock=clock)
+    with caplog.at_level(logging.WARNING, logger="arcaneum.embeddings.remote.server"):
+        server.start()
+    server.stop()
+
+    assert any("authkey" in r.getMessage() for r in caplog.records if r.levelno == logging.WARNING)
+
+
+def test_authkey_or_specific_address_does_not_warn(host, clock, caplog):
+    with caplog.at_level(logging.WARNING, logger="arcaneum.embeddings.remote.server"):
+        for settings in (
+            ServerSettings(port=0, bind="all", authkey=b"k"),
+            ServerSettings(port=0, bind="127.0.0.1"),
+        ):
+            server = EmbeddingServer(settings, host=host, clock=clock)
+            server.start()
+            server.stop()
+
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]

@@ -25,6 +25,7 @@ from arcaneum.embeddings.capabilities import (
     coreml_provider_options,
     select_backend,
 )
+from arcaneum.embeddings.remote.errors import RemoteEmbeddingUnavailable
 from arcaneum.embeddings.worker_protocol import (
     AcceleratorWorkerSession,
     WorkerConfig,
@@ -468,6 +469,25 @@ def _fastembed_description(model_path: str) -> Dict[str, Any]:
         if description.get("model") == model_path:
             return description
     raise ValueError(f"fastembed does not support model '{model_path}'")
+
+
+def _model_download_error(model_name: str, error: Exception) -> Exception:
+    """Explain SSL and network failures while fetching a model; pass others through."""
+    message = str(error).lower()
+    if "ssl" in message or "certificate" in message:
+        return RuntimeError(
+            f"SSL certificate verification failed while downloading model '{model_name}'.\n"
+            f"For corporate proxies with self-signed certificates, run:\n"
+            f"  export ARC_SSL_VERIFY=false\n\n"
+            f"Original error: {error}"
+        )
+    if "connection" in message or "network" in message or "timeout" in message:
+        return RuntimeError(
+            f"Network connection failed while downloading model '{model_name}'.\n"
+            f"Please check your internet connection. If using a VPN, try disabling it.\n\n"
+            f"Original error: {error}"
+        )
+    return error
 
 
 def _unknown_model_error(model_name: str) -> ValueError:
@@ -1552,14 +1572,40 @@ class EmbeddingClient:
         return snapshot
 
     def _load_pinned_fastembed_model(self, model_name: str):
+        """Load a pinned snapshot, healing an incomplete cache like the unpinned loader."""
         config = EMBEDDING_MODELS[model_name]
-        snapshot = self._pinned_fastembed_snapshot(model_name)
-        return TextEmbedding(
-            model_name=config["name"],
-            cache_dir=self.cache_dir,
-            specific_model_path=snapshot,
-            providers=self._resolve_fastembed_providers(model_name),
+
+        def load():
+            return TextEmbedding(
+                model_name=config["name"],
+                cache_dir=self.cache_dir,
+                specific_model_path=self._pinned_fastembed_snapshot(model_name),
+                providers=self._resolve_fastembed_providers(model_name),
+            )
+
+        try:
+            return load()
+        except Exception as error:
+            if not (
+                self._is_missing_fastembed_artifact_error(error)
+                and self._purge_fastembed_model_cache(model_name)
+            ):
+                translated = _model_download_error(model_name, error)
+                if translated is error:
+                    raise
+                raise translated from error
+        print(
+            "   Cached model files were incomplete; redownloading...",
+            flush=True,
+            file=sys.stderr,
         )
+        try:
+            return load()
+        except Exception as error:
+            translated = _model_download_error(model_name, error)
+            if translated is error:
+                raise
+            raise translated from error
 
     def embed(
         self,
@@ -2289,6 +2335,10 @@ class EmbeddingClient:
                         except KeyboardInterrupt:
                             # User pressed Ctrl-C - cancel remaining futures and re-raise
                             logger.debug("KeyboardInterrupt received during CPU embedding")
+                            executor.shutdown(wait=False, cancel_futures=True)
+                            raise
+                        except RemoteEmbeddingUnavailable:
+                            # The `fail` policy ends the run (RDR-025).
                             executor.shutdown(wait=False, cancel_futures=True)
                             raise
                         except TimeoutError:

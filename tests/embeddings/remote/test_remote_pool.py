@@ -16,6 +16,7 @@ from arcaneum.embeddings.remote.config import (
     EndpointConfig,
     RemoteEmbeddingConfig,
 )
+from arcaneum.embeddings.remote.errors import RemoteEmbeddingBatchError
 from arcaneum.embeddings.remote.identity import local_identity
 from arcaneum.embeddings.remote.pool import (
     RemoteEmbeddingFallback,
@@ -230,7 +231,7 @@ def test_encode_deadline_marks_the_endpoint_down_and_retries(cluster):
     assert "encoding deadline" in status[f"127.0.0.1:{port_of(stuck)}"].reason
 
 
-def test_invalid_results_mark_the_endpoint_down_and_retry(cluster):
+def test_invalid_results_are_retried_once_without_taking_the_endpoint_down(cluster):
     first = cluster.server()
     second = cluster.server()
     pool = cluster.pool([port_of(first), port_of(second)])
@@ -243,6 +244,62 @@ def test_invalid_results_mark_the_endpoint_down_and_retry(cluster):
     texts = ["only"]
     np.testing.assert_array_equal(pool.embed(texts, MODEL, validate=validate), expected(texts))
     assert len(seen) == 2
+    assert {status.state for status in pool.link_status(MODEL)} == {"up"}
+
+
+@pytest.mark.parametrize("unavailable", ["wait", "fail"])
+def test_a_batch_that_always_fails_fails_the_call_not_the_endpoints(cluster, unavailable):
+    """A deterministic per-batch error must not loop forever under `wait`."""
+    servers = [cluster.server(), cluster.server()]
+    for host in cluster.hosts:
+        original = host.encode
+
+        def encode(model, texts, original=original):
+            if "poison" in texts:
+                raise ValueError("tokenizer exploded")
+            return original(model, texts)
+
+        host.encode = encode
+    pool = cluster.pool([port_of(s) for s in servers], unavailable=unavailable)
+
+    with pytest.raises(RemoteEmbeddingBatchError, match="tokenizer exploded"):
+        pool.embed(["poison"], MODEL)
+
+    assert {status.state for status in pool.link_status(MODEL)} == {"up"}
+    np.testing.assert_array_equal(pool.embed(["fine"], MODEL), expected(["fine"]))
+
+
+def test_always_invalid_results_fail_the_call(cluster):
+    server = cluster.server()
+    pool = cluster.pool([port_of(server)], unavailable="wait")
+
+    with pytest.raises(RemoteEmbeddingBatchError, match="invalid"):
+        pool.embed(["x"], MODEL, validate=lambda rows, count: False)
+
+
+def test_unavailable_messages_name_the_environment_override(cluster):
+    pool = cluster.pool([free_port()])
+
+    with pytest.raises(RemoteEmbeddingUnavailable) as raised:
+        pool.embed(["alpha"], MODEL)
+    assert "ARC_EMBED_ENDPOINTS=" in str(raised.value)
+    assert "--local-embed" in str(raised.value)
+
+
+def test_health_checks_run_in_parallel():
+    pool = RemoteEmbeddingPool(RemoteEmbeddingConfig())
+
+    class SlowLink:
+        def health(self):
+            time.sleep(0.3)
+            return {"resident_model": MODEL, "busy": False}
+
+    links = [SlowLink() for _ in range(4)]
+    started = time.monotonic()
+    chosen = pool._prefer(links, MODEL)
+
+    assert chosen == links
+    assert time.monotonic() - started < 0.9
 
 
 def test_all_endpoints_down_under_fail_raises(cluster):
@@ -417,3 +474,15 @@ def test_probe_endpoint_reports_unreachable_endpoints(cluster):
 
     assert status.state == "unreachable"
     assert status.reason
+
+
+@pytest.mark.parametrize(("server_key", "client_key"), [(b"secret", None), (None, "secret")])
+def test_authkey_mismatch_is_reported_not_raised(cluster, server_key, client_key):
+    server = cluster.server(authkey=server_key)
+    pool = cluster.pool([port_of(server)], authkey=client_key)
+
+    with pytest.raises(RemoteEmbeddingUnavailable, match="authkey"):
+        pool.embed(["alpha"], MODEL)
+    status = probe_endpoint(pool.config.endpoints[0], pool.config)
+    assert status.state == "unreachable"
+    assert "authkey" in status.reason

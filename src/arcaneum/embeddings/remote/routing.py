@@ -93,6 +93,11 @@ def configure_remote_embedding(mode: str = "default") -> Optional[RemoteRouter]:
     if not config.endpoints:
         install_router(None)
         return None
+    current = active_router()
+    if current is not None and current.mode == mode and current.config == config:
+        # Repair runs sync then parity, and a spool drain syncs once per batch;
+        # keep the pool's worker connections across them.
+        return current
     router = RemoteRouter(config, mode=mode)
     install_router(router)
     return router

@@ -145,3 +145,54 @@ def test_pinned_arctic_m_matches_the_unpinned_loader_vectors(tmp_path):
     reference = np.asarray(list(unpinned.embed(texts)), dtype=np.float32)
 
     np.testing.assert_allclose(pinned, reference, atol=1e-6)
+
+
+def test_incomplete_pinned_cache_is_purged_and_redownloaded(tmp_path):
+    snapshot = make_snapshot(tmp_path)
+    client = EmbeddingClient(cache_dir=str(tmp_path))
+    missing = RuntimeError(
+        "[ONNXRuntimeError] : 3 : NO_SUCHFILE : Load model from onnx/model.onnx failed"
+    )
+    constructed = []
+
+    def text_embedding(**kwargs):
+        constructed.append(kwargs["specific_model_path"])
+        if len(constructed) == 1:
+            raise missing
+        return object()
+
+    with (
+        patch("arcaneum.embeddings.client._snapshot_download", return_value=str(snapshot)),
+        patch("arcaneum.embeddings.client.TextEmbedding", side_effect=text_embedding),
+        patch.object(client, "_purge_fastembed_model_cache", return_value=True) as purge,
+    ):
+        client.get_model("arctic-m")
+
+    purge.assert_called_once_with("arctic-m")
+    assert len(constructed) == 2
+
+
+def test_pinned_download_ssl_failure_explains_arc_ssl_verify(tmp_path):
+    client = EmbeddingClient(cache_dir=str(tmp_path))
+
+    def download(**kwargs):
+        raise OSError("SSL: CERTIFICATE_VERIFY_FAILED certificate verify failed")
+
+    with (
+        patch("arcaneum.embeddings.client._snapshot_download", side_effect=download),
+        pytest.raises(RuntimeError, match="ARC_SSL_VERIFY"),
+    ):
+        client.get_model("arctic-m")
+
+
+def test_pinned_download_network_failure_is_explained(tmp_path):
+    client = EmbeddingClient(cache_dir=str(tmp_path))
+
+    with (
+        patch(
+            "arcaneum.embeddings.client._snapshot_download",
+            side_effect=OSError("Connection reset by peer"),
+        ),
+        pytest.raises(RuntimeError, match="Network connection failed"),
+    ):
+        client.get_model("arctic-m")

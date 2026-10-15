@@ -26,6 +26,7 @@ from typing import Any, Optional, Protocol
 import numpy as np
 
 from arcaneum.embeddings.client import EMBEDDING_MODELS, EmbeddingClient, model_revision
+from arcaneum.embeddings.remote import DEFAULT_PORT
 from arcaneum.embeddings.remote.identity import (
     dependency_versions,
     identity_mismatches,
@@ -42,7 +43,6 @@ from arcaneum.embeddings.worker_protocol import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PORT = 7300
 TAILSCALE_NETWORK = ipaddress.ip_network("100.64.0.0/10")
 HANDSHAKE_TIMEOUT = 30.0
 
@@ -563,6 +563,13 @@ class EmbeddingServer:
         address = self._resolve_address(self.settings.bind)
         # Authentication runs on each connection's own thread (below), so one slow
         # client cannot stall accept().
+        if address == "0.0.0.0" and not self.settings.authkey:
+            logger.warning(
+                "Listening on all interfaces without an authkey: anyone who can reach port "
+                "%d can send this server pickled data. Use --bind tailscale or an address, "
+                "or set ARC_EMBED_AUTHKEY, unless this network is trusted.",
+                self.settings.port,
+            )
         self._listener = Listener((address, self.settings.port), family="AF_INET")
         self._scheduler.start()
         threading.Thread(target=self._accept_loop, name="arc-embed-accept", daemon=True).start()

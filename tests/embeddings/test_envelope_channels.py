@@ -114,3 +114,45 @@ def test_connection_channel_works_over_an_authenticated_socket():
         assert client.receive(timeout=1)["payload"] == {"state": "idle"}
         client.close()
         server.close()
+
+
+def test_undecodable_bytes_are_a_protocol_error_naming_the_authkey():
+    left, right = Pipe()
+    channel = ConnectionChannel(left)
+    right.send_bytes(b"#CHALLENGE#not-a-pickle")
+
+    with pytest.raises(WorkerProtocolError, match="authkey"):
+        channel.receive(timeout=1)
+    channel.close()
+    right.close()
+
+
+def test_a_reply_that_stalls_mid_message_times_out():
+    import socket
+    import struct
+    import time
+
+    from arcaneum.embeddings.remote.pool import connect
+
+    server = socket.create_server(("127.0.0.1", 0))
+    stop = threading.Event()
+
+    def serve():
+        conn, _ = server.accept()
+        conn.sendall(struct.pack("!i", 1000) + b"x" * 10)
+        stop.wait(5)
+        conn.close()
+
+    thread = threading.Thread(target=serve)
+    thread.start()
+    channel = connect("127.0.0.1", server.getsockname()[1], None, 0.5)
+    started = time.monotonic()
+    try:
+        with pytest.raises(OSError):
+            channel.receive(timeout=1)
+        assert time.monotonic() - started < 3
+    finally:
+        stop.set()
+        channel.close()
+        thread.join()
+        server.close()

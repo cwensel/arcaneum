@@ -30,7 +30,11 @@ import numpy as np
 
 from arcaneum.embeddings.client import EMBEDDING_MODELS
 from arcaneum.embeddings.remote.config import EndpointConfig, RemoteEmbeddingConfig
-from arcaneum.embeddings.remote.errors import RemoteEmbeddingFallback, RemoteEmbeddingUnavailable
+from arcaneum.embeddings.remote.errors import (
+    RemoteEmbeddingBatchError,
+    RemoteEmbeddingFallback,
+    RemoteEmbeddingUnavailable,
+)
 from arcaneum.embeddings.remote.identity import identity_mismatches, local_identity
 from arcaneum.embeddings.remote.server import TAILSCALE_NETWORK, default_encode_batch_size
 from arcaneum.embeddings.worker_protocol import (
@@ -50,6 +54,15 @@ __all__ = ["RemoteEmbeddingFallback", "RemoteEmbeddingUnavailable", "RemoteEmbed
 
 class EndpointFailure(Exception):
     """One endpoint could not complete a request; the pool retries elsewhere."""
+
+
+class BatchFailure(Exception):
+    """The endpoint answered, but this batch failed (encode error or invalid vectors)."""
+
+
+# Attempts per sub-batch for batch failures before the embed call fails; a
+# deterministic error must not take endpoints down or loop under `wait`.
+BATCH_ATTEMPTS = 2
 
 
 # --- Connections -------------------------------------------------------------------
@@ -80,13 +93,19 @@ def connect(host: str, port: int, authkey: Optional[bytes], timeout: float) -> C
         raise
     try:
         if authkey:
-            answer_challenge(connection, authkey)
-            deliver_challenge(connection, authkey)
-        # Later reads poll with their own deadlines.
-        _set_receive_timeout(connection.fileno(), 0)
+            try:
+                answer_challenge(connection, authkey)
+                deliver_challenge(connection, authkey)
+            except Exception as exc:
+                raise ConnectionError(
+                    f"authentication failed ({exc or type(exc).__name__}); check that "
+                    "both ends use the same authkey"
+                ) from exc
     except BaseException:
         connection.close()
         raise
+    # Reads poll before receiving; the receive timeout stays set so a reply that
+    # stalls partway through raises instead of blocking past every deadline.
     return ConnectionChannel(connection)
 
 
@@ -331,7 +350,10 @@ class _Link:
     def _result(self, reply: dict[str, Any], count: int) -> np.ndarray:
         payload = reply["payload"]
         if reply["type"] == MessageType.ERROR:
-            raise EndpointFailure(f"{payload.get('code')}: {payload.get('message')}")
+            message = f"{payload.get('code')}: {payload.get('message')}"
+            if payload.get("code") == "backend_error":
+                raise BatchFailure(message)
+            raise EndpointFailure(message)
         if reply["type"] != MessageType.ENCODED:
             raise EndpointFailure(f"unexpected reply {reply['type']!r}")
         result = decode_embeddings(payload)
@@ -446,17 +468,20 @@ class RemoteEmbeddingPool:
             )
             raise RemoteEmbeddingFallback(details)
         hint = "Run `arc models deploy` to update the workers"
+        local = (
+            "rerun with --local-embed (sync, repair) or with ARC_EMBED_ENDPOINTS= " "(any command)"
+        )
         if policy == "fail":
             raise RemoteEmbeddingUnavailable(
                 f"No remote embedding endpoint can serve {model}: {details}. {hint}, "
-                "or rerun with --local-embed to embed locally."
+                f"or {local} to embed locally."
             )
         now = self.clock()
         if now - self._last_notice >= NOTIFY_INTERVAL:
             self._last_notice = now
             self.notify(
                 f"Waiting for remote embedding endpoints for {model}: {details}. {hint}, "
-                "or rerun with --local-embed to proceed without them."
+                f"or {local} to proceed without them."
             )
         self.sleep(min(self.config.probe_interval, 1.0))
 
@@ -468,14 +493,21 @@ class RemoteEmbeddingPool:
         idle endpoint away from another model only when it needs it.
         """
         holders, empty, idle_other, busy_other = [], [], [], []
-        for link in usable:
+
+        def check(link: _Link) -> Optional[dict[str, Any]]:
             try:
-                health = link.health()
+                return link.health()
             except EndpointFailure as exc:
                 link.fail(str(exc))
+                return None
+
+        with ThreadPoolExecutor(max_workers=max(1, len(usable))) as executor:
+            healths = list(executor.map(check, usable))
+        for link, health in zip(usable, healths):
+            if health is None:
                 continue
             resident = health.get("resident_model") or health.get("loading_model")
-            if resident == model or health.get("loading_model") == model:
+            if resident == model:
                 holders.append(link)
             elif health.get("busy"):
                 busy_other.append(link)
@@ -500,9 +532,12 @@ class RemoteEmbeddingPool:
             work.put(pending[start : start + size])
         # Fewer sub-batches than endpoints: use the most preferred endpoints only.
         chosen = chosen[: work.qsize()]
+        attempts: dict[tuple[int, ...], int] = {}
+        failed: list[str] = []
+        lock = threading.Lock()
 
         def run(link: _Link) -> None:
-            while True:
+            while not failed:
                 try:
                     batch = work.get_nowait()
                 except queue.Empty:
@@ -510,16 +545,32 @@ class RemoteEmbeddingPool:
                 try:
                     rows = link.encode([texts[i] for i in batch])
                     if validate is not None and not validate(rows, len(batch)):
-                        raise EndpointFailure("returned invalid embeddings")
+                        raise BatchFailure("returned invalid embeddings")
                 except EndpointFailure as exc:
                     link.fail(str(exc))
                     work.put(batch)
                     return
+                except BatchFailure as exc:
+                    # The endpoint is healthy; retry the batch, then give up on it.
+                    with lock:
+                        key = tuple(batch)
+                        attempts[key] = attempts.get(key, 0) + 1
+                        if attempts[key] >= BATCH_ATTEMPTS:
+                            failed.append(f"{link.name}: {exc}")
+                            return
+                    logger.warning("Retrying a batch that failed on %s: %s", link.name, exc)
+                    work.put(batch)
+                    continue
                 for offset, index in enumerate(batch):
                     results[index] = rows[offset : offset + 1]
 
         with ThreadPoolExecutor(max_workers=len(chosen)) as executor:
             list(executor.map(run, chosen))
+        if failed:
+            raise RemoteEmbeddingBatchError(
+                f"Remote embedding of {len(pending)} texts failed after "
+                f"{BATCH_ATTEMPTS} attempts ({failed[0]})"
+            )
         return [index for index in pending if results[index] is None]
 
     def close(self) -> None:

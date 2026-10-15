@@ -21,6 +21,7 @@ from arcaneum.cli.errors import (
     InvalidArgumentError,
     ResourceNotFoundError,
 )
+from arcaneum.embeddings.remote import DEFAULT_PORT as REMOTE_EMBED_DEFAULT_PORT
 
 # Version check (RDR-006: Best practice from reference implementation)
 MIN_PYTHON = (3, 12)
@@ -405,7 +406,12 @@ def list_models(output_json):
 
 @models.command("serve")
 @click.option(
-    "--port", type=int, default=7300, show_default=True, envvar="ARC_EMBED_PORT", help="TCP port"
+    "--port",
+    type=int,
+    default=REMOTE_EMBED_DEFAULT_PORT,
+    show_default=True,
+    envvar="ARC_EMBED_PORT",
+    help="TCP port",
 )
 @click.option(
     "--bind",

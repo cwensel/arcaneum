@@ -20,6 +20,7 @@ from qdrant_client.models import PointStruct
 
 from ...cli.output import timestamp
 from ...embeddings.client import EMBEDDING_MODELS, EmbeddingClient
+from ...embeddings.remote.errors import RemoteEmbeddingUnavailable
 from ...schema.document import persisted_metadata_fields
 from ...utils.formatting import format_duration
 from ..collection_metadata import file_manifests_ready, stamp_file_manifests_ready
@@ -463,6 +464,9 @@ class MarkdownIndexingPipeline:
 
                 return (points, file_chunk_count, None)
 
+        except RemoteEmbeddingUnavailable:
+            # The `fail` policy ends the run (RDR-025).
+            raise
         except Exception as e:
             error_msg = str(e)
             error_type = type(e).__name__

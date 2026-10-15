@@ -365,6 +365,26 @@ def _embed_mode_options(func):
     return func
 
 
+def _background_option(func):
+    """--background: run below interactive work on this machine."""
+    return click.option(
+        "--background",
+        is_flag=True,
+        help=(
+            "Run below interactive work such as compilers and tests. macOS: efficiency "
+            "cores only, Docker VM at nice 5. Linux: SCHED_IDLE, nice 19"
+        ),
+    )(func)
+
+
+def _enter_background(output_json: bool) -> None:
+    from arcaneum.cli import background
+    from arcaneum.cli.output import print_info
+
+    for note in background.enter_background():
+        print_info(note, output_json)
+
+
 def _embed_mode(remote_embed: bool, local_embed: bool) -> str:
     if remote_embed and local_embed:
         raise click.UsageError("--remote-embed and --local-embed are mutually exclusive")
@@ -1634,6 +1654,7 @@ def _drain_corpus_spool(corpus, *, max_batches, sync_kwargs):
     help="Use CPU by default; pass --gpu to opt into accelerator embedding",
 )
 @_embed_mode_options
+@_background_option
 @click.option(
     "--cpu-workers",
     type=int,
@@ -1767,6 +1788,7 @@ def sync_directory(
     changed_since,
     drain_spool,
     max_batches,
+    background,
 ):
     """Index to both vector and full-text.
 
@@ -1825,6 +1847,8 @@ def sync_directory(
             )
 
     embed_mode = _embed_mode(remote_embed, local_embed)
+    if background:
+        _enter_background(output_json)
 
     if drain_spool:
         if paths or from_file or changed_since:
@@ -2322,6 +2346,7 @@ FORCE_PRUNE_HELP = "Like --prune-orphans, but also prune files whose directory i
     help="Use CPU by default; pass --gpu to opt into accelerator embedding",
 )
 @_embed_mode_options
+@_background_option
 @click.option(
     "--max-embedding-batch",
     type=int,
@@ -2350,6 +2375,7 @@ def corpus_repair(
     force_prune,
     verbose,
     output_json,
+    background,
 ):
     """Selectively re-index files for which verification recommends repair.
 
@@ -2375,6 +2401,9 @@ def corpus_repair(
         arc corpus repair PapersFast --quality-threshold 0.5
         arc corpus repair PapersFast --verbose
     """
+    if background:
+        _enter_background(output_json)
+
     from arcaneum.cli.sync import repair_corpus_command
     from arcaneum.cli.utils import create_qdrant_client
     from arcaneum.indexing.collection_metadata import get_collection_metadata

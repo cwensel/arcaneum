@@ -53,6 +53,8 @@ full-text search (MeiliSearch) for the same content.
   configured remote embedding workers for this run
 - --local-embed: Embed every model locally for this run, ignoring configured
   remote embedding workers
+- --background: Run below interactive work (compilers, tests) for continuous
+  indexing; on macOS, efficiency cores only and the Docker VM at nice 5
 - --changed-since REV: Sync only what a git commit or range touched (e.g. HEAD,
   ORIG_HEAD..HEAD), removing the files it deleted
 - --order: Process files by path (default), newest modification first, or oldest
@@ -76,6 +78,7 @@ full-text search (MeiliSearch) for the same content.
 - --gpu: Opt into accelerator embedding (CPU is the stable default)
 - --remote-embed / --local-embed: Route this repair's document embedding as for
   sync (remote embedding workers)
+- --background: Run below interactive work, as for sync
 - --verbose: Show per-file quality scores and details
 - --json: Output in JSON format
 

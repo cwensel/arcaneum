@@ -315,6 +315,13 @@ arc corpus sync MyCorpus /path/to/repo --git-version       # Keep multiple versi
   [Remote Embedding Workers](#remote-embedding-workers).
 - `--local-embed`: Embed every model locally for this run, ignoring configured
   remote workers
+- `--background`: Run below interactive work such as compilers and tests, for
+  continuous indexing on a busy machine. On macOS, arc and its worker processes
+  use efficiency cores only, with throttled disk I/O, and the Docker Desktop VM
+  drops to nice 5 so Qdrant and MeiliSearch stay just below interactive work.
+  On Linux, arc runs at `SCHED_IDLE`, nice 19, and Docker is unchanged. Nothing
+  is restored on exit: raising a priority again needs root, and the VM returns
+  to normal when Docker Desktop restarts. Searches are unaffected.
 - `--text-workers`: Parallel workers for code AST chunking (default: auto)
 - `--order`: Order files are indexed in: `path` (default, alphabetical), `newest`
   (most recently modified first), or `oldest`. Affects processing order only, not
@@ -535,6 +542,7 @@ arc corpus repair MyCorpus --verbose                  # Show per-file quality sc
 - `--max-embedding-batch`: Cap embedding batch size
 - `--remote-embed` / `--local-embed`: Route this repair's document embedding as
   for `arc corpus sync` (see [Remote Embedding Workers](#remote-embedding-workers))
+- `--background`: Run below interactive work, as for `arc corpus sync`
 - `--verbose`: Show per-file old → new quality scores
 - `--json`: Output JSON format
 

@@ -1820,6 +1820,40 @@ def _file_verification_breakdown(verification_result, include_stale_policy: bool
     )
 
 
+def _repair_quality_baselines(verification_result) -> Dict[str, float]:
+    """Map garbled files to the score a repair re-extraction must beat.
+
+    Files already at their quality floor are excluded: they are only being
+    repaired for some other defect, which a score comparison would skip.
+    """
+    return {
+        f.file_path: f.avg_quality_score
+        for f in verification_result.files
+        if f.has_garbled_text and not f.recovery_exhausted
+    }
+
+
+def _mark_quality_floor(qdrant, corpus: str, file_path: str) -> None:
+    """Record that re-extraction could not improve a garbled file's chunks.
+
+    The verifier then reports the file as recovery-exhausted instead of
+    queuing the same extraction on every repair. Re-indexing the file
+    replaces its chunks and drops the marker.
+    """
+    from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchValue
+
+    qdrant.set_payload(
+        collection_name=corpus,
+        payload={"quality_floor": True},
+        points=FilterSelector(
+            filter=metadata_exclusion_filter(
+                Filter(must=[FieldCondition(key="file_path", match=MatchValue(value=file_path))])
+            )
+        ),
+        wait=True,
+    )
+
+
 def _handle_renames_meili(
     renames: List[Tuple[str, str]],
     qdrant,
@@ -2898,12 +2932,8 @@ def _sync_directory_locked(
                 interaction_logger.finish(result_count=0)
                 return
 
-            # Build old quality score map for garbled files (used for comparison reporting)
-            old_quality_scores = {
-                f.file_path: f.avg_quality_score
-                for f in verification_result.files
-                if f.has_garbled_text
-            }
+            # Scores a garbled file's re-extraction must beat to replace it
+            old_quality_scores = _repair_quality_baselines(verification_result)
 
             # Set up for re-indexing: use incomplete files as single_files with force
             single_files = sorted(Path(p).resolve() for p in existing_repairable)
@@ -4040,6 +4070,7 @@ def _sync_directory_locked(
                                         repair_results.append(
                                             (file_path.name, old_score, new_score, action)
                                         )
+                                        _mark_quality_floor(qdrant, corpus, file_path_str)
                                         progress.advance(task, file_progress_weight)
                                         continue
 

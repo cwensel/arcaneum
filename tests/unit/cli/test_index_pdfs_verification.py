@@ -1,6 +1,7 @@
 """PDF verification reporting distinguishes actionable and exhausted failures."""
 
 from io import StringIO
+from unittest.mock import MagicMock
 
 from rich.console import Console
 
@@ -171,3 +172,47 @@ def test_report_reuses_precomputed_breakdown(monkeypatch):
 
     assert returned is breakdown
     assert "/papers/incomplete.pdf" in output.getvalue()
+
+
+def test_quality_baselines_skip_floor_marked_files():
+    # A garbled file at its quality floor is only re-indexed for some other
+    # defect; comparing scores again would skip it and leave that defect.
+    fresh = FileVerificationResult(
+        file_path="/papers/garbled.pdf",
+        expected_chunks=1,
+        actual_chunks=1,
+        has_garbled_text=True,
+        avg_quality_score=0.6,
+    )
+    floored = FileVerificationResult(
+        file_path="/papers/floored.pdf",
+        expected_chunks=2,
+        actual_chunks=1,
+        has_garbled_text=True,
+        avg_quality_score=0.7,
+        recovery_exhausted=True,
+    )
+    clean = FileVerificationResult(
+        file_path="/papers/clean.pdf",
+        expected_chunks=1,
+        actual_chunks=1,
+    )
+
+    assert sync._repair_quality_baselines(_result(fresh, floored, clean)) == {
+        "/papers/garbled.pdf": 0.6
+    }
+
+
+def test_mark_quality_floor_stamps_the_files_chunks():
+    qdrant = MagicMock()
+
+    sync._mark_quality_floor(qdrant, "Papers", "/papers/garbled.pdf")
+
+    kwargs = qdrant.set_payload.call_args.kwargs
+    assert kwargs["collection_name"] == "Papers"
+    assert kwargs["payload"] == {"quality_floor": True}
+    must = kwargs["points"].filter.must
+    assert any(
+        getattr(c, "key", None) == "file_path" and c.match.value == "/papers/garbled.pdf"
+        for c in must
+    )

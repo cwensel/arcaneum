@@ -1494,3 +1494,37 @@ def test_dropout_falls_back_to_disk_page_count(qdrant_client, tmp_path):
 
     assert result.dropout_items == 1
     assert result.files[0].page_count == 8
+
+
+def test_quality_floor_marks_garbled_file_exhausted_not_repairable(qdrant_client):
+    # Repair already re-extracted this garbled file without improving its
+    # score; re-queuing it would redo the same expensive extraction forever.
+    qdrant_client.scroll.side_effect = _scroll_once(
+        [
+            _point(
+                {
+                    "file_path": "/tmp/garbled-floor.pdf",
+                    "chunk_index": 0,
+                    "chunk_count": 1,
+                    "page_count": 1,
+                    "text": "�" * 1000,
+                    "quality_floor": True,
+                }
+            ),
+        ]
+    )
+
+    with patch.object(verify_mod, "get_collection_type", return_value="pdf"):
+        result = CollectionVerifier(qdrant_client)._verify_file_collection(
+            collection_name="Dummy",
+            collection_type="pdf",
+            total_points=1,
+            check_quality=True,
+        )
+
+    file_result = result.files[0]
+    assert file_result.has_garbled_text is True
+    assert file_result.recovery_exhausted is True
+    assert "garbled_recovery_exhausted" in file_result.quality_manifest["quality_warnings"]
+    assert result.is_healthy is False
+    assert result.get_items_needing_repair() == []

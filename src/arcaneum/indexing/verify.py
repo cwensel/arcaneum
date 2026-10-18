@@ -564,6 +564,7 @@ class CollectionVerifier:
                 "total_text_chars": 0,
                 "page_count": None,
                 "extraction_floor": False,
+                "quality_floor": False,
                 "quality_manifest": None,
                 "source_hash": None,
                 "indexing_policy": None,
@@ -611,6 +612,8 @@ class CollectionVerifier:
         ]
         if check_dropout:
             payload_fields.extend(["page_count", "extraction_floor"])
+        if check_quality:
+            payload_fields.append("quality_floor")
         if check_quality or check_dropout:
             payload_fields.append("text")
 
@@ -689,6 +692,8 @@ class CollectionVerifier:
                     )
                     if text:
                         file_chunks[file_path]["quality_scores"].append(score_text(text))
+                    if payload.get("quality_floor"):
+                        file_chunks[file_path]["quality_floor"] = True
 
                 # Accumulate dropout signal (total text, page_count, floor marker)
                 if check_dropout:
@@ -971,6 +976,16 @@ class CollectionVerifier:
                     warnings.add("replacement_fidelity_degraded")
                 if recovery_exhausted:
                     warnings.add("replacement_recovery_exhausted")
+                manifest["quality_warnings"] = sorted(warnings)
+                file_data["quality_manifest"] = manifest
+
+            # Repair already re-extracted this garbled file without improving
+            # its score; re-queuing it would only repeat that extraction.
+            if has_garbled and file_data["quality_floor"]:
+                recovery_exhausted = True
+                manifest = manifest or {}
+                warnings = set(manifest.get("quality_warnings", []))
+                warnings.add("garbled_recovery_exhausted")
                 manifest["quality_warnings"] = sorted(warnings)
                 file_data["quality_manifest"] = manifest
 

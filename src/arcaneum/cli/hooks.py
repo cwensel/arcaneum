@@ -305,6 +305,7 @@ def render_block(
     queue_rel = spool.queue_relpath(corpus).as_posix()
     deferred_rel = spool.deferred_relpath(corpus).as_posix()
     lock_rel = (spool.queue_relpath(corpus).parent / "worker.lock").as_posix()
+    watch_rel = spool.worker_watch_relpath(corpus).as_posix()
     repo_id = spool.repo_id(repo)
 
     if spawn:
@@ -315,7 +316,8 @@ def render_block(
         #      ~1.1s of interpreter startup to discover the lock is taken, run
         #      concurrently with the worker that is actually embedding. The
         #      entry is already spooled, so the running worker picks it up on
-        #      its next loop.
+        #      its next loop. The exception is one stall check per interval,
+        #      so a hung worker cannot hold the lock forever.
         #   2. Otherwise debounce: git runs each hook in its own shell, so a
         #      burst would still stampede past gate 1 if every invocation
         #      spawned at once. Sleep first, then re-check.
@@ -352,17 +354,27 @@ def render_block(
         "$_arc_py" "$_arc_probe" "$_arc_lock" 2>/dev/null
     }
 
-    _arc_locked && return 0
-
-    # One body for both branches: setsid gets a fresh shell that inherits no
-    # functions, so it repeats the probe inline rather than a copy of the logic.
-    _arc_spawn_body="sleep $_arc_debounce; \\
+    if _arc_locked; then
+        # The worker picks this entry up on its next loop, unless it stalled.
+        # At most once per interval, start a drain anyway: it checks the
+        # holder's CPU progress and takes over once there has been none for 15
+        # minutes (drain_watchdog). The touch claims the interval for a burst.
+        [ -n "$(find "$_arc_watch" -mmin "-$_arc_watch_min" 2>/dev/null)" ] && return 0
+        touch "$_arc_watch" 2>/dev/null || return 0
+        _arc_spawn_body="sleep $_arc_debounce; \\
+'$_arc_bin' corpus sync '$_arc_corpus' --drain-spool --background >>'$_arc_log' 2>&1"
+    else
+        # One body for both branches: setsid gets a fresh shell that inherits
+        # no functions, so it repeats the probe inline rather than a copy of
+        # the logic.
+        _arc_spawn_body="sleep $_arc_debounce; \\
 if command -v flock >/dev/null 2>&1; then \\
   flock -n '$_arc_lock' true >/dev/null 2>&1 || exit 0; \\
 else \\
   '$_arc_py' '$_arc_probe' '$_arc_lock' 2>/dev/null && exit 0; \\
 fi; \\
 '$_arc_bin' corpus sync '$_arc_corpus' --drain-spool --background >>'$_arc_log' 2>&1"
+    fi
 
     if command -v setsid >/dev/null 2>&1; then
         setsid sh -c "$_arc_spawn_body" >/dev/null 2>&1 < /dev/null &
@@ -394,6 +406,10 @@ _arc_queue="$_arc_data/{queue_rel}"
 _arc_deferred="$_arc_data/{deferred_rel}"
 _arc_repo_id='{repo_id}'
 _arc_lock="$_arc_data/{lock_rel}"
+# Last stall check of the lock holder, and the minutes between checks while a
+# worker holds the lock.
+_arc_watch="$_arc_data/{watch_rel}"
+_arc_watch_min="${{ARC_HOOK_STALL_CHECK_MIN:-5}}"
 # Seconds to wait before starting a worker, so a burst of commits coalesces
 # into one worker instead of a stampede of processes that each die on the lock.
 _arc_debounce="${{ARC_HOOK_DEBOUNCE:-3}}"

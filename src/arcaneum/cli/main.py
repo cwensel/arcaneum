@@ -1514,6 +1514,29 @@ def delete_corpus(name, confirm, output_json, no_wait, lock_timeout):
     )
 
 
+def _take_over_stalled_drain(corpus):
+    """Stop the drain holding `corpus`'s worker lock if it has stalled; then take the lock.
+
+    Returns the lock fd, or None when the holder is still making progress or
+    could not be stopped. The stopped drain's claimed entries are recovered by
+    the caller like any dead worker's.
+    """
+    from arcaneum.cli import drain_watchdog, hook_log, spool
+    from arcaneum.utils.formatting import format_duration
+
+    observation = drain_watchdog.observe(corpus)
+    if observation is None or not observation.stalled:
+        return None
+    hook_log.write(
+        f"[{corpus}] drain pid {observation.pid} made no CPU progress for "
+        f"{format_duration(observation.idle_s)}; stopping it"
+    )
+    if not drain_watchdog.stop(observation):
+        hook_log.write(f"[{corpus}] could not stop stalled drain pid {observation.pid}")
+        return None
+    return spool.try_acquire_worker_lock(corpus)
+
+
 def _drain_corpus_spool(corpus, *, max_batches, sync_kwargs):
     """Index everything the git hook queued for `corpus`, until the spool empties.
 
@@ -1524,7 +1547,8 @@ def _drain_corpus_spool(corpus, *, max_batches, sync_kwargs):
     never has to spawn a second worker.
 
     Single-flight per corpus: if another worker already holds the lock, this
-    exits quietly and leaves the work for it.
+    exits quietly and leaves the work for it, unless that worker has stalled
+    (see `drain_watchdog`), in which case it is stopped and this one drains.
     """
     from arcaneum.cli import hook_log, spool
     from arcaneum.cli.output import print_json
@@ -1539,6 +1563,8 @@ def _drain_corpus_spool(corpus, *, max_batches, sync_kwargs):
     proctitle.set_title(f"drain {corpus} (starting)")
 
     lock_fd = spool.try_acquire_worker_lock(corpus)
+    if lock_fd is None:
+        lock_fd = _take_over_stalled_drain(corpus)
     if lock_fd is None:
         proctitle.set_title(f"drain {corpus} (declined: already running)")
         hook_log.write(f"[{corpus}] skipped: another worker is already draining")

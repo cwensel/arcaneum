@@ -19,6 +19,7 @@ Layout::
     <data>/spool/<corpus>/claimed/   entries a worker is indexing
     <data>/spool/<corpus>/deferred/  entries waiting for their branch
     <data>/spool/<corpus>/worker.lock
+    <data>/spool/<corpus>/worker.watch  the lock holder's CPU progress
     <data>/hook-marks/<corpus>/<repo-id>/<branch>
 
 `queue/` is what the `--service` watcher watches (kata 4j93). launchd's
@@ -128,6 +129,16 @@ def deferred_dir(corpus: str) -> Path:
 def worker_lock_path(corpus: str) -> Path:
     corpus_spool_dir(corpus).mkdir(parents=True, exist_ok=True)
     return corpus_spool_dir(corpus) / "worker.lock"
+
+
+def worker_watch_relpath(corpus: str) -> Path:
+    """`worker_watch_path` relative to the data dir, for the hook to rebuild at run time."""
+    return Path("spool") / _safe_name(corpus) / "worker.watch"
+
+
+def worker_watch_path(corpus: str) -> Path:
+    """The drain watchdog's record of the lock holder's CPU progress."""
+    return get_data_dir() / worker_watch_relpath(corpus)
 
 
 def write_entry(

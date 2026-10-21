@@ -71,7 +71,15 @@ def test_gated_hooks_are_valid_shell(hook, tmp_path):
 def test_shell_and_python_agree_on_every_path(isolated, tmp_path):
     """A divergence here makes the gate silently never fire."""
     body = hooks.render_block("Docs", "post-commit", tmp_path, spawn=True, branch="main")
-    names = ("_arc_data", "_arc_lock", "_arc_mark", "_arc_queue", "_arc_deferred", "_arc_repo_id")
+    names = (
+        "_arc_data",
+        "_arc_lock",
+        "_arc_mark",
+        "_arc_queue",
+        "_arc_deferred",
+        "_arc_repo_id",
+        "_arc_watch",
+    )
     assignments = [
         line for line in body.splitlines() if line.startswith(tuple(f"{n}=" for n in names))
     ]
@@ -88,6 +96,7 @@ def test_shell_and_python_agree_on_every_path(isolated, tmp_path):
     assert Path(out[2]) == spool.queue_dir("Docs")
     assert Path(out[3]) == spool.deferred_dir("Docs")
     assert out[4] == spool.repo_id(tmp_path)
+    assert Path(out[5]) == spool.worker_watch_path("Docs")
 
 
 # --- end to end: a held lock suppresses the spawn ----------------------------
@@ -132,6 +141,13 @@ def _install_armed(repo: Path) -> None:
     spool.write_entry("Docs", root, changed=[str(root / "a.md")], removed=[])
 
 
+def _checked_recently() -> None:
+    """Record a stall check moments ago, so a held lock suppresses the spawn."""
+    watch = spool.worker_watch_path("Docs")
+    watch.parent.mkdir(parents=True, exist_ok=True)
+    watch.touch()
+
+
 def test_hook_spawns_nothing_without_queued_work(isolated, repo, tmp_path):
     hooks.install("Docs", repo, "post-commit", spawn=True)
     bin_dir = tmp_path / "bin"
@@ -149,6 +165,7 @@ def test_hook_spawns_nothing_without_queued_work(isolated, repo, tmp_path):
 def test_hook_skips_the_spawn_while_a_worker_holds_the_lock(isolated, repo, tmp_path):
     """The core fix: no wasted process when a worker is already draining."""
     _install_armed(repo)
+    _checked_recently()
     hook_script = repo / ".git" / "hooks" / "post-commit"
 
     env = dict(os.environ)
@@ -256,7 +273,7 @@ def _fake_arc(bin_dir: Path, marker: Path, *, held: bool = False) -> None:
 # Every external tool the generated hook invokes, minus flock. Keep this in
 # step with render_block: a missing tool makes the hook fail early, which can
 # look like a working gate.
-_HOOK_TOOLS = ("sh", "git", "mkdir", "dirname", "sleep", "python3", "setsid")
+_HOOK_TOOLS = ("sh", "git", "mkdir", "dirname", "sleep", "python3", "setsid", "find", "touch")
 
 
 def _flockless_bin(tmp_path: Path) -> Path:
@@ -299,6 +316,7 @@ def _wait_past_debounce() -> None:
 def test_gate_holds_without_flock(isolated, repo, tmp_path, monkeypatch):
     """With a worker holding the lock, no drain may be spawned even sans flock."""
     _install_armed(repo)
+    _checked_recently()
     hook_script = repo / ".git" / "hooks" / "post-commit"
     bin_dir = tmp_path / "bin"
     marker = tmp_path / "calls.txt"
@@ -324,6 +342,74 @@ def test_gate_holds_without_flock(isolated, repo, tmp_path, monkeypatch):
     )
 
 
+def _drain_calls(marker: Path) -> int:
+    return (marker.read_text() if marker.exists() else "").count("--drain-spool")
+
+
+def test_a_held_lock_still_spawns_a_stall_check(isolated, repo, tmp_path):
+    """A stalled worker never picks the entry up; a drain must look at it."""
+    _install_armed(repo)
+    hook_script = repo / ".git" / "hooks" / "post-commit"
+    bin_dir = tmp_path / "bin"
+    marker = tmp_path / "calls.txt"
+    _fake_arc(bin_dir, marker)
+    env = _env_without_flock(tmp_path, bin_dir)
+
+    lock = spool.try_acquire_worker_lock("Docs")
+    try:
+        result = _run_hook(hook_script, env)
+        _wait_past_debounce()
+    finally:
+        spool.release_worker_lock(lock)
+
+    assert result.returncode == 0, result.stderr
+    assert _drain_calls(marker) == 1
+    assert spool.worker_watch_path("Docs").exists(), "the check claims its interval"
+
+
+def test_stall_checks_are_rate_limited_while_the_lock_is_held(isolated, repo, tmp_path):
+    """A rebase burst against a busy worker must not become a spawn per commit."""
+    _install_armed(repo)
+    hook_script = repo / ".git" / "hooks" / "post-commit"
+    bin_dir = tmp_path / "bin"
+    marker = tmp_path / "calls.txt"
+    _fake_arc(bin_dir, marker)
+    env = _env_without_flock(tmp_path, bin_dir)
+
+    lock = spool.try_acquire_worker_lock("Docs")
+    try:
+        for _ in range(3):
+            _install_armed(repo)
+            _run_hook(hook_script, env)
+        _wait_past_debounce()
+    finally:
+        spool.release_worker_lock(lock)
+
+    assert _drain_calls(marker) == 1
+
+
+def test_a_stall_check_older_than_the_interval_lets_the_next_through(isolated, repo, tmp_path):
+    _install_armed(repo)
+    _checked_recently()
+    watch = spool.worker_watch_path("Docs")
+    ten_minutes_ago = watch.stat().st_mtime - 600
+    os.utime(watch, (ten_minutes_ago, ten_minutes_ago))
+    hook_script = repo / ".git" / "hooks" / "post-commit"
+    bin_dir = tmp_path / "bin"
+    marker = tmp_path / "calls.txt"
+    _fake_arc(bin_dir, marker)
+    env = _env_without_flock(tmp_path, bin_dir)
+
+    lock = spool.try_acquire_worker_lock("Docs")
+    try:
+        _run_hook(hook_script, env)
+        _wait_past_debounce()
+    finally:
+        spool.release_worker_lock(lock)
+
+    assert _drain_calls(marker) == 1
+
+
 def test_spawn_still_happens_without_flock_when_idle(isolated, repo, tmp_path):
     """The gate must not become a blanket suppression."""
     _install_armed(repo)
@@ -343,6 +429,7 @@ def test_spawn_still_happens_without_flock_when_idle(isolated, repo, tmp_path):
 def test_the_nohup_fallback_path_is_gated_too(isolated, repo, tmp_path):
     """CI always has setsid, so exercise the other branch explicitly."""
     _install_armed(repo)
+    _checked_recently()
     hook_script = repo / ".git" / "hooks" / "post-commit"
     bin_dir = tmp_path / "bin"
     marker = tmp_path / "calls.txt"

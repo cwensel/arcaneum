@@ -6,6 +6,10 @@ clear on release. A record names a pid; it counts as running only while that
 pid is alive and was created no later than the record. A crashed holder leaves
 its record behind, and its pid may since belong to an unrelated process.
 
+For a drain, the listing also samples the holder's CPU progress (see
+`drain_watchdog`), flagging one that has stopped making any. That writes the
+watchdog's record, never a lock.
+
 Nothing here takes a lock, not even briefly. The drain worker's lock is
 single-try: a probe holding it at the instant a hook spawns a worker makes that
 worker decline, stranding the queued work until the next commit.
@@ -38,6 +42,8 @@ class Job:
     started: float
     command: Optional[str]
     endpoints: Optional[str] = None
+    # Drains only: how long the holder has made no CPU progress (drain_watchdog).
+    cpu_idle_seconds: Optional[float] = None
 
     @property
     def elapsed(self) -> float:
@@ -54,7 +60,8 @@ class QueuedWork:
     orphaned: bool
 
 
-def _read_record(path: Path) -> Optional[Dict[str, Any]]:
+def read_holder_record(path: Path) -> Optional[Dict[str, Any]]:
+    """The holder record stamped in a lock file, or None if absent or malformed."""
     try:
         raw = path.read_text().strip()
     except OSError:
@@ -74,10 +81,10 @@ def _read_record(path: Path) -> Optional[Dict[str, Any]]:
     return record
 
 
-def _live_title(pid: int, started: float) -> Optional[str]:
-    """The process title of `pid` if it is the record's holder, else None.
+def holder_process(pid: int, started: float) -> Optional[psutil.Process]:
+    """`pid` if it is alive and is the record's holder, else None.
 
-    Returns "" for a live holder whose title cannot be read.
+    Raises psutil.AccessDenied when that cannot be determined.
     """
     try:
         proc = psutil.Process(pid)
@@ -87,8 +94,20 @@ def _live_title(pid: int, started: float) -> Optional[str]:
             return None
     except (psutil.NoSuchProcess, psutil.ZombieProcess):
         return None
+    return proc
+
+
+def _live_title(pid: int, started: float) -> Optional[str]:
+    """The process title of `pid` if it is the record's holder, else None.
+
+    Returns "" for a live holder whose title cannot be read.
+    """
+    try:
+        proc = holder_process(pid, started)
     except psutil.AccessDenied:
         return ""
+    if proc is None:
+        return None
     try:
         return " ".join(proc.cmdline())
     except psutil.Error:
@@ -96,7 +115,7 @@ def _live_title(pid: int, started: float) -> Optional[str]:
 
 
 def _job_from(path: Path, kind: str, default_corpus: str) -> Optional[Job]:
-    record = _read_record(path)
+    record = read_holder_record(path)
     if record is None:
         return None
     title = _live_title(record["pid"], record["started"])
@@ -169,10 +188,41 @@ def _describe_queued(work: QueuedWork) -> str:
     return f"  {work.corpus}: {', '.join(parts)}"
 
 
+# Shorter idle spells are ordinary waits (corpus lock, remote workers).
+_SHOW_IDLE_AFTER_S = 5 * 60
+
+
+def _with_cpu_progress(job: Job) -> Job:
+    """`job` with its CPU idle time, if it is a drain. Records an observation."""
+    from dataclasses import replace
+
+    from . import drain_watchdog
+
+    if job.kind != "drain":
+        return job
+    observation = drain_watchdog.observe(job.corpus)
+    if observation is None or observation.pid != job.pid:
+        return job
+    return replace(job, cpu_idle_seconds=round(observation.idle_s, 1))
+
+
+def _describe_command(job: Job) -> str:
+    from . import drain_watchdog
+
+    command = job.command or "?"
+    idle = job.cpu_idle_seconds
+    if idle is None or idle < _SHOW_IDLE_AFTER_S:
+        return command
+    note = f"no CPU progress for {format_duration(idle)}"
+    if idle >= drain_watchdog.STALL_AFTER_S:
+        note += f"; stalled, the next `arc corpus sync {job.corpus} --drain-spool` stops it"
+    return f"{command}  [{note}]"
+
+
 def jobs_command(output_json: bool) -> None:
     from .output import print_json
 
-    running = running_jobs()
+    running = [_with_cpu_progress(job) for job in running_jobs()]
     queued = queued_work(running)
 
     if output_json:
@@ -192,7 +242,13 @@ def jobs_command(output_json: bool) -> None:
         click.echo("No indexing jobs running.")
     else:
         rows = [("CORPUS", "KIND", "PID", "ELAPSED", "COMMAND")] + [
-            (job.corpus, job.kind, str(job.pid), format_duration(job.elapsed), job.command or "?")
+            (
+                job.corpus,
+                job.kind,
+                str(job.pid),
+                format_duration(job.elapsed),
+                _describe_command(job),
+            )
             for job in running
         ]
         widths = [max(len(row[i]) for row in rows) for i in range(4)]

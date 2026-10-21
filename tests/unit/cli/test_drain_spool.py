@@ -117,6 +117,87 @@ def test_drain_declines_when_another_worker_holds_the_lock(isolated, repo):
     assert spool.has_pending("Docs"), "work must be left for the running worker"
 
 
+def _observation(idle_s):
+    from arcaneum.cli import drain_watchdog
+
+    return drain_watchdog.Observation(pid=4242, started=0.0, cpu_s=1.0, idle_s=idle_s)
+
+
+@pytest.fixture
+def state(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+
+
+def test_drain_takes_over_from_a_stalled_worker(isolated, state, repo):
+    from arcaneum.cli import drain_watchdog, hook_log
+
+    spool.write_entry("Docs", repo, changed=[str(repo / "a.py")], removed=[])
+    called = []
+    lock = spool.try_acquire_worker_lock("Docs")
+
+    def stop(observation, **kwargs):
+        # Stopping the holder releases its lock, as the OS does on exit.
+        spool.release_worker_lock(lock)
+        return True
+
+    with (
+        patch.object(drain_watchdog, "observe", return_value=_observation(3600)),
+        patch.object(drain_watchdog, "stop", side_effect=stop) as stopped,
+    ):
+        result = _run(["corpus", "sync", "Docs", "--drain-spool"], lambda *a, **k: called.append(1))
+
+    assert result.exit_code == 0, result.output
+    stopped.assert_called_once()
+    assert called, "the stalled worker's batch must be drained"
+    log = hook_log.hook_log_path().read_text()
+    assert "pid 4242 made no CPU progress for 1h" in log
+
+
+def test_drain_still_declines_while_the_holder_progresses(isolated, state, repo):
+    from arcaneum.cli import drain_watchdog
+
+    spool.write_entry("Docs", repo, changed=[str(repo / "a.py")], removed=[])
+    called = []
+    lock = spool.try_acquire_worker_lock("Docs")
+    try:
+        with (
+            patch.object(drain_watchdog, "observe", return_value=_observation(60)),
+            patch.object(drain_watchdog, "stop") as stopped,
+        ):
+            result = _run(
+                ["corpus", "sync", "Docs", "--drain-spool"], lambda *a, **k: called.append(1)
+            )
+    finally:
+        spool.release_worker_lock(lock)
+
+    assert result.exit_code == 0, result.output
+    stopped.assert_not_called()
+    assert not called
+
+
+def test_drain_declines_when_a_stalled_worker_cannot_be_stopped(isolated, state, repo):
+    from arcaneum.cli import drain_watchdog, hook_log
+
+    spool.write_entry("Docs", repo, changed=[str(repo / "a.py")], removed=[])
+    called = []
+    lock = spool.try_acquire_worker_lock("Docs")
+    try:
+        with (
+            patch.object(drain_watchdog, "observe", return_value=_observation(3600)),
+            patch.object(drain_watchdog, "stop", return_value=False),
+        ):
+            result = _run(
+                ["corpus", "sync", "Docs", "--drain-spool"], lambda *a, **k: called.append(1)
+            )
+    finally:
+        spool.release_worker_lock(lock)
+
+    assert result.exit_code == 0, result.output
+    assert not called
+    assert spool.has_pending("Docs")
+    assert "could not stop stalled drain pid 4242" in hook_log.hook_log_path().read_text()
+
+
 def test_drain_releases_the_worker_lock_when_done(isolated, repo):
     spool.write_entry("Docs", repo, changed=[str(repo / "a.py")], removed=[])
     _run(["corpus", "sync", "Docs", "--drain-spool"], lambda *a, **k: None)

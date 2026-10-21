@@ -232,3 +232,50 @@ def test_cli_json(data_dir):
     assert job["elapsed_seconds"] >= 0
     [work] = payload["data"]["queued"]
     assert (work["corpus"], work["claimed"], work["orphaned"]) == ("Queued", 1, True)
+
+
+# --- stalled drains -----------------------------------------------------------------
+
+
+@pytest.fixture
+def idle_drain(data_dir, monkeypatch):
+    """A live drain whose CPU time has not moved for an hour."""
+    from arcaneum.cli import drain_watchdog
+
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
+    started = time.time()
+    _write_worker_record("Docs", pid=proc.pid, started=started)
+    monkeypatch.setattr(drain_watchdog, "_tree_cpu_seconds", lambda _proc: 5.0)
+    spool.worker_watch_path("Docs").write_text(
+        json.dumps({"pid": proc.pid, "started": started, "cpu": 5.0, "since": time.time() - 3600})
+    )
+    yield proc
+    proc.kill()
+    proc.wait()
+
+
+def test_cli_flags_a_drain_without_cpu_progress(idle_drain):
+    result = CliRunner().invoke(cli, ["corpus", "jobs"])
+
+    assert result.exit_code == 0, result.output
+    assert "no CPU progress for 1h" in result.output
+    assert "stalled" in result.output
+
+
+def test_cli_json_reports_cpu_idle_seconds(idle_drain):
+    result = CliRunner().invoke(cli, ["corpus", "jobs", "--json"])
+
+    assert result.exit_code == 0, result.output
+    [job] = json.loads(result.output)["data"]["jobs"]
+    assert job["cpu_idle_seconds"] >= 3600
+
+
+def test_cli_says_nothing_of_progress_for_a_busy_drain(data_dir):
+    fd = spool.try_acquire_worker_lock("Docs")
+    try:
+        result = CliRunner().invoke(cli, ["corpus", "jobs"])
+    finally:
+        spool.release_worker_lock(fd)
+
+    assert result.exit_code == 0, result.output
+    assert "CPU progress" not in result.output

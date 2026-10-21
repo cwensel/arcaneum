@@ -56,7 +56,7 @@ full-text search (MeiliSearch) for the same content.
 - --local-embed: Embed every model locally for this run, ignoring configured
   remote embedding workers
 - --background: Run below interactive work (compilers, tests) for continuous
-  indexing; on macOS, efficiency cores only and the Docker VM at nice 5
+  indexing; nice 10 on macOS, SCHED_IDLE on Linux
 - --changed-since REV: Sync only what a git commit or range touched (e.g. HEAD,
   ORIG_HEAD..HEAD), removing the files it deleted
 - --order: Process files by path (default), newest modification first, or oldest

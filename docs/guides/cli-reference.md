@@ -318,11 +318,10 @@ arc corpus sync MyCorpus /path/to/repo --git-version       # Keep multiple versi
   remote workers
 - `--background`: Run below interactive work such as compilers and tests, for
   continuous indexing on a busy machine. On macOS, arc and its worker processes
-  use efficiency cores only, with throttled disk I/O, and the Docker Desktop VM
-  drops to nice 5 so Qdrant and MeiliSearch stay just below interactive work.
-  On Linux, arc runs at `SCHED_IDLE`, nice 19, and Docker is unchanged. Nothing
-  is restored on exit: raising a priority again needs root, and the VM returns
-  to normal when Docker Desktop restarts. Searches are unaffected.
+  run at nice 10: CPU priority only, so disk I/O and swap page-ins are not
+  throttled. On Linux, arc runs at `SCHED_IDLE`, nice 19. Docker is unchanged
+  on both, so searches are unaffected. Nothing is restored on exit: raising a
+  priority again needs root.
 - `--text-workers`: Parallel workers for code AST chunking (default: auto)
 - `--order`: Order files are indexed in: `path` (default, alphabetical), `newest`
   (most recently modified first), or `oldest`. Affects processing order only, not

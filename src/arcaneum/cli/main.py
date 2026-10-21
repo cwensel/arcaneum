@@ -371,8 +371,8 @@ def _background_option(func):
         "--background",
         is_flag=True,
         help=(
-            "Run below interactive work such as compilers and tests. macOS: efficiency "
-            "cores only, Docker VM at nice 5. Linux: SCHED_IDLE, nice 19"
+            "Run below interactive work such as compilers and tests. macOS: nice 10. "
+            "Linux: SCHED_IDLE, nice 19"
         ),
     )(func)
 

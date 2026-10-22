@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import importlib.util
+import json
 import logging
 import socket
+import subprocess
+import sys
 import threading
 import time
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -13,7 +18,9 @@ from remote_fakes import FakeClock, FakeHost, RawClient, wait_for
 
 from arcaneum.embeddings.remote.identity import dependency_versions, local_identity
 from arcaneum.embeddings.remote.server import (
+    EmbeddingClientHost,
     EmbeddingServer,
+    EncodeCancelled,
     ServerSettings,
     default_encode_batch_size,
     find_tailscale_address,
@@ -325,6 +332,168 @@ def test_disconnected_clients_queued_requests_are_dropped(server_factory, host):
     permits.release()
     wait_for(lambda: host.active == 0 and len(host.encodes) == 1)
     first.close()
+
+
+def test_disconnecting_client_cancels_its_running_encode(server_factory, host):
+    server = server_factory()
+    permits = host.encode_permits["qwen3-embed"] = threading.Semaphore(0)
+    client = RawClient(server.address, "qwen3-embed")
+    client.encode(["a long chunk"])
+    assert host.encode_started.wait(5)
+    assert not host.cancel_signals[0].is_set()
+
+    client.close()
+    wait_for(lambda: host.cancel_signals[0].is_set())
+    permits.release()
+    status = RawClient(server.address)
+    wait_for(lambda: status.heartbeat()["busy"] is False)
+    status.close()
+
+
+def test_connected_clients_running_encode_is_not_cancelled(server_factory, host):
+    server = server_factory()
+    permits = host.encode_permits["arctic-m"] = threading.Semaphore(0)
+    staying = RawClient(server.address, "arctic-m")
+    leaving = RawClient(server.address, "arctic-m")
+    request = staying.encode(["running"])
+    assert host.encode_started.wait(5)
+
+    leaving.close()
+    wait_for(lambda: server.connection_count() == 1)
+    assert not host.cancel_signals[0].is_set()
+    permits.release()
+    assert staying.wait(request)["type"] == MessageType.ENCODED
+    staying.close()
+
+
+def test_cancelled_encode_frees_the_endpoint_without_a_reply(server_factory, host):
+    server = server_factory()
+
+    def cancellable(model, texts, cancelled):
+        host.encode_started.set()
+        assert cancelled.wait(5)
+        raise EncodeCancelled()
+
+    host.encode = cancellable
+    leaving = RawClient(server.address, "qwen3-embed")
+    leaving.encode(["a long chunk"])
+    assert host.encode_started.wait(5)
+    leaving.close()
+
+    host.encode = FakeHost().encode
+    next_client = RawClient(server.address, "qwen3-embed")
+    assert next_client.wait(next_client.encode(["next"]))["type"] == MessageType.ENCODED
+    next_client.close()
+
+
+def test_request_whose_client_left_during_the_load_is_not_encoded(server_factory, host):
+    server = server_factory()
+    host.load_gate = threading.Event()
+    client = RawClient(server.address, "qwen3-embed")
+    client.encode(["alpha"])
+    wait_for(lambda: host.loads == ["qwen3-embed"])
+
+    client.close()
+    wait_for(lambda: server.connection_count() == 0)
+    host.load_gate.set()
+    status = RawClient(server.address)
+    wait_for(lambda: status.heartbeat()["resident_model"] == "qwen3-embed")
+    wait_for(lambda: status.heartbeat()["busy"] is False)
+    status.close()
+    assert host.encodes == []
+
+
+TORCH_CANCEL_SCRIPT = """
+import json, threading, torch
+from arcaneum.embeddings.remote.server import EncodeCancelled, cancel_forward_on
+
+cancelled, ran = threading.Event(), []
+
+class Step(torch.nn.Module):
+    def __init__(self, name, cancels=False):
+        super().__init__()
+        self.step, self.cancels = name, cancels
+
+    def forward(self, x):
+        ran.append(self.step)
+        if self.cancels:
+            cancelled.set()
+        return x
+
+model = torch.nn.Sequential(Step("a"), Step("b", cancels=True), Step("c"))
+try:
+    with cancel_forward_on(model, cancelled):
+        model(torch.zeros(1))
+    outcome = "finished"
+except EncodeCancelled:
+    outcome = "cancelled"
+interrupted = list(ran)
+ran.clear()
+model(torch.zeros(1))
+print(json.dumps({"outcome": outcome, "interrupted": interrupted, "after": ran}))
+"""
+
+
+def test_cancel_signal_stops_a_torch_forward_pass_between_modules():
+    # Real torch runs in a subprocess: tests in this process swap torch in sys.modules.
+    if importlib.util.find_spec("torch") is None:
+        pytest.skip("torch is not installed")
+    result = subprocess.run(
+        [sys.executable, "-c", TORCH_CANCEL_SCRIPT],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=True,
+    )
+
+    assert json.loads(result.stdout.splitlines()[-1]) == {
+        "outcome": "cancelled",
+        "interrupted": ["a", "b"],
+        "after": ["a", "b", "c"],
+    }
+
+
+class HookedModule:
+    """Duck-typed torch module: each call runs its forward pre-hooks, then one step."""
+
+    def __init__(self):
+        self.hooks = []
+        self.steps = 0
+
+    def modules(self):
+        return [self]
+
+    def register_forward_pre_hook(self, hook):
+        self.hooks.append(hook)
+        return SimpleNamespace(remove=lambda: self.hooks.remove(hook))
+
+    def __call__(self):
+        for hook in list(self.hooks):
+            hook(self, ())
+        self.steps += 1
+
+
+def test_embedding_client_host_cancels_a_sentence_transformer_encode():
+    cancelled = threading.Event()
+    module = HookedModule()
+
+    class Client:
+        def get_model(self, name):
+            return module
+
+        def embed(self, texts, name, prompt_type):
+            module()
+            cancelled.set()
+            module()
+            return [[0.0]]
+
+    host = EmbeddingClientHost.__new__(EmbeddingClientHost)
+    host.client = Client()
+
+    with pytest.raises(EncodeCancelled):
+        host.encode("qwen3-embed", ["alpha"], cancelled)
+    assert module.steps == 1
+    assert module.hooks == []
 
 
 def test_server_binds_a_literal_address(server_factory):

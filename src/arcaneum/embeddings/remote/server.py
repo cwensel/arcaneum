@@ -5,7 +5,8 @@ Model loads and encodes run on one executor thread, so encodes from several
 clients never overlap. At most one model is resident: requests for another model
 wait (``queued``) until the resident model yields, which it does after its current
 encode once another model is waiting and either it has been idle for the grace
-period or it has been resident for the turn length.
+period or it has been resident for the turn length. A client that disconnects
+loses its queued requests and cancels its running encode.
 """
 
 from __future__ import annotations
@@ -18,7 +19,8 @@ import socket
 import threading
 import time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from multiprocessing.connection import Listener, answer_challenge, deliver_challenge
 from typing import Any, Optional, Protocol
@@ -47,12 +49,38 @@ TAILSCALE_NETWORK = ipaddress.ip_network("100.64.0.0/10")
 HANDSHAKE_TIMEOUT = 30.0
 
 
+class EncodeCancelled(Exception):
+    """An encode stopped early because the client that asked for it disconnected."""
+
+
+@contextmanager
+def cancel_forward_on(module: Any, cancelled: threading.Event) -> Iterator[None]:
+    """Raise ``EncodeCancelled`` at the next submodule call once ``cancelled`` is set.
+
+    A long-sequence CPU encode can run for minutes; checking before every module's
+    forward stops it within one layer without changing how texts are batched.
+    """
+
+    def check(_module: Any, _args: Any) -> None:
+        if cancelled.is_set():
+            raise EncodeCancelled()
+
+    handles = [each.register_forward_pre_hook(check) for each in module.modules()]
+    try:
+        yield
+    finally:
+        for handle in handles:
+            handle.remove()
+
+
 class ModelHost(Protocol):
     """Loads, runs and unloads embedding models for the server's executor."""
 
     def load(self, model: str) -> None: ...
 
-    def encode(self, model: str, texts: list[str]) -> np.ndarray: ...
+    def encode(self, model: str, texts: list[str], cancelled: threading.Event) -> np.ndarray:
+        """Embed ``texts``; may raise ``EncodeCancelled`` once ``cancelled`` is set."""
+        ...
 
     def unload(self, model: str) -> None: ...
 
@@ -71,8 +99,16 @@ class EmbeddingClientHost:
     def load(self, model: str) -> None:
         self.client.get_model(model)
 
-    def encode(self, model: str, texts: list[str]) -> np.ndarray:
-        return np.asarray(self.client.embed(texts, model, prompt_type="document"))
+    def encode(self, model: str, texts: list[str], cancelled: threading.Event) -> np.ndarray:
+        loaded = self.client.get_model(model)
+        # SentenceTransformer models are torch modules and can stop mid-pass;
+        # fastembed runs each ONNX batch to completion.
+        if callable(getattr(loaded, "register_forward_pre_hook", None)):
+            guard = cancel_forward_on(loaded, cancelled)
+        else:
+            guard = nullcontext()
+        with guard:
+            return np.asarray(self.client.embed(texts, model, prompt_type="document"))
 
     def unload(self, model: str) -> None:
         self.client.unload_model(model)
@@ -204,6 +240,7 @@ class _Request:
     model: str
     texts: list[str]
     sequence: int = 0
+    cancelled: threading.Event = field(default_factory=threading.Event)
 
 
 class _Scheduler:
@@ -248,11 +285,13 @@ class _Scheduler:
             self._cond.notify_all()
 
     def drop(self, connection: "_ServerConnection") -> None:
-        """Forget a closed connection's queued requests; a running one finishes unseen."""
+        """Forget a closed connection's queued requests and cancel its running one."""
         with self._cond:
             for queue in self._queues.values():
                 for request in [r for r in queue if r.connection is connection]:
                     queue.remove(request)
+            if self._running is not None and self._running.connection is connection:
+                self._running.cancelled.set()
             self._cond.notify_all()
 
     def queued_count(self) -> int:
@@ -356,10 +395,23 @@ class _Scheduler:
     def _encode(self, request: _Request) -> None:
         started = time.monotonic()
         try:
-            result = self._host.encode(request.model, request.texts)
+            # The client may have left while its model was loading.
+            if request.cancelled.is_set():
+                raise EncodeCancelled()
+            result = self._host.encode(request.model, request.texts, request.cancelled)
             reply = encoded_message(
                 request.request_id, result, encode_seconds=time.monotonic() - started
             )
+        except EncodeCancelled:
+            logger.info(
+                "Cancelled encoding %d texts for %s after %.0f s: %s disconnected",
+                len(request.texts),
+                request.model,
+                time.monotonic() - started,
+                request.connection.peer,
+            )
+            reply = None
+            error = None
         except Exception as exc:
             logger.exception("Encoding %d texts for %s failed", len(request.texts), request.model)
             reply = None
@@ -371,7 +423,7 @@ class _Scheduler:
             self._cond.notify_all()
         if reply is not None:
             request.connection.reply(request, reply)
-        else:
+        elif error is not None:
             request.connection.reply_error(request, "backend_error", error)
 
 
@@ -599,6 +651,10 @@ class EmbeddingServer:
 
     def queued_count(self) -> int:
         return self._scheduler.queued_count()
+
+    def connection_count(self) -> int:
+        with self._connections_lock:
+            return len(self._connections)
 
     def _next_sequence(self) -> int:
         with self._connections_lock:

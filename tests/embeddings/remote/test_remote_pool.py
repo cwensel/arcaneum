@@ -254,10 +254,10 @@ def test_a_batch_that_always_fails_fails_the_call_not_the_endpoints(cluster, una
     for host in cluster.hosts:
         original = host.encode
 
-        def encode(model, texts, original=original):
+        def encode(model, texts, cancelled, original=original):
             if "poison" in texts:
                 raise ValueError("tokenizer exploded")
-            return original(model, texts)
+            return original(model, texts, cancelled)
 
         host.encode = encode
     pool = cluster.pool([port_of(s) for s in servers], unavailable=unavailable)

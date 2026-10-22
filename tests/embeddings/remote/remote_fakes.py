@@ -38,6 +38,7 @@ class FakeHost:
         self.loads: list[str] = []
         self.unloads: list[str] = []
         self.encodes: list[tuple[str, list[str]]] = []
+        self.cancel_signals: list[threading.Event] = []
         self.load_gate: threading.Event | None = None
         self.encode_permits: dict[str, threading.Semaphore] = {}
         self.encode_started = threading.Event()
@@ -50,11 +51,12 @@ class FakeHost:
         if self.load_gate is not None:
             assert self.load_gate.wait(5)
 
-    def encode(self, model: str, texts: list[str]) -> np.ndarray:
+    def encode(self, model: str, texts: list[str], cancelled: threading.Event) -> np.ndarray:
         with self._lock:
             self.active += 1
             self.max_active = max(self.max_active, self.active)
         try:
+            self.cancel_signals.append(cancelled)
             self.encode_started.set()
             permits = self.encode_permits.get(model)
             if permits is not None:

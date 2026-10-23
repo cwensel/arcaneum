@@ -272,6 +272,9 @@ class _Scheduler:
     def stop(self) -> None:
         with self._cond:
             self._stopped = True
+            # Exiting while torch is mid-encode on this thread aborts the process.
+            if self._running is not None:
+                self._running.cancelled.set()
             self._cond.notify_all()
         self._thread.join(timeout=5)
 
@@ -404,11 +407,11 @@ class _Scheduler:
             )
         except EncodeCancelled:
             logger.info(
-                "Cancelled encoding %d texts for %s after %.0f s: %s disconnected",
+                "Cancelled encoding %d texts for %s from %s after %.0f s",
                 len(request.texts),
                 request.model,
-                time.monotonic() - started,
                 request.connection.peer,
+                time.monotonic() - started,
             )
             reply = None
             error = None

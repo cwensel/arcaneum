@@ -403,6 +403,31 @@ def test_request_whose_client_left_during_the_load_is_not_encoded(server_factory
     assert host.encodes == []
 
 
+def test_stopping_the_server_cancels_the_running_encode(server_factory, host, monkeypatch):
+    server = server_factory()
+    seen = []
+
+    def cancellable(model, texts, cancelled):
+        host.encode_started.set()
+        seen.append(cancelled.wait(5))
+        raise EncodeCancelled()
+
+    host.encode = cancellable
+    # On Linux closing a socket does not wake the thread reading it, so a
+    # connection's own cleanup may not run before the process exits.
+    monkeypatch.setattr(server._scheduler, "drop", lambda connection: None)
+    client = RawClient(server.address, "qwen3-embed")
+    client.encode(["a long chunk"])
+    assert host.encode_started.wait(5)
+
+    started = time.monotonic()
+    server.stop()
+
+    assert seen == [True]
+    assert time.monotonic() - started < 2
+    client.close()
+
+
 TORCH_CANCEL_SCRIPT = """
 import json, threading, torch
 from arcaneum.embeddings.remote.server import EncodeCancelled, cancel_forward_on

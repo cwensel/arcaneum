@@ -215,8 +215,7 @@ def render_dockerfile(wheel_name: str) -> str:
             "ENV PIP_NO_CACHE_DIR=1 PYTHONUNBUFFERED=1 XDG_CACHE_HOME=" + CACHE_MOUNT,
             "RUN pip install --index-url https://download.pytorch.org/whl/cpu torch",
             f"COPY {wheel_name} /tmp/{wheel_name}",
-            f'RUN pip install "/tmp/{wheel_name}[sentence-transformers]" '
-            f"&& rm /tmp/{wheel_name}",
+            f'RUN pip install "/tmp/{wheel_name}[sentence-transformers]" && rm /tmp/{wheel_name}',
             'CMD ["arc", "models", "serve"]',
         ]
     )
@@ -512,6 +511,22 @@ def _parse_images(stdout: str) -> list[tuple[str, str, str]]:
     return images
 
 
+def select_endpoints(
+    config: RemoteEmbeddingConfig, hosts: Optional[Iterable[str]]
+) -> list[EndpointConfig]:
+    """The configured endpoints matching ``hosts`` by host, name or SSH target; all if none."""
+    if not hosts:
+        return list(config.endpoints)
+    selected = []
+    for name in hosts:
+        matches = [e for e in config.endpoints if name in (e.host, e.name, e.ssh_target)]
+        if not matches:
+            known = ", ".join(e.name for e in config.endpoints) or "none"
+            raise DeployError(f"No configured endpoint matches '{name}' (configured: {known})")
+        selected.extend(e for e in matches if e not in selected)
+    return selected
+
+
 class Deployer:
     def __init__(
         self,
@@ -543,16 +558,7 @@ class Deployer:
         self.health_timeout = health_timeout
 
     def select(self, hosts: Optional[Iterable[str]]) -> list[EndpointConfig]:
-        if not hosts:
-            return list(self.config.endpoints)
-        selected = []
-        for name in hosts:
-            matches = [e for e in self.config.endpoints if name in (e.host, e.name, e.ssh_target)]
-            if not matches:
-                known = ", ".join(e.name for e in self.config.endpoints) or "none"
-                raise DeployError(f"No configured endpoint matches '{name}' (configured: {known})")
-            selected.extend(e for e in matches if e not in selected)
-        return selected
+        return select_endpoints(self.config, hosts)
 
     def deploy(self, hosts: Optional[Iterable[str]] = None) -> bool:
         """Deploy each selected endpoint in turn; returns False if any host failed."""
@@ -760,3 +766,126 @@ class Deployer:
         keep_ids = {image_id for image_id, tag, _ in images if tag in keep}
         for image_id in sorted({image_id for image_id, _, _ in images} - keep_ids):
             runner.run(["docker", "image", "rm", image_id], check=False)
+
+
+# --- Stop / start ----------------------------------------------------------------------
+
+
+class WorkerControl:
+    """Stops and starts deployed worker containers without rebuilding or replacing them.
+
+    Stopping cancels any encode in progress and frees the worker's CPU and memory; the
+    container's ``unless-stopped`` policy keeps it stopped across reboots until started.
+    """
+
+    def __init__(
+        self,
+        config: RemoteEmbeddingConfig,
+        *,
+        dry_run: bool = False,
+        runner_factory: Callable[[str], RemoteRunner] = SshRunner,
+        probe: Callable[[EndpointConfig, RemoteEmbeddingConfig], EndpointStatus] = probe_endpoint,
+        out: Callable[[str], None] = print,
+        sleep: Optional[Callable[[float], None]] = None,
+        health_timeout: float = 180.0,
+    ) -> None:
+        import time
+
+        self.config = config
+        self.dry_run = dry_run
+        self.runner_factory = runner_factory
+        self.probe = probe
+        self.out = out
+        self.sleep = sleep or time.sleep
+        self.health_timeout = health_timeout
+
+    def stop(self, hosts: Optional[Iterable[str]] = None) -> bool:
+        """Stop each selected worker; returns False if any host failed."""
+        return self._each(hosts, self._stop_endpoint)
+
+    def start(self, hosts: Optional[Iterable[str]] = None) -> bool:
+        """Start each selected stopped worker; returns False if any host failed."""
+        return self._each(hosts, self._start_endpoint)
+
+    def _each(
+        self, hosts: Optional[Iterable[str]], action: Callable[[EndpointConfig], None]
+    ) -> bool:
+        ok = True
+        for endpoint in select_endpoints(self.config, hosts):
+            try:
+                action(endpoint)
+            except DeployError as exc:
+                ok = False
+                self.out(f"✗ {endpoint.name}: {exc}")
+        return ok
+
+    def _container(
+        self, runner: RemoteRunner, endpoint: EndpointConfig
+    ) -> Optional[ContainerState]:
+        try:
+            runner.run(["docker", "version", "--format", "{{.Server.Version}}"], timeout=60)
+        except DeployError as exc:
+            raise DeployError(f"preflight failed on {endpoint.ssh_target}: {exc}") from exc
+        name = container_name(endpoint.port)
+        inspected = runner.run(["docker", "container", "inspect", name], check=False)
+        return _parse_container(inspected.stdout) if inspected.returncode == 0 else None
+
+    def _stop_endpoint(self, endpoint: EndpointConfig) -> None:
+        runner = self.runner_factory(endpoint.ssh_target)
+        container = self._container(runner, endpoint)
+        name = container_name(endpoint.port)
+        if container is None:
+            self.out(f"✓ {endpoint.name}: no worker container; nothing to stop")
+        elif not container.running:
+            self.out(f"✓ {endpoint.name}: already stopped")
+        elif self.dry_run:
+            self.out(f"{endpoint.name}: would stop {name}")
+        else:
+            runner.run(["docker", "stop", name])
+            self.out(f"✓ {endpoint.name}: stopped (`arc models start` resumes it)")
+
+    def _start_endpoint(self, endpoint: EndpointConfig) -> None:
+        runner = self.runner_factory(endpoint.ssh_target)
+        container = self._container(runner, endpoint)
+        name = container_name(endpoint.port)
+        if container is None:
+            raise DeployError(
+                f"no worker container on {endpoint.ssh_target}; run `arc models deploy`"
+            )
+        if container.running:
+            self.out(f"✓ {endpoint.name}: already running")
+            return
+        if self.dry_run:
+            self.out(f"{endpoint.name}: would start {name}")
+            return
+        runner.run(["docker", "start", name])
+        status = self._wait_answering(runner, endpoint)
+        running = f"{status.arcaneum_version or '?'} {(status.code_fingerprint or '?')[:12]}"
+        if status.state == "mismatch":
+            self.out(
+                f"✓ {endpoint.name}: started, running arcaneum {running}, which differs from "
+                f"this workstation ({status.reason}); run `arc models deploy` to update it"
+            )
+        else:
+            self.out(f"✓ {endpoint.name}: started, running arcaneum {running}")
+
+    def _wait_answering(self, runner: RemoteRunner, endpoint: EndpointConfig) -> EndpointStatus:
+        """Poll until the worker answers a status connection, whatever code it runs."""
+        name = container_name(endpoint.port)
+        status = None
+        for _ in range(max(1, math.ceil(self.health_timeout / HEALTH_POLL))):
+            status = self.probe(endpoint, self.config)
+            if status.state != "unreachable":
+                return status
+            inspected = runner.run(["docker", "container", "inspect", name], check=False)
+            container = _parse_container(inspected.stdout) if inspected.returncode == 0 else None
+            if container is None or not container.running:
+                break
+            self.sleep(HEALTH_POLL)
+        logs = runner.run(["docker", "logs", "--tail", "40", name], check=False)
+        self.out(f"  {name} log on {endpoint.ssh_target}:\n{(logs.stdout + logs.stderr).rstrip()}")
+        detail = tailscale_resolution_problem(endpoint) or (status.reason if status else None)
+        raise DeployError(
+            f"the worker did not answer within {self.health_timeout:.0f}s"
+            + (f" ({detail})" if detail else "")
+        )

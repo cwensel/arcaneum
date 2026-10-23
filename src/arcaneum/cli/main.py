@@ -556,6 +556,51 @@ def models_deploy(hosts, build, wheel_path, refresh, dry_run, no_verify):
     )
 
 
+@models.command("stop")
+@click.argument("hosts", nargs=-1)
+@click.option("--dry-run", is_flag=True, help="Show which workers would stop without stopping them")
+def models_stop(hosts, dry_run):
+    """Stop remote embedding workers over SSH, freeing their CPU and memory.
+
+    Stops each configured endpoint's container (or the HOSTS named). Any encode
+    in progress is cancelled; syncs mark a stopped worker down and use the
+    others, or follow remote_embedding.unavailable when none is left. A stopped
+    worker stays stopped, across reboots too, until `arc models start`.
+
+    \b
+    Examples:
+        arc models stop
+        arc models stop dev-0
+        arc models stop --dry-run
+    """
+    from arcaneum.cli.remote_embedding import control_command
+
+    control_command("stop", hosts, dry_run=dry_run)
+
+
+@models.command("start")
+@click.argument("hosts", nargs=-1)
+@click.option(
+    "--dry-run", is_flag=True, help="Show which workers would start without starting them"
+)
+def models_start(hosts, dry_run):
+    """Start stopped remote embedding workers over SSH and wait until they answer.
+
+    Starts each configured endpoint's existing container (or the HOSTS named)
+    as last deployed; it does not rebuild or upgrade. A worker without a
+    container, or running code other than this workstation's, needs
+    `arc models deploy`.
+
+    \b
+    Examples:
+        arc models start
+        arc models start dev-0
+    """
+    from arcaneum.cli.remote_embedding import control_command
+
+    control_command("start", hosts, dry_run=dry_run)
+
+
 # Indexing commands (RDR-004, RDR-005, RDR-010)
 @cli.group(
     cls=HelpfulGroup,

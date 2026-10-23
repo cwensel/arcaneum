@@ -240,6 +240,13 @@ the background every `probe_interval` until it answers again. A sub-batch that
 fails on its own (an encode error or invalid vectors) is retried once and then
 fails only that file; the worker stays up.
 
+When a sync disconnects from a worker (it finished, failed or was
+interrupted), the worker drops that sync's queued requests and cancels its
+running encode: a SentenceTransformers encode such as qwen3-embed stops within
+one model layer, and a fastembed encode such as arctic-m after its current
+batch. The model stays resident until another model needs the worker or the
+worker is stopped.
+
 There is no distribution setting beyond `models`, `batch_size` and the turn
 settings below.
 
@@ -313,11 +320,31 @@ and skipped, the others continue, and deploy exits non-zero.
 | Endpoint settings changed | `arc models deploy` | Replace container, reuse image |
 | Base image or dependency updates | `arc models deploy --refresh` | Rebuild with `--pull --no-cache`, replace container |
 | Container stopped or missing | `arc models deploy` | Start or create container |
+| Free a worker's CPU and memory | `arc models stop` | Stop container |
+| Resume a stopped worker | `arc models start` | Start container as last deployed |
 | Container not answering | `arc models deploy` | Replace container |
 | Nothing changed | `arc models deploy` | None |
 
 `--dry-run` shows each host's current and desired version, fingerprint and
 action without changing anything. `--no-verify` skips the parity check.
+
+### Stopping and Starting Workers
+
+`arc models stop [HOSTS...]` stops worker containers over SSH, cancelling any
+encode in progress and freeing the worker's CPU and the resident model's
+memory. Syncs mark a stopped worker down and use the others; with none left
+they follow the [unavailable policy](#unavailable-policy). Because of
+`--restart unless-stopped`, a stopped worker stays stopped across reboots.
+
+`arc models start [HOSTS...]` starts the existing containers and waits until
+each answers. It neither rebuilds nor upgrades: a worker without a container
+needs `arc models deploy`, and one running code other than the workstation's
+is reported with a hint to deploy. Both accept `--dry-run`.
+
+```bash
+arc models stop dev-0      # Free dev-0 for other work
+arc models start           # Bring every stopped worker back
+```
 
 ### Removing a Worker
 
@@ -369,7 +396,7 @@ MagicDNS, rather than only as unreachable.
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | `mismatch` in `arc models workers`; syncs wait, fall back or fail | Workstation code changed (upgrade, commit, pull) | `arc models deploy` (release) or `arc models deploy --build` (source) |
-| `unreachable (... Connection refused)` | Container stopped or missing, or wrong port | `arc models deploy`; check `docker ps` on the host |
+| `unreachable (... Connection refused)` | Container stopped or missing, or wrong port | `arc models start` if stopped, else `arc models deploy`; check `docker ps` on the host |
 | `... resolves to <address> ... outside the tailnet` | Workstation not on the tailnet, or MagicDNS off | Start Tailscale and enable MagicDNS on the workstation |
 | `authentication failed ... same authkey` or `undecodable message ... authkey` | `authkey` set on only one side or different | Set the same `remote_embedding.authkey` and redeploy |
 | Deploy: `vector parity check failed` | Worker and workstation dependency versions embed differently (both sides' versions are printed) | Align the workstation's packages with the worker's, or serve only the passing models (`models:`), then redeploy |

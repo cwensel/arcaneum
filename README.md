@@ -96,7 +96,8 @@ for the capability matrix, worker fallback behavior, diagnostics, and evidence.
   on the LAN or a Tailscale tailnet; query embedding stays local
 - Workers run arcaneum's own code in Docker, so their vectors match local ones
 - `arc models deploy` installs and updates workers over SSH and checks vector
-  parity before they are used; `arc models workers` shows their state
+  parity before they are used; `arc models workers` shows their state, and
+  `arc models stop` / `start` free and resume them
 
 See [Remote Embedding Workers](docs/guides/remote-embedding-workers.md).
 

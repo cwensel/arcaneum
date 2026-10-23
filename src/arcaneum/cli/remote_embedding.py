@@ -1,4 +1,7 @@
-"""Remote embedding worker commands: `arc models serve`, `workers`, `deploy` (RDR-025)."""
+"""Remote embedding worker commands: `arc models serve`, `workers`, `deploy`, `stop`, `start`.
+
+See RDR-025.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from arcaneum.embeddings.client import EMBEDDING_MODELS, model_revision
-from arcaneum.embeddings.remote.deploy import Deployer, DeployError, resolve_wheel
+from arcaneum.embeddings.remote.deploy import Deployer, DeployError, WorkerControl, resolve_wheel
 from arcaneum.embeddings.remote.pool import probe_endpoint
 from arcaneum.embeddings.remote.server import EmbeddingServer, ServerSettings
 
@@ -257,6 +260,27 @@ def deploy_command(
     )
     try:
         ok = deployer.deploy(hosts)
+    except DeployError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    if not ok:
+        sys.exit(1)
+
+
+# --- arc models stop / start -------------------------------------------------------
+
+
+def control_command(action: str, hosts: tuple[str, ...], *, dry_run: bool) -> None:
+    """Stop or start each configured worker (or the HOSTS named); exit 1 if any host fails."""
+    import click
+
+    config = _load_config_or_exit(False)
+    if not config.endpoints:
+        click.echo(NO_ENDPOINTS, err=True)
+        sys.exit(1)
+    control = WorkerControl(config, dry_run=dry_run, out=click.echo)
+    try:
+        ok = getattr(control, action)(hosts)
     except DeployError as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)

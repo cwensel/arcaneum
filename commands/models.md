@@ -1,6 +1,6 @@
 ---
 description: Manage embedding models and remote embedding workers
-argument-hint: <list|workers|deploy|serve> [options]
+argument-hint: <list|workers|deploy|stop|start|serve> [options]
 ---
 
 Manage and view available embedding models for vector search, and the optional
@@ -15,13 +15,18 @@ remote embedding workers that embed documents on spare machines.
   code fingerprint, resident model and dependency versions
 - `deploy [HOSTS...]`: Install, upgrade or reconfigure remote embedding workers
   over SSH, then check their vectors match this workstation's
+- `stop [HOSTS...]`: Stop remote embedding workers over SSH, cancelling any
+  encode in progress and freeing their CPU and memory until `start`
+- `start [HOSTS...]`: Start stopped remote embedding workers and wait until
+  they answer
 - `serve`: Run a remote embedding worker (normally inside the container
   `deploy` creates; not for use on the workstation)
 
 **Options:**
 
 - --json: Output in JSON format (`list`, `workers`)
-- --dry-run: Show each worker's current and desired state without changes (`deploy`)
+- --dry-run: Show each worker's current and desired state without changes
+  (`deploy`), or which workers would stop or start (`stop`, `start`)
 - --build: Deploy a wheel built from this source tree (`deploy`; needed for
   source checkouts and unreleased builds)
 - --wheel PATH: Deploy a given wheel (`deploy`)
@@ -36,6 +41,8 @@ remote embedding workers that embed documents on spare machines.
 /models workers
 /models deploy --dry-run
 /models deploy --build
+/models stop dev-0
+/models start
 ```
 
 Remote embedding workers are optional and configured under `remote_embedding`

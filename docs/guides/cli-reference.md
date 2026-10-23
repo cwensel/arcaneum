@@ -148,6 +148,8 @@ arc doctor                                 # Verify setup and prerequisites
 arc models list                            # List available embedding models
 arc models workers                         # Show remote embedding workers
 arc models deploy                          # Install or update remote embedding workers
+arc models stop                            # Stop remote embedding workers
+arc models start                           # Start stopped remote embedding workers
 arc models serve                           # Run an embedding worker (on a worker host)
 arc store <file> --collection <name>       # Store agent content for long-term memory
 ```
@@ -2455,6 +2457,26 @@ unless-stopped`, host networking, models cached in the
 `arcaneum-embed-models` volume). Deploy keeps the images for the current and
 previous fingerprint. To remove a worker, run
 `docker rm -f -v arcaneum-embed-<port>` and `docker image rm` on the host.
+
+`arc models stop` stops worker containers over SSH to free their CPU and
+memory, cancelling any encode in progress. Syncs mark a stopped worker down
+and use the others, or follow `remote_embedding.unavailable` when none is
+left. A stopped worker stays stopped, across reboots too, until
+`arc models start` starts its existing container and waits until it answers.
+Start neither rebuilds nor upgrades; a worker without a container, or running
+code other than the workstation's, needs `arc models deploy`.
+
+```bash
+arc models stop                   # Stop every configured worker
+arc models stop dev-0             # Only the named host(s)
+arc models start                  # Start every stopped worker
+arc models start --dry-run        # Show which workers would start; changes nothing
+```
+
+**Options (`stop`, `start`):**
+
+- `HOSTS`: Endpoints to stop or start (default: every configured endpoint)
+- `--dry-run`: Show which workers would stop or start without changing anything
 
 `arc models serve` runs the worker itself (normally inside the container that
 deploy creates):

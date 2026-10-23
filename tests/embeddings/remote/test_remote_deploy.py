@@ -17,6 +17,7 @@ from arcaneum.embeddings.remote.deploy import (
     DeployError,
     VerifyResult,
     WheelInfo,
+    WorkerControl,
     container_name,
     image_tag,
     render_dockerfile,
@@ -148,6 +149,9 @@ class FakeDockerHost:
             return ok
         if args[:2] == ["docker", "start"]:
             self.containers[args[2]]["running"] = True
+            return ok
+        if args[:2] == ["docker", "stop"]:
+            self.containers[args[-1]]["running"] = False
             return ok
         if args[:2] == ["docker", "logs"]:
             return CommandResult(0, "Waiting for the Tailscale address\n", "")
@@ -591,3 +595,179 @@ def test_built_wheels_match_the_installed_tree_and_each_other(tmp_path):
     # Wheels built at different times may differ byte for byte; only the
     # fingerprint identifies the image.
     assert first.path.name == second.path.name
+
+
+# --- arc models stop / start ---------------------------------------------------------
+
+
+class ControlHarness(Harness):
+    """Deployed fake workers plus a WorkerControl over the same hosts."""
+
+    def __init__(self, tmp_path, endpoints, **options):
+        super().__init__(tmp_path, endpoints)
+        self.deployer.deploy()
+        self.mismatched: set[str] = set()
+        for host in self.hosts.values():
+            host.commands.clear()
+        self.output.clear()
+        self.control = WorkerControl(
+            self.config,
+            runner_factory=lambda target: self.hosts[target],
+            probe=self.control_probe,
+            out=self.output.append,
+            sleep=lambda seconds: None,
+            health_timeout=5,
+            **options,
+        )
+
+    def control_probe(self, endpoint, config):
+        status = self.probe(endpoint, config)
+        if status.state == "up" and endpoint.name in self.mismatched:
+            return EndpointStatus(
+                endpoint.name, "mismatch", "code fingerprint differs", code_fingerprint=OLD
+            )
+        return status
+
+    def running(self, host):
+        return self.hosts[host].containers[container_name(7300)]["running"]
+
+
+def test_stop_stops_every_running_worker(tmp_path):
+    harness = ControlHarness(tmp_path, endpoints("dev-0", "dev-1"))
+
+    assert harness.control.stop() is True
+
+    for host in ("dev-0", "dev-1"):
+        assert not harness.running(host)
+        assert ["docker", "stop", container_name(7300)] in harness.hosts[host].commands
+    assert any("dev-0:7300" in line and "stopped" in line for line in harness.output)
+
+
+def test_stop_only_touches_the_named_hosts(tmp_path):
+    harness = ControlHarness(tmp_path, endpoints("dev-0", "dev-1"))
+
+    assert harness.control.stop(["dev-0"]) is True
+
+    assert not harness.running("dev-0")
+    assert harness.running("dev-1")
+    assert harness.hosts["dev-1"].commands == []
+
+
+def test_stop_leaves_an_already_stopped_worker_alone(tmp_path):
+    harness = ControlHarness(tmp_path, endpoints("dev-0"))
+    harness.hosts["dev-0"].containers[container_name(7300)]["running"] = False
+
+    assert harness.control.stop() is True
+
+    assert harness.hosts["dev-0"].changing() == []
+    assert any("already stopped" in line for line in harness.output)
+
+
+def test_stop_without_a_worker_container_has_nothing_to_do(tmp_path):
+    harness = ControlHarness(tmp_path, endpoints("dev-0"))
+    harness.hosts["dev-0"].containers.clear()
+
+    assert harness.control.stop() is True
+
+    assert harness.hosts["dev-0"].changing() == []
+    assert any("no worker container" in line for line in harness.output)
+
+
+def test_stop_dry_run_issues_no_changing_command(tmp_path):
+    harness = ControlHarness(tmp_path, endpoints("dev-0"), dry_run=True)
+
+    assert harness.control.stop() is True
+
+    assert harness.running("dev-0")
+    assert harness.hosts["dev-0"].changing() == []
+    assert any("would stop" in line for line in harness.output)
+
+
+def test_start_starts_a_stopped_worker_and_waits_until_it_answers(tmp_path):
+    harness = ControlHarness(tmp_path, endpoints("dev-0"))
+    harness.control.stop()
+    harness.output.clear()
+
+    assert harness.control.start() is True
+
+    assert harness.running("dev-0")
+    assert ["docker", "start", container_name(7300)] in harness.hosts["dev-0"].commands
+    assert any(
+        line.startswith("✓ dev-0:7300") and FINGERPRINT[:12] in line for line in harness.output
+    )
+
+
+def test_start_leaves_a_running_worker_alone(tmp_path):
+    harness = ControlHarness(tmp_path, endpoints("dev-0"))
+
+    assert harness.control.start() is True
+
+    assert harness.hosts["dev-0"].changing() == []
+    assert any("already running" in line for line in harness.output)
+
+
+def test_start_without_a_worker_container_names_deploy(tmp_path):
+    harness = ControlHarness(tmp_path, endpoints("dev-0", "dev-1"))
+    harness.hosts["dev-0"].containers.clear()
+    harness.control.stop(["dev-1"])
+
+    assert harness.control.start() is False
+
+    assert any("dev-0:7300" in line and "arc models deploy" in line for line in harness.output)
+    assert harness.running("dev-1")
+
+
+def test_start_dry_run_issues_no_changing_command(tmp_path):
+    harness = ControlHarness(tmp_path, endpoints("dev-0"))
+    harness.control.stop()
+    harness.control.dry_run = True
+    harness.hosts["dev-0"].commands.clear()
+
+    assert harness.control.start() is True
+
+    assert not harness.running("dev-0")
+    assert harness.hosts["dev-0"].changing() == []
+    assert any("would start" in line for line in harness.output)
+
+
+def test_start_warns_when_the_worker_runs_other_code(tmp_path):
+    harness = ControlHarness(tmp_path, endpoints("dev-0"))
+    harness.control.stop()
+    harness.mismatched.add("dev-0:7300")
+    harness.output.clear()
+
+    assert harness.control.start() is True
+
+    assert harness.running("dev-0")
+    assert any("arc models deploy" in line for line in harness.output)
+
+
+def test_start_that_never_answers_prints_the_log_and_fails(tmp_path):
+    harness = ControlHarness(tmp_path, endpoints("dev-0"))
+    harness.control.stop()
+    harness.unresponsive.add("dev-0:7300")
+
+    assert harness.control.start() is False
+
+    assert any("Waiting for the Tailscale address" in line for line in harness.output)
+    assert any(line.startswith("✗ dev-0:7300") for line in harness.output)
+
+
+def test_unreachable_host_fails_its_stop_and_the_others_still_stop(tmp_path):
+    harness = ControlHarness(tmp_path, endpoints("dev-0", "dev-1"))
+    harness.hosts["dev-0"].reachable = False
+
+    assert harness.control.stop() is False
+
+    assert not harness.running("dev-1")
+    assert any(line.startswith("✗ dev-0:7300") for line in harness.output)
+
+
+def test_unknown_host_is_an_error_for_stop_and_start(tmp_path):
+    harness = ControlHarness(tmp_path, endpoints("dev-0"))
+
+    with pytest.raises(DeployError, match="dev-9"):
+        harness.control.stop(["dev-9"])
+    with pytest.raises(DeployError, match="dev-9"):
+        harness.control.start(["dev-9"])
+    assert harness.hosts["dev-0"].commands == []

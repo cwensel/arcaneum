@@ -428,6 +428,104 @@ def test_stopping_the_server_cancels_the_running_encode(server_factory, host, mo
     client.close()
 
 
+# --- Idle exit (kata kqbn) ---------------------------------------------------------
+
+
+def _encode_and_leave(server, model="arctic-m"):
+    client = RawClient(server.address, model)
+    assert client.wait(client.encode(["warm"]))["type"] == MessageType.ENCODED
+    client.close()
+    wait_for(lambda: server.connection_count() == 0)
+
+
+def test_idle_exit_is_due_after_the_period_with_no_connections_or_work(server_factory, clock):
+    server = server_factory(idle_exit=600)
+    _encode_and_leave(server)
+
+    clock.now += 599
+    assert not server.idle_exit_due()
+    clock.now += 1
+    assert server.idle_exit_due()
+
+
+def test_idle_exit_is_never_due_when_off(server_factory, clock):
+    server = server_factory(idle_exit=0)
+    _encode_and_leave(server)
+
+    clock.now += 1_000_000
+    assert not server.idle_exit_due()
+
+
+def test_idle_exit_is_not_due_before_the_first_encode(server_factory, clock):
+    server = server_factory(idle_exit=600)
+    # A handshake alone (a status probe) loads nothing.
+    RawClient(server.address, "arctic-m").close()
+    wait_for(lambda: server.connection_count() == 0)
+
+    clock.now += 1_000_000
+    assert not server.idle_exit_due()
+
+
+def test_idle_exit_is_not_due_while_a_connection_is_open(server_factory, clock):
+    server = server_factory(idle_exit=600)
+    client = RawClient(server.address, "arctic-m")
+    assert client.wait(client.encode(["warm"]))["type"] == MessageType.ENCODED
+
+    clock.now += 1_000_000
+    assert not server.idle_exit_due()
+
+    # The period restarts when the last client leaves.
+    client.close()
+    wait_for(lambda: server.connection_count() == 0)
+    assert not server.idle_exit_due()
+    clock.now += 600
+    assert server.idle_exit_due()
+
+
+def test_idle_exit_is_not_due_while_a_request_is_running_or_queued(server_factory, host, clock):
+    server = server_factory(idle_exit=600)
+    _encode_and_leave(server)
+    # This encode ignores its cancel signal, so it outlives its client.
+    permits = host.encode_permits["arctic-m"] = threading.Semaphore(0)
+    client = RawClient(server.address, "arctic-m")
+    host.encode_started.clear()
+    client.encode(["slow"])
+    assert host.encode_started.wait(5)
+    client.close()
+    wait_for(lambda: server.connection_count() == 0)
+
+    clock.now += 1_000_000
+    assert not server.idle_exit_due()
+
+    permits.release()
+    wait_for(lambda: not server._scheduler.busy())
+    assert not server.idle_exit_due()
+    clock.now += 600
+    assert server.idle_exit_due()
+
+
+def test_serve_forever_exits_and_closes_the_listener_once_idle(host, clock):
+    server = EmbeddingServer(
+        ServerSettings(port=0, bind="127.0.0.1", idle_exit=600), host=host, clock=clock
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        wait_for(lambda: server._listener is not None)
+        _encode_and_leave(server)
+        address = server.address
+
+        clock.now += 600
+        server.wake()
+        thread.join(timeout=5)
+
+        assert not thread.is_alive()
+        with pytest.raises(OSError):
+            socket.create_connection(address, timeout=1).close()
+    finally:
+        server.stop()
+
+
 TORCH_CANCEL_SCRIPT = """
 import json, threading, torch
 from arcaneum.embeddings.remote.server import EncodeCancelled, cancel_forward_on

@@ -7,6 +7,11 @@ wait (``queued``) until the resident model yields, which it does after its curre
 encode once another model is waiting and either it has been idle for the grace
 period or it has been resident for the turn length. A client that disconnects
 loses its queued requests and cancels its running encode.
+
+With an idle exit set, a server that has done work exits once it has had no
+connection and no work for that long: only an exit reliably returns the memory
+past encodes left in the process, and the deploy container's restart policy
+starts a fresh one.
 """
 
 from __future__ import annotations
@@ -132,6 +137,8 @@ class ServerSettings:
     batch_sizes: dict[str, int] = field(default_factory=dict)
     idle_grace: float = 60.0
     turn_length: float = 600.0
+    # Seconds idle before serve_forever returns; 0 never exits.
+    idle_exit: float = 0.0
     cache_dir: Optional[str] = None
 
     def serves(self, model: Optional[str]) -> bool:
@@ -261,6 +268,7 @@ class _Scheduler:
         self._loading: Optional[str] = None
         self._resident_since = 0.0
         self._last_work = 0.0
+        self._worked = False
         self._running: Optional[_Request] = None
         self._running_state = "idle"
         self._stopped = False
@@ -304,6 +312,13 @@ class _Scheduler:
     def busy(self) -> bool:
         with self._cond:
             return self._running is not None or any(self._queues.values())
+
+    def idle_since(self) -> Optional[float]:
+        """When the last work ended, or None while busy or before any work."""
+        with self._cond:
+            if not self._worked or self._running is not None or any(self._queues.values()):
+                return None
+            return self._last_work
 
     def resident(self) -> Optional[str]:
         with self._cond:
@@ -384,6 +399,7 @@ class _Scheduler:
                 self._running = None
                 self._running_state = "idle"
                 self._last_work = self._clock()
+                self._worked = True
                 self._cond.notify_all()
             for each in failed:
                 each.connection.reply_error(each, "load_failed", exc)
@@ -423,6 +439,7 @@ class _Scheduler:
             self._running = None
             self._running_state = "idle"
             self._last_work = self._clock()
+            self._worked = True
             self._cond.notify_all()
         if reply is not None:
             request.connection.reply(request, reply)
@@ -601,12 +618,18 @@ class EmbeddingServer:
         self.identity = identity
         self._host = host or EmbeddingClientHost(settings.cache_dir)
         self._resolve_address = resolve_address
+        self._clock = clock
         self._scheduler = _Scheduler(self._host, settings, clock)
         self._listener: Optional[Listener] = None
+        # Guards the connection set, handshakes in progress and the idle-exit decision.
         self._connections: set[_ServerConnection] = set()
         self._connections_lock = threading.Lock()
+        self._handshaking = 0
+        self._last_disconnect = clock()
+        self._exiting = False
         self._sequence = 0
         self._stopped = threading.Event()
+        self._recheck = threading.Event()
 
     @property
     def address(self) -> tuple[str, int]:
@@ -632,11 +655,44 @@ class EmbeddingServer:
         return self.address
 
     def serve_forever(self) -> None:
+        """Serve until stopped, or until the idle exit is due."""
         self.start()
-        self._stopped.wait()
+        while not self._stopped.is_set():
+            self._recheck.clear()
+            if self._claim_idle_exit():
+                logger.info(
+                    "No connection or work for %.0f s; exiting to return this process's memory",
+                    self.settings.idle_exit,
+                )
+                self.stop()
+                return
+            # Decisions use the injected clock; re-check at least once a second.
+            self._recheck.wait(timeout=1.0)
+
+    def idle_exit_due(self) -> bool:
+        """Whether the server has done work and has since been idle for the idle exit."""
+        with self._connections_lock:
+            return self._idle_exit_due_locked()
+
+    def _claim_idle_exit(self) -> bool:
+        """Decide to exit, refusing connections from then on so none is half served."""
+        with self._connections_lock:
+            self._exiting = self._idle_exit_due_locked()
+            return self._exiting
+
+    def _idle_exit_due_locked(self) -> bool:
+        # With no connection registered, no request can arrive during this check.
+        if self.settings.idle_exit <= 0 or self._connections or self._handshaking:
+            return False
+        idle_since = self._scheduler.idle_since()
+        if idle_since is None:
+            return False
+        quiet_since = max(idle_since, self._last_disconnect)
+        return self._clock() - quiet_since >= self.settings.idle_exit
 
     def stop(self) -> None:
         self._stopped.set()
+        self._recheck.set()
         if self._listener is not None:
             try:
                 self._listener.close()
@@ -649,8 +705,9 @@ class EmbeddingServer:
         self._scheduler.stop()
 
     def wake(self) -> None:
-        """Re-evaluate scheduling now (tests advance an injected clock)."""
+        """Re-evaluate scheduling and the idle exit now (tests advance an injected clock)."""
         self._scheduler.wake()
+        self._recheck.set()
 
     def queued_count(self) -> int:
         return self._scheduler.queued_count()
@@ -667,6 +724,7 @@ class EmbeddingServer:
     def _forget(self, connection: _ServerConnection) -> None:
         with self._connections_lock:
             self._connections.discard(connection)
+            self._last_disconnect = self._clock()
 
     def _accept_loop(self) -> None:
         assert self._listener is not None
@@ -679,6 +737,11 @@ class EmbeddingServer:
                 logger.exception("accept failed")
                 continue
             peer = str(getattr(self._listener, "last_accepted", "") or "unknown")
+            with self._connections_lock:
+                if self._exiting:
+                    raw.close()
+                    return
+                self._handshaking += 1
             threading.Thread(
                 target=self._serve_connection,
                 args=(raw, peer),
@@ -687,15 +750,19 @@ class EmbeddingServer:
             ).start()
 
     def _serve_connection(self, raw: Any, peer: str) -> None:
-        if self.settings.authkey:
-            try:
-                deliver_challenge(raw, self.settings.authkey)
-                answer_challenge(raw, self.settings.authkey)
-            except Exception as exc:
-                logger.warning("Rejected connection from %s: %s", peer, exc)
-                raw.close()
-                return
-        connection = _ServerConnection(self, ConnectionChannel(raw), peer)
-        with self._connections_lock:
-            self._connections.add(connection)
+        try:
+            if self.settings.authkey:
+                try:
+                    deliver_challenge(raw, self.settings.authkey)
+                    answer_challenge(raw, self.settings.authkey)
+                except Exception as exc:
+                    logger.warning("Rejected connection from %s: %s", peer, exc)
+                    raw.close()
+                    return
+            connection = _ServerConnection(self, ConnectionChannel(raw), peer)
+            with self._connections_lock:
+                self._connections.add(connection)
+        finally:
+            with self._connections_lock:
+                self._handshaking -= 1
         connection.run()

@@ -469,9 +469,23 @@ def list_models(output_json):
     help="Seconds a busy resident model keeps the endpoint while another model waits",
 )
 @click.option(
+    "--idle-exit",
+    type=click.FloatRange(min=0),
+    default=0.0,
+    show_default=True,
+    envvar="ARC_EMBED_IDLE_EXIT",
+    help=(
+        "Exit after this many seconds with no connection or work, once the server has "
+        "done work, to return the memory encodes used; a supervisor such as Docker's "
+        "restart policy starts it again (0: never)"
+    ),
+)
+@click.option(
     "--cache-dir", envvar="ARC_EMBED_CACHE_DIR", help="Model cache directory (default: arcaneum's)"
 )
-def serve_models(served_models, batch_sizes, port, bind, idle_grace, turn_length, cache_dir):
+def serve_models(
+    served_models, batch_sizes, port, bind, idle_grace, turn_length, idle_exit, cache_dir
+):
     """Serve document embedding to remote arcaneum clients (RDR-025).
 
     Runs on a worker machine, normally inside the container `arc models deploy`
@@ -489,6 +503,7 @@ def serve_models(served_models, batch_sizes, port, bind, idle_grace, turn_length
             batch_sizes=batch_sizes,
             idle_grace=idle_grace,
             turn_length=turn_length,
+            idle_exit=idle_exit,
             cache_dir=cache_dir,
         )
     except ValueError as exc:

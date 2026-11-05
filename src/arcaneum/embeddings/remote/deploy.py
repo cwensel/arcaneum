@@ -230,6 +230,7 @@ def container_environment(
         "ARC_EMBED_MODELS": ",".join(config.endpoint_models(endpoint)),
         "ARC_EMBED_IDLE_GRACE": f"{config.idle_grace:g}",
         "ARC_EMBED_TURN_LENGTH": f"{config.turn_length:g}",
+        "ARC_EMBED_IDLE_EXIT": f"{config.idle_exit:g}",
         "XDG_CACHE_HOME": CACHE_MOUNT,
     }
     if endpoint.batch_size:

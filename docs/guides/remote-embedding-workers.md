@@ -116,6 +116,7 @@ remote_embedding:
     qwen3-embed: on-request
   idle_grace: 60               # seconds; see Model Turns
   turn_length: 600             # seconds; see Model Turns
+  idle_exit: 1800              # seconds; see Idle Exit (0 keeps workers running)
   probe_interval: 10           # seconds between reconnect attempts to a down worker
   deadlines:
     loading: 1800              # first download and load of a model
@@ -244,8 +245,8 @@ When a sync disconnects from a worker (it finished, failed or was
 interrupted), the worker drops that sync's queued requests and cancels its
 running encode: a SentenceTransformers encode such as qwen3-embed stops within
 one model layer, and a fastembed encode such as arctic-m after its current
-batch. The model stays resident until another model needs the worker or the
-worker is stopped.
+batch. The model stays resident until another model needs the worker, the
+worker is stopped, or it exits idle (see Idle Exit).
 
 There is no distribution setting beyond `models`, `batch_size` and the turn
 settings below.
@@ -265,6 +266,20 @@ and one model load. In practice, a `--remote-embed` qwen3-embed run on both
 workers gives one worker to an arctic-m sync that starts meanwhile and keeps the
 other; after the arctic-m sync ends, the idle worker returns to qwen3-embed
 after the grace period.
+
+## Idle Exit
+
+A worker process keeps the memory its largest encode needed until it exits,
+even after the model is unloaded. So a deployed worker that has done work and
+then has had no connection and no work for `idle_exit` seconds (default 1800)
+exits. The container's `unless-stopped` restart policy starts a fresh process
+with no model loaded, and the next request loads its model as a model switch
+does. `arc models deploy` passes the setting to the container as
+`ARC_EMBED_IDLE_EXIT`. Changing it replaces the container on the next deploy.
+
+A client that connects while the worker restarts finds it down and handles it
+by the unavailable policy: under `wait` it reconnects at the next probe. Set
+`idle_exit: 0` to keep workers running.
 
 ## Version Matching
 

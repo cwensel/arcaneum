@@ -52,7 +52,29 @@ def test_serve_builds_settings_from_options_and_environment(monkeypatch):
     assert settings.batch_sizes == {"arctic-m": 32}
     assert settings.idle_grace == 30
     assert settings.turn_length == 300
+    assert settings.idle_exit == 0
     server.return_value.serve_forever.assert_called_once_with()
+
+
+def test_serve_reads_the_idle_exit_from_the_option_or_environment(monkeypatch):
+    monkeypatch.delenv("ARC_EMBED_MODELS", raising=False)
+    monkeypatch.setenv("ARC_EMBED_IDLE_EXIT", "1800")
+    with patch("arcaneum.cli.remote_embedding.EmbeddingServer") as server:
+        result = CliRunner().invoke(cli, ["models", "serve"])
+    assert result.exit_code == 0, result.output
+    assert server.call_args.args[0].idle_exit == 1800
+
+    with patch("arcaneum.cli.remote_embedding.EmbeddingServer") as server:
+        result = CliRunner().invoke(cli, ["models", "serve", "--idle-exit", "90"])
+    assert result.exit_code == 0, result.output
+    assert server.call_args.args[0].idle_exit == 90
+
+
+def test_serve_rejects_a_negative_idle_exit(monkeypatch):
+    monkeypatch.delenv("ARC_EMBED_IDLE_EXIT", raising=False)
+    with patch("arcaneum.cli.remote_embedding.EmbeddingServer"):
+        result = CliRunner().invoke(cli, ["models", "serve", "--idle-exit", "-1"])
+    assert result.exit_code != 0
 
 
 def test_serve_rejects_an_invalid_model_list(monkeypatch):

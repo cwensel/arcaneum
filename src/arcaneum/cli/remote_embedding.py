@@ -61,6 +61,7 @@ def serve_command(
     batch_sizes: Optional[str],
     idle_grace: float,
     turn_length: float,
+    idle_exit: float,
     cache_dir: Optional[str],
 ) -> None:
     """Run the embedding server until SIGTERM or SIGINT."""
@@ -78,6 +79,7 @@ def serve_command(
         batch_sizes=parse_batch_sizes(batch_sizes),
         idle_grace=idle_grace,
         turn_length=turn_length,
+        idle_exit=idle_exit,
         cache_dir=cache_dir,
     )
     server = EmbeddingServer(settings)

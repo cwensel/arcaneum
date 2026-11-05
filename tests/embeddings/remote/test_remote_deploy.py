@@ -246,7 +246,7 @@ def test_container_uses_host_networking_and_publishes_no_ports(tmp_path):
     assert "ARC_EMBED_PORT=7300" in env
     assert "ARC_EMBED_AUTHKEY=secret" in env
     # An idle worker exits and Docker restarts it, returning its encode memory.
-    assert "ARC_EMBED_IDLE_EXIT=1800" in env
+    assert "ARC_EMBED_IDLE_EXIT=300" in env
     assert any(a.startswith("arcaneum-embed-models:") for a in args)
 
 

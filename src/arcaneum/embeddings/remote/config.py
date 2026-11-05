@@ -113,7 +113,7 @@ class RemoteEmbeddingConfig(BaseModel):
     turn_length: float = 600.0
     # A deployed worker idle this long exits; Docker restarts it without the memory
     # its encodes kept. 0 keeps workers running.
-    idle_exit: float = Field(default=1800.0, ge=0)
+    idle_exit: float = Field(default=300.0, ge=0)
     probe_interval: float = 10.0
     deadlines: DeadlineConfig = Field(default_factory=DeadlineConfig)
 

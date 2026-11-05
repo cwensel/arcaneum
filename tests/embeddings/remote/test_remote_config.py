@@ -86,8 +86,8 @@ def test_default_routing_sends_arctic_m_remote_and_qwen3_on_request():
     assert config.model_routing("jina-code") == "local"
 
 
-def test_deployed_workers_exit_after_thirty_idle_minutes_by_default():
-    assert RemoteEmbeddingConfig().idle_exit == 1800
+def test_deployed_workers_exit_after_five_idle_minutes_by_default():
+    assert RemoteEmbeddingConfig().idle_exit == 300
     assert RemoteEmbeddingConfig(idle_exit=0).idle_exit == 0
     with pytest.raises(ValueError):
         RemoteEmbeddingConfig(idle_exit=-1)

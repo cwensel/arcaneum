@@ -116,7 +116,7 @@ remote_embedding:
     qwen3-embed: on-request
   idle_grace: 60               # seconds; see Model Turns
   turn_length: 600             # seconds; see Model Turns
-  idle_exit: 1800              # seconds; see Idle Exit (0 keeps workers running)
+  idle_exit: 300               # seconds; see Idle Exit (0 keeps workers running)
   probe_interval: 10           # seconds between reconnect attempts to a down worker
   deadlines:
     loading: 1800              # first download and load of a model
@@ -271,7 +271,7 @@ after the grace period.
 
 A worker process keeps the memory its largest encode needed until it exits,
 even after the model is unloaded. So a deployed worker that has done work and
-then has had no connection and no work for `idle_exit` seconds (default 1800)
+then has had no connection and no work for `idle_exit` seconds (default 300)
 exits. The container's `unless-stopped` restart policy starts a fresh process
 with no model loaded, and the next request loads its model as a model switch
 does. `arc models deploy` passes the setting to the container as

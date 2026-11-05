@@ -2502,7 +2502,7 @@ arc models serve --models arctic-m --batch-size arctic-m=64
 - `--idle-exit`: Exit after this many seconds with no connection or work, once
   the server has done work, so the process returns the memory its encodes used;
   a supervisor such as Docker's restart policy starts it again (default: 0,
-  never; env `ARC_EMBED_IDLE_EXIT`; `arc models deploy` sets 1800)
+  never; env `ARC_EMBED_IDLE_EXIT`; `arc models deploy` sets 300)
 - `--cache-dir`: Model cache directory (env `ARC_EMBED_CACHE_DIR`)
 
 The protocol uses pickle and is meant for a trusted LAN or tailnet only; never

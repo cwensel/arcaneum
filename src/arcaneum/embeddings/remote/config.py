@@ -14,6 +14,11 @@ Lives in the ``remote_embedding`` section of ``~/.config/arcaneum/config.yaml``:
           models: [arctic-m]          # default: every remote/on-request model
           batch_size: {qwen3-embed: 8}
           cpu_priority: low           # idle | low | normal, against other host work
+          wake:                       # optional: Wake-on-LAN for a worker that sleeps
+            mac: 10:dd:b1:c9:7d:22
+            network: 10.0.1.0/24      # the worker's LAN; broadcast there when on it
+            relay: laptop-1           # SSH host on that LAN, used from elsewhere
+            timeout: 120              # seconds a sync waits for a woken worker
 
 ``ARC_EMBED_ENDPOINTS=host[:port],...`` replaces the configured endpoint list for
 one process (endpoints given that way use default settings; empty disables the pool).
@@ -48,6 +53,42 @@ class RemoteEmbeddingConfigError(ValueError):
     """The remote embedding configuration is invalid."""
 
 
+class WakeConfig(BaseModel):
+    """How to wake a worker that sleeps when idle, with a Wake-on-LAN magic packet.
+
+    A magic packet is a LAN broadcast and cannot cross Tailscale or a router: off
+    ``network``, the packet is sent from ``relay``, an SSH host on that LAN.
+    """
+
+    mac: str
+    network: Optional[str] = None
+    relay: Optional[str] = None
+    # Syncs wait this long for a woken worker before following `unavailable`.
+    timeout: float = Field(default=120.0, gt=0)
+
+    @field_validator("mac")
+    @classmethod
+    def _check_mac(cls, value: str) -> str:
+        import re
+
+        digits = re.sub(r"[:\-.]", "", value.strip()).lower()
+        if not re.fullmatch(r"[0-9a-f]{12}", digits):
+            raise ValueError(f"mac must be six hex bytes such as 10:dd:b1:c9:7d:22, not {value!r}")
+        return ":".join(digits[i : i + 2] for i in range(0, 12, 2))
+
+    @field_validator("network")
+    @classmethod
+    def _check_network(cls, value: Optional[str]) -> Optional[str]:
+        import ipaddress
+
+        if value is None:
+            return None
+        try:
+            return str(ipaddress.IPv4Network(value, strict=False))
+        except ValueError as exc:
+            raise ValueError(f"network must be an IPv4 network such as 10.0.1.0/24: {exc}") from exc
+
+
 class EndpointConfig(BaseModel):
     """How to reach one worker and how to run it."""
 
@@ -60,6 +101,7 @@ class EndpointConfig(BaseModel):
     # The worker uses idle CPU freely; under contention it yields to host work
     # such as CI runners according to this priority.
     cpu_priority: CpuPriority = "low"
+    wake: Optional[WakeConfig] = None
 
     @property
     def name(self) -> str:

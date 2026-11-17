@@ -15,6 +15,7 @@ from arcaneum.embeddings.remote.config import (
     DeadlineConfig,
     EndpointConfig,
     RemoteEmbeddingConfig,
+    WakeConfig,
 )
 from arcaneum.embeddings.remote.errors import RemoteEmbeddingBatchError
 from arcaneum.embeddings.remote.identity import local_identity
@@ -22,10 +23,12 @@ from arcaneum.embeddings.remote.pool import (
     RemoteEmbeddingFallback,
     RemoteEmbeddingPool,
     RemoteEmbeddingUnavailable,
+    connect,
     probe_endpoint,
     tailscale_resolution_problem,
 )
 from arcaneum.embeddings.remote.server import EmbeddingServer, ServerSettings
+from arcaneum.embeddings.remote.wake import Waker
 
 MODEL = "arctic-m"
 
@@ -60,7 +63,9 @@ class Cluster:
         self.hosts.append(host)
         return server
 
-    def pool(self, ports, *, unavailable="fail", notify=None, **overrides) -> RemoteEmbeddingPool:
+    def pool(
+        self, ports, *, unavailable="fail", notify=None, pool_options=None, **overrides
+    ) -> RemoteEmbeddingPool:
         deadlines = DeadlineConfig(
             heartbeat_interval=0.02,
             heartbeat_timeout=1.0,
@@ -78,7 +83,9 @@ class Cluster:
             deadlines=deadlines,
             **overrides,
         )
-        pool = RemoteEmbeddingPool(config, notify=notify or (lambda message: None))
+        pool = RemoteEmbeddingPool(
+            config, notify=notify or (lambda message: None), **(pool_options or {})
+        )
         self.pools.append(pool)
         return pool
 
@@ -358,6 +365,110 @@ def test_mismatched_endpoints_under_wait_resume_after_redeploy(cluster):
     cluster.server(port=port)
     worker.join(timeout=10)
     np.testing.assert_array_equal(result["v"], expected(["a"]))
+
+
+class SleepingHost:
+    """Connector whose host times out until a magic packet wakes it."""
+
+    def __init__(self, *, wakes: bool = True) -> None:
+        self.wakes = wakes
+        self.awake = threading.Event()
+        self.packets: list[str] = []
+
+    def send(self, wake) -> str:
+        self.packets.append(wake.mac)
+        if self.wakes:
+            self.awake.set()
+        return f"sent a magic packet to {wake.mac}"
+
+    def connect(self, host, port, authkey, timeout):
+        if not self.awake.is_set():
+            raise TimeoutError("timed out")
+        return connect(host, port, authkey, timeout)
+
+
+def sleeping_pool(cluster, port, host, *, unavailable, timeout=30.0, notify=None):
+    return cluster.pool(
+        [port],
+        unavailable=unavailable,
+        notify=notify,
+        endpoint={"wake": WakeConfig(mac="10:dd:b1:c9:7d:22", timeout=timeout)},
+        pool_options={"connector": host.connect, "waker": Waker(send=host.send)},
+    )
+
+
+@pytest.mark.parametrize("unavailable", ["local", "fail", "wait"])
+def test_a_sleeping_worker_is_woken_and_used_whatever_the_policy(cluster, unavailable):
+    server = cluster.server()
+    host = SleepingHost()
+    pool = sleeping_pool(cluster, port_of(server), host, unavailable=unavailable)
+
+    result = pool.embed(["a", "b"], MODEL)
+
+    np.testing.assert_array_equal(result, expected(["a", "b"]))
+    assert host.packets == ["10:dd:b1:c9:7d:22"]
+    assert cluster.hosts[0].encodes
+
+
+def test_waking_is_announced_while_the_pool_waits(cluster):
+    server = cluster.server()
+    host = SleepingHost(wakes=False)
+    messages = []
+    pool = sleeping_pool(
+        cluster, port_of(server), host, unavailable="local", notify=messages.append
+    )
+    worker = threading.Thread(target=lambda: pool.embed(["a"], MODEL), daemon=True)
+    worker.start()
+
+    wait_for(lambda: messages)
+    host.awake.set()
+    worker.join(timeout=10)
+
+    assert not worker.is_alive()
+    assert messages[0].startswith(f"Waking 127.0.0.1:{port_of(server)} for {MODEL}")
+    assert "sent a magic packet" in messages[0]
+
+
+def test_a_worker_that_does_not_wake_in_time_follows_the_unavailable_policy(cluster):
+    server = cluster.server()
+    host = SleepingHost(wakes=False)
+    pool = sleeping_pool(cluster, port_of(server), host, unavailable="local", timeout=0.3)
+    started = time.monotonic()
+
+    with pytest.raises(RemoteEmbeddingFallback, match="waking it"):
+        pool.embed(["a"], MODEL)
+
+    assert time.monotonic() - started >= 0.3
+    assert host.packets == ["10:dd:b1:c9:7d:22"]
+
+
+def test_a_refused_connection_means_the_host_is_awake_and_is_not_woken(cluster):
+    packets = []
+    pool = cluster.pool(
+        [free_port()],
+        unavailable="local",
+        endpoint={"wake": WakeConfig(mac="10:dd:b1:c9:7d:22")},
+        pool_options={"waker": Waker(send=lambda wake: packets.append(wake.mac) or "sent")},
+    )
+
+    with pytest.raises(RemoteEmbeddingFallback):
+        pool.embed(["a"], MODEL)
+
+    assert packets == []
+
+
+def test_an_endpoint_without_wake_settings_is_not_woken(cluster):
+    host = SleepingHost()
+    pool = cluster.pool(
+        [free_port()],
+        unavailable="local",
+        pool_options={"connector": host.connect, "waker": Waker(send=host.send)},
+    )
+
+    with pytest.raises(RemoteEmbeddingFallback):
+        pool.embed(["a"], MODEL)
+
+    assert host.packets == []
 
 
 def test_bind_tailscale_endpoint_resolving_outside_the_tailnet_is_named(cluster):

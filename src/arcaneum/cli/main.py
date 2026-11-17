@@ -616,6 +616,36 @@ def models_start(hosts, dry_run):
     control_command("start", hosts, dry_run=dry_run)
 
 
+@models.command("wake")
+@click.argument("hosts", nargs=-1)
+@click.option("--no-wait", is_flag=True, help="Send the wake packets and return at once")
+@click.option(
+    "--timeout",
+    type=click.FloatRange(min=0, min_open=True),
+    help="Seconds to wait for each worker to answer (default: its wake.timeout, 120)",
+)
+@click.option("--dry-run", is_flag=True, help="Show which workers would be woken")
+def models_wake(hosts, no_wait, timeout, dry_run):
+    """Wake sleeping remote embedding workers with a Wake-on-LAN magic packet.
+
+    Sends a magic packet to each configured endpoint with `wake` settings (or
+    the HOSTS named) that does not answer, then waits until each answers. Off
+    the worker's `wake.network`, the packet goes out from `wake.relay` over
+    SSH, since it cannot cross Tailscale. Syncs wake a sleeping worker on their
+    own; this is for waking one ahead of time. Wake-on-LAN wakes a suspended
+    host, not one that is shut down.
+
+    \b
+    Examples:
+        arc models wake
+        arc models wake dev-0
+        arc models wake --no-wait
+    """
+    from arcaneum.cli.remote_embedding import wake_command
+
+    wake_command(hosts, wait=not no_wait, timeout=timeout, dry_run=dry_run)
+
+
 # Indexing commands (RDR-004, RDR-005, RDR-010)
 @cli.group(
     cls=HelpfulGroup,

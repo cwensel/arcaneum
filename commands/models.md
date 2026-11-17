@@ -1,6 +1,6 @@
 ---
 description: Manage embedding models and remote embedding workers
-argument-hint: <list|workers|deploy|stop|start|serve> [options]
+argument-hint: <list|workers|deploy|stop|start|wake|serve> [options]
 ---
 
 Manage and view available embedding models for vector search, and the optional
@@ -19,6 +19,8 @@ remote embedding workers that embed documents on spare machines.
   encode in progress and freeing their CPU and memory until `start`
 - `start [HOSTS...]`: Start stopped remote embedding workers and wait until
   they answer
+- `wake [HOSTS...]`: Wake sleeping remote embedding workers with a
+  Wake-on-LAN magic packet and wait until they answer (syncs also wake them)
 - `serve`: Run a remote embedding worker (normally inside the container
   `deploy` creates; not for use on the workstation)
 
@@ -26,7 +28,10 @@ remote embedding workers that embed documents on spare machines.
 
 - --json: Output in JSON format (`list`, `workers`)
 - --dry-run: Show each worker's current and desired state without changes
-  (`deploy`), or which workers would stop or start (`stop`, `start`)
+  (`deploy`), or which workers would stop, start or be woken (`stop`,
+  `start`, `wake`)
+- --no-wait: Send the wake packets without waiting (`wake`)
+- --timeout SECONDS: How long to wait for each woken worker (`wake`)
 - --build: Deploy a wheel built from this source tree (`deploy`; needed for
   source checkouts and unreleased builds)
 - --wheel PATH: Deploy a given wheel (`deploy`)
@@ -43,6 +48,7 @@ remote embedding workers that embed documents on spare machines.
 /models deploy --build
 /models stop dev-0
 /models start
+/models wake dev-0
 ```
 
 Remote embedding workers are optional and configured under `remote_embedding`

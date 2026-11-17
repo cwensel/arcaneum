@@ -6,6 +6,8 @@ larger than each endpoint's encode batch size, spread across the endpoints that
 hold the model or have no work, and reassembled in order. An endpoint that errors,
 disconnects, stops answering heartbeats or exceeds a deadline is marked down, its
 sub-batch is retried elsewhere, and it is probed in the background until it rejoins.
+An endpoint with ``wake`` settings whose connection times out is woken with a
+Wake-on-LAN packet, and the pool waits for it before following ``unavailable``.
 """
 
 from __future__ import annotations
@@ -37,6 +39,7 @@ from arcaneum.embeddings.remote.errors import (
 )
 from arcaneum.embeddings.remote.identity import identity_mismatches, local_identity
 from arcaneum.embeddings.remote.server import TAILSCALE_NETWORK, default_encode_batch_size
+from arcaneum.embeddings.remote.wake import Waker
 from arcaneum.embeddings.worker_protocol import (
     ConnectionChannel,
     MessageType,
@@ -205,8 +208,13 @@ class _Link:
                 config.deadlines.connect_timeout,
             )
         except Exception as exc:
-            self._mark("down", _unreachable_reason(self.endpoint, exc))
+            reason = _unreachable_reason(self.endpoint, exc)
+            # A refused connection comes from an awake host with no worker listening.
+            if self.endpoint.wake is not None and not isinstance(exc, ConnectionRefusedError):
+                reason = f"{reason}; {self.pool.waker.wake(self.endpoint)}"
+            self._mark("down", reason)
             return False
+        self.pool.waker.awake(self.endpoint)
         local = local_identity(self.model)
         try:
             request_id = uuid.uuid4().hex
@@ -379,12 +387,14 @@ class RemoteEmbeddingPool:
         sleep: Callable[[float], None] = time.sleep,
         connector: Callable[..., ConnectionChannel] = connect,
         notify: Callable[[str], None] = _stderr_notify,
+        waker: Optional[Waker] = None,
     ) -> None:
         self.config = config
         self.clock = clock
         self.sleep = sleep
         self.connector = connector
         self.notify = notify
+        self.waker = waker or Waker(clock=clock)
         self._links: dict[tuple[str, str], _Link] = {}
         self._lock = threading.Lock()
         self._last_notice = -math.inf
@@ -461,6 +471,14 @@ class RemoteEmbeddingPool:
         details = "; ".join(f"{link.name} {link.reason or link.state}" for link in links) or (
             "no endpoint is configured to serve it"
         )
+        waking = sorted({link.name for link in links if self.waker.waking(link.endpoint)})
+        if waking:
+            # A woken worker is on its way: wait for it whatever the policy.
+            self._notify(
+                f"Waking {', '.join(waking)} for {model}; waiting for it to answer ({details})."
+            )
+            self.sleep(min(self.config.probe_interval, 1.0))
+            return
         policy = self.config.unavailable
         if policy == "local":
             logger.warning(
@@ -476,14 +494,17 @@ class RemoteEmbeddingPool:
                 f"No remote embedding endpoint can serve {model}: {details}. {hint}, "
                 f"or {local} to embed locally."
             )
+        self._notify(
+            f"Waiting for remote embedding endpoints for {model}: {details}. {hint}, "
+            f"or {local} to proceed without them."
+        )
+        self.sleep(min(self.config.probe_interval, 1.0))
+
+    def _notify(self, message: str) -> None:
         now = self.clock()
         if now - self._last_notice >= NOTIFY_INTERVAL:
             self._last_notice = now
-            self.notify(
-                f"Waiting for remote embedding endpoints for {model}: {details}. {hint}, "
-                f"or {local} to proceed without them."
-            )
-        self.sleep(min(self.config.probe_interval, 1.0))
+            self.notify(message)
 
     def _prefer(self, usable: list[_Link], model: str) -> list[_Link]:
         """Endpoints holding the model or without work; else one endpoint to queue at.

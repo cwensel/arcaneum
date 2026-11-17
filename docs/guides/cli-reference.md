@@ -150,6 +150,7 @@ arc models workers                         # Show remote embedding workers
 arc models deploy                          # Install or update remote embedding workers
 arc models stop                            # Stop remote embedding workers
 arc models start                           # Start stopped remote embedding workers
+arc models wake                            # Wake sleeping workers (Wake-on-LAN)
 arc models serve                           # Run an embedding worker (on a worker host)
 arc store <file> --collection <name>       # Store agent content for long-term memory
 ```

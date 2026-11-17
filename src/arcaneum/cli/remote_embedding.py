@@ -1,4 +1,5 @@
-"""Remote embedding worker commands: `arc models serve`, `workers`, `deploy`, `stop`, `start`.
+"""Remote embedding worker commands: `arc models serve`, `workers`, `deploy`, `stop`,
+`start`, `wake`.
 
 See RDR-025.
 """
@@ -14,9 +15,16 @@ from pathlib import Path
 from typing import Optional
 
 from arcaneum.embeddings.client import EMBEDDING_MODELS, model_revision
-from arcaneum.embeddings.remote.deploy import Deployer, DeployError, WorkerControl, resolve_wheel
+from arcaneum.embeddings.remote.deploy import (
+    Deployer,
+    DeployError,
+    WorkerControl,
+    resolve_wheel,
+    select_endpoints,
+)
 from arcaneum.embeddings.remote.pool import probe_endpoint
 from arcaneum.embeddings.remote.server import EmbeddingServer, ServerSettings
+from arcaneum.embeddings.remote.wake import wake_endpoints
 
 
 def parse_served_models(value: Optional[str]) -> Optional[tuple[str, ...]]:
@@ -169,6 +177,7 @@ def workers_command(output_json: bool) -> None:
             "dependencies": status.dependencies,
             "bind": endpoint.bind,
             "models": config.endpoint_models(endpoint),
+            "wake": endpoint.wake.mac if endpoint.wake else None,
         }
         for endpoint, status in zip(config.endpoints, statuses)
     ]
@@ -205,6 +214,8 @@ def workers_command(output_json: bool) -> None:
     console.print(table)
     for worker in workers:
         details = [f"models {','.join(worker['models'])}", f"bind {worker['bind']}"]
+        if worker["wake"]:
+            details.append(f"wake {worker['wake']}")
         if worker["dependencies"]:
             details.append(
                 " ".join(
@@ -215,6 +226,8 @@ def workers_command(output_json: bool) -> None:
         if worker["reason"]:
             details.append(worker["reason"])
         console.print(f"  {worker['endpoint']}: {'; '.join(details)}", soft_wrap=True)
+    if any(w["state"] == "unreachable" and w["wake"] for w in workers):
+        console.print("Run `arc models wake` to wake workers that are asleep.")
     if not healthy:
         console.print(
             "Run `arc models deploy` to install or update workers "
@@ -286,5 +299,36 @@ def control_command(action: str, hosts: tuple[str, ...], *, dry_run: bool) -> No
     except DeployError as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
+    if not ok:
+        sys.exit(1)
+
+
+# --- arc models wake ---------------------------------------------------------------
+
+
+def wake_command(
+    hosts: tuple[str, ...], *, wait: bool, timeout: Optional[float], dry_run: bool
+) -> None:
+    """Wake each configured worker with wake settings (or the HOSTS named); exit 1 on failure."""
+    import click
+
+    config = _load_config_or_exit(False)
+    if not config.endpoints:
+        click.echo(NO_ENDPOINTS, err=True)
+        sys.exit(1)
+    try:
+        endpoints = select_endpoints(config, hosts)
+    except DeployError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    ok = wake_endpoints(
+        endpoints,
+        explicit=bool(hosts),
+        wait=wait,
+        dry_run=dry_run,
+        timeout=timeout,
+        connect_timeout=min(config.deadlines.connect_timeout, 2.0),
+        out=click.echo,
+    )
     if not ok:
         sys.exit(1)

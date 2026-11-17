@@ -136,6 +136,11 @@ remote_embedding:
       batch_size:              # encode batch size per model on this worker
         arctic-m: 64
       cpu_priority: low        # idle | low (default) | normal, against other host work
+      wake:                    # optional; see Waking Sleeping Workers
+        mac: 10:dd:b1:c9:7d:22
+        network: 10.0.1.0/24
+        relay: laptop-1
+        timeout: 120
 ```
 
 ### Endpoint Settings
@@ -149,6 +154,7 @@ remote_embedding:
 | `models` | routed models | Models this worker serves; confines a model to chosen workers |
 | `batch_size` | 100 (fastembed), 8 (SentenceTransformers) | Largest sub-batch the worker encodes at once; bounds its peak memory |
 | `cpu_priority` | `low` | Worker's CPU priority against other work on the host (see [CPU Priority](#cpu-priority)) |
+| `wake` | none | Wake-on-LAN settings for a worker that sleeps when idle (see [Waking Sleeping Workers](#waking-sleeping-workers)) |
 
 ### CPU Priority
 
@@ -179,6 +185,9 @@ priority replaces the container on the next `arc models deploy`.
 | `wait` (default) | Block and keep probing; print the unreachable workers once a minute |
 | `local` | Embed on the workstation, as without workers; warn once per model |
 | `fail` | End the run; the file being embedded gets no chunks, finished files keep theirs |
+
+While a worker that was just woken is booting, every policy waits for it first
+(see [Waking Sleeping Workers](#waking-sleeping-workers)).
 
 `local` suits a workstation whose `arc` runs a source checkout: every commit
 changes the code fingerprint, and syncs keep working on the workstation until
@@ -361,6 +370,49 @@ arc models stop dev-0      # Free dev-0 for other work
 arc models start           # Bring every stopped worker back
 ```
 
+### Waking Sleeping Workers
+
+A worker host that suspends when idle can be woken with a Wake-on-LAN magic
+packet. Give its endpoint a `wake` section:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `mac` | required | MAC address of the worker's wired NIC (`:` or `-` separated) |
+| `network` | none | The worker's LAN, such as `10.0.1.0/24`; the packet is broadcast to its broadcast address as well as `255.255.255.255` |
+| `relay` | none | SSH host on the worker's LAN that sends the packet when this workstation is not on `network` |
+| `timeout` | `120` | Seconds to wait for a woken worker to answer |
+
+A magic packet is a LAN broadcast and cannot cross Tailscale or a router. On
+`network`, the workstation broadcasts it itself, on UDP ports 9 and 7, three
+times. Elsewhere it runs `ssh <relay> python3 -` with a short script that
+broadcasts from the relay, so the relay needs key-based SSH and Python 3.
+Without `network`, a configured relay is always used.
+
+Syncs wake workers on their own. When a connection to a worker with `wake`
+settings times out, the pool sends a magic packet, resends every 30 s while
+the worker stays down, and prints `Waking <worker> for <model>; waiting for it
+to answer`. Until the worker answers or `timeout` runs out, the pool waits for
+it under every [unavailable policy](#unavailable-policy), so `local` does not
+embed on the workstation just because a worker was asleep. A refused
+connection means the host is awake with no worker listening, so it is never
+woken. Workers that are up keep embedding while another wakes.
+
+`arc models wake [HOSTS...]` wakes workers ahead of time: it sends a packet to
+each one with `wake` settings that does not answer, and waits until each
+answers on its port. `--no-wait` only sends; `--timeout` overrides
+`wake.timeout`; `--dry-run` shows which workers would be woken.
+
+```bash
+arc models wake            # Wake every sleeping worker and wait for it
+arc models wake dev-0 --no-wait
+```
+
+Wake-on-LAN must be armed on the worker (for example `ethtool -s <nic> wol g`,
+reapplied at every boot), and it wakes a suspended host, not one that is shut
+down. A worker counts as busy for the host's idle-sleep check only if that
+check looks at connections to the worker port; arcaneum keeps its connections
+open for the whole run.
+
 ### Removing a Worker
 
 There is no undeploy command yet. On the worker host:
@@ -412,6 +464,8 @@ MagicDNS, rather than only as unreachable.
 | --- | --- | --- |
 | `mismatch` in `arc models workers`; syncs wait, fall back or fail | Workstation code changed (upgrade, commit, pull) | `arc models deploy` (release) or `arc models deploy --build` (source) |
 | `unreachable (... Connection refused)` | Container stopped or missing, or wrong port | `arc models start` if stopped, else `arc models deploy`; check `docker ps` on the host |
+| `unreachable (timed out)` for a host that sleeps | Host suspended | Add `wake` settings; `arc models wake` |
+| `... did not answer within 120s` after a wake | Wake-on-LAN not armed, host shut down rather than suspended, or the packet did not reach its LAN | Check the NIC's `wol` setting; set `wake.network` and `wake.relay` |
 | `... resolves to <address> ... outside the tailnet` | Workstation not on the tailnet, or MagicDNS off | Start Tailscale and enable MagicDNS on the workstation |
 | `authentication failed ... same authkey` or `undecodable message ... authkey` | `authkey` set on only one side or different | Set the same `remote_embedding.authkey` and redeploy |
 | Deploy: `vector parity check failed` | Worker and workstation dependency versions embed differently (both sides' versions are printed) | Align the workstation's packages with the worker's, or serve only the passing models (`models:`), then redeploy |

@@ -98,6 +98,8 @@ for the capability matrix, worker fallback behavior, diagnostics, and evidence.
 - `arc models deploy` installs and updates workers over SSH and checks vector
   parity before they are used; `arc models workers` shows their state, and
   `arc models stop` / `start` free and resume them
+- Workers that sleep when idle are woken with a Wake-on-LAN packet, by syncs
+  as needed or ahead of time with `arc models wake`
 
 See [Remote Embedding Workers](docs/guides/remote-embedding-workers.md).
 

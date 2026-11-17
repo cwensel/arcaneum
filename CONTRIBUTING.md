@@ -49,35 +49,10 @@ pytest tests/
 
 ## Development Workflow
 
-### Using Kata for Task Tracking
+### Task Tracking
 
-This project uses `kata` for issue tracking.
-
-**Check for ready work:**
-
-```bash
-kata ready
-```
-
-**Create a new task:**
-
-```bash
-kata create "Add feature X" --priority 2 --label type:feature
-```
-
-**Claim a task:**
-
-```bash
-kata assign arcaneum-123 YourName
-```
-
-**Complete a task:**
-
-```bash
-kata close arcaneum-123 --reason done
-```
-
-See your local kata workflow documentation for project-specific issue tracking.
+Maintainers track work in the `arcaneum` ledger and ship it with flight (`/flight-scope`, `/flight-ship`,
+`/flight-inbox`; `/flight-doctor` checks the setup). Contributors without that setup can open a GitHub issue instead.
 
 ### Using Recommendation Data Records (RDRs)
 
@@ -288,11 +263,7 @@ Use descriptive branch names:
 
 ### Adding a New CLI Command
 
-1. **Create issue record:**
-
-```bash
-kata create "Add arc foo command" --priority 2 --label type:feature
-```
+1. **File an item** in the `arcaneum` ledger (or open a GitHub issue)
 
 2. **Create RDR** (if complex)
 
@@ -341,11 +312,7 @@ def test_foo_command():
     assert foo() == expected
 ```
 
-8. **Close issue record:**
-
-```bash
-kata close arcaneum-XXX --reason done
-```
+8. **Close the item** (flight closes it when it lands the change)
 
 ### Updating Documentation
 
@@ -357,25 +324,11 @@ kata close arcaneum-XXX --reason done
 
 ### Reporting Issues
 
-Use `kata` for issue tracking:
-
-```bash
-# Report a bug
-kata create "Bug: arc search fails with filter" --priority 1 --label type:bug
-
-# Suggest a feature
-kata create "Feature: add arc backup command" --priority 3 --label type:feature
-
-# Document a task
-kata create "Update RDR-005 with branch support" --priority 2 --label type:task
-```
-
-Or use GitHub issues if you prefer (maintainers will create issue records).
+Open a GitHub issue; maintainers file it as an item in the `arcaneum` ledger.
 
 ## Questions?
 
 - **Setup issues?** Run `arc doctor` for diagnostics
-- **Kata questions?** See your local kata workflow documentation
 - **RDR questions?** See [docs/rdr/README.md](docs/rdr/README.md)
 - **Documentation questions?** See [docs/CONTRIBUTING-DOCS.md](docs/CONTRIBUTING-DOCS.md)
 - **Still stuck?** Open a GitHub issue or discussion

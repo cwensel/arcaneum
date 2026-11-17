@@ -45,9 +45,6 @@ arcaneum.yaml
 /.worktrees/
 _*
 !__init__.py
-.kata/
-.roborev.toml
-.kata.toml
-.kata.local.toml
+.flight/
 .agents
 skills-lock.json

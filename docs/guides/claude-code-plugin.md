@@ -838,14 +838,7 @@ arc collection delete test-* --confirm 2>/dev/null || true
 
 ### 4. Document Bugs Immediately
 
-Use `kata` to track issues found during testing:
-
-```bash
-kata create "Search filter syntax unclear in help text" \
-  --priority 1 \
-  --label type:bug \
-  --json
-```
+File issues found during testing as items in the `arcaneum` ledger (or as GitHub issues).
 
 ## References
 

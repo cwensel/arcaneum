@@ -239,6 +239,7 @@ def wake_endpoints(
     explicit: bool,
     wait: bool = True,
     dry_run: bool = False,
+    quiet: bool = False,
     timeout: Optional[float] = None,
     connect_timeout: float = 2.0,
     out: Callable[[str], None] = print,
@@ -251,7 +252,9 @@ def wake_endpoints(
     """Wake each sleeping endpoint and, unless ``wait`` is false, wait until it answers.
 
     ``explicit`` means the endpoints were named, so one without wake settings fails
-    rather than being skipped. Returns False if any endpoint failed.
+    rather than being skipped. ``quiet`` reports only the endpoints it wakes, for a
+    command that wakes workers on the way to its own work. Returns False if any
+    endpoint failed.
     """
     ok = True
     pending: dict[str, tuple[EndpointConfig, float, float]] = {}  # name -> (ep, start, sent)
@@ -271,15 +274,17 @@ def wake_endpoints(
                     f"✗ {endpoint.name}: no wake settings; add wake.mac to this endpoint "
                     "under remote_embedding.endpoints"
                 )
-            else:
+            elif not quiet:
                 out(f"- {endpoint.name}: no wake settings; skipped")
             continue
         current = state(endpoint.host, endpoint.port, connect_timeout)
         if current == "listening":
-            out(f"✓ {endpoint.name}: already awake")
+            if not quiet:
+                out(f"✓ {endpoint.name}: already awake")
             continue
         if current == "refused":
-            out(_awake_without_worker(endpoint))
+            if not quiet:
+                out(_awake_without_worker(endpoint))
             continue
         if dry_run:
             out(f"{endpoint.name}: would send a magic packet to {endpoint.wake.mac}")
@@ -302,7 +307,7 @@ def wake_endpoints(
             current = state(endpoint.host, endpoint.port, connect_timeout)
             if current != "silent":
                 del pending[name]
-                if current == "listening":
+                if current == "listening" or quiet:
                     out(f"✓ {name}: awake after {now - started:.0f}s")
                 else:
                     out(_awake_without_worker(endpoint))

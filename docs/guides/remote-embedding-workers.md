@@ -388,14 +388,19 @@ times. Elsewhere it runs `ssh <relay> python3 -` with a short script that
 broadcasts from the relay, so the relay needs key-based SSH and Python 3.
 Without `network`, a configured relay is always used.
 
-Syncs wake workers on their own. When a connection to a worker with `wake`
-settings times out, the pool sends a magic packet, resends every 30 s while
-the worker stays down, and prints `Waking <worker> for <model>; waiting for it
-to answer`. Until the worker answers or `timeout` runs out, the pool waits for
-it under every [unavailable policy](#unavailable-policy), so `local` does not
-embed on the workstation just because a worker was asleep. A refused
-connection means the host is awake with no worker listening, so it is never
-woken. Workers that are up keep embedding while another wakes.
+Syncs, `arc models deploy` and `arc models start` wake workers on their own.
+Deploy and start send a packet to each selected worker with `wake` settings that
+does not answer, then wait for it before connecting over SSH; a dry run only
+reports what it would wake. `arc models stop` does not wake a sleeping host.
+
+When a sync's connection to a worker with `wake` settings times out, the pool
+sends a magic packet, resends every 30 s while the worker stays down, and prints
+`Waking <worker> for <model>; waiting for it to answer`. Until the worker
+answers or `timeout` runs out, the pool waits for it under every [unavailable
+policy](#unavailable-policy), so `local` does not embed on the workstation just
+because a worker was asleep. A refused connection means the host is awake with
+no worker listening, so it is never woken. Workers that are up keep embedding
+while another wakes.
 
 `arc models wake [HOSTS...]` wakes workers ahead of time: it sends a packet to
 each one with `wake` settings that does not answer, and waits until each

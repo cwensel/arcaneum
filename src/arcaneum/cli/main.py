@@ -635,9 +635,10 @@ def models_wake(hosts, no_wait, timeout, dry_run):
     Sends a magic packet to each configured endpoint with `wake` settings (or
     the HOSTS named) that does not answer, then waits until each answers. Off
     the worker's `wake.network`, the packet goes out from `wake.relay` over
-    SSH, since it cannot cross Tailscale. Syncs wake a sleeping worker on their
-    own; this is for waking one ahead of time. Wake-on-LAN wakes a suspended
-    host, not one that is shut down.
+    SSH, since it cannot cross Tailscale. Syncs, `arc models deploy` and `arc
+    models start` wake a sleeping worker on their own; this is for waking one
+    ahead of time. Wake-on-LAN wakes a suspended host, not one that is shut
+    down.
 
     \b
     Examples:

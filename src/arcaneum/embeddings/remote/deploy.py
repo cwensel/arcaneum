@@ -36,6 +36,7 @@ from arcaneum.embeddings.remote.pool import (
     probe_endpoint,
     tailscale_resolution_problem,
 )
+from arcaneum.embeddings.remote.wake import wake_endpoints
 
 IMAGE_REPOSITORY = "arcaneum-embed"
 MODEL_VOLUME = "arcaneum-embed-models"
@@ -528,6 +529,33 @@ def select_endpoints(
     return selected
 
 
+def wake_sleeping(
+    config: RemoteEmbeddingConfig,
+    endpoints: list[EndpointConfig],
+    waker: Callable[..., bool],
+    *,
+    dry_run: bool,
+    out: Callable[[str], None],
+) -> None:
+    """Wake the endpoints with wake settings whose host sleeps, and wait for them.
+
+    A host that does not wake fails its own SSH preflight next, so the result is
+    not needed here. A dry run only reports what it would wake.
+    """
+    sleepers = [e for e in endpoints if e.wake is not None]
+    if not sleepers:
+        return
+    waker(
+        sleepers,
+        explicit=False,
+        wait=True,
+        dry_run=dry_run,
+        quiet=True,
+        connect_timeout=min(config.deadlines.connect_timeout, 2.0),
+        out=out,
+    )
+
+
 class Deployer:
     def __init__(
         self,
@@ -543,11 +571,13 @@ class Deployer:
         out: Callable[[str], None] = print,
         sleep: Callable[[float], None] = None,
         health_timeout: float = 180.0,
+        waker: Callable[..., bool] = wake_endpoints,
     ) -> None:
         import time
 
         self.config = config
         self.wheel = wheel
+        self.waker = waker
         self.dry_run = dry_run
         self.refresh = refresh
         self.verify = verify
@@ -564,7 +594,9 @@ class Deployer:
     def deploy(self, hosts: Optional[Iterable[str]] = None) -> bool:
         """Deploy each selected endpoint in turn; returns False if any host failed."""
         ok = True
-        for endpoint in self.select(hosts):
+        selected = self.select(hosts)
+        wake_sleeping(self.config, selected, self.waker, dry_run=self.dry_run, out=self.out)
+        for endpoint in selected:
             try:
                 self._deploy_endpoint(endpoint)
             except DeployError as exc:
@@ -789,11 +821,13 @@ class WorkerControl:
         out: Callable[[str], None] = print,
         sleep: Optional[Callable[[float], None]] = None,
         health_timeout: float = 180.0,
+        waker: Callable[..., bool] = wake_endpoints,
     ) -> None:
         import time
 
         self.config = config
         self.dry_run = dry_run
+        self.waker = waker
         self.runner_factory = runner_factory
         self.probe = probe
         self.out = out
@@ -801,18 +835,23 @@ class WorkerControl:
         self.health_timeout = health_timeout
 
     def stop(self, hosts: Optional[Iterable[str]] = None) -> bool:
-        """Stop each selected worker; returns False if any host failed."""
-        return self._each(hosts, self._stop_endpoint)
+        """Stop each selected worker; returns False if any host failed.
+
+        A sleeping host is not woken: its worker is idle, and stopping it can wait.
+        """
+        return self._each(select_endpoints(self.config, hosts), self._stop_endpoint)
 
     def start(self, hosts: Optional[Iterable[str]] = None) -> bool:
-        """Start each selected stopped worker; returns False if any host failed."""
-        return self._each(hosts, self._start_endpoint)
+        """Wake, then start each selected stopped worker; returns False if any host failed."""
+        selected = select_endpoints(self.config, hosts)
+        wake_sleeping(self.config, selected, self.waker, dry_run=self.dry_run, out=self.out)
+        return self._each(selected, self._start_endpoint)
 
     def _each(
-        self, hosts: Optional[Iterable[str]], action: Callable[[EndpointConfig], None]
+        self, endpoints: list[EndpointConfig], action: Callable[[EndpointConfig], None]
     ) -> bool:
         ok = True
-        for endpoint in select_endpoints(self.config, hosts):
+        for endpoint in endpoints:
             try:
                 action(endpoint)
             except DeployError as exc:

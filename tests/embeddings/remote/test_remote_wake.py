@@ -455,3 +455,20 @@ def test_wake_reports_a_failed_send():
 
     assert not ok
     assert "laptop-1 unreachable" in lines[-1]
+
+
+def test_quiet_wake_reports_only_the_hosts_it_wakes():
+    hosts = Hosts(
+        **{"dev-0": ["listening"], "dev-1": ["refused"], "dev-2": ["silent", "listening"]}
+    )
+    workers = [
+        endpoint("dev-0"),
+        endpoint("dev-1", mac="0c:4d:e9:99:4e:97"),
+        endpoint("dev-2", mac="ac:87:a3:2c:b8:9e"),
+        EndpointConfig(host="dev-3"),
+    ]
+
+    ok, sent, lines = run_wake(workers, hosts, quiet=True)
+
+    assert ok and sent == ["ac:87:a3:2c:b8:9e"]
+    assert lines and all("dev-2" in line for line in lines)

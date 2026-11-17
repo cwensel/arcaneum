@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from arcaneum.embeddings.remote.config import EndpointConfig, RemoteEmbeddingConfig
+from arcaneum.embeddings.remote.config import EndpointConfig, RemoteEmbeddingConfig, WakeConfig
 from arcaneum.embeddings.remote.deploy import (
     CHANGING_COMMANDS,
     CommandResult,
@@ -773,3 +773,83 @@ def test_unknown_host_is_an_error_for_stop_and_start(tmp_path):
     with pytest.raises(DeployError, match="dev-9"):
         harness.control.start(["dev-9"])
     assert harness.hosts["dev-0"].commands == []
+
+
+# --- waking sleeping workers -------------------------------------------------------
+
+
+class FakeWaker:
+    """Records each wake call and how many remote commands had run before it."""
+
+    def __init__(self, hosts) -> None:
+        self.hosts = hosts
+        self.calls: list[dict] = []
+
+    def __call__(self, endpoints, **options):
+        commands = sum(len(host.commands) for host in self.hosts.values())
+        self.calls.append({"names": [e.name for e in endpoints], "commands": commands, **options})
+        return True
+
+
+def sleepy_endpoints(*hosts):
+    return [
+        EndpointConfig(host=host, bind="tailscale", wake=WakeConfig(mac="10:dd:b1:c9:7d:22"))
+        for host in hosts
+    ]
+
+
+def waking_harness(tmp_path, endpoints, **options):
+    holder: dict[str, FakeWaker] = {}
+
+    def waker(selected, **kwargs):
+        return holder["waker"](selected, **kwargs)
+
+    harness = Harness(tmp_path, endpoints, waker=waker, **options)
+    holder["waker"] = harness.waker = FakeWaker(harness.hosts)
+    return harness
+
+
+def test_deploy_wakes_selected_workers_with_wake_settings_before_ssh(tmp_path):
+    workers = sleepy_endpoints("dev-0", "dev-1") + endpoints("dev-2")
+    harness = waking_harness(tmp_path, workers)
+
+    assert harness.deployer.deploy(["dev-0", "dev-2"]) is True
+
+    [call] = harness.waker.calls
+    assert call["names"] == ["dev-0:7300"]
+    assert call["commands"] == 0
+    assert call["quiet"] is True and call["explicit"] is False and call["wait"] is True
+    assert call["dry_run"] is False
+
+
+def test_deploy_dry_run_wakes_nothing(tmp_path):
+    harness = waking_harness(tmp_path, sleepy_endpoints("dev-0"), dry_run=True)
+
+    harness.deployer.deploy()
+
+    [call] = harness.waker.calls
+    assert call["dry_run"] is True
+
+
+def test_deploy_without_wake_settings_never_calls_the_waker(tmp_path):
+    harness = waking_harness(tmp_path, endpoints("dev-0"))
+
+    assert harness.deployer.deploy() is True
+
+    assert harness.waker.calls == []
+
+
+def test_start_wakes_sleeping_workers_but_stop_does_not(tmp_path):
+    woken: list[list[str]] = []
+
+    def waker(selected, **options):
+        woken.append([e.name for e in selected])
+        return True
+
+    harness = ControlHarness(tmp_path, sleepy_endpoints("dev-0"), waker=waker)
+
+    harness.control.stop()
+    assert woken == []
+
+    assert harness.control.start() is True
+    assert woken == [["dev-0:7300"]]

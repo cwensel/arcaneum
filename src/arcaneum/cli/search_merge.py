@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from typing import Callable, List, Tuple, TypeVar
 
-from .errors import ResourceNotFoundError
+from .errors import UnknownCorpusError
 
 T = TypeVar("T")
 
@@ -55,8 +55,9 @@ def fetch_from_corpora(
     Returns:
         (per_corpus_results, missing_corpora).
 
-        Raises ``ResourceNotFoundError`` if a single requested corpus is
-        missing, or if every requested corpus is missing.
+        Raises ``UnknownCorpusError`` (a ``ResourceNotFoundError``) if a
+        single requested corpus is missing, or if every requested corpus is
+        missing.
     """
     results: List[T] = []
     missing: List[str] = []
@@ -72,9 +73,9 @@ def fetch_from_corpora(
                 if verbose:
                     logger.warning(f"Corpus '{corpus_name}' not found, skipping")
             else:
-                raise ResourceNotFoundError(f"Corpus '{corpus_name}' not found")
+                raise UnknownCorpusError(f"Corpus '{corpus_name}' not found")
 
     if missing and len(missing) == len(corpora):
-        raise ResourceNotFoundError(f"No matching corpora found: {', '.join(corpora)}")
+        raise UnknownCorpusError(f"No matching corpora found: {', '.join(corpora)}")
 
     return results, missing

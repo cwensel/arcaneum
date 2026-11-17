@@ -15,6 +15,29 @@ from ..indexing.collection_metadata import (
 )
 
 
+class ModelNotCachedError(Exception):
+    """The query model is missing from the local cache and downloads are off."""
+
+    def __init__(self, model_key: str):
+        self.model_key = model_key
+        super().__init__(
+            f"Embedding model '{model_key}' is not in the local model cache and downloads "
+            "are disabled; cache it with `arc models`, or use text search"
+        )
+
+
+class QueryEmbeddingError(Exception):
+    """Loading the query model (including a download) or embedding the query failed.
+
+    Kept apart from Qdrant failures, so an unreachable model host is not
+    reported as an unreachable Qdrant.
+    """
+
+    def __init__(self, model_key: str, cause: BaseException):
+        self.model_key = model_key
+        super().__init__(f"Embedding model '{model_key}' could not embed the query: {cause}")
+
+
 class SearchEmbedder:
     """Manages embedding models for search queries.
 
@@ -22,12 +45,18 @@ class SearchEmbedder:
     its named vectors, then generates query embeddings using that model.
     """
 
-    def __init__(self, cache_dir: Path):
+    # Class default, so an instance built without __init__ keeps download-on-use.
+    _allow_download = True
+
+    def __init__(self, cache_dir: Path, allow_download: bool = True):
         """Initialize search embedder.
 
         Args:
             cache_dir: Directory to cache downloaded models
+            allow_download: When False, a model missing from the local cache
+                raises ModelNotCachedError instead of downloading (RDR-026 Q9)
         """
+        self._allow_download = allow_download
         self._embedding_client = EmbeddingClient(
             cache_dir=str(cache_dir),
         )
@@ -98,6 +127,11 @@ class SearchEmbedder:
             available = ", ".join(EMBEDDING_MODELS.keys())
             raise ValueError(f"Model '{model_key}' not configured.\nAvailable models: {available}")
 
+        # Refuse before the policy check, whose backfill writes to Qdrant, and
+        # before get_model, which downloads when the local load fails.
+        if not self._allow_download and not self._embedding_client.is_model_cached(model_key):
+            raise ModelNotCachedError(model_key)
+
         metadata = get_collection_metadata(client, collection_name)
         policy_issues = prompt_policy_issues(metadata, model_key)
         if policy_issues and prompt_policy_can_be_backfilled(metadata, [model_key]):
@@ -112,6 +146,13 @@ class SearchEmbedder:
         if policy_issues:
             raise ValueError(policy_issues[0])
 
+        try:
+            return self._embed_query(query, model_key)
+        except Exception as e:
+            raise QueryEmbeddingError(model_key, e) from e
+
+    def _embed_query(self, query: str, model_key: str) -> Tuple[str, List[float]]:
+        """Load the query model (downloading it if allowed) and embed ``query``."""
         # Generate embedding using the detected model
         # Note: query_embed() is for queries, embed() is for documents
         model = self._embedding_client.get_model(model_key)

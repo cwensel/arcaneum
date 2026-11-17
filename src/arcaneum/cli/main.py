@@ -14,12 +14,11 @@ from arcaneum.cli import hooks as hook_utils
 from arcaneum.cli.errors import (
     EXIT_ERROR,
     EXIT_INVALID_ARGS,
-    EXIT_NOT_FOUND,
     EXIT_SUCCESS,
+    GENERIC_ERROR_CODE,
     ArcaneumError,
     HelpfulGroup,
     InvalidArgumentError,
-    ResourceNotFoundError,
 )
 from arcaneum.embeddings.remote import DEFAULT_PORT as REMOTE_EMBED_DEFAULT_PORT
 
@@ -2955,6 +2954,18 @@ def main():
         or "--format=json" in args
         or any(flag == "--format" and value == "json" for flag, value in zip(args, args[1:]))
     )
+
+    def report(message: str, code: str, detail: str | None = None) -> None:
+        # JSON mode: the envelope on stdout, its error carrying a stable code
+        # (RDR-026 Q3). Text mode: the message on stderr.
+        if json_mode:
+            from arcaneum.cli.output import print_json
+
+            entry = {"code": code, "message": message if detail is None else detail}
+            print_json("error", message, errors=[entry])
+        else:
+            print(f"[ERROR] {message}", file=sys.stderr)
+
     try:
         cli(standalone_mode=False)
         return EXIT_SUCCESS
@@ -2963,61 +2974,27 @@ def main():
     except click.ClickException as e:
         # Click handles its own exceptions (usage errors, etc.)
         if json_mode:
-            from arcaneum.cli.output import print_json
-
-            print_json("error", str(e), errors=[str(e)])
+            report(str(e), InvalidArgumentError.code)
         else:
             e.show()
         return EXIT_INVALID_ARGS
-    except (InvalidArgumentError, click.BadParameter) as e:
-        if json_mode:
-            from arcaneum.cli.output import print_json
-
-            print_json("error", str(e), errors=[str(e)])
-        else:
-            print(f"[ERROR] {e}", file=sys.stderr)
-        return EXIT_INVALID_ARGS
-    except ResourceNotFoundError as e:
-        if json_mode:
-            from arcaneum.cli.output import print_json
-
-            print_json("error", str(e), errors=[str(e)])
-        else:
-            print(f"[ERROR] {e}", file=sys.stderr)
-        return EXIT_NOT_FOUND
     except click.Abort:
         if json_mode:
-            from arcaneum.cli.output import print_json
-
-            print_json("error", "Operation aborted", errors=["Operation aborted"])
+            report("Operation aborted", GENERIC_ERROR_CODE)
         else:
             print("Aborted!", file=sys.stderr)
         return EXIT_ERROR
     except KeyboardInterrupt:
         if json_mode:
-            from arcaneum.cli.output import print_json
-
-            print_json(
-                "error", "Operation cancelled by user", errors=["Operation cancelled by user"]
-            )
+            report("Operation cancelled by user", GENERIC_ERROR_CODE)
         else:
             print("\n[INFO] Operation cancelled by user", file=sys.stderr)
         return EXIT_ERROR
     except ArcaneumError as e:
-        if json_mode:
-            from arcaneum.cli.output import print_json
-
-            print_json("error", str(e), errors=[str(e)])
-        else:
-            print(f"[ERROR] {e}", file=sys.stderr)
+        report(str(e), e.code)
         return e.exit_code
     except Exception as e:
-        if json_mode:
-            from arcaneum.cli.output import print_json
-
-            print_json("error", f"Unexpected error: {e}", errors=[str(e)])
-        else:
-            print(f"[ERROR] Unexpected error: {e}", file=sys.stderr)
+        report(f"Unexpected error: {e}", GENERIC_ERROR_CODE, str(e))
         if "--verbose" in sys.argv or "-v" in sys.argv:
             import traceback
 

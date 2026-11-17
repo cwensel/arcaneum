@@ -91,7 +91,31 @@ def format_json_results(
     verbose: bool = False,
     max_content_chars: int | None = None,
 ) -> str:
-    """Format search results as JSON.
+    """Format search results as a JSON string (see ``build_json_results``)."""
+    output = build_json_results(
+        query=query,
+        collection=collection,
+        results=results,
+        limit=limit,
+        offset=offset,
+        verbose=verbose,
+        max_content_chars=max_content_chars,
+    )
+    # ensure_ascii=True escapes ALL non-ASCII and control characters
+    # This is the safest option for PDF text which may contain unusual characters
+    return json.dumps(output, indent=2, ensure_ascii=True)
+
+
+def build_json_results(
+    query: str,
+    collection: str,
+    results: List[SearchResult],
+    limit: int = 10,
+    offset: int = 0,
+    verbose: bool = False,
+    max_content_chars: int | None = None,
+) -> Dict[str, Any]:
+    """Build the JSON-ready search results object.
 
     Output structure:
         {
@@ -120,7 +144,7 @@ def format_json_results(
         max_content_chars: Override the content limit and add truncation flags; zero is unlimited
 
     Returns:
-        JSON string (properly escaped for all control characters)
+        Results dictionary, ready for ``json.dumps``
     """
     # Truncate content unless verbose mode
     content_length = None if verbose or max_content_chars is not None else 500
@@ -148,9 +172,7 @@ def format_json_results(
     if max_content_chars is not None:
         output["results"] = [limit_json_content(r, max_content_chars) for r in output["results"]]
 
-    # ensure_ascii=True escapes ALL non-ASCII and control characters
-    # This is the safest option for PDF text which may contain unusual characters
-    return json.dumps(output, indent=2, ensure_ascii=True)
+    return output
 
 
 def format_metadata(metadata: Dict[str, Any], verbose: bool = False) -> str:

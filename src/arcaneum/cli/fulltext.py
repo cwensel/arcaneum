@@ -14,23 +14,14 @@ from ..fulltext.indexes import get_index_settings
 from .output import print_json, print_error, print_info, print_success
 from .interaction_logger import interaction_logger
 from .errors import InvalidArgumentError, ResourceNotFoundError
-from .search_merge import fetch_from_corpora, per_corpus_limit
 from .utils import create_meili_client
+from ..retrieval import search_text
 from ..schema.document import persisted_metadata_fields
 from ..utils.formatting import format_size
-from ..utils.search_output import content_preview, format_compact_results, limit_json_content
+from ..utils.search_output import content_preview, format_compact_results
 
 console = Console()
 logger = logging.getLogger(__name__)
-
-
-class _MissingCorpus(Exception):
-    """Sentinel raised by the per-corpus fetch closure when an index is absent.
-
-    MeiliSearch's index_exists() is an upfront check, so there is no driver
-    exception to inspect — we raise this sentinel and match on it inside
-    fetch_from_corpora's is_missing predicate.
-    """
 
 
 def _require_meili() -> FullTextClient:
@@ -123,244 +114,109 @@ def search_text_command(
     else:
         logging.basicConfig(level=logging.WARNING, format="[%(levelname)s] %(message)s")
 
-    client = None
-    try:
-        with interaction_logger.track(
-            "search",
-            "text",
-            corpora=corpora,
-            query=query,
+    if verbose:
+        logger.info(f"Searching corpus '{', '.join(corpora)}' for: \"{query}\"")
+        if filter_arg:
+            logger.info(f"Filter: {filter_arg}")
+
+    start_time = time.time()
+    with interaction_logger.track(
+        "search",
+        "text",
+        corpora=corpora,
+        query=query,
+        limit=limit,
+        offset=offset,
+        filters=filter_arg if filter_arg else None,
+    ) as ctx:
+        result = search_text(
+            query,
+            corpora,
+            filter=filter_arg,
             limit=limit,
             offset=offset,
-            filters=filter_arg if filter_arg else None,
-        ) as ctx:
-            client = _require_meili()
+            client=create_meili_client(),
+            verbose=verbose,
+        )
+        ctx["result_count"] = len(result.hits)
 
-            corpora_str = ", ".join(corpora)
-            if verbose:
-                logger.info(f"Searching corpus '{corpora_str}' for: \"{query}\"")
-                if filter_arg:
-                    logger.info(f"Filter: {filter_arg}")
+    hits = result.hits
+    if verbose:
+        logger.info(f"Search completed in {(time.time() - start_time) * 1000:.1f}ms")
+        if result.missing_corpora:
+            logger.warning(f"Missing corpora: {', '.join(result.missing_corpora)}")
 
-            start_time = time.time()
-            fetch_limit = per_corpus_limit(corpora, limit, offset)
-            total_processing_time = 0
-            total_estimated_hits = 0
-
-            def _fetch(corpus_name: str) -> list:
-                if not client.index_exists(corpus_name):
-                    raise _MissingCorpus(corpus_name)
-                results = client.search(
-                    corpus_name,
-                    query,
-                    filter=filter_arg,
-                    limit=fetch_limit,
-                    offset=0,  # Apply offset after merge
-                    attributes_to_highlight=["content"],
-                )
-                hits = results.get("hits", [])
-                for hit in hits:
-                    hit["_corpus"] = corpus_name
-                nonlocal total_processing_time, total_estimated_hits
-                total_processing_time += results.get("processingTimeMs", 0)
-                total_estimated_hits += results.get("estimatedTotalHits", 0)
-                return hits
-
-            per_corpus_hits, missing_corpora = fetch_from_corpora(
+    # Format and output results
+    if output_format == "compact":
+        print(
+            format_compact_results(
+                query,
                 corpora,
-                _fetch,
-                lambda exc: isinstance(exc, _MissingCorpus),
-                logger,
-                verbose,
+                [
+                    {
+                        "location": format_location(hit),
+                        "content": hit.get("content"),
+                        "corpus": hit.get("_corpus"),
+                    }
+                    for hit in hits
+                ],
+                offset=offset,
+                max_content_chars=500 if max_content_chars is None else max_content_chars,
             )
+        )
+    elif output_json or output_format == "json":
+        output = {
+            "status": "success",
+            "message": f"Found {result.estimated_total_hits} results",
+            "data": result.to_data(max_content_chars=max_content_chars),
+            "errors": [],
+        }
+        print(json.dumps(output, indent=2))
+    else:
+        # Human-readable text output
+        console.print(f"\n[bold]Search Results[/bold] ({result.processing_time_ms}ms)")
+        console.print(f"Found {result.estimated_total_hits} matches in '{result.display_index}'\n")
 
-            all_hits = [hit for hits in per_corpus_hits for hit in hits]
-
-            # MeiliSearch doesn't return a normalized score comparable across
-            # indexes, but results are already ranked by relevance within each
-            # index. Multi-corpus merge uses positional round-robin rather
-            # than score-based ranking — this preserves within-corpus ordering
-            # but does not reflect true cross-corpus relevance. If future
-            # versions of MeiliSearch expose a normalized _rankingScore we
-            # should switch to score-based merging to match semantic search.
-            if len(corpora) > 1 and len(corpora) != len(missing_corpora):
-                # Group hits by corpus for interleaving
-                hits_by_corpus = {}
-                for hit in all_hits:
-                    corpus = hit.get("_corpus", "unknown")
-                    if corpus not in hits_by_corpus:
-                        hits_by_corpus[corpus] = []
-                    hits_by_corpus[corpus].append(hit)
-
-                # Interleave results
-                interleaved = []
-                max_len = max(len(h) for h in hits_by_corpus.values()) if hits_by_corpus else 0
-                for i in range(max_len):
-                    for corpus in corpora:
-                        if corpus in hits_by_corpus and i < len(hits_by_corpus[corpus]):
-                            interleaved.append(hits_by_corpus[corpus][i])
-
-                all_hits = interleaved
-
-            # Apply pagination
-            hits = all_hits[offset : offset + limit]
-
-            execution_time_ms = (time.time() - start_time) * 1000
-
-            if verbose:
-                logger.info(f"Search completed in {execution_time_ms:.1f}ms")
-                if missing_corpora:
-                    logger.warning(f"Missing corpora: {', '.join(missing_corpora)}")
-
-            ctx["result_count"] = len(hits)
-
-        # Use first corpus name for backwards-compatible output format
-        # (or combined name for multi-corpus)
-        display_index = corpora[0] if len(corpora) == 1 else f"[{', '.join(corpora)}]"
-
-        # Format and output results
-        if output_format == "compact":
-            print(
-                format_compact_results(
-                    query,
-                    corpora,
-                    [
-                        {
-                            "location": format_location(hit),
-                            "content": hit.get("content"),
-                            "corpus": hit.get("_corpus"),
-                        }
-                        for hit in hits
-                    ],
-                    offset=offset,
-                    max_content_chars=500 if max_content_chars is None else max_content_chars,
-                )
-            )
-        elif output_json or output_format == "json":
-            # JSON output mode
-            if max_content_chars is not None:
-                hits = [limit_json_content(hit, max_content_chars) for hit in hits]
-            output = {
-                "status": "success",
-                "message": f"Found {total_estimated_hits} results",
-                "data": {
-                    "query": query,
-                    "index": display_index,
-                    "corpora": corpora,
-                    "hits": hits,
-                    "estimatedTotalHits": total_estimated_hits,
-                    "processingTimeMs": total_processing_time,
-                    "limit": limit,
-                    "offset": offset,
-                },
-                "errors": [],
-            }
-            print(json.dumps(output, indent=2))
+        if not hits:
+            console.print("[dim]No results found[/dim]")
         else:
-            # Human-readable text output
-            console.print(f"\n[bold]Search Results[/bold] ({total_processing_time}ms)")
-            console.print(f"Found {total_estimated_hits} matches in '{display_index}'\n")
+            for i, hit in enumerate(hits, 1):
+                # Get file location with full context (RDR-012 enhancement)
+                location = format_location(hit)
 
-            if not hits:
-                console.print("[dim]No results found[/dim]")
-            else:
-                for i, hit in enumerate(hits, 1):
-                    # Get file location with full context (RDR-012 enhancement)
-                    location = format_location(hit)
+                # Show source corpus for multi-corpus searches
+                corpus_tag = f" [{hit.get('_corpus', '?')}]" if len(corpora) > 1 else ""
 
-                    # Show source corpus for multi-corpus searches
-                    if len(corpora) > 1:
-                        corpus_tag = f" [{hit.get('_corpus', '?')}]"
-                    else:
-                        corpus_tag = ""
+                console.print(f"[cyan]{i}. {location}{corpus_tag}[/cyan]")
 
-                    console.print(f"[cyan]{i}. {location}{corpus_tag}[/cyan]")
+                # Show metadata if available
+                if verbose:
+                    if "language" in hit:
+                        console.print(f"   Language: {hit['language']}")
+                    if "project" in hit:
+                        console.print(f"   Project: {hit['project']}")
 
-                    # Show metadata if available
-                    if verbose:
-                        if "language" in hit:
-                            console.print(f"   Language: {hit['language']}")
-                        if "project" in hit:
-                            console.print(f"   Project: {hit['project']}")
+                # Show highlighted content
+                if max_content_chars is not None:
+                    content = content_preview(hit.get("content") or "", max_content_chars)
+                    console.print(f"   {content}", markup=False, highlight=False)
+                elif "_formatted" in hit and "content" in hit["_formatted"]:
+                    content = hit["_formatted"]["content"]
+                    # Truncate long content
+                    if len(content) > 200:
+                        content = content[:200] + "..."
+                    # Replace MeiliSearch highlight markers with rich formatting
+                    content = content.replace("<em>", "[yellow]").replace("</em>", "[/yellow]")
+                    console.print(f"   {content}")
+                elif "content" in hit:
+                    content = hit["content"]
+                    if len(content) > 200:
+                        content = content[:200] + "..."
+                    console.print(f"   {content}")
 
-                    # Show highlighted content
-                    if max_content_chars is not None:
-                        content = content_preview(hit.get("content") or "", max_content_chars)
-                        console.print(f"   {content}", markup=False, highlight=False)
-                    elif "_formatted" in hit and "content" in hit["_formatted"]:
-                        content = hit["_formatted"]["content"]
-                        # Truncate long content
-                        if len(content) > 200:
-                            content = content[:200] + "..."
-                        # Replace MeiliSearch highlight markers with rich formatting
-                        content = content.replace("<em>", "[yellow]").replace("</em>", "[/yellow]")
-                        console.print(f"   {content}")
-                    elif "content" in hit:
-                        content = hit["content"]
-                        if len(content) > 200:
-                            content = content[:200] + "..."
-                        console.print(f"   {content}")
+                console.print()  # Blank line between results
 
-                    console.print()  # Blank line between results
-
-        sys.exit(0)
-
-    except (InvalidArgumentError, ResourceNotFoundError):
-        raise  # Re-raise our custom exceptions for main() to handle
-    except Exception as e:
-        error_console = Console(stderr=True)
-        error_str = str(e)
-        # Check for MeiliSearch filter attribute error
-        if (
-            "is not filterable" in error_str or "invalid_search_filter" in error_str
-        ) and client is not None:
-            import re
-
-            attr_match = re.search(r"Attribute `(\w+)`", error_str)
-            bad_attr = attr_match.group(1) if attr_match else None
-
-            # Fetch filterable attributes for the first index (for error message)
-            index_name = corpora[0] if corpora else "unknown"
-            try:
-                settings = client.get_index_settings(index_name)
-                filterable = settings.get("filterableAttributes", [])
-
-                if bad_attr:
-                    error_console.print(
-                        f"[red][ERROR] Filter attribute '{bad_attr}' is not filterable.[/red]"
-                    )
-                else:
-                    error_console.print(f"[red][ERROR] Invalid filter attribute.[/red]")
-
-                if filterable:
-                    error_console.print(
-                        f"\nAvailable filterable attributes for index '{index_name}':"
-                    )
-                    for attr in filterable:
-                        error_console.print(f"  - {attr}")
-                    if bad_attr:
-                        # Suggest similar attribute if there's a close match
-                        for attr in filterable:
-                            if bad_attr.lower() in attr.lower() or attr.lower() in bad_attr.lower():
-                                error_console.print(
-                                    f'\n[yellow]Hint: Try --filter "{attr}=<value>"[/yellow]'
-                                )
-                                break
-                else:
-                    error_console.print(
-                        f"\n[yellow]Index '{index_name}' has no filterable attributes configured.[/yellow]"
-                    )
-                    error_console.print("[dim]Filters cannot be used with this index.[/dim]")
-            except Exception:
-                error_console.print(f"[red][ERROR] Search failed: {e}[/red]")
-        else:
-            error_console.print(f"[red][ERROR] Search failed: {e}[/red]")
-
-        if verbose:
-            import traceback
-
-            traceback.print_exc()
-        sys.exit(1)
+    sys.exit(0)
 
 
 # Index management commands (arc indexes ...)

@@ -15,6 +15,7 @@ from arcaneum.utils.search_output import limit_json_content
 @pytest.fixture(params=["semantic", "text"])
 def search_cli(request, monkeypatch):
     from arcaneum.cli import fulltext, search
+    from arcaneum.retrieval import semantic
 
     mode = request.param
     state = {"content": "    [bold]雪[/bold] 'quoted'\n" + "x" * 1500, "empty": False}
@@ -60,17 +61,25 @@ def search_cli(request, monkeypatch):
         }
 
     monkeypatch.setattr(search, "create_qdrant_client", lambda **kwargs: client)
-    monkeypatch.setattr(search, "SearchEmbedder", MagicMock())
-    monkeypatch.setattr(search, "acquire_embedder_slot", nullcontext)
-    monkeypatch.setattr(search, "search_collection", semantic_results)
+    monkeypatch.setattr(semantic, "SearchEmbedder", MagicMock())
+    monkeypatch.setattr(semantic, "acquire_embedder_slot", nullcontext)
+    monkeypatch.setattr(semantic, "search_collection", semantic_results)
     monkeypatch.setattr(search, "interaction_logger", MagicMock())
-    monkeypatch.setattr(fulltext, "_require_meili", lambda: client)
+    monkeypatch.setattr(fulltext, "create_meili_client", lambda: client)
     monkeypatch.setattr(fulltext, "interaction_logger", MagicMock())
     client.search.side_effect = text_results
 
     def run(*args):
         return CliRunner().invoke(cli, ["search", mode, "a 'query'", "--corpus", "Code", *args])
 
+    def run_main(*args):
+        monkeypatch.setattr(
+            "sys.argv", ["arc", "search", mode, "a 'query'", "--corpus", "Code", *args]
+        )
+        monkeypatch.setattr("arcaneum.cli.main.configure_ssl_from_env", lambda: None)
+        return main()
+
+    run.main = run_main
     return mode, state, run
 
 
@@ -188,14 +197,26 @@ def test_terminal_budget_overrides_line_limit(search_cli):
     assert "line 29" not in result.stdout
 
 
-@pytest.mark.parametrize("output_args", [[], ["--format", "compact"], ["--json"]])
-def test_backend_failure_is_nonzero_and_on_stderr(search_cli, output_args):
+@pytest.mark.parametrize("output_args", [[], ["--format", "compact"]])
+def test_backend_failure_is_nonzero_and_on_stderr(search_cli, output_args, capsys):
     _, state, run = search_cli
     state["error"] = "backend unavailable"
-    result = run(*output_args)
-    assert result.exit_code == 1
-    assert result.stdout == ""
-    assert "backend unavailable" in result.stderr
+    assert run.main(*output_args) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "backend unavailable" in captured.err
+
+
+@pytest.mark.parametrize("output_args", [["--json"], ["--format", "json"]])
+def test_backend_failure_json_prints_coded_envelope(search_cli, output_args, capsys):
+    _, state, run = search_cli
+    state["error"] = "backend unavailable"
+    assert run.main(*output_args) == 1
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["status"] == "error"
+    assert payload["errors"][0]["code"] == "error"
+    assert "backend unavailable" in payload["errors"][0]["message"]
 
 
 def test_json_limit_does_not_mutate_backend_payload():

@@ -32,6 +32,7 @@ def _mock_corpus_list_clients(
     global_meili_stats=None,
 ):
     from arcaneum.cli import corpus
+    from arcaneum.retrieval import corpora as corpora_core
 
     meili_chunks = meili_chunks or {}
     qdrant_payloads_by_name = qdrant_payloads_by_name or {}
@@ -86,22 +87,22 @@ def _mock_corpus_list_clients(
                 }
             }
 
+    def record_update(_client, name, **updates):
+        if qdrant_metadata_updates is not None:
+            qdrant_metadata_updates.append((name, updates))
+        return {**metadata_by_name.get(name, {}), **updates}
+
     monkeypatch.setattr(corpus, "create_qdrant_client", lambda: Qdrant())
     monkeypatch.setattr(corpus, "create_meili_client", lambda: Meili())
-    monkeypatch.setattr(
-        corpus,
-        "get_collection_metadata",
-        lambda _client, name: metadata_by_name.get(name, {}),
-    )
-    monkeypatch.setattr(
-        corpus,
-        "update_collection_metadata",
-        lambda _client, name, **updates: (
-            qdrant_metadata_updates.append((name, updates))
-            if qdrant_metadata_updates is not None
-            else {**metadata_by_name.get(name, {}), **updates}
-        ),
-    )
+    # Listing reads through the retrieval core; any metadata write from either
+    # module is recorded so tests can assert that listing stays read-only.
+    for module in (corpus, corpora_core):
+        monkeypatch.setattr(
+            module,
+            "get_collection_metadata",
+            lambda _client, name: metadata_by_name.get(name, {}),
+        )
+        monkeypatch.setattr(module, "update_collection_metadata", record_update, raising=False)
 
 
 def _mock_corpus_update_clients(monkeypatch, metadata):
@@ -637,6 +638,28 @@ class TestCorpusMarkdownChunking:
 class TestCorpusListModelInfo:
     """Corpus list exposes embedding model metadata for selection and audits."""
 
+    def test_meili_client_construction_failure_still_lists_qdrant(self, monkeypatch, capsys):
+        from arcaneum.cli import corpus
+        from arcaneum.cli.corpus import list_corpora_command
+
+        _mock_corpus_list_clients(
+            monkeypatch,
+            metadata_by_name={"docs": {"collection_type": "pdf", "model": "arctic-m"}},
+            collection_info_by_name={"docs": _collection_info()},
+        )
+
+        def unreadable_key():
+            raise PermissionError("meili key file unreadable")
+
+        monkeypatch.setattr(corpus, "create_meili_client", unreadable_key)
+
+        list_corpora_command(details=False, output_json=True)
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["status"] == "success"
+        assert [c["name"] for c in payload["data"]["corpora"]] == ["docs"]
+        assert payload["data"]["service_errors"] == ["MeiliSearch: meili key file unreadable"]
+
     def test_json_includes_single_model_backend_vector_and_policy(self, monkeypatch, capsys):
         from arcaneum.cli.corpus import list_corpora_command
 
@@ -914,10 +937,8 @@ class TestCorpusListModelInfo:
         assert corpus["item_unit"] == "documents"
         assert corpus["item_count_status"] == "facet"
         assert facet_calls == [("LLM", "file_path")]
-        assert metadata_updates[0][0] == "LLM"
-        assert metadata_updates[0][1]["item_count"] == 2
-        assert metadata_updates[0][1]["item_unit"] == "documents"
-        assert metadata_updates[0][1]["count_source"] == "facet"
+        # Listing counts on demand but persists nothing (RDR-026 Q10).
+        assert metadata_updates == []
 
     def test_json_marks_chunk_mismatches(self, monkeypatch, capsys):
         from arcaneum.cli.corpus import list_corpora_command
@@ -1077,14 +1098,7 @@ class TestCorpusListModelInfo:
             ("code", "file_path"),
             ("docs", "file_path"),
         ]
-        assert [(name, update["item_count"]) for name, update in metadata_updates] == [
-            ("code", 2),
-            ("docs", 2),
-        ]
-        assert metadata_updates[0][1]["file_count"] == 3
-        assert metadata_updates[0][1]["count_source"] == "facet"
-        assert metadata_updates[1][1]["file_count"] is None
-        assert metadata_updates[1][1]["count_source"] == "facet"
+        assert metadata_updates == []
 
     def test_json_details_counts_pdf_corpus_named_llm_with_facets(self, monkeypatch, capsys):
         from arcaneum.cli.corpus import list_corpora_command
@@ -1114,11 +1128,11 @@ class TestCorpusListModelInfo:
         assert corpus["item_unit"] == "documents"
         assert corpus["item_count_status"] == "facet"
         assert facet_calls == [("LLM", "file_path")]
-        assert metadata_updates[0][0] == "LLM"
-        assert metadata_updates[0][1]["item_count"] == 2
-        assert metadata_updates[0][1]["item_unit"] == "documents"
+        assert metadata_updates == []
 
-    def test_json_details_lazily_scrolls_and_persists_capped_facets(self, monkeypatch, capsys):
+    def test_json_details_lazily_scrolls_capped_facets_without_persisting(
+        self, monkeypatch, capsys
+    ):
         from arcaneum.cli.corpus import list_corpora_command
 
         scroll_calls = {}
@@ -1151,10 +1165,7 @@ class TestCorpusListModelInfo:
         assert corpus["item_count"] == 2
         assert corpus["item_count_status"] == "scroll"
         assert scroll_calls == {"docs": 1}
-        assert len(metadata_updates) == 1
-        assert metadata_updates[0][0] == "docs"
-        assert metadata_updates[0][1]["item_count"] == 2
-        assert metadata_updates[0][1]["count_source"] == "scroll"
+        assert metadata_updates == []
 
     def test_json_details_scroll_count_paginates_and_deduplicates(self, monkeypatch, capsys):
         from arcaneum.cli.corpus import list_corpora_command
@@ -1188,7 +1199,7 @@ class TestCorpusListModelInfo:
         assert scroll_calls == {"docs": 2}
 
     def test_cached_qdrant_count_ignores_stale_source_without_counts(self):
-        from arcaneum.cli.corpus import _cached_qdrant_list_item_count
+        from arcaneum.retrieval.corpora import _cached_qdrant_list_item_count
 
         counts = _cached_qdrant_list_item_count("pdf", {"count_source": "sync"})
 
@@ -1238,7 +1249,7 @@ class TestCorpusListModelInfo:
         assert _get_qdrant_item_count(Qdrant(), "docs", "markdown") == 3
 
     def test_qdrant_list_item_count_uses_repositories_for_code(self):
-        from arcaneum.cli.corpus import _get_qdrant_list_item_count
+        from arcaneum.retrieval.corpora import _get_qdrant_list_item_count
 
         class Qdrant:
             def facet(self, collection_name, key, **_kwargs):

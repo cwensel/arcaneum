@@ -1,13 +1,22 @@
-"""Custom exception classes for CLI error handling (RDR-006).
+"""Custom exception classes for CLI error handling (RDR-006, RDR-026).
 
 This module defines exception classes that map to specific exit codes following
-reference implementation practices for structured error handling.
+reference implementation practices for structured error handling. Each class
+also carries a stable ``code`` (RDR-026 Q3) that JSON output reports in the
+envelope's ``errors`` as ``{code, message}``, and that the MCP server reports in
+its error results.
 
 Exit Codes:
 - 0: Success
 - 1: General error
 - 2: Invalid arguments
 - 3: Resource not found
+
+Codes (RDR-026 Q3):
+- unknown-corpus (3), unknown-chunk (3)
+- bad-filter (2), bad-argument (2)
+- service-down (1), semantic-unavailable (1), timeout (1)
+- not-found (3) and error (1) for failures outside the retrieval contract
 """
 
 # Exit codes (same as main.py)
@@ -16,15 +25,23 @@ EXIT_ERROR = 1
 EXIT_INVALID_ARGS = 2
 EXIT_NOT_FOUND = 3
 
+# Code for a failure that names no more specific one.
+GENERIC_ERROR_CODE = "error"
+
 
 class ArcaneumError(Exception):
     """Base exception for Arcaneum CLI errors.
 
     All custom Arcaneum exceptions should inherit from this class.
-    Default exit code is EXIT_ERROR (1).
+    Default exit code is EXIT_ERROR (1) and default code is ``error``.
     """
 
     exit_code = EXIT_ERROR
+    code = GENERIC_ERROR_CODE
+
+    def to_error(self) -> dict:
+        """Return the ``{code, message}`` entry for a JSON ``errors`` list."""
+        return {"code": self.code, "message": str(self)}
 
 
 class InvalidArgumentError(ArcaneumError):
@@ -40,6 +57,16 @@ class InvalidArgumentError(ArcaneumError):
     """
 
     exit_code = EXIT_INVALID_ARGS
+    code = "bad-argument"
+
+
+class BadFilterError(InvalidArgumentError):
+    """A search filter that does not parse or names an unfilterable field.
+
+    Exit code: 2
+    """
+
+    code = "bad-filter"
 
 
 class ResourceNotFoundError(ArcaneumError):
@@ -55,9 +82,55 @@ class ResourceNotFoundError(ArcaneumError):
     """
 
     exit_code = EXIT_NOT_FOUND
+    code = "not-found"
 
 
-class SearchSlotUnavailable(ArcaneumError):
+class UnknownCorpusError(ResourceNotFoundError):
+    """No requested corpus exists, or one is outside the server allowlist.
+
+    Exit code: 3
+    """
+
+    code = "unknown-corpus"
+
+
+class UnknownChunkError(ResourceNotFoundError):
+    """A chunk id that neither Qdrant nor MeiliSearch holds.
+
+    Exit code: 3
+    """
+
+    code = "unknown-chunk"
+
+
+class ServiceDownError(ArcaneumError):
+    """Qdrant or MeiliSearch is unreachable; the message names which.
+
+    Exit code: 1
+    """
+
+    code = "service-down"
+
+
+class SemanticUnavailableError(ArcaneumError):
+    """Semantic search cannot embed the query (model uncached, slot busy).
+
+    Exit code: 1
+    """
+
+    code = "semantic-unavailable"
+
+
+class OperationTimeoutError(ArcaneumError):
+    """A call exceeded its per-call timeout.
+
+    Exit code: 1
+    """
+
+    code = "timeout"
+
+
+class SearchSlotUnavailable(SemanticUnavailableError):
     """No embedder slot available within the wait timeout.
 
     Raised when too many concurrent `arc search semantic` invocations are in

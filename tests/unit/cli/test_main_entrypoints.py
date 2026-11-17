@@ -808,3 +808,23 @@ def test_index_code_prune_flag_is_threaded(tmp_path):
     assert result.exit_code == 0, result.output
     assert called["force"] is True
     assert called["prune"] is True
+
+
+def test_json_errors_are_coded_objects(capsys):
+    """RDR-026 Q3: the envelope's errors are {code, message}; bare strings get the generic code."""
+    from arcaneum.cli.output import print_json
+
+    print_json("error", "failed", errors=["boom", {"code": "bad-filter", "message": "bad"}])
+
+    assert json.loads(capsys.readouterr().out)["errors"] == [
+        {"code": "error", "message": "boom"},
+        {"code": "bad-filter", "message": "bad"},
+    ]
+
+
+def test_main_json_click_usage_error_is_bad_argument(capsys):
+    with patch("sys.argv", ["arc", "--json", "missing-command"]):
+        with patch("arcaneum.cli.main.configure_ssl_from_env"):
+            assert main() == 2
+
+    assert json.loads(capsys.readouterr().out)["errors"][0]["code"] == "bad-argument"

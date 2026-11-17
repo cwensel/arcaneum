@@ -821,6 +821,56 @@ def _stamp_full_directory_count_metadata(
         logger.warning("Failed to update count metadata for %s: %s", corpus, e)
 
 
+def _stamp_repaired_count_metadata(corpus: str) -> None:
+    """Persist list-view counters after a repair, counted from the index.
+
+    Listing is read-only (RDR-026 Q10), so the commands that change a corpus
+    stamp its counts: full directory sync from the files it walked, and
+    repair, which walks no directory, from bounded Qdrant facets (an exact
+    scroll when a facet caps), with paths counted from the file manifests
+    when they are authoritative, so chunkless paths (duplicate-PDF aliases,
+    empty files) count as sync counts them. The keys match the sync stamp, with
+    ``count_source: repair``. A failure only logs: repair's work stands.
+    """
+    # Resolved at call time so a caller that patches the factory controls it.
+    from ..cli.utils import create_qdrant_client as make_qdrant_client
+    from ..retrieval.corpora import count_corpus_items
+
+    try:
+        qdrant = make_qdrant_client()
+        corpus_type = get_collection_type(qdrant, corpus)
+        # A path can have a manifest but no chunks (a duplicate PDF's alias,
+        # an empty file), which chunk facets miss. Manifests hold one entry per
+        # physical path, as full sync counts the paths it walked; code keeps
+        # its repository count from the facets.
+        path_count = None
+        if file_manifests_ready(qdrant, corpus):
+            path_count = len(MetadataBasedSync(qdrant).get_file_manifest_snapshot(corpus))
+        if path_count is not None and corpus_type in {"pdf", "markdown"}:
+            counts = {
+                "item_count": path_count,
+                "item_unit": "files" if corpus_type == "markdown" else "documents",
+            }
+        else:
+            counts = count_corpus_items(qdrant, corpus, corpus_type)
+            if path_count is not None and corpus_type == "code":
+                counts["file_count"] = path_count
+        if counts["item_count"] is None:
+            return
+        update_collection_metadata(
+            qdrant,
+            corpus,
+            item_count=counts["item_count"],
+            item_unit=counts["item_unit"],
+            file_count=counts["file_count"] if corpus_type == "code" else None,
+            file_unit=counts["file_unit"] if corpus_type == "code" else None,
+            count_source="repair",
+            counts_updated_at=datetime.now(timezone.utc).isoformat(),
+        )
+    except Exception as e:
+        logger.warning("Failed to update count metadata for %s: %s", corpus, e)
+
+
 def _stale_policy_error(policy_issues: list[str], action: str) -> str:
     return (
         f"Collection embedding policy is stale before {action}: "
@@ -7288,6 +7338,9 @@ def _repair_corpus_locked(
         parity = {"status": "error", "message": str(e)}
         if not output_json:
             console.print(f"[red]{parity_error}[/red]")
+
+    if not dry_run and parity_error is None:
+        _stamp_repaired_count_metadata(corpus)
 
     if output_json:
         content_doc = (

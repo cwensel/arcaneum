@@ -7,7 +7,6 @@ collection and a MeiliSearch index in a single operation.
 import logging
 import sys
 from datetime import datetime, timezone
-from typing import Any
 
 from qdrant_client.models import HnswConfigDiff
 from rich.console import Console
@@ -23,7 +22,6 @@ from ..cli.utils import (
     create_qdrant_client,
     get_model_dimensions,
 )
-from ..embeddings.client import EMBEDDING_MODELS
 from ..fulltext.indexes import get_index_settings
 from ..indexing.collection_metadata import (
     get_collection_metadata,
@@ -31,6 +29,12 @@ from ..indexing.collection_metadata import (
     set_collection_metadata,
     update_collection_metadata,
     user_point_count,
+)
+from ..retrieval import list_corpora
+from ..retrieval.corpora import (
+    UNKNOWN_LEGACY,
+    _item_unit_for_corpus_type,
+    _payload_file_paths,
 )
 
 console = Console()
@@ -62,34 +66,6 @@ def map_corpus_type_to_canonical(corpus_type: str) -> str:
     return type_map.get(corpus_type, corpus_type)
 
 
-UNKNOWN_LEGACY = "unknown/legacy"
-LIST_COUNT_FACET_LIMIT = 10_000
-COUNTABLE_CORPUS_TYPES = {"code", "markdown", "pdf"}
-
-
-def _item_unit_for_corpus_type(collection_type):
-    """Return the user-facing unit for corpus list item counts."""
-    if collection_type == "code":
-        return "repositories"
-    if collection_type == "markdown":
-        return "files"
-    if collection_type == "pdf":
-        return "documents"
-    return UNKNOWN_LEGACY
-
-
-def _last_sync_state(metadata, chunk_count: int = 0):
-    """Normalize sync metadata into stable JSON fields."""
-    if not metadata:
-        return None, "unknown"
-    last_sync = metadata.get("last_sync")
-    if not last_sync:
-        if chunk_count > 0:
-            return None, "unknown"
-        return None, "never_synced"
-    return last_sync, "synced"
-
-
 def _format_last_sync_for_table(last_sync, last_sync_status: str) -> str:
     """Return a compact, human-readable sync timestamp for table output."""
     if not last_sync:
@@ -109,385 +85,6 @@ def _format_last_sync_for_table(last_sync, last_sync_status: str) -> str:
     if parsed.utcoffset() == timezone.utc.utcoffset(None):
         return f"{timestamp}Z"
     return f"{timestamp}{parsed.strftime('%z')}"
-
-
-def _split_metadata_models(model_metadata):
-    """Normalize stored model metadata into an ordered list of model names."""
-    if not model_metadata:
-        return []
-    if isinstance(model_metadata, str):
-        return [part.strip() for part in model_metadata.split(",") if part.strip()]
-    if isinstance(model_metadata, (list, tuple)):
-        return [str(part).strip() for part in model_metadata if str(part).strip()]
-    return [str(model_metadata)]
-
-
-def _embedding_model_config(model_name):
-    """Look up an embedding model by alias or canonical model name."""
-    if model_name in EMBEDDING_MODELS:
-        return model_name, EMBEDDING_MODELS[model_name]
-    for alias, config in EMBEDDING_MODELS.items():
-        if config.get("name") == model_name:
-            return alias, config
-    return model_name, {}
-
-
-def _extract_vectors_config(collection_info):
-    """Return stable vector config records for single or named Qdrant vectors."""
-    vectors = getattr(collection_info.config.params, "vectors", None)
-    if isinstance(vectors, dict):
-        return [
-            {
-                "vector_name": name,
-                "dimensions": vector_params.size,
-                "distance": str(vector_params.distance),
-            }
-            for name, vector_params in vectors.items()
-        ]
-    if vectors is not None:
-        return [
-            {
-                "vector_name": None,
-                "dimensions": getattr(vectors, "size", None),
-                "distance": str(getattr(vectors, "distance", UNKNOWN_LEGACY)),
-            }
-        ]
-    return []
-
-
-def _extract_policy_metadata(metadata):
-    """Expose prompt/schema policy metadata when collections recorded it."""
-    policy = {key: metadata.get(key, UNKNOWN_LEGACY) for key in ("prompt_policy", "schema_policy")}
-    for optional_key in ("prompt_schema_policy", "context_enrichment"):
-        if optional_key in metadata:
-            policy[optional_key] = metadata[optional_key]
-    return policy
-
-
-def _build_corpus_model_info(metadata, collection_info):
-    """Build JSON-stable model/vector/backend details for a corpus."""
-    model_names = _split_metadata_models(metadata.get("model"))
-    vector_configs = _extract_vectors_config(collection_info)
-    named_vectors = {
-        vector["vector_name"]: vector
-        for vector in vector_configs
-        if vector.get("vector_name") is not None
-    }
-    positional_vectors = [vector for vector in vector_configs if vector.get("vector_name") is None]
-
-    if not model_names and not vector_configs:
-        return [
-            {
-                "alias": UNKNOWN_LEGACY,
-                "name": UNKNOWN_LEGACY,
-                "backend": UNKNOWN_LEGACY,
-                "vector_name": UNKNOWN_LEGACY,
-                "dimensions": None,
-                "distance": UNKNOWN_LEGACY,
-                "policy": _extract_policy_metadata(metadata),
-            }
-        ]
-
-    models = []
-    for index, model_name in enumerate(model_names):
-        alias, config = _embedding_model_config(model_name)
-        canonical_name = config.get("name", model_name)
-        candidates = (model_name, alias, canonical_name)
-        vector = next(
-            (
-                named_vectors.pop(candidate)
-                for candidate in candidates
-                if candidate in named_vectors
-            ),
-            positional_vectors[index] if index < len(positional_vectors) else {},
-        )
-        vector_name = vector.get("vector_name")
-
-        models.append(
-            {
-                "alias": alias,
-                "name": canonical_name,
-                "backend": config.get("backend", UNKNOWN_LEGACY),
-                "vector_name": vector_name or UNKNOWN_LEGACY,
-                "dimensions": vector.get("dimensions", config.get("dimensions")),
-                "distance": vector.get("distance", UNKNOWN_LEGACY),
-                "policy": _extract_policy_metadata(metadata),
-            }
-        )
-
-    if model_names:
-        unmatched_vectors = named_vectors.values()
-    else:
-        unmatched_vectors = vector_configs
-
-    for vector in unmatched_vectors:
-        vector_name = vector.get("vector_name")
-        lookup_name = vector_name
-
-        if lookup_name:
-            alias, config = _embedding_model_config(lookup_name)
-            canonical_name = config.get("name", lookup_name)
-            backend = config.get("backend", UNKNOWN_LEGACY)
-        else:
-            alias = UNKNOWN_LEGACY
-            canonical_name = UNKNOWN_LEGACY
-            backend = UNKNOWN_LEGACY
-
-        models.append(
-            {
-                "alias": alias,
-                "name": canonical_name,
-                "backend": backend,
-                "vector_name": vector_name or UNKNOWN_LEGACY,
-                "dimensions": vector.get(
-                    "dimensions",
-                    config.get("dimensions") if lookup_name else None,
-                ),
-                "distance": vector.get("distance", UNKNOWN_LEGACY),
-                "policy": _extract_policy_metadata(metadata),
-            }
-        )
-    return models
-
-
-def _format_model_summary(models):
-    """Format concise model info for the corpus table."""
-    if not models:
-        return UNKNOWN_LEGACY
-    parts = []
-    for model in models:
-        alias = model.get("alias") or UNKNOWN_LEGACY
-        vector_name = model.get("vector_name")
-        backend = model.get("backend")
-        suffix = []
-        if vector_name and vector_name != UNKNOWN_LEGACY and vector_name != alias:
-            suffix.append(vector_name)
-        if backend and backend != UNKNOWN_LEGACY:
-            suffix.append(backend)
-        parts.append(f"{alias} ({', '.join(suffix)})" if suffix else alias)
-    return ", ".join(parts)
-
-
-def _metadata_int(metadata: dict[str, Any], key: str) -> int | None:
-    """Return a non-negative integer metadata value, if present."""
-    value = metadata.get(key)
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int) and value >= 0:
-        return value
-    if isinstance(value, str) and value.isdecimal():
-        return int(value)
-    return None
-
-
-def _facet_hit_count(result) -> int:
-    """Return the number of unique facet values in a Qdrant facet response."""
-    hits = getattr(result, "hits", None)
-    if hits is None and isinstance(result, dict):
-        hits = result.get("hits")
-    return len(hits or [])
-
-
-def _bounded_qdrant_facet_count(client, collection_name: str, key: str) -> tuple[int | None, str]:
-    """Count unique payload values without scrolling every point.
-
-    Qdrant facets are limited but not paginated. A response that reaches the cap
-    may be truncated, so callers treat it as unavailable instead of exact.
-    """
-    result = client.facet(
-        collection_name=collection_name,
-        key=key,
-        facet_filter=metadata_exclusion_filter(),
-        limit=LIST_COUNT_FACET_LIMIT,
-        exact=True,
-    )
-    count = _facet_hit_count(result)
-    if count >= LIST_COUNT_FACET_LIMIT:
-        return None, "unavailable"
-    return count, "facet"
-
-
-def _scroll_qdrant_list_item_count(client, collection_name: str, collection_type: str):
-    """Exact legacy count path used once to populate missing list counters."""
-    unique_items = set()
-    unique_files = set()
-    offset = None
-    payload_fields = (
-        ["git_project_identifier", "file_path", "file_paths"]
-        if collection_type == "code"
-        else ["file_path", "file_paths"]
-    )
-
-    while True:
-        points, offset = client.scroll(
-            collection_name=collection_name,
-            scroll_filter=metadata_exclusion_filter(),
-            limit=1000,
-            offset=offset,
-            with_payload=payload_fields,
-            with_vectors=False,
-        )
-
-        if not points:
-            break
-
-        for point in points:
-            if point.payload:
-                if collection_type == "code":
-                    item_id = point.payload.get("git_project_identifier")
-                    if item_id:
-                        unique_items.add(item_id)
-                    for file_path in _payload_file_paths(point.payload):
-                        unique_files.add(file_path)
-                else:
-                    for item_id in _payload_file_paths(point.payload):
-                        unique_items.add(item_id)
-
-        if offset is None:
-            break
-
-    return {
-        "item_count": len(unique_items),
-        "item_unit": _item_unit_for_corpus_type(collection_type),
-        "file_count": len(unique_files) if collection_type == "code" else None,
-        "file_unit": "source files" if collection_type == "code" else None,
-        "item_count_status": "scroll",
-    }
-
-
-def _facet_based_list_item_count(client, collection_name: str, collection_type: str):
-    """Count list items using bounded Qdrant facets only."""
-    item_key = "git_project_identifier" if collection_type == "code" else "file_path"
-    try:
-        item_count, item_status = _bounded_qdrant_facet_count(client, collection_name, item_key)
-        if collection_type == "code" and item_status != "unavailable":
-            file_count, file_status = _bounded_qdrant_facet_count(
-                client, collection_name, "file_path"
-            )
-            if file_status == "unavailable":
-                item_status = "unavailable"
-                item_count = None
-                file_count = None
-        else:
-            file_count = None
-    except Exception:
-        item_count = None
-        file_count = None
-        item_status = "unavailable"
-
-    return {
-        "item_count": item_count,
-        "item_unit": _item_unit_for_corpus_type(collection_type),
-        "file_count": file_count if collection_type == "code" else None,
-        "file_unit": "source files" if collection_type == "code" else None,
-        "item_count_status": item_status,
-    }
-
-
-def _get_qdrant_list_item_count(
-    client, collection_name: str, collection_type: str, metadata: dict[str, Any] | None = None
-):
-    """Count corpus-list items using persisted metadata or bounded facets."""
-    if collection_type not in COUNTABLE_CORPUS_TYPES:
-        return {
-            "item_count": None,
-            "item_unit": UNKNOWN_LEGACY,
-            "file_count": None,
-            "file_unit": None,
-            "item_count_status": "unavailable",
-        }
-
-    metadata = metadata or {}
-    item_count = _metadata_int(metadata, "item_count")
-    file_count = _metadata_int(metadata, "file_count") if collection_type == "code" else None
-    if item_count is not None and (collection_type != "code" or file_count is not None):
-        return {
-            "item_count": item_count,
-            "item_unit": _item_unit_for_corpus_type(collection_type),
-            "file_count": file_count,
-            "file_unit": "source files" if collection_type == "code" else None,
-            "item_count_status": metadata.get("count_source") or "metadata",
-        }
-
-    item_counts = _facet_based_list_item_count(client, collection_name, collection_type)
-
-    if item_counts["item_count_status"] == "unavailable":
-        try:
-            return _scroll_qdrant_list_item_count(client, collection_name, collection_type)
-        except Exception:
-            return item_counts
-
-    return item_counts
-
-
-def _get_bounded_qdrant_list_item_count(
-    client, collection_name: str, collection_type: str, metadata: dict[str, Any] | None = None
-):
-    """Count list items without unbounded point scrolling.
-
-    Used by the default list view to fill missing count metadata for newer
-    corpora synced from file lists or individual files.
-    """
-    metadata = metadata or {}
-    cached = _cached_qdrant_list_item_count(collection_type, metadata)
-    if cached["item_count"] is not None:
-        return cached
-    if collection_type not in COUNTABLE_CORPUS_TYPES:
-        return cached
-
-    return _facet_based_list_item_count(client, collection_name, collection_type)
-
-
-def _cached_qdrant_list_item_count(collection_type: str, metadata: dict[str, Any] | None = None):
-    """Return persisted corpus-list item counts without querying indexed points."""
-    if collection_type not in COUNTABLE_CORPUS_TYPES:
-        return {
-            "item_count": None,
-            "item_unit": UNKNOWN_LEGACY,
-            "file_count": None,
-            "file_unit": None,
-            "item_count_status": "unavailable",
-        }
-
-    metadata = metadata or {}
-    item_count = _metadata_int(metadata, "item_count")
-    file_count = _metadata_int(metadata, "file_count") if collection_type == "code" else None
-    count_status = (
-        (metadata.get("count_source") or "metadata")
-        if item_count is not None or file_count is not None
-        else "not_requested"
-    )
-
-    return {
-        "item_count": item_count,
-        "item_unit": _item_unit_for_corpus_type(collection_type),
-        "file_count": file_count,
-        "file_unit": "source files" if collection_type == "code" else None,
-        "item_count_status": count_status,
-    }
-
-
-def _persist_list_item_count_metadata(
-    client, collection_name: str, collection_type: str, item_counts: dict[str, Any]
-) -> None:
-    """Cache exact list counters discovered during details listing."""
-    if item_counts.get("item_count_status") not in {"facet", "scroll"}:
-        return
-    if item_counts.get("item_count") is None:
-        return
-
-    updates = {
-        "item_count": item_counts["item_count"],
-        "item_unit": item_counts["item_unit"],
-        "file_count": item_counts.get("file_count") if collection_type == "code" else None,
-        "file_unit": item_counts.get("file_unit") if collection_type == "code" else None,
-        "count_source": item_counts["item_count_status"],
-        "counts_updated_at": datetime.now(timezone.utc).isoformat(),
-    }
-    try:
-        update_collection_metadata(client, collection_name, **updates)
-    except Exception:
-        logger.debug("failed to persist list item count metadata", exc_info=True)
 
 
 def _format_list_item_count(corpus):
@@ -512,27 +109,12 @@ def _format_chunk_summary(corpus):
     return f"Q: {q_chunks} / M: {m_chunks}"
 
 
-def _payload_file_paths(payload):
-    """Yield every indexed file path represented by a point payload."""
-    file_paths = payload.get("file_paths")
-    if isinstance(file_paths, list):
-        emitted = False
-        for file_path in file_paths:
-            if file_path:
-                emitted = True
-                yield file_path
-        if emitted:
-            return
-    file_path = payload.get("file_path")
-    if file_path:
-        yield file_path
-
-
 def list_corpora_command(details: bool, output_json: bool):
     """List all corpora with parity status.
 
-    A corpus is a paired Qdrant collection + MeiliSearch index.
-    This command discovers all such pairs and shows their sync status.
+    A corpus is a paired Qdrant collection + MeiliSearch index. This command
+    formats ``arcaneum.retrieval.list_corpora``, which discovers the pairs and
+    their sync status and writes nothing (RDR-026 Q10).
 
     Args:
         details: Show extended listing columns, including exact item counts
@@ -543,200 +125,71 @@ def list_corpora_command(details: bool, output_json: bool):
     interaction_logger.start("corpus", "list")
 
     try:
-        # Gather Qdrant collections
-        qdrant_collections = {}
-        try:
-            qdrant = create_qdrant_client()
-            collections = qdrant.get_collections()
-            for col in collections.collections:
-                metadata = get_collection_metadata(qdrant, col.name)
-                col_info = qdrant.get_collection(col.name)
-                chunk_count = user_point_count(qdrant, col.name, col_info)
-                models = _build_corpus_model_info(metadata, col_info)
-                collection_type = metadata.get("collection_type")
-                last_sync, last_sync_status = _last_sync_state(metadata, chunk_count)
-                if details:
-                    item_counts = _get_qdrant_list_item_count(
-                        qdrant, col.name, collection_type, metadata
-                    )
-                    _persist_list_item_count_metadata(
-                        qdrant, col.name, collection_type, item_counts
-                    )
-                else:
-                    item_counts = _get_bounded_qdrant_list_item_count(
-                        qdrant, col.name, collection_type, metadata
-                    )
-                    _persist_list_item_count_metadata(
-                        qdrant, col.name, collection_type, item_counts
-                    )
-                qdrant_collections[col.name] = {
-                    "type": collection_type,
-                    "model": metadata.get("model"),
-                    "description": metadata.get("description"),
-                    "models": models,
-                    "model_summary": _format_model_summary(models),
-                    "chunks": chunk_count,
-                    "last_sync": last_sync,
-                    "last_sync_status": last_sync_status,
-                    **item_counts,
-                }
-        except Exception as e:
-            if not output_json:
-                print_error(f"Could not connect to Qdrant: {e}")
-
-        # Gather MeiliSearch indexes
-        meili_indexes = {}
-        try:
-            meili = create_meili_client()
-            if meili.health_check():
-                indexes = meili.list_indexes()
-                all_stats = None
-                try:
-                    all_stats = meili.get_stats().get("indexes", {})
-                except Exception:
-                    all_stats = None
-                for idx in indexes:
-                    name = idx["uid"]
-                    try:
-                        stats = all_stats.get(name, {}) if all_stats is not None else None
-                        if stats is None:
-                            stats = meili.get_index_stats(name)
-                        meili_indexes[name] = {
-                            "chunks": stats.get("numberOfDocuments", 0),
-                        }
-                    except Exception:
-                        meili_indexes[name] = {"chunks": 0}
-        except Exception as e:
-            if not output_json:
-                print_error(f"Could not connect to MeiliSearch: {e}")
-
-        # Build unified corpus list
-        all_names = set(qdrant_collections.keys()) | set(meili_indexes.keys())
-        corpora = []
-
-        for name in sorted(all_names):
-            q_info = qdrant_collections.get(name)
-            m_info = meili_indexes.get(name)
-
-            # Determine parity status
-            q_chunks = q_info.get("chunks", 0) if q_info else 0
-            m_chunks = m_info.get("chunks", 0) if m_info else 0
-            if q_info and m_info:
-                status = "synced" if q_chunks == m_chunks else "chunk_mismatch"
-            elif q_info:
-                status = "qdrant_only"
-            else:
-                status = "meili_only"
-
-            corpus_type = q_info.get("type") if q_info else None
-            model = q_info.get("model") if q_info else None
-            description = q_info.get("description") if q_info else None
-            models = (
-                q_info.get("models")
-                if q_info
-                else [
-                    {
-                        "alias": UNKNOWN_LEGACY,
-                        "name": UNKNOWN_LEGACY,
-                        "backend": UNKNOWN_LEGACY,
-                        "vector_name": UNKNOWN_LEGACY,
-                        "dimensions": None,
-                        "distance": UNKNOWN_LEGACY,
-                        "policy": {
-                            "prompt_policy": UNKNOWN_LEGACY,
-                            "schema_policy": UNKNOWN_LEGACY,
-                        },
-                    }
-                ]
-            )
-            model_summary = q_info.get("model_summary") if q_info else UNKNOWN_LEGACY
-            last_sync = q_info.get("last_sync") if q_info else None
-            last_sync_status = q_info.get("last_sync_status") if q_info else "unknown"
-            item_count = q_info.get("item_count") if q_info else None
-            item_unit = q_info.get("item_unit") if q_info else UNKNOWN_LEGACY
-            file_count = q_info.get("file_count") if q_info else None
-            file_unit = q_info.get("file_unit") if q_info else None
-            item_count_status = q_info.get("item_count_status") if q_info else "unavailable"
-
-            corpora.append(
-                {
-                    "name": name,
-                    "type": corpus_type,
-                    "model": model,
-                    "description": description,
-                    "models": models,
-                    "model_summary": model_summary,
-                    "status": status,
-                    "qdrant_chunks": q_chunks,
-                    "meili_chunks": m_chunks,
-                    "last_sync": last_sync,
-                    "last_sync_status": last_sync_status,
-                    "item_count": item_count,
-                    "item_unit": item_unit,
-                    "file_count": file_count,
-                    "file_unit": file_unit,
-                    "item_count_status": item_count_status,
-                }
-            )
-
-        # Output
-        if output_json:
-            print_json("success", f"Found {len(corpora)} corpora", {"corpora": corpora})
-        else:
-            if not corpora:
-                print_info("No corpora found")
-                print_info("Create one with: arc corpus create <name> --type <pdf|code|markdown>")
-            else:
-                table = Table(title="Corpora", expand=True)
-                table.add_column("Name", style="cyan", no_wrap=True)
-                table.add_column("Type", style="blue", no_wrap=True)
-                if details:
-                    table.add_column("Model", style="magenta", no_wrap=True)
-                table.add_column("Status", style="green", no_wrap=True)
-                if details:
-                    table.add_column("Last Sync", style="yellow", no_wrap=True)
-                table.add_column("Items", style="yellow", justify="right", no_wrap=True)
-                if details:
-                    table.add_column("Chunks", style="yellow", justify="right", no_wrap=True)
-                table.add_column("Description", style="dim", ratio=1)
-
-                for c in corpora:
-                    # Format status with color
-                    status = c["status"]
-                    if status == "synced":
-                        status_str = "[green]synced[/green]"
-                    elif status == "chunk_mismatch":
-                        status_str = "[yellow]chunk_mismatch[/yellow]"
-                    elif status == "qdrant_only":
-                        status_str = "[yellow]qdrant_only[/yellow]"
-                    else:
-                        status_str = "[yellow]meili_only[/yellow]"
-
-                    row = [
-                        c["name"],
-                        c["type"] or "—",
-                    ]
-                    if details:
-                        row.append(c["model_summary"])
-                    row.append(status_str)
-                    if details:
-                        row.append(
-                            _format_last_sync_for_table(c["last_sync"], c["last_sync_status"])
-                        )
-                    row.append(_format_list_item_count(c))
-                    if details:
-                        row.append(_format_chunk_summary(c))
-                    row.append(c["description"] or "—")
-                    table.add_row(*row)
-
-                console.print(table)
-
-        interaction_logger.finish(result_count=len(corpora))
-
+        listing = list_corpora(
+            details=details,
+            qdrant_factory=create_qdrant_client,
+            meili_factory=create_meili_client,
+        )
     except Exception as e:
         interaction_logger.finish(error=str(e))
-        print_error(f"Failed to list corpora: {e}", output_json)
-        sys.exit(1)
+        raise
+
+    corpora = listing.corpora
+    if not output_json:
+        for service_error in listing.service_errors:
+            print_error(f"Could not connect to {service_error}")
+
+    # Output
+    if output_json:
+        print_json("success", f"Found {len(corpora)} corpora", listing.to_data())
+    else:
+        if not corpora:
+            print_info("No corpora found")
+            print_info("Create one with: arc corpus create <name> --type <pdf|code|markdown>")
+        else:
+            table = Table(title="Corpora", expand=True)
+            table.add_column("Name", style="cyan", no_wrap=True)
+            table.add_column("Type", style="blue", no_wrap=True)
+            if details:
+                table.add_column("Model", style="magenta", no_wrap=True)
+            table.add_column("Status", style="green", no_wrap=True)
+            if details:
+                table.add_column("Last Sync", style="yellow", no_wrap=True)
+            table.add_column("Items", style="yellow", justify="right", no_wrap=True)
+            if details:
+                table.add_column("Chunks", style="yellow", justify="right", no_wrap=True)
+            table.add_column("Description", style="dim", ratio=1)
+
+            for c in corpora:
+                # Format status with color
+                status = c["status"]
+                if status == "synced":
+                    status_str = "[green]synced[/green]"
+                elif status == "chunk_mismatch":
+                    status_str = "[yellow]chunk_mismatch[/yellow]"
+                elif status == "qdrant_only":
+                    status_str = "[yellow]qdrant_only[/yellow]"
+                else:
+                    status_str = "[yellow]meili_only[/yellow]"
+
+                row = [
+                    c["name"],
+                    c["type"] or "—",
+                ]
+                if details:
+                    row.append(c["model_summary"])
+                row.append(status_str)
+                if details:
+                    row.append(_format_last_sync_for_table(c["last_sync"], c["last_sync_status"]))
+                row.append(_format_list_item_count(c))
+                if details:
+                    row.append(_format_chunk_summary(c))
+                row.append(c["description"] or "—")
+                table.add_row(*row)
+
+            console.print(table)
+
+    interaction_logger.finish(result_count=len(corpora))
 
 
 def delete_corpus_command(

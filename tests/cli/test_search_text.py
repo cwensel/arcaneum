@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from arcaneum.cli.errors import ResourceNotFoundError
+from arcaneum.cli.errors import ArcaneumError, ResourceNotFoundError, ServiceDownError
 from arcaneum.cli.fulltext import search_text_command
 
 
@@ -391,11 +391,11 @@ class TestErrorHandlingServerUnavailable:
         client.health_check.return_value = False  # Server not available
         return client
 
-    def test_server_unavailable_raises_resource_not_found_error(self, mock_client_unhealthy):
-        """Test that unavailable server raises ResourceNotFoundError with helpful message."""
+    def test_server_unavailable_raises_service_down_error(self, mock_client_unhealthy):
+        """An unavailable server is service-down (exit 1) with a helpful message."""
         with patch("arcaneum.cli.fulltext.create_meili_client", return_value=mock_client_unhealthy):
             with patch("arcaneum.cli.fulltext.interaction_logger"):
-                with pytest.raises(ResourceNotFoundError) as exc_info:
+                with pytest.raises(ServiceDownError) as exc_info:
                     search_text_command(
                         query="query",
                         corpora=["MyIndex"],
@@ -720,7 +720,7 @@ class TestInteractionLogging:
 
         with patch("arcaneum.cli.fulltext.create_meili_client", return_value=mock_client):
             with patch("arcaneum.cli.fulltext.interaction_logger", mock_logger):
-                with pytest.raises(SystemExit):
+                with pytest.raises(ArcaneumError):
                     search_text_command(
                         query="test",
                         corpora=["TestIndex"],
@@ -816,3 +816,80 @@ class TestHighlightingFormatting:
         hit = output["data"]["hits"][0]
         assert "_formatted" in hit
         assert "<em>authenticate</em>" in hit["_formatted"]["content"]
+
+
+class TestJSONModeFailureEnvelope:
+    """RDR-026 Q3: under --json every failure prints a coded envelope on stdout."""
+
+    @pytest.fixture
+    def run_main(self, monkeypatch, capsys):
+        from arcaneum.cli import fulltext
+        from arcaneum.cli.main import main
+
+        client = MagicMock()
+        client.health_check.return_value = True
+        client.index_exists.return_value = True
+        client.get_index_settings.return_value = {"filterableAttributes": ["file_path"]}
+        monkeypatch.setattr("arcaneum.cli.main.configure_ssl_from_env", lambda: None)
+        monkeypatch.setattr(fulltext, "create_meili_client", lambda: client)
+        monkeypatch.setattr(fulltext, "interaction_logger", MagicMock())
+
+        def run(*args):
+            monkeypatch.setattr("sys.argv", ["arc", "search", "text", "q", "--corpus", "DevRef", *args])
+            exit_code = main()
+            return exit_code, capsys.readouterr()
+
+        return client, run
+
+    @staticmethod
+    def _filter_error():
+        from types import SimpleNamespace
+
+        from meilisearch.errors import MeilisearchApiError
+
+        body = {"message": "Attribute `filename` is not filterable.", "code": "invalid_search_filter"}
+        return MeilisearchApiError("bad", SimpleNamespace(status_code=400, text=json.dumps(body)))
+
+    def test_bad_filter_json_prints_coded_envelope_and_exits_2(self, run_main):
+        client, run = run_main
+        client.search.side_effect = self._filter_error()
+
+        exit_code, captured = run("--filter", '{"filename": "db(31).pdf"}', "--json")
+
+        assert exit_code == 2
+        payload = json.loads(captured.out)
+        assert payload["status"] == "error"
+        assert payload["errors"][0]["code"] == "bad-filter"
+        assert "filename" in payload["errors"][0]["message"]
+        assert "file_path" in payload["errors"][0]["message"]
+
+    def test_bad_filter_text_mode_prints_to_stderr(self, run_main):
+        client, run = run_main
+        client.search.side_effect = self._filter_error()
+
+        exit_code, captured = run("--filter", "filename = x")
+
+        assert exit_code == 2
+        assert captured.out == ""
+        assert "[ERROR]" in captured.err
+        assert "filename" in captured.err
+
+    def test_unknown_corpus_json_exits_3_with_code(self, run_main):
+        client, run = run_main
+        client.index_exists.return_value = False
+
+        exit_code, captured = run("--json")
+
+        assert exit_code == 3
+        assert json.loads(captured.out)["errors"] == [
+            {"code": "unknown-corpus", "message": "Corpus 'DevRef' not found"}
+        ]
+
+    def test_service_down_json_exits_1_with_code(self, run_main):
+        client, run = run_main
+        client.health_check.return_value = False
+
+        exit_code, captured = run("--json")
+
+        assert exit_code == 1
+        assert json.loads(captured.out)["errors"][0]["code"] == "service-down"

@@ -8,7 +8,7 @@ import json
 import sys
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Union
 
 
 def timestamp() -> str:
@@ -26,11 +26,29 @@ def timestamp() -> str:
     return datetime.now().strftime("[%H:%M:%S]")
 
 
+ErrorEntry = Union[str, Dict[str, Any]]
+
+# Code for an error reported as a bare message (mirrors cli/errors.py).
+GENERIC_ERROR_CODE = "error"
+
+
+def coded_errors(errors: Optional[List[ErrorEntry]]) -> List[Dict[str, Any]]:
+    """Normalize an errors list to ``{code, message}`` entries (RDR-026 Q3).
+
+    Entries that already carry a code pass through; a bare message gets the
+    generic ``error`` code, so every envelope has one shape.
+    """
+    return [
+        error if isinstance(error, dict) else {"code": GENERIC_ERROR_CODE, "message": str(error)}
+        for error in errors or []
+    ]
+
+
 def format_json_response(
     status: str,
     message: str = "",
     data: Optional[Dict[str, Any]] = None,
-    errors: Optional[List[str]] = None,
+    errors: Optional[List[ErrorEntry]] = None,
 ) -> str:
     """Format a consistent JSON response.
 
@@ -38,7 +56,7 @@ def format_json_response(
         status: "success" or "error"
         message: Human-readable summary
         data: Command-specific data (optional)
-        errors: List of error messages (optional)
+        errors: Error messages or ``{code, message}`` entries (optional)
 
     Returns:
         JSON string formatted for output
@@ -47,7 +65,12 @@ def format_json_response(
         >>> format_json_response("success", "Created collection", {"name": "MyCollection"})
         '{"status": "success", "message": "Created collection", "data": {"name": "MyCollection"}, "errors": []}'
     """
-    response = {"status": status, "message": message, "data": data or {}, "errors": errors or []}
+    response = {
+        "status": status,
+        "message": message,
+        "data": data or {},
+        "errors": coded_errors(errors),
+    }
     return json.dumps(response, indent=2)
 
 
@@ -74,7 +97,7 @@ def print_json(
     status: str,
     message: str = "",
     data: Optional[Dict[str, Any]] = None,
-    errors: Optional[List[str]] = None,
+    errors: Optional[List[ErrorEntry]] = None,
 ):
     """Print JSON response to stdout.
 
@@ -82,7 +105,7 @@ def print_json(
         status: "success" or "error"
         message: Human-readable summary
         data: Command-specific data (optional)
-        errors: List of error messages (optional)
+        errors: Error messages or ``{code, message}`` entries (optional)
     """
     output = format_json_response(status, message, data, errors)
     if _json_capture is not None:

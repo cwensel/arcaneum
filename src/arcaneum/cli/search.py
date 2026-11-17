@@ -1,5 +1,10 @@
-"""CLI command for semantic search (RDR-007 with RDR-006 enhancements)."""
+"""CLI command for semantic search (RDR-007 with RDR-006 enhancements).
 
+The command formats ``arcaneum.retrieval.search_semantic``; the search itself
+and its coded errors live in the print-free core (RDR-026).
+"""
+
+import json
 import logging
 import sys
 import time
@@ -7,34 +12,14 @@ from typing import List
 
 from rich.console import Console
 
-from ..paths import get_models_dir
-from ..search import (
-    SearchEmbedder,
-    build_filter_description,
-    format_json_results,
-    format_summary,
-    format_text_results,
-    parse_filter,
-    search_collection,
-)
+from ..retrieval import search_semantic
+from ..search import format_summary, format_text_results
 from ..utils.search_output import format_compact_results
-from .concurrency import acquire_embedder_slot
-from .errors import InvalidArgumentError, ResourceNotFoundError, SearchSlotUnavailable
 from .interaction_logger import interaction_logger
-from .search_merge import fetch_from_corpora, per_corpus_limit
 from .utils import create_qdrant_client
 
 console = Console()
 logger = logging.getLogger(__name__)
-
-
-class _MissingCollection(Exception):
-    """Sentinel raised by the per-corpus fetch closure when a collection is absent.
-
-    Avoids fragile string-matching on Qdrant error messages to detect missing
-    collections — we raise this sentinel and match on it inside
-    fetch_from_corpora's is_missing predicate.
-    """
 
 
 def search_command(
@@ -80,165 +65,93 @@ def search_command(
         logging.getLogger("httpx").setLevel(logging.ERROR)
         logging.getLogger("qdrant_client").setLevel(logging.ERROR)
 
-    try:
-        # Initialize Qdrant client with proper timeout and retry configuration
-        client = create_qdrant_client(for_search=True)
+    corpora_str = ", ".join(corpora)
+    if verbose:
+        logger.info(f"Searching corpus '{corpora_str}' for: \"{query}\"")
 
-        # Parse metadata filter if provided (cheap; do before grabbing the slot)
-        query_filter = None
-        filter_description = None
-        if filter_arg:
-            try:
-                query_filter = parse_filter(filter_arg)
-                filter_description = build_filter_description(query_filter)
-                if verbose:
-                    logger.info(f"Filter: {filter_description}")
-            except ValueError as e:
-                raise InvalidArgumentError(f"Invalid filter: {e}")
+    start_time = time.time()
 
-        # Execute search with interaction logging (RDR-018)
-        corpora_str = ", ".join(corpora)
-        if verbose:
-            logger.info(f"Searching corpus '{corpora_str}' for: \"{query}\"")
-
-        start_time = time.time()
-
-        with interaction_logger.track(
-            "search",
-            "semantic",
-            corpora=corpora,
-            query=query,
+    with interaction_logger.track(
+        "search",
+        "semantic",
+        corpora=corpora,
+        query=query,
+        limit=limit,
+        offset=offset,
+        filters=filter_arg if filter_arg else None,
+        score_threshold=score_threshold,
+        include_references=include_references,
+    ) as ctx:
+        result = search_semantic(
+            query,
+            corpora,
+            vector_name=vector_name,
+            filter=filter_arg,
             limit=limit,
             offset=offset,
-            filters=filter_arg if filter_arg else None,
             score_threshold=score_threshold,
             include_references=include_references,
-        ) as ctx:
-            # Cap concurrent embedder loads (file-lock semaphore). Cold-loading
-            # the embedding model in N parallel processes thrashes RAM/swap on
-            # consumer hardware; ARCANEUM_SEARCH_CONCURRENCY tunes the cap.
-            with acquire_embedder_slot():
-                cache_dir = get_models_dir()
-                embedder = SearchEmbedder(cache_dir=cache_dir)
+            client=create_qdrant_client(for_search=True),
+            verbose=verbose,
+        )
+        ctx["result_count"] = len(result.results)
 
-                fetch_limit = per_corpus_limit(corpora, limit, offset)
+    results = result.results
+    execution_time_ms = (time.time() - start_time) * 1000
+    if verbose:
+        if result.filter_description:
+            logger.info(f"Filter: {result.filter_description}")
+        logger.info(f"Search completed in {execution_time_ms:.1f}ms")
+        if result.missing_corpora:
+            logger.warning(f"Missing corpora: {', '.join(result.missing_corpora)}")
 
-                def _fetch(corpus_name: str):
-                    if not client.collection_exists(corpus_name):
-                        raise _MissingCollection(corpus_name)
-                    return search_collection(
-                        client=client,
-                        embedder=embedder,
-                        query=query,
-                        collection_name=corpus_name,
-                        vector_name=vector_name,
-                        limit=fetch_limit,
-                        offset=0,  # Apply offset after merge
-                        query_filter=query_filter,
-                        score_threshold=score_threshold,
-                        include_references=include_references,
-                    )
-
-                per_corpus, missing_corpora = fetch_from_corpora(
-                    corpora,
-                    _fetch,
-                    lambda exc: isinstance(exc, _MissingCollection),
-                    logger,
-                    verbose,
-                )
-
-            all_results = [hit for hits in per_corpus for hit in hits]
-
-            # Sort merged results by score (descending) and apply pagination
-            all_results.sort(key=lambda x: x.score, reverse=True)
-            results = all_results[offset : offset + limit]
-
-            execution_time_ms = (time.time() - start_time) * 1000
-
-            if verbose:
-                logger.info(f"Search completed in {execution_time_ms:.1f}ms")
-                if missing_corpora:
-                    logger.warning(f"Missing corpora: {', '.join(missing_corpora)}")
-
-            ctx["result_count"] = len(results)
-
-        # Use first corpus name for backwards-compatible output format
-        # (or combined name for multi-corpus)
-        display_collection = corpora[0] if len(corpora) == 1 else f"[{', '.join(corpora)}]"
-
-        # Format and output results
-        if output_format == "compact":
-            print(
-                format_compact_results(
-                    query,
-                    corpora,
-                    [
-                        {
-                            "location": r.location,
-                            "content": r.content,
-                            "score": r.score,
-                            "corpus": r.collection,
-                        }
-                        for r in results
-                    ],
-                    offset=offset,
-                    max_content_chars=500 if max_content_chars is None else max_content_chars,
-                )
-            )
-        elif output_json or output_format == "json":
-            # JSON output mode
-            output = format_json_results(
-                query=query,
-                collection=display_collection,
-                results=results,
-                limit=limit,
+    # Format and output results
+    if output_format == "compact":
+        print(
+            format_compact_results(
+                query,
+                corpora,
+                [
+                    {
+                        "location": r.location,
+                        "content": r.content,
+                        "score": r.score,
+                        "corpus": r.collection,
+                    }
+                    for r in results
+                ],
                 offset=offset,
-                verbose=verbose,
-                max_content_chars=max_content_chars,
+                max_content_chars=500 if max_content_chars is None else max_content_chars,
             )
-            # Use print() not console.print() for JSON to avoid Rich wrapping
-            print(output)
-        else:
-            # Human-readable text output
-            if verbose:
-                # Show summary in verbose mode
-                summary = format_summary(
-                    query=query,
-                    collection=display_collection,
-                    results=results,
-                    filter_description=filter_description,
-                    execution_time_ms=execution_time_ms,
-                )
-                console.print(summary)
-                console.print()  # Blank line
-
-            # Show results
-            output = format_text_results(
-                query=query,
-                results=results,
-                offset=offset,
-                verbose=verbose,
-                max_content_chars=max_content_chars,
-            )
-            if max_content_chars is None:
-                console.print(output)
-            else:
-                console.print(output, markup=False, highlight=False)
-
-        # Exit with success
-        sys.exit(0)
-
-    except (InvalidArgumentError, ResourceNotFoundError, SearchSlotUnavailable):
-        raise  # Re-raise our custom exceptions for main() to handle
-    except ValueError as e:
-        # Convert ValueError to InvalidArgumentError for consistency
-        raise InvalidArgumentError(str(e))
-
-    except Exception as e:
-        # Unexpected errors (Qdrant connection, etc.)
-        print(f"[ERROR] Search failed: {e}", file=sys.stderr)
+        )
+    elif output_json or output_format == "json":
+        data = result.to_data(verbose=verbose, max_content_chars=max_content_chars)
+        # print() not console.print() for JSON to avoid Rich wrapping;
+        # ensure_ascii escapes the control characters PDF text can carry.
+        print(json.dumps(data, indent=2, ensure_ascii=True))
+    else:
+        # Human-readable text output
         if verbose:
-            import traceback
+            summary = format_summary(
+                query=query,
+                collection=result.display_collection,
+                results=results,
+                filter_description=result.filter_description,
+                execution_time_ms=execution_time_ms,
+            )
+            console.print(summary)
+            console.print()  # Blank line
 
-            traceback.print_exc()
-        sys.exit(1)
+        output = format_text_results(
+            query=query,
+            results=results,
+            offset=offset,
+            verbose=verbose,
+            max_content_chars=max_content_chars,
+        )
+        if max_content_chars is None:
+            console.print(output)
+        else:
+            console.print(output, markup=False, highlight=False)
+
+    sys.exit(0)

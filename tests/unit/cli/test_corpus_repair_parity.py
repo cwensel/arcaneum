@@ -143,7 +143,7 @@ def test_repair_skips_parity_when_content_repair_fails(isolated_locks):
     # The content failure is reported exactly as before.
     doc = json.loads(result.stdout)
     assert doc["status"] == "error"
-    assert doc["errors"] == ["boom"]
+    assert doc["errors"] == [{"code": "error", "message": "boom"}]
 
 
 def test_repair_reports_parity_skipped_when_store_missing(isolated_locks):
@@ -172,7 +172,9 @@ def test_repair_exits_nonzero_when_parity_fails(isolated_locks):
     assert doc["status"] == "error"
     assert doc["data"]["repair"] == {"improved": 1}
     assert doc["data"]["parity"] == {"status": "error", "message": "backfill exploded"}
-    assert doc["errors"] == ["Parity repair failed: backfill exploded"]
+    assert doc["errors"] == [
+        {"code": "error", "message": "Parity repair failed: backfill exploded"}
+    ]
 
 
 def test_repair_text_output_reports_parity_failure(isolated_locks):
@@ -183,3 +185,117 @@ def test_repair_text_output_reports_parity_failure(isolated_locks):
 
     assert result.exit_code == 1
     assert "Parity repair failed: backfill exploded" in result.output
+
+
+class _CountingQdrant:
+    """Qdrant double whose facets count two documents in the corpus."""
+
+    def facet(self, collection_name, key, **_kwargs):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            hits=[SimpleNamespace(value=f"/docs/{i}.pdf", count=1) for i in range(2)]
+        )
+
+
+def _run_with_counts(args, updates, manifests=None, corpus_type="pdf"):
+    runner = CliRunner()
+    with (
+        patch("arcaneum.cli.sync._sync_directory_locked", _content_ok),
+        patch("arcaneum.cli.sync._parity_single_corpus", _parity_ok),
+        patch("arcaneum.cli.utils.create_qdrant_client", lambda **_kwargs: _CountingQdrant()),
+        patch("arcaneum.cli.sync.get_collection_type", lambda _client, _corpus: corpus_type),
+        patch(
+            "arcaneum.cli.sync.update_collection_metadata",
+            lambda _client, name, **metadata: updates.append((name, metadata)),
+        ),
+        patch(
+            "arcaneum.cli.sync.file_manifests_ready",
+            lambda _client, _corpus: manifests is not None,
+        ),
+        patch(
+            "arcaneum.cli.sync.MetadataBasedSync.get_file_manifest_snapshot",
+            lambda _self, _corpus: manifests,
+        ),
+    ):
+        return runner.invoke(cli, args, catch_exceptions=False)
+
+
+def test_repair_stamps_list_counts_from_the_index(isolated_locks):
+    """Listing no longer persists counts, so repair stamps them (RDR-026 Q10)."""
+    updates = []
+
+    result = _run_with_counts(["corpus", "repair", "Docs"], updates)
+
+    assert result.exit_code == 0, result.output
+    assert len(updates) == 1
+    name, metadata = updates[0]
+    assert name == "Docs"
+    assert metadata["item_count"] == 2
+    assert metadata["item_unit"] == "documents"
+    assert metadata["count_source"] == "repair"
+    assert metadata["counts_updated_at"]
+
+
+def test_repair_counts_duplicate_pdf_aliases_from_manifests(isolated_locks):
+    """An alias path has a manifest but no chunks, so chunk facets miss it."""
+    updates = []
+    manifests = {
+        "/docs/0.pdf": {"file_path": "/docs/0.pdf"},
+        "/docs/1.pdf": {"file_path": "/docs/1.pdf"},
+        "/docs/copy-of-1.pdf": {"file_path": "/docs/copy-of-1.pdf", "canonical_path": "/docs/1.pdf"},
+    }
+
+    result = _run_with_counts(["corpus", "repair", "Docs"], updates, manifests=manifests)
+
+    assert result.exit_code == 0, result.output
+    assert len(updates) == 1
+    _name, metadata = updates[0]
+    assert metadata["item_count"] == 3
+    assert metadata["item_unit"] == "documents"
+    assert metadata["count_source"] == "repair"
+
+
+def test_repair_counts_chunkless_markdown_files_from_manifests(isolated_locks):
+    """An empty Markdown file gets a manifest but no chunks; full sync counts it."""
+    updates = []
+    manifests = {
+        "/notes/a.md": {"file_path": "/notes/a.md", "chunk_count": 3},
+        "/notes/empty.md": {"file_path": "/notes/empty.md", "chunk_count": 0},
+        "/notes/b.md": {"file_path": "/notes/b.md", "chunk_count": 1},
+    }
+
+    result = _run_with_counts(
+        ["corpus", "repair", "Notes"], updates, manifests=manifests, corpus_type="markdown"
+    )
+
+    assert result.exit_code == 0, result.output
+    _name, metadata = updates[0]
+    assert metadata["item_count"] == 3
+    assert metadata["item_unit"] == "files"
+
+
+def test_repair_counts_chunkless_code_files_from_manifests(isolated_locks):
+    """Code keeps repositories from facets; its file count includes empty files."""
+    updates = []
+    manifests = {f"/repo/{i}.py": {"file_path": f"/repo/{i}.py"} for i in range(3)}
+
+    result = _run_with_counts(
+        ["corpus", "repair", "Code"], updates, manifests=manifests, corpus_type="code"
+    )
+
+    assert result.exit_code == 0, result.output
+    _name, metadata = updates[0]
+    assert metadata["item_count"] == 2
+    assert metadata["item_unit"] == "repositories"
+    assert metadata["file_count"] == 3
+    assert metadata["file_unit"] == "source files"
+
+
+def test_repair_dry_run_stamps_no_counts(isolated_locks):
+    updates = []
+
+    result = _run_with_counts(["corpus", "repair", "Docs", "--dry-run"], updates)
+
+    assert result.exit_code == 0, result.output
+    assert updates == []

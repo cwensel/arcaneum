@@ -5,6 +5,7 @@ Tests for 'arc search semantic' command.
 
 import json
 import sys
+from contextlib import nullcontext
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -68,22 +69,19 @@ class TestSearchSemantic:
         """Test search with metadata filter."""
         from arcaneum.cli.search import search_command
 
-        json_output = json.dumps({"status": "success", "results": []})
-
         with patch("arcaneum.cli.search.create_qdrant_client", return_value=mock_qdrant_client):
-            with patch("arcaneum.cli.search.SearchEmbedder", return_value=mock_embedder):
+            with patch("arcaneum.retrieval.semantic.SearchEmbedder", return_value=mock_embedder):
                 with patch(
-                    "arcaneum.cli.search.search_collection", return_value=sample_search_results
+                    "arcaneum.retrieval.semantic.search_collection",
+                    return_value=sample_search_results,
                 ) as mock_search:
-                    with patch("arcaneum.cli.search.parse_filter") as mock_parse:
+                    with patch("arcaneum.retrieval.semantic.parse_filter") as mock_parse:
                         mock_parse.return_value = MagicMock()
                         with patch(
-                            "arcaneum.cli.search.build_filter_description",
+                            "arcaneum.retrieval.semantic.build_filter_description",
                             return_value="test filter",
                         ):
-                            with patch(
-                                "arcaneum.cli.search.format_json_results", return_value=json_output
-                            ):
+                            with nullcontext():
                                 with patch("arcaneum.cli.search.interaction_logger"):
                                     with pytest.raises(SystemExit) as exc_info:
                                         search_command(
@@ -105,14 +103,13 @@ class TestSearchSemantic:
         """Test search with pagination (limit and offset)."""
         from arcaneum.cli.search import search_command
 
-        json_output = json.dumps({"status": "success", "results": []})
-
         with patch("arcaneum.cli.search.create_qdrant_client", return_value=mock_qdrant_client):
-            with patch("arcaneum.cli.search.SearchEmbedder", return_value=mock_embedder):
+            with patch("arcaneum.retrieval.semantic.SearchEmbedder", return_value=mock_embedder):
                 with patch(
-                    "arcaneum.cli.search.search_collection", return_value=sample_search_results[:1]
+                    "arcaneum.retrieval.semantic.search_collection",
+                    return_value=sample_search_results[:1],
                 ) as mock_search:
-                    with patch("arcaneum.cli.search.format_json_results", return_value=json_output):
+                    with nullcontext():
                         with patch("arcaneum.cli.search.interaction_logger"):
                             with pytest.raises(SystemExit) as exc_info:
                                 search_command(
@@ -140,14 +137,13 @@ class TestSearchSemantic:
         """Test search with score threshold."""
         from arcaneum.cli.search import search_command
 
-        json_output = json.dumps({"status": "success", "results": []})
-
         with patch("arcaneum.cli.search.create_qdrant_client", return_value=mock_qdrant_client):
-            with patch("arcaneum.cli.search.SearchEmbedder", return_value=mock_embedder):
+            with patch("arcaneum.retrieval.semantic.SearchEmbedder", return_value=mock_embedder):
                 with patch(
-                    "arcaneum.cli.search.search_collection", return_value=sample_search_results
+                    "arcaneum.retrieval.semantic.search_collection",
+                    return_value=sample_search_results,
                 ) as mock_search:
-                    with patch("arcaneum.cli.search.format_json_results", return_value=json_output):
+                    with nullcontext():
                         with patch("arcaneum.cli.search.interaction_logger"):
                             with pytest.raises(SystemExit) as exc_info:
                                 search_command(
@@ -173,8 +169,8 @@ class TestSearchSemantic:
         from arcaneum.cli.errors import ResourceNotFoundError
 
         with patch("arcaneum.cli.search.create_qdrant_client", return_value=mock_qdrant_client):
-            with patch("arcaneum.cli.search.SearchEmbedder", return_value=mock_embedder):
-                with patch("arcaneum.cli.search.search_collection") as mock_search:
+            with patch("arcaneum.retrieval.semantic.SearchEmbedder", return_value=mock_embedder):
+                with patch("arcaneum.retrieval.semantic.search_collection") as mock_search:
                     mock_search.side_effect = ResourceNotFoundError(
                         "Collection 'NonExistent' not found"
                     )
@@ -207,9 +203,10 @@ class TestSearchSemantic:
         mock_logger.track.return_value = track_ctx
 
         with patch("arcaneum.cli.search.create_qdrant_client", return_value=mock_qdrant_client):
-            with patch("arcaneum.cli.search.SearchEmbedder", return_value=mock_embedder):
+            with patch("arcaneum.retrieval.semantic.SearchEmbedder", return_value=mock_embedder):
                 with patch(
-                    "arcaneum.cli.search.search_collection", return_value=sample_search_results
+                    "arcaneum.retrieval.semantic.search_collection",
+                    return_value=sample_search_results,
                 ):
                     with patch("arcaneum.cli.search.interaction_logger", mock_logger):
                         with pytest.raises(SystemExit):
@@ -246,12 +243,10 @@ class TestSearchNoResults:
         mock_embedder = MagicMock()
         mock_embedder.embed.return_value = [0.1] * 1024
 
-        json_output = json.dumps({"status": "success", "results": []})
-
         with patch("arcaneum.cli.search.create_qdrant_client", return_value=mock_qdrant_client):
-            with patch("arcaneum.cli.search.SearchEmbedder", return_value=mock_embedder):
-                with patch("arcaneum.cli.search.search_collection", return_value=[]):
-                    with patch("arcaneum.cli.search.format_json_results", return_value=json_output):
+            with patch("arcaneum.retrieval.semantic.SearchEmbedder", return_value=mock_embedder):
+                with patch("arcaneum.retrieval.semantic.search_collection", return_value=[]):
+                    with nullcontext():
                         with patch("arcaneum.cli.search.interaction_logger"):
                             with pytest.raises(SystemExit) as exc_info:
                                 search_command(
@@ -283,8 +278,8 @@ class TestSearchInvalidFilter:
         mock_embedder = MagicMock()
 
         with patch("arcaneum.cli.search.create_qdrant_client", return_value=mock_qdrant_client):
-            with patch("arcaneum.cli.search.SearchEmbedder", return_value=mock_embedder):
-                with patch("arcaneum.cli.search.parse_filter") as mock_parse:
+            with patch("arcaneum.retrieval.semantic.SearchEmbedder", return_value=mock_embedder):
+                with patch("arcaneum.retrieval.semantic.parse_filter") as mock_parse:
                     mock_parse.side_effect = ValueError("Invalid filter syntax")
                     with patch("arcaneum.cli.search.interaction_logger"):
                         with pytest.raises(InvalidArgumentError) as exc_info:
@@ -376,8 +371,10 @@ class TestMultiCorpusSearch:
             raise Exception(f"Unknown collection: {collection_name}")
 
         with patch("arcaneum.cli.search.create_qdrant_client", return_value=mock_qdrant_client):
-            with patch("arcaneum.cli.search.SearchEmbedder", return_value=mock_embedder):
-                with patch("arcaneum.cli.search.search_collection", side_effect=search_side_effect):
+            with patch("arcaneum.retrieval.semantic.SearchEmbedder", return_value=mock_embedder):
+                with patch(
+                    "arcaneum.retrieval.semantic.search_collection", side_effect=search_side_effect
+                ):
                     with patch("arcaneum.cli.search.interaction_logger"):
                         with pytest.raises(SystemExit) as exc_info:
                             search_command(
@@ -411,8 +408,10 @@ class TestMultiCorpusSearch:
             raise Exception(f"Unknown collection: {collection_name}")
 
         with patch("arcaneum.cli.search.create_qdrant_client", return_value=mock_qdrant_client):
-            with patch("arcaneum.cli.search.SearchEmbedder", return_value=mock_embedder):
-                with patch("arcaneum.cli.search.search_collection", side_effect=search_side_effect):
+            with patch("arcaneum.retrieval.semantic.SearchEmbedder", return_value=mock_embedder):
+                with patch(
+                    "arcaneum.retrieval.semantic.search_collection", side_effect=search_side_effect
+                ):
                     with patch("arcaneum.cli.search.interaction_logger"):
                         with pytest.raises(SystemExit) as exc_info:
                             search_command(
@@ -452,8 +451,10 @@ class TestMultiCorpusSearch:
             raise Exception(f"Unknown collection: {collection_name}")
 
         with patch("arcaneum.cli.search.create_qdrant_client", return_value=mock_qdrant_client):
-            with patch("arcaneum.cli.search.SearchEmbedder", return_value=mock_embedder):
-                with patch("arcaneum.cli.search.search_collection", side_effect=search_side_effect):
+            with patch("arcaneum.retrieval.semantic.SearchEmbedder", return_value=mock_embedder):
+                with patch(
+                    "arcaneum.retrieval.semantic.search_collection", side_effect=search_side_effect
+                ):
                     with patch("arcaneum.cli.search.interaction_logger"):
                         with pytest.raises(SystemExit) as exc_info:
                             search_command(
@@ -489,8 +490,10 @@ class TestMultiCorpusSearch:
             raise Exception(f"Unknown collection: {collection_name}")
 
         with patch("arcaneum.cli.search.create_qdrant_client", return_value=mock_qdrant_client):
-            with patch("arcaneum.cli.search.SearchEmbedder", return_value=mock_embedder):
-                with patch("arcaneum.cli.search.search_collection", side_effect=search_side_effect):
+            with patch("arcaneum.retrieval.semantic.SearchEmbedder", return_value=mock_embedder):
+                with patch(
+                    "arcaneum.retrieval.semantic.search_collection", side_effect=search_side_effect
+                ):
                     with patch("arcaneum.cli.search.interaction_logger"):
                         with pytest.raises(SystemExit) as exc_info:
                             search_command(

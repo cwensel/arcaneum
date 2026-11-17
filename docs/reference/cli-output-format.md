@@ -366,16 +366,36 @@ All errors use the `[ERROR]` prefix:
 
 ### Error Response Structure
 
+In JSON mode a failure prints this envelope on stdout and exits with the mapped
+exit code. Each `errors` entry carries a stable `code` and a `message`:
+
 ```json
 {
   "status": "error",
-  "message": "[ERROR] Collection 'Nonexistent' not found",
+  "message": "Corpus 'Nonexistent' not found",
   "data": {},
   "errors": [
-    "Collection 'Nonexistent' not found"
+    {"code": "unknown-corpus", "message": "Corpus 'Nonexistent' not found"}
   ]
 }
 ```
+
+### Error Codes
+
+The search and listing commands report these codes (RDR-026):
+
+| Code | Exit | Raised when |
+| --- | --- | --- |
+| `unknown-corpus` | 3 | No requested corpus exists |
+| `bad-filter` | 2 | The filter does not parse or names an unfilterable field |
+| `bad-argument` | 2 | Any other bad argument, including a command-line usage error |
+| `service-down` | 1 | Qdrant or MeiliSearch is unreachable; the message names which |
+| `semantic-unavailable` | 1 | No embedder slot is free within the wait budget |
+| `not-found` | 3 | Another resource is missing, such as a path |
+| `error` | 1 | Any other failure |
+
+A multi-corpus search with some corpora missing still succeeds and lists them
+in `data.missing_corpora`.
 
 ### Common Error Messages
 

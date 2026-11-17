@@ -302,6 +302,121 @@ class TestSearchSemantic:
 
         assert built[0]["allow_download"] is allow_download
 
+    @pytest.mark.parametrize("stamp_policy", [True, False])
+    def test_stamp_policy_reaches_the_embedder(self, semantic, monkeypatch, stamp_policy):
+        built = []
+        monkeypatch.setattr(
+            semantic.module,
+            "SearchEmbedder",
+            lambda **kwargs: built.append(kwargs) or MagicMock(),
+        )
+
+        semantic.module.search_semantic(
+            "query", ["A"], stamp_policy=stamp_policy, client=semantic.client
+        )
+
+        assert built[0]["stamp_policy"] is stamp_policy
+
+    def test_slot_waits_only_for_the_time_left_before_the_deadline(self, semantic, monkeypatch):
+        waits = []
+
+        @contextmanager
+        def slot(**kwargs):
+            waits.append(kwargs)
+            yield
+
+        monkeypatch.setattr(semantic.module, "acquire_embedder_slot", slot)
+        monkeypatch.setattr(semantic.module, "_monotonic", lambda: 100.0)
+
+        semantic.module.search_semantic(
+            "query", ["A"], deadline=107.5, client=semantic.client, embedder=semantic.embedder
+        )
+
+        assert waits == [{"timeout": 7.5}]
+
+    def test_no_deadline_keeps_the_slot_default_wait(self, semantic, monkeypatch):
+        waits = []
+
+        @contextmanager
+        def slot(**kwargs):
+            waits.append(kwargs)
+            yield
+
+        monkeypatch.setattr(semantic.module, "acquire_embedder_slot", slot)
+
+        semantic.module.search_semantic(
+            "query", ["A"], client=semantic.client, embedder=semantic.embedder
+        )
+
+        assert waits == [{}]
+
+    def test_a_passed_deadline_is_timeout_before_any_search(self, semantic, monkeypatch):
+        monkeypatch.setattr(semantic.module, "_monotonic", lambda: 100.0)
+
+        with pytest.raises(errors.OperationTimeoutError) as exc_info:
+            semantic.module.search_semantic(
+                "query", ["A"], deadline=99.0, client=semantic.client, embedder=semantic.embedder
+            )
+
+        assert exc_info.value.code == "timeout"
+        assert semantic.calls == []
+
+    def test_deadline_passing_between_corpora_is_timeout(self, semantic, monkeypatch):
+        # The clock passes the deadline once the first corpus has been searched.
+        monkeypatch.setattr(
+            semantic.module, "_monotonic", lambda: 120.0 if semantic.calls else 100.0
+        )
+        monkeypatch.setattr(semantic.module, "acquire_embedder_slot", lambda **_kw: nullcontext())
+
+        with pytest.raises(errors.OperationTimeoutError):
+            semantic.module.search_semantic(
+                "query",
+                ["A", "B"],
+                deadline=110.0,
+                client=semantic.client,
+                embedder=semantic.embedder,
+            )
+
+        assert [call["collection_name"] for call in semantic.calls] == ["A"]
+
+    def test_deadline_passing_during_the_last_corpus_is_timeout(self, semantic, monkeypatch):
+        # The only corpus's search starts in time and ends past the deadline.
+        monkeypatch.setattr(
+            semantic.module, "_monotonic", lambda: 120.0 if semantic.calls else 100.0
+        )
+        monkeypatch.setattr(semantic.module, "acquire_embedder_slot", lambda **_kw: nullcontext())
+
+        with pytest.raises(errors.OperationTimeoutError) as exc_info:
+            semantic.module.search_semantic(
+                "query",
+                ["A"],
+                deadline=110.0,
+                client=semantic.client,
+                embedder=semantic.embedder,
+            )
+
+        assert exc_info.value.code == "timeout"
+        assert [call["collection_name"] for call in semantic.calls] == ["A"]
+
+    def test_a_caller_holding_the_slot_skips_it(self, semantic, monkeypatch):
+        def slot(**_kwargs):
+            raise AssertionError("slot acquired by a caller that holds one")
+
+        monkeypatch.setattr(semantic.module, "acquire_embedder_slot", slot)
+
+        result = semantic.module.search_semantic(
+            "query", ["A"], acquire_slot=False, client=semantic.client, embedder=semantic.embedder
+        )
+
+        assert [hit.point_id for hit in result.results] == ["a1", "a2"]
+
+    def test_score_threshold_reaches_qdrant(self, semantic):
+        semantic.module.search_semantic(
+            "query", ["A"], score_threshold=0.6, client=semantic.client, embedder=semantic.embedder
+        )
+
+        assert semantic.calls[0]["score_threshold"] == 0.6
+
     def test_writes_nothing_to_stdout(self, semantic, capsys):
         semantic.module.search_semantic(
             "query", ["A", "Gone"], client=semantic.client, embedder=semantic.embedder, verbose=True
@@ -377,6 +492,311 @@ class TestSearchEmbedderDownloadPolicy:
 
         with pytest.raises(ResponseHandlingException):
             embedder.generate_query_embedding("query", "Docs", client)
+
+    @pytest.mark.parametrize("allow_download", [True, False])
+    def test_download_policy_reaches_the_loader(self, monkeypatch, allow_download):
+        from arcaneum.search import embedder as module
+
+        built = []
+        monkeypatch.setattr(
+            module, "EmbeddingClient", lambda **kwargs: built.append(kwargs) or MagicMock()
+        )
+
+        module.SearchEmbedder(cache_dir="/tmp/models", allow_download=allow_download)
+
+        assert built[0]["allow_download"] is allow_download
+
+    def test_incomplete_cache_is_model_not_cached_not_query_embedding_error(self, monkeypatch):
+        # The directory passes is_model_cached, but the local load fails.
+        module, embedding_client = self._embedder(monkeypatch, cached=True)
+        embedding_client.get_model.side_effect = module.ModelNotCachedError("arctic-m")
+        embedder = module.SearchEmbedder(cache_dir="/tmp/models", allow_download=False)
+
+        with pytest.raises(module.ModelNotCachedError):
+            embedder.generate_query_embedding("query", "Docs", self._client())
+
+
+class TestSearchEmbedderPromptPolicyStamp:
+    """stamp_policy=False searches a legacy collection without writing to Qdrant."""
+
+    def _embedder(self, monkeypatch, metadata, stamp_policy):
+        from arcaneum.search import embedder as module
+
+        embedding_client = MagicMock()
+        embedding_client.is_model_cached.return_value = True
+        embedding_client.get_model.return_value.query_embed.return_value = iter([[0.1, 0.2]])
+        monkeypatch.setattr(module, "EmbeddingClient", lambda **_kwargs: embedding_client)
+        monkeypatch.setattr(module, "get_collection_metadata", lambda *_args: metadata)
+        stamps = []
+
+        def backfill(client, name, collection_type, model_key):
+            stamps.append(name)
+            from arcaneum.embeddings.client import get_embedding_prompt_policies
+
+            return {**metadata, "embedding_prompt_policy": get_embedding_prompt_policies(model_key)}
+
+        monkeypatch.setattr(module, "backfill_embedding_prompt_policy", backfill)
+        monkeypatch.setattr(module, "get_collection_type", lambda *_args: "pdf")
+        embedder = module.SearchEmbedder(cache_dir="/tmp/models", stamp_policy=stamp_policy)
+        return embedder, stamps
+
+    def _client(self):
+        client = MagicMock()
+        client.get_collection.return_value = SimpleNamespace(
+            config=SimpleNamespace(params=SimpleNamespace(vectors={"arctic-m": object()}))
+        )
+        return client
+
+    def test_legacy_policy_is_stamped_by_default(self, monkeypatch):
+        embedder, stamps = self._embedder(monkeypatch, {"collection_type": "pdf"}, True)
+
+        model_key, _vector = embedder.generate_query_embedding("query", "Docs", self._client())
+
+        assert model_key == "arctic-m"
+        assert stamps == ["Docs"]
+
+    def test_legacy_policy_without_stamping_searches_under_the_current_policy(self, monkeypatch):
+        embedder, stamps = self._embedder(monkeypatch, {"collection_type": "pdf"}, False)
+        client = self._client()
+
+        model_key, vector = embedder.generate_query_embedding("query", "Docs", client)
+
+        assert (model_key, list(vector)) == ("arctic-m", [0.1, 0.2])
+        assert stamps == []
+        client.upsert.assert_not_called()
+
+    def test_a_stale_policy_still_refuses_without_stamping(self, monkeypatch):
+        stale = {"embedding_prompt_policy": {"arctic-m": {"query_prefix": "stale"}}}
+        embedder, stamps = self._embedder(monkeypatch, stale, False)
+
+        with pytest.raises(ValueError, match="reindex"):
+            embedder.generate_query_embedding("query", "Docs", self._client())
+
+        assert stamps == []
+
+
+class _Slot:
+    """A fake embedder slot that counts how often it is entered and left."""
+
+    def __init__(self, busy=False):
+        self.busy = busy
+        self.entered = 0
+        self.exited = 0
+        self.timeouts = []
+
+    def __call__(self, **kwargs):
+        self.timeouts.append(kwargs.get("timeout"))
+        slot = self
+
+        @contextmanager
+        def held():
+            if slot.busy:
+                raise errors.SearchSlotUnavailable("All 2 embedder slots busy")
+            slot.entered += 1
+            try:
+                yield
+            finally:
+                slot.exited += 1
+
+        return held()
+
+
+@pytest.fixture
+def session_env(monkeypatch):
+    from arcaneum.retrieval import semantic as module
+
+    slot = _Slot()
+    built = []
+    embedders = []
+
+    def make_embedder(**kwargs):
+        built.append(kwargs)
+        embedder = MagicMock()
+        embedders.append(embedder)
+        return embedder
+
+    searches = []
+
+    def search_collection(**kwargs):
+        searches.append(kwargs)
+        return [_hit(0.9, kwargs["collection_name"], "/a/1.pdf", "a1")]
+
+    monkeypatch.setattr(module, "acquire_embedder_slot", slot)
+    monkeypatch.setattr(module, "SearchEmbedder", make_embedder)
+    monkeypatch.setattr(module, "search_collection", search_collection)
+    client = MagicMock()
+    client.collection_exists.return_value = True
+    return SimpleNamespace(
+        module=module,
+        slot=slot,
+        built=built,
+        embedders=embedders,
+        searches=searches,
+        client=client,
+    )
+
+
+class TestSemanticSession:
+    """The server's resident embedder (RDR-026 Q9)."""
+
+    def _deadline(self, seconds=30.0):
+        import time
+
+        return time.monotonic() + seconds
+
+    def test_first_search_loads_an_embedder_that_never_downloads_or_stamps(self, session_env):
+        session = session_env.module.SemanticSession()
+
+        result = session.search(
+            "query", ["A"], deadline=self._deadline(), client=session_env.client
+        )
+
+        assert [hit.point_id for hit in result.results] == ["a1"]
+        assert len(session_env.built) == 1
+        assert session_env.built[0]["allow_download"] is False
+        assert session_env.built[0]["stamp_policy"] is False
+        assert session_env.searches[0]["embedder"] is session_env.embedders[0]
+        assert session.resident
+
+    def test_later_searches_reuse_the_embedder_and_the_held_slot(self, session_env):
+        session = session_env.module.SemanticSession()
+
+        for _ in range(3):
+            session.search("query", ["A"], deadline=self._deadline(), client=session_env.client)
+
+        assert len(session_env.built) == 1
+        assert (session_env.slot.entered, session_env.slot.exited) == (1, 0)
+        assert {id(call["embedder"]) for call in session_env.searches} == {
+            id(session_env.embedders[0])
+        }
+
+    def test_the_slot_wait_is_the_time_left_in_the_call(self, session_env, monkeypatch):
+        monkeypatch.setattr(session_env.module, "_monotonic", lambda: 50.0)
+        session = session_env.module.SemanticSession()
+
+        session.search("query", ["A"], deadline=62.0, client=session_env.client)
+
+        assert session_env.slot.timeouts == [12.0]
+
+    def test_a_busy_slot_is_semantic_unavailable_and_loads_nothing(self, session_env):
+        session_env.slot.busy = True
+        session = session_env.module.SemanticSession()
+
+        with pytest.raises(errors.SemanticUnavailableError) as exc_info:
+            session.search("query", ["A"], deadline=self._deadline(1), client=session_env.client)
+
+        assert exc_info.value.code == "semantic-unavailable"
+        assert session_env.built == []
+        assert not session.resident
+
+    def test_a_failed_first_search_frees_the_slot_and_the_embedder(
+        self, session_env, monkeypatch
+    ):
+        def uncached(**_kwargs):
+            raise session_env.module.ModelNotCachedError("m", FileNotFoundError("m"))
+
+        monkeypatch.setattr(session_env.module, "search_collection", uncached)
+        session = session_env.module.SemanticSession()
+
+        with pytest.raises(errors.SemanticUnavailableError):
+            session.search("query", ["A"], deadline=self._deadline(), client=session_env.client)
+
+        assert not session.resident
+        assert session_env.slot.exited == 1
+        session_env.embedders[0].release.assert_called_once_with()
+
+    def test_a_failed_search_keeps_an_already_resident_embedder(self, session_env, monkeypatch):
+        session = session_env.module.SemanticSession()
+        session.search("query", ["A"], deadline=self._deadline(), client=session_env.client)
+
+        def uncached(**_kwargs):
+            raise session_env.module.ModelNotCachedError("m", FileNotFoundError("m"))
+
+        monkeypatch.setattr(session_env.module, "search_collection", uncached)
+        with pytest.raises(errors.SemanticUnavailableError):
+            session.search("query", ["A"], deadline=self._deadline(), client=session_env.client)
+
+        assert session.resident
+        assert session_env.slot.exited == 0
+
+    def test_a_first_search_past_the_deadline_keeps_its_cold_load(
+        self, session_env, monkeypatch
+    ):
+        # The cold load is paid; the next call reuses it rather than reloading.
+        clock = {"now": 100.0}
+
+        def slow_search(**kwargs):
+            clock["now"] = 140.0
+            return []
+
+        monkeypatch.setattr(session_env.module, "_monotonic", lambda: clock["now"])
+        monkeypatch.setattr(session_env.module, "search_collection", slow_search)
+        session = session_env.module.SemanticSession()
+
+        with pytest.raises(errors.OperationTimeoutError):
+            session.search("query", ["A"], deadline=130.0, client=session_env.client)
+
+        assert session.resident
+        assert session_env.slot.exited == 0
+
+    def test_idle_session_drops_the_embedder_and_the_slot(self, session_env):
+        import time
+
+        session = session_env.module.SemanticSession(idle_seconds=0.05)
+        session.search("query", ["A"], deadline=self._deadline(), client=session_env.client)
+
+        waited = time.monotonic() + 5
+        while session.resident and time.monotonic() < waited:
+            time.sleep(0.01)
+
+        assert not session.resident
+        assert session_env.slot.exited == 1
+        session_env.embedders[0].release.assert_called_once_with()
+
+        session.search("query", ["A"], deadline=self._deadline(), client=session_env.client)
+        assert len(session_env.built) == 2
+        assert session_env.slot.entered == 2
+
+    def test_searches_are_serialized_and_a_wait_past_the_deadline_is_unavailable(
+        self, session_env, monkeypatch
+    ):
+        import threading
+
+        entered = threading.Event()
+        release = threading.Event()
+
+        def blocking_search(**kwargs):
+            entered.set()
+            release.wait(5)
+            return []
+
+        monkeypatch.setattr(session_env.module, "search_collection", blocking_search)
+        session = session_env.module.SemanticSession()
+        first = threading.Thread(
+            target=session.search,
+            args=("query", ["A"]),
+            kwargs={"deadline": self._deadline(), "client": session_env.client},
+        )
+        first.start()
+        try:
+            assert entered.wait(5)
+            with pytest.raises(errors.SemanticUnavailableError) as exc_info:
+                session.search(
+                    "query", ["A"], deadline=self._deadline(0.2), client=session_env.client
+                )
+            assert "busy" in str(exc_info.value)
+        finally:
+            release.set()
+            first.join(5)
+
+    def test_release_drops_a_resident_embedder(self, session_env):
+        session = session_env.module.SemanticSession()
+        session.search("query", ["A"], deadline=self._deadline(), client=session_env.client)
+
+        session.release()
+
+        assert not session.resident
+        assert session_env.slot.exited == 1
 
 
 # ---------------------------------------------------------------------------

@@ -1380,6 +1380,14 @@ def _resolve_search_format(output_format, output_json):
     is_flag=True,
     help="Alias for --format json; cannot combine with another format",
 )
+@click.option(
+    "--offline",
+    is_flag=True,
+    help=(
+        "Use only embedding models already in the local cache; an uncached model "
+        "fails semantic-unavailable instead of downloading"
+    ),
+)
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 def search_semantic(
     query,
@@ -1394,6 +1402,7 @@ def search_semantic(
     output_format,
     max_content_chars,
     output_json,
+    offline,
     verbose,
 ):
     """Find concepts and paraphrases with vector-based semantic search.
@@ -1422,6 +1431,7 @@ def search_semantic(
         include_references=include_references,
         output_format=output_format,
         max_content_chars=max_content_chars,
+        allow_download=not offline,
     )
 
 

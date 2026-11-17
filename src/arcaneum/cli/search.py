@@ -35,6 +35,7 @@ def search_command(
     include_references: bool = False,
     output_format: str | None = None,
     max_content_chars: int | None = None,
+    allow_download: bool = True,
 ):
     """Search Qdrant collection(s) semantically.
 
@@ -51,6 +52,8 @@ def search_command(
         include_references: Include PDF bibliography chunks
         output_format: Text, compact, or JSON output; None preserves output_json
         max_content_chars: Explicit content cap; zero is unlimited, None uses format defaults
+        allow_download: Download a query model missing from the local cache
+            (``--offline`` turns it off: such a model is semantic-unavailable)
     """
     # Setup logging based on verbose flag
     if verbose:
@@ -91,6 +94,7 @@ def search_command(
             offset=offset,
             score_threshold=score_threshold,
             include_references=include_references,
+            allow_download=allow_download,
             client=create_qdrant_client(for_search=True),
             verbose=verbose,
         )

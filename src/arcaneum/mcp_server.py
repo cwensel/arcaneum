@@ -18,6 +18,11 @@ protocol messages alone:
 - **Per call**: the core runs in a worker thread under ``--timeout``; a stalled
   call is abandoned (every core call is read-only) and reported as ``timeout``.
   ``--max-output-chars`` bounds the serialized ``data`` of every result.
+- **Semantic**: the first ``search_semantic`` call loads the query embedder,
+  which then stays resident, holding an embedder slot, until 5 minutes idle
+  (``retrieval.semantic.SemanticSession``). It never downloads a model or
+  stamps a prompt policy; an uncached model or an embedder busy past the
+  call's time is ``semantic-unavailable``.
 - **Launch config**: ``--print-config claude|codex`` prints a client config
   that names an absolute command (``launch_command``), so a client started
   under launchd's fixed PATH still finds arc, and exits before any server
@@ -37,6 +42,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping
 
 from .cli.errors import (
@@ -127,6 +133,41 @@ SEARCH_TEXT_TOOL: dict[str, Any] = {
                 "minimum": 0,
                 "default": SEARCH_CONTENT_CHARS_DEFAULT,
                 "description": "Maximum characters per snippet; 0 means unlimited.",
+            },
+        },
+        "required": ["query", "corpora"],
+        "additionalProperties": False,
+    },
+}
+
+SEARCH_SEMANTIC_TOOL: dict[str, Any] = {
+    "name": "search_semantic",
+    "title": "Search semantic",
+    "description": (
+        "Vector search for concepts and paraphrases across one or more arc "
+        "corpora. Each hit carries a cite (<corpus>:<locator>) and a snippet. "
+        "Same data as `arc search semantic --json`. Uses only embedding models "
+        "already in the local cache; on semantic-unavailable, use search_text."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            **SEARCH_TEXT_TOOL["input_schema"]["properties"],
+            "query": {
+                "type": "string",
+                "description": "A natural-language description of what to find.",
+            },
+            "filter": {
+                "type": "string",
+                "description": (
+                    "Metadata filter: key=value, key:op:value, a JSON object such as "
+                    '{"language": "python"}, or a Qdrant filter object (must, should, '
+                    "must_not)."
+                ),
+            },
+            "score_threshold": {
+                "type": "number",
+                "description": "Minimum similarity score; weaker hits are dropped.",
             },
         },
         "required": ["query", "corpora"],
@@ -455,6 +496,15 @@ def _qdrant_client():
     return utils.create_qdrant_client(config_path=utils.resolve_config_path(migrate=False))
 
 
+def _qdrant_search_client():
+    """``_qdrant_client`` with the search timeout, as ``arc search semantic`` makes it."""
+    from .cli import utils
+
+    return utils.create_qdrant_client(
+        config_path=utils.resolve_config_path(migrate=False), for_search=True
+    )
+
+
 def _meili_client():
     """A MeiliSearch client on the existing key: none is generated or stored."""
     from .cli import utils
@@ -532,6 +582,39 @@ def _integer_argument(
     return value
 
 
+def _number_argument(arguments: Mapping[str, Any], name: str) -> float | None:
+    value = arguments.get(name)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise InvalidArgumentError(f"{name} must be a number, got {value!r}")
+    return float(value)
+
+
+def _search_arguments(tool: dict[str, Any], arguments: Mapping[str, Any]) -> dict[str, Any]:
+    """The arguments both search tools share, within their advertised bounds."""
+    _reject_arguments(tool["name"], arguments, tool["input_schema"]["properties"])
+    return {
+        "query": _string_argument(arguments, "query", required=True),
+        "corpora": _corpora_argument(arguments),
+        "limit": _integer_argument(
+            arguments, "limit", SEARCH_LIMIT_DEFAULT, minimum=1, maximum=SEARCH_LIMIT_MAX
+        ),
+        "offset": _integer_argument(arguments, "offset", 0, minimum=0),
+        "filter": _string_argument(arguments, "filter", required=False) or None,
+        "max_content_chars": _integer_argument(
+            arguments, "max_content_chars", SEARCH_CONTENT_CHARS_DEFAULT, minimum=0
+        ),
+    }
+
+
+# The core gives up this long before the per-call deadline (at most 1 s, a tenth
+# of a short timeout), so a busy embedder reports semantic-unavailable itself
+# rather than racing the deadline's timeout.
+def _semantic_report_margin(timeout: float) -> float:
+    return min(1.0, timeout / 10)
+
+
 class ArcTools:
     """The tool implementations, independent of the transport."""
 
@@ -547,6 +630,9 @@ class ArcTools:
         self.max_output_chars = max_output_chars
         # One event per call whose worker was left running, set when it returns.
         self._abandoned: list[threading.Event] = []
+        # Made on the first semantic call, so start loads no embedder (RDR-026 Q9).
+        self._semantic: Any = None
+        self._semantic_lock = threading.Lock()
 
     def tool_definitions(self) -> list[mcp_types.Tool]:
         import mcp_types
@@ -554,7 +640,7 @@ class ArcTools:
         read_only = mcp_types.ToolAnnotations(read_only_hint=True)
         return [
             mcp_types.Tool(**definition, annotations=read_only)
-            for definition in (LIST_CORPORA_TOOL, SEARCH_TEXT_TOOL)
+            for definition in (LIST_CORPORA_TOOL, SEARCH_TEXT_TOOL, SEARCH_SEMANTIC_TOOL)
         ]
 
     def abandoned_calls_running(self) -> bool:
@@ -568,6 +654,7 @@ class ArcTools:
         handlers: dict[str, Callable[[Mapping[str, Any]], dict[str, Any]]] = {
             "list_corpora": self.list_corpora,
             "search_text": self.search_text,
+            "search_semantic": self.search_semantic,
         }
         handler = handlers.get(name)
         if handler is None:
@@ -631,31 +718,57 @@ class ArcTools:
 
         Every argument and the allowlist are checked before any client is made.
         """
-        _reject_arguments("search_text", arguments, SEARCH_TEXT_TOOL["input_schema"]["properties"])
-        query = _string_argument(arguments, "query", required=True)
-        corpora = _corpora_argument(arguments)
-        limit = _integer_argument(
-            arguments, "limit", SEARCH_LIMIT_DEFAULT, minimum=1, maximum=SEARCH_LIMIT_MAX
-        )
-        offset = _integer_argument(arguments, "offset", 0, minimum=0)
-        filter_text = _string_argument(arguments, "filter", required=False)
-        max_content_chars = _integer_argument(
-            arguments, "max_content_chars", SEARCH_CONTENT_CHARS_DEFAULT, minimum=0
-        )
-        require_allowed(self.allowlist, corpora)
+        args = _search_arguments(SEARCH_TEXT_TOOL, arguments)
+        require_allowed(self.allowlist, args["corpora"])
 
         from .retrieval import search_text
 
         result = search_text(
-            query,
-            corpora,
-            filter=filter_text or None,
-            limit=limit,
-            offset=offset,
+            args["query"],
+            args["corpora"],
+            filter=args["filter"],
+            limit=args["limit"],
+            offset=args["offset"],
             client=_meili_client(),
             qdrant_client=_source_roots_client(),
         )
-        data = result.to_data(max_content_chars=max_content_chars)
+        data = result.to_data(max_content_chars=args["max_content_chars"])
+        return cap_search(data, self.max_output_chars)
+
+    @property
+    def _semantic_session(self):
+        """The session's resident embedder, made on first use."""
+        with self._semantic_lock:
+            if self._semantic is None:
+                from .retrieval.semantic import SemanticSession
+
+                self._semantic = SemanticSession()
+            return self._semantic
+
+    def search_semantic(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
+        """``arc search semantic --json``'s ``data`` under the MCP bounds and the output cap.
+
+        Every argument and the allowlist are checked before any client is made.
+        The search never downloads a model or stamps a prompt policy, and
+        reports an uncached model or a busy embedder as ``semantic-unavailable``
+        (RDR-026 Q9).
+        """
+        deadline = time.monotonic() + self.timeout - _semantic_report_margin(self.timeout)
+        args = _search_arguments(SEARCH_SEMANTIC_TOOL, arguments)
+        score_threshold = _number_argument(arguments, "score_threshold")
+        require_allowed(self.allowlist, args["corpora"])
+
+        result = self._semantic_session.search(
+            args["query"],
+            args["corpora"],
+            deadline=deadline,
+            filter=args["filter"],
+            limit=args["limit"],
+            offset=args["offset"],
+            score_threshold=score_threshold,
+            client=_qdrant_search_client(),
+        )
+        data = result.to_data(max_content_chars=args["max_content_chars"])
         return cap_search(data, self.max_output_chars)
 
 

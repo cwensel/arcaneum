@@ -4,9 +4,10 @@
 as review sessions, where a reviewer cannot run `arc` directly. Sessions that do have a shell keep using the `arc`
 CLI.
 
-Today the server serves one tool, `list_corpora`, whose result is the same `data` that `arc corpus list --json`
-prints. RDR-026 specifies three more (`search_text`, `search_semantic` and `get_passage`); they are not served yet.
-The [cite grammar](#cite-grammar) below is the contract their hits follow.
+The server serves three tools, each returning the same `data` as an `arc` command's `--json` output:
+`list_corpora` (`arc corpus list`), `search_text` (`arc search text`) and `search_semantic` (`arc search semantic`).
+RDR-026 specifies a fourth, `get_passage`, which is not served yet. Search hits follow the
+[cite grammar](#cite-grammar) below.
 
 Design record: [RDR-026](../rdr/RDR-026-arc-mcp-server.md). Option reference: [CLI Reference](cli-reference.md#mcp-server).
 
@@ -122,6 +123,18 @@ the field. The CLI's `click.IntRange` options already refuse in the same way.
 `semantic-unavailable`'s causes (RDR-026 Q9) are an embedding model missing from the local cache, since the server
 never downloads one, and an embedder still busy when the call's time runs out. A reviewer who gets it falls back to
 `search_text`. A failure no code classifies carries the code `error`.
+
+## Semantic search
+
+The first `search_semantic` call loads the query embedding model, so it pays the cold load against the call's
+timeout; later calls reuse the loaded model. While the model is loaded the server holds one of the embedder slots
+that `arc search semantic` shares (`ARCANEUM_SEARCH_CONCURRENCY`, default 2), and it runs one semantic call at a
+time. After 5 minutes with no semantic call it unloads the model and frees the slot.
+
+The server only uses models already in the local cache: one that is missing, or whose cache is incomplete, fails
+`semantic-unavailable` rather than downloading. `arc search semantic --offline` behaves the same way. Where
+`arc search semantic` stamps the current prompt policy on a legacy collection that records none, the server
+searches under that policy without stamping it, so a call writes nothing.
 
 ## Cite grammar
 

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -11,6 +14,7 @@ from ..cli.errors import (
     ArcaneumError,
     BadFilterError,
     InvalidArgumentError,
+    OperationTimeoutError,
     SemanticUnavailableError,
 )
 from ..cli.search_merge import fetch_from_corpora, per_corpus_limit
@@ -29,6 +33,28 @@ from .failures import is_connection_failure, service_down
 from .hits import build_hit, read_corpora_source_roots, search_data
 
 logger = logging.getLogger(__name__)
+
+# The server drops a resident embedder and its slot after this long idle,
+# matching the remote embedding worker's idle exit (RDR-026 Q9).
+SEMANTIC_IDLE_SECONDS = 300.0
+
+
+def _monotonic() -> float:
+    return time.monotonic()
+
+
+def _seconds_left(deadline: Optional[float]) -> Optional[float]:
+    """Seconds until ``deadline`` (a ``time.monotonic()`` value), or None without one.
+
+    Raises:
+        OperationTimeoutError: the deadline has passed
+    """
+    if deadline is None:
+        return None
+    left = deadline - _monotonic()
+    if left <= 0:
+        raise OperationTimeoutError("semantic search ran out of time before it finished")
+    return left
 
 
 def _collection_type(client, collection_name: str) -> Optional[str]:
@@ -126,6 +152,9 @@ def search_semantic(
     score_threshold: Optional[float] = None,
     include_references: bool = False,
     allow_download: bool = True,
+    deadline: Optional[float] = None,
+    stamp_policy: bool = True,
+    acquire_slot: bool = True,
     client=None,
     embedder: Optional[SearchEmbedder] = None,
     verbose: bool = False,
@@ -143,9 +172,20 @@ def search_semantic(
         score_threshold: Minimum similarity score
         include_references: Include PDF bibliography chunks
         allow_download: Download a query model missing from the local cache;
-            when False such a model is ``semantic-unavailable`` (RDR-026 Q9)
+            when False a model that cannot load from the cache is
+            ``semantic-unavailable`` (RDR-026 Q9)
+        deadline: ``time.monotonic()`` value by which the search must end. The
+            embedder slot waits only for the time left; a search still running
+            at the deadline is ``timeout``. None waits as the CLI always has.
+        stamp_policy: Stamp the current prompt policy on a legacy collection
+            that records none (a Qdrant write); when False the search runs
+            under that policy and writes nothing
+        acquire_slot: Take an embedder slot for the search; False when the
+            caller already holds one (``SemanticSession``)
         client: Qdrant client (created from config when None)
-        embedder: Query embedder (created inside the embedder slot when None)
+        embedder: Query embedder (created inside the embedder slot when None,
+            with ``allow_download`` and ``stamp_policy``; a passed embedder
+            keeps its own)
         verbose: Log skipped corpora
 
     Raises:
@@ -153,8 +193,9 @@ def search_semantic(
         BadFilterError: the filter does not parse, is a MeiliSearch
             expression, or names a field the corpus type does not filter on
         ServiceDownError: Qdrant is unreachable
-        SemanticUnavailableError: no embedder slot, or the model is uncached
-            with downloads off
+        SemanticUnavailableError: no embedder slot, or the model cannot load
+            from the local cache with downloads off
+        OperationTimeoutError: the deadline passed before the search ended
         InvalidArgumentError: the collection cannot serve the query (no such
             vector, unconfigured model, stale prompt policy)
         ArcaneumError: any other search failure
@@ -182,14 +223,26 @@ def search_semantic(
 
         # Cap concurrent embedder loads (file-lock semaphore). Cold-loading
         # the embedding model in N parallel processes thrashes RAM/swap on
-        # consumer hardware; ARCANEUM_SEARCH_CONCURRENCY tunes the cap.
-        with acquire_embedder_slot():
+        # consumer hardware; ARCANEUM_SEARCH_CONCURRENCY tunes the cap. With a
+        # deadline the slot waits only for the time left (RDR-026 Q9).
+        if not acquire_slot:
+            slot = contextlib.nullcontext()
+        elif deadline is None:
+            slot = acquire_embedder_slot()
+        else:
+            slot = acquire_embedder_slot(timeout=_seconds_left(deadline))
+        with slot:
             if embedder is None:
-                embedder = SearchEmbedder(cache_dir=get_models_dir(), allow_download=allow_download)
+                embedder = SearchEmbedder(
+                    cache_dir=get_models_dir(),
+                    allow_download=allow_download,
+                    stamp_policy=stamp_policy,
+                )
 
             fetch_limit = per_corpus_limit(corpora, limit, offset)
 
             def _fetch(corpus_name: str) -> List[SearchResult]:
+                _seconds_left(deadline)
                 if not client.collection_exists(corpus_name):
                     raise _MissingCollection(corpus_name)
                 return search_collection(
@@ -229,6 +282,9 @@ def search_semantic(
     merged = [hit for hits in per_corpus for hit in hits]
     merged.sort(key=lambda hit: hit.score, reverse=True)
     page = merged[offset : offset + limit]
+    source_roots = read_corpora_source_roots(client, sorted({r.collection for r in page}))
+    # A search that started in time can still end past the deadline.
+    _seconds_left(deadline)
 
     return SemanticSearchResult(
         query=query,
@@ -238,5 +294,122 @@ def search_semantic(
         results=page,
         missing_corpora=missing_corpora,
         filter_description=filter_description,
-        source_roots=read_corpora_source_roots(client, sorted({r.collection for r in page})),
+        source_roots=source_roots,
     )
+
+
+class SemanticSession:
+    """A resident query embedder for one process's semantic searches (RDR-026 Q9).
+
+    The MCP server holds one. It loads its ``SearchEmbedder`` on the first
+    search, not at start; holds an embedder slot while the embedder is
+    resident; serializes searches on it; and drops both after
+    ``idle_seconds`` with no search. Its searches never download a model and
+    never stamp a prompt policy, so they write nothing.
+    """
+
+    def __init__(self, idle_seconds: float = SEMANTIC_IDLE_SECONDS):
+        self._idle_seconds = idle_seconds
+        self._lock = threading.Lock()
+        self._slot: Optional[contextlib.ExitStack] = None
+        self._embedder: Optional[SearchEmbedder] = None
+        self._idle_timer: Optional[threading.Timer] = None
+
+    @property
+    def resident(self) -> bool:
+        """True while the session holds an embedder slot."""
+        return self._slot is not None
+
+    def search(
+        self, query: str, corpora: List[str], *, deadline: float, **options: Any
+    ) -> SemanticSearchResult:
+        """``search_semantic`` on the resident embedder, by ``deadline``.
+
+        ``options`` are ``search_semantic``'s search options and ``client``.
+
+        Raises:
+            SemanticUnavailableError: another search, or another process's
+                searches, kept the embedder busy past the deadline
+            OperationTimeoutError: the deadline passed before the search ended
+            ArcaneumError: any other ``search_semantic`` failure
+        """
+        if not self._lock.acquire(timeout=_seconds_left(deadline)):
+            raise SemanticUnavailableError(
+                "The embedder is busy with another semantic search until past this "
+                "call's time limit; retry shortly, or use text search"
+            )
+        fresh = self._slot is None
+        try:
+            if self._idle_timer is not None:
+                self._idle_timer.cancel()
+                self._idle_timer = None
+            if self._slot is None:
+                slot = contextlib.ExitStack()
+                slot.enter_context(acquire_embedder_slot(timeout=_seconds_left(deadline)))
+                self._slot = slot
+            if self._embedder is None:
+                self._embedder = SearchEmbedder(
+                    cache_dir=get_models_dir(), allow_download=False, stamp_policy=False
+                )
+            return search_semantic(
+                query,
+                corpora,
+                allow_download=False,
+                stamp_policy=False,
+                deadline=deadline,
+                acquire_slot=False,
+                embedder=self._embedder,
+                **options,
+            )
+        except OperationTimeoutError:
+            # A cold load past the deadline stays resident for the next call.
+            raise
+        except Exception:
+            # A first search that failed holds a slot for a model it never
+            # loaded; free it rather than block other processes until idle.
+            if fresh:
+                try:
+                    self._release_locked()
+                except Exception:
+                    logger.warning("dropping a failed semantic session failed", exc_info=True)
+            raise
+        finally:
+            if self._slot is not None:
+                self._arm_idle_timer()
+            self._lock.release()
+
+    def release(self) -> None:
+        """Drop the resident embedder and its slot now."""
+        with self._lock:
+            self._release_locked()
+
+    def _arm_idle_timer(self) -> None:
+        timer = threading.Timer(self._idle_seconds, self._on_idle)
+        timer.args = (timer,)
+        timer.daemon = True
+        self._idle_timer = timer
+        timer.start()
+
+    def _on_idle(self, timer: threading.Timer) -> None:
+        # A search holding the lock re-arms the timer when it ends, and a timer
+        # a later search replaced is stale.
+        if not self._lock.acquire(blocking=False):
+            return
+        try:
+            if self._idle_timer is timer:
+                self._release_locked()
+        finally:
+            self._lock.release()
+
+    def _release_locked(self) -> None:
+        if self._idle_timer is not None:
+            self._idle_timer.cancel()
+            self._idle_timer = None
+        embedder, self._embedder = self._embedder, None
+        slot, self._slot = self._slot, None
+        try:
+            if embedder is not None:
+                embedder.release()
+        finally:
+            if slot is not None:
+                slot.close()

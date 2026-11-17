@@ -5,7 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Tuple
 
-from ..embeddings.client import EMBEDDING_MODELS, EmbeddingClient
+from ..embeddings.client import (
+    EMBEDDING_MODELS,
+    EmbeddingClient,
+    ModelNotCachedError,
+    get_embedding_prompt_policies,
+)
 from ..indexing.collection_metadata import (
     backfill_embedding_prompt_policy,
     get_collection_metadata,
@@ -20,15 +25,7 @@ if TYPE_CHECKING:
     from qdrant_client import QdrantClient
 
 
-class ModelNotCachedError(Exception):
-    """The query model is missing from the local cache and downloads are off."""
-
-    def __init__(self, model_key: str):
-        self.model_key = model_key
-        super().__init__(
-            f"Embedding model '{model_key}' is not in the local model cache and downloads "
-            "are disabled; cache it with `arc models`, or use text search"
-        )
+__all__ = ["ModelNotCachedError", "QueryEmbeddingError", "SearchEmbedder"]
 
 
 class QueryEmbeddingError(Exception):
@@ -50,21 +47,36 @@ class SearchEmbedder:
     its named vectors, then generates query embeddings using that model.
     """
 
-    # Class default, so an instance built without __init__ keeps download-on-use.
+    # Class defaults, so an instance built without __init__ keeps download-on-use
+    # and the prompt-policy stamp.
     _allow_download = True
+    _stamp_policy = True
 
-    def __init__(self, cache_dir: Path, allow_download: bool = True):
+    def __init__(self, cache_dir: Path, allow_download: bool = True, stamp_policy: bool = True):
         """Initialize search embedder.
 
         Args:
             cache_dir: Directory to cache downloaded models
-            allow_download: When False, a model missing from the local cache
-                raises ModelNotCachedError instead of downloading (RDR-026 Q9)
+            allow_download: When False, a model that cannot load from the local
+                cache (missing, or incomplete) raises ModelNotCachedError
+                instead of downloading (RDR-026 Q9)
+            stamp_policy: When False, a legacy collection with no recorded
+                prompt policy is searched under the current policy without
+                stamping it, so the search writes nothing to Qdrant (RDR-026 Q9)
         """
         self._allow_download = allow_download
+        self._stamp_policy = stamp_policy
         self._embedding_client = EmbeddingClient(
             cache_dir=str(cache_dir),
+            allow_download=allow_download,
         )
+
+    def release(self) -> None:
+        """Drop every model this embedder loaded, so their memory can be freed."""
+        client = self._embedding_client
+        for model_key in client.local_models:
+            client.unload_model(model_key)
+        client.close()
 
     @staticmethod
     def detect_collection_model(
@@ -140,19 +152,31 @@ class SearchEmbedder:
         metadata = get_collection_metadata(client, collection_name)
         policy_issues = prompt_policy_issues(metadata, model_key)
         if policy_issues and prompt_policy_can_be_backfilled(metadata, [model_key]):
-            collection_type = get_collection_type(client, collection_name) or "pdf"
-            metadata = backfill_embedding_prompt_policy(
-                client,
-                collection_name,
-                collection_type,
-                model_key,
-            )
+            if self._stamp_policy:
+                collection_type = get_collection_type(client, collection_name) or "pdf"
+                metadata = backfill_embedding_prompt_policy(
+                    client,
+                    collection_name,
+                    collection_type,
+                    model_key,
+                )
+            else:
+                # Search under the policy the stamp would record, writing nothing.
+                metadata = {
+                    **metadata,
+                    "embedding_prompt_policy": {
+                        **(metadata.get("embedding_prompt_policy") or {}),
+                        **get_embedding_prompt_policies(model_key),
+                    },
+                }
             policy_issues = prompt_policy_issues(metadata, model_key)
         if policy_issues:
             raise ValueError(policy_issues[0])
 
         try:
             return self._embed_query(query, model_key)
+        except ModelNotCachedError:
+            raise  # an incomplete cache with downloads off (RDR-026 Q9)
         except Exception as e:
             raise QueryEmbeddingError(model_key, e) from e
 

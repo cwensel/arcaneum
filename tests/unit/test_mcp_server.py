@@ -1,4 +1,6 @@
-"""The `arc mcp` stdio server and its list_corpora and search_text tools (RDR-026 Q1, Q2, Q3, Q10).
+"""The `arc mcp` stdio server and its list_corpora, search_text and search_semantic tools.
+
+RDR-026 Q1, Q2, Q3, Q9 and Q10.
 
 Review sessions launch the server fresh for every review, so these tests drive
 it as a child process over pipes, the way a client does. `mcp_harness.py`
@@ -193,7 +195,7 @@ def test_every_tool_is_read_only(server):
     proc = server()
     proc.initialize()
     tools = proc.request("tools/list")["result"]["tools"]
-    assert [tool["name"] for tool in tools] == ["list_corpora", "search_text"]
+    assert [tool["name"] for tool in tools] == ["list_corpora", "search_text", "search_semantic"]
     for tool in tools:
         assert tool["annotations"]["readOnlyHint"] is True
         assert tool["inputSchema"]["type"] == "object"
@@ -498,6 +500,236 @@ def test_search_text_stall_is_timeout(server):
 
 
 # ---------------------------------------------------------------------------
+# search_semantic
+# ---------------------------------------------------------------------------
+
+
+def _semantic_env(tmp_path, **extra):
+    """An environment whose embedder slots live under ``tmp_path``, not the user's."""
+    return _env(XDG_DATA_HOME=str(tmp_path / "data"), **extra)
+
+
+def _cli_semantic(args, env, scenario="fake"):
+    result = subprocess.run(
+        [sys.executable, str(HARNESS), scenario, "search", "semantic", *args],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(ROOT),
+        timeout=60,
+    )
+    return result
+
+
+def _cli_semantic_data(query, corpora, env, *, limit, max_content_chars, offset=0, **options):
+    args = [query, "--json", "--limit", str(limit), "--offset", str(offset)]
+    args += ["--max-content-chars", str(max_content_chars)]
+    for name in corpora:
+        args += ["--corpus", name]
+    if options.get("filter") is not None:
+        args += ["--filter", options["filter"]]
+    if options.get("score_threshold") is not None:
+        args += ["--score-threshold", str(options["score_threshold"])]
+    result = _cli_semantic(args, env)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)["data"]
+
+
+def _stderr_once_exited(proc, needle=None):
+    """The server's stderr after it exits, so every line it wrote is read."""
+    proc.close()
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and needle is not None and needle not in proc.stderr:
+        time.sleep(0.05)
+    return proc.stderr
+
+
+@pytest.fixture
+def held_slots(tmp_path):
+    """Hold every embedder slot (ARCANEUM_SEARCH_CONCURRENCY=1) from this process."""
+    import fcntl
+
+    locks = tmp_path / "data" / "arcaneum" / "locks"
+    locks.mkdir(parents=True)
+    fd = os.open(locks / "embedder-slot-0.lock", os.O_CREAT | os.O_WRONLY, 0o644)
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    yield
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    os.close(fd)
+
+
+def test_search_semantic_schema_advertises_its_bounds(server):
+    proc = server()
+    proc.initialize()
+    tools = {tool["name"]: tool for tool in proc.request("tools/list")["result"]["tools"]}
+    schema = tools["search_semantic"]["inputSchema"]
+    assert schema["required"] == ["query", "corpora"]
+    assert schema["additionalProperties"] is False
+    properties = schema["properties"]
+    assert set(properties) == {
+        "query",
+        "corpora",
+        "limit",
+        "offset",
+        "filter",
+        "max_content_chars",
+        "score_threshold",
+    }
+    assert properties["limit"]["maximum"] == 25 and properties["limit"]["default"] == 10
+    assert properties["max_content_chars"]["default"] == 1200
+    assert properties["score_threshold"]["type"] == "number"
+
+
+def test_search_semantic_matches_cli_data(server, tmp_path):
+    env = _semantic_env(tmp_path)
+    proc = server(env=env)
+    proc.initialize()
+    arguments = {
+        "query": "lorem",
+        "corpora": ["Alpha", "Beta"],
+        "limit": 5,
+        "offset": 1,
+        "filter": "language=python",
+        "max_content_chars": 300,
+        "score_threshold": 0.5,
+    }
+    result = proc.call("search_semantic", arguments)
+
+    expected = _cli_semantic_data(
+        "lorem",
+        ["Alpha", "Beta"],
+        env,
+        limit=5,
+        offset=1,
+        filter="language=python",
+        max_content_chars=300,
+        score_threshold=0.5,
+    )
+    assert result.get("isError") in (None, False), result
+    assert result["structuredContent"] == expected
+    assert json.loads(result["content"][0]["text"]) == expected
+    hits = expected["hits"]
+    assert len(hits) == 5
+    assert {hit["corpus"] for hit in hits} == {"Alpha", "Beta"}
+    assert [hit["score"] for hit in hits] == sorted((hit["score"] for hit in hits), reverse=True)
+    for hit in hits:
+        assert int(hit["chunk_id"].split("-")[1]) % 2 == 1
+        assert hit["score"] >= 0.5
+        assert hit["cite"] == f"{hit['corpus']}:{hit['locator']}"
+        assert hit["locator"].startswith("doc")
+        assert len(hit["snippet"]) <= 300 and hit["snippet_truncated"] is True
+
+
+def test_search_semantic_score_threshold_drops_weak_hits(server, tmp_path):
+    proc = server(env=_semantic_env(tmp_path))
+    proc.initialize()
+    arguments = {"query": "lorem", "corpora": ["Alpha"], "limit": 25}
+    every = proc.call("search_semantic", arguments)["structuredContent"]["hits"]
+    strong = proc.call("search_semantic", {**arguments, "score_threshold": 0.8})[
+        "structuredContent"
+    ]["hits"]
+
+    assert len(every) == 25
+    assert strong == [hit for hit in every if hit["score"] >= 0.8]
+    assert 0 < len(strong) < len(every)
+
+
+def test_search_semantic_keeps_its_embedder_warm_across_calls(server, tmp_path):
+    proc = server(env=_semantic_env(tmp_path))
+    proc.initialize()
+    for _ in range(3):
+        result = proc.call("search_semantic", {"query": "lorem", "corpora": ["Alpha"]})
+        assert result.get("isError") in (None, False), result
+
+    stderr = _stderr_once_exited(proc, "fake model load")
+    assert stderr.count("fake model load: arctic-m") == 1
+
+
+def test_search_semantic_writes_no_prompt_policy_stamp(server, tmp_path):
+    env = _semantic_env(tmp_path)
+    proc = server(env=env)
+    proc.initialize()
+    result = proc.call("search_semantic", {"query": "lorem", "corpora": ["Alpha"]})
+    assert result.get("isError") in (None, False), result
+    assert result["structuredContent"]["hits"]
+
+    assert "fake qdrant write" not in _stderr_once_exited(proc)
+    # The CLI stamps the same legacy collection, so the fake does see writes.
+    cli = _cli_semantic(["lorem", "--json", "--corpus", "Alpha"], env)
+    assert cli.returncode == 0, cli.stderr
+    assert "fake qdrant write: upsert Alpha" in cli.stderr
+
+
+def test_search_semantic_uncached_model_is_semantic_unavailable(server, tmp_path):
+    env = _semantic_env(tmp_path)
+    proc = server("uncached", env=env)
+    proc.initialize()
+    error = _error(proc.call("search_semantic", {"query": "lorem", "corpora": ["Alpha"]}))
+    assert error["code"] == "semantic-unavailable"
+    assert "arctic-m" in error["message"]
+    assert "fake model" not in _stderr_once_exited(proc)
+
+    offline = _cli_semantic(["lorem", "--json", "--offline", "--corpus", "Alpha"], env, "uncached")
+    assert offline.returncode == 1
+    envelope = json.loads(offline.stdout)
+    assert envelope["status"] == "error"
+    assert envelope["errors"][0]["code"] == "semantic-unavailable"
+    assert "fake model download" not in offline.stderr
+
+    # The CLI's default keeps download-on-first-use.
+    online = _cli_semantic(["lorem", "--json", "--corpus", "Alpha"], env, "uncached")
+    assert online.returncode == 0, online.stderr
+    assert "fake model download: arctic-m" in online.stderr
+
+
+def test_search_semantic_busy_slot_is_semantic_unavailable(server, tmp_path, held_slots):
+    env = _semantic_env(tmp_path, ARCANEUM_SEARCH_CONCURRENCY="1")
+    proc = server("fake", "--timeout", "2", env=env)
+    proc.initialize()
+    started = time.monotonic()
+    error = _error(proc.call("search_semantic", {"query": "lorem", "corpora": ["Alpha"]}))
+    assert error["code"] == "semantic-unavailable"
+    assert "slot" in error["message"]
+    assert time.monotonic() - started < 10
+
+    cli = _cli_semantic(
+        ["lorem", "--json", "--corpus", "Alpha"],
+        {**env, "ARCANEUM_SEARCH_WAIT_SECONDS": "0.5"},
+    )
+    assert cli.returncode == 1
+    assert json.loads(cli.stdout)["errors"][0]["code"] == "semantic-unavailable"
+
+
+def test_search_semantic_stalled_embed_is_timeout(server, tmp_path):
+    proc = server("embed-stall", "--timeout", "1", env=_semantic_env(tmp_path))
+    proc.initialize()
+    error = _error(
+        proc.call("search_semantic", {"query": "lorem", "corpora": ["Alpha"]}, timeout=15)
+    )
+    assert error["code"] == "timeout"
+
+
+def test_search_semantic_corpus_outside_the_allowlist_is_unknown_corpus(server, tmp_path):
+    proc = server("fake", "--corpus", "Alpha", env=_semantic_env(tmp_path))
+    proc.initialize()
+    error = _error(proc.call("search_semantic", {"query": "lorem", "corpora": ["Alpha", "Beta"]}))
+    assert error["code"] == "unknown-corpus"
+    assert "Beta" in error["message"]
+
+
+def test_search_semantic_output_cap_drops_whole_hits_and_says_so(server, tmp_path):
+    proc = server("fake", "--max-output-chars", "4000", env=_semantic_env(tmp_path))
+    proc.initialize()
+    result = proc.call("search_semantic", {"query": "lorem", "corpora": ["Alpha"], "limit": 25})
+    data = result["structuredContent"]
+
+    assert 0 < len(data["hits"]) < 25
+    assert data["output_truncated"] is True
+    assert data["omitted_hits"] == 25 - len(data["hits"])
+    assert len(result["content"][0]["text"]) <= 4000
+
+
+# ---------------------------------------------------------------------------
 # Start-up
 # ---------------------------------------------------------------------------
 
@@ -671,6 +903,46 @@ class TestSearchTextArguments:
     def test_a_corpus_outside_the_allowlist_is_refused_before_any_client(self, tools):
         with pytest.raises(UnknownCorpusError) as exc_info:
             tools.search_text({"query": "q", "corpora": ["A", "B"]})
+        assert "B" in str(exc_info.value)
+
+
+class TestSearchSemanticArguments:
+    """Argument checks run before any client, embedder or core call."""
+
+    @pytest.fixture
+    def tools(self, monkeypatch):
+        import arcaneum.mcp_server as mcp_server
+
+        def refuse(*_args, **_kwargs):
+            raise AssertionError("a refused call reached a client")
+
+        monkeypatch.setattr(mcp_server, "_qdrant_search_client", refuse)
+        monkeypatch.setattr(mcp_server.ArcTools, "_semantic_session", property(refuse))
+        return mcp_server.ArcTools(allowlist=frozenset({"A"}))
+
+    @pytest.mark.parametrize(
+        "arguments, field",
+        [
+            ({"corpora": ["A"]}, "query"),
+            ({"query": "q", "corpora": []}, "corpora"),
+            ({"query": "q", "corpora": ["A"], "limit": 26}, "limit"),
+            ({"query": "q", "corpora": ["A"], "offset": -1}, "offset"),
+            ({"query": "q", "corpora": ["A"], "max_content_chars": -1}, "max_content_chars"),
+            ({"query": "q", "corpora": ["A"], "filter": 1}, "filter"),
+            ({"query": "q", "corpora": ["A"], "score_threshold": "0.5"}, "score_threshold"),
+            ({"query": "q", "corpora": ["A"], "score_threshold": True}, "score_threshold"),
+            ({"query": "q", "corpora": ["A"], "vector_name": "x"}, "vector_name"),
+        ],
+    )
+    def test_a_bad_argument_names_its_field(self, tools, arguments, field):
+        with pytest.raises(InvalidArgumentError) as exc_info:
+            tools.search_semantic(arguments)
+        assert exc_info.value.code == "bad-argument"
+        assert field in str(exc_info.value)
+
+    def test_a_corpus_outside_the_allowlist_is_refused_before_any_client(self, tools):
+        with pytest.raises(UnknownCorpusError) as exc_info:
+            tools.search_semantic({"query": "q", "corpora": ["A", "B"]})
         assert "B" in str(exc_info.value)
 
 

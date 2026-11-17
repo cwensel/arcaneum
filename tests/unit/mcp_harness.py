@@ -2,10 +2,11 @@
 
 usage: python mcp_harness.py <scenario> <arc arguments...>
 
-The tests drive `arc mcp` (and `arc corpus list --json` and `arc search text
---json`, for the CLI-parity checks) as a real child process over pipes. A
-scenario swaps the client factories the retrieval core builds its clients from,
-so no service runs:
+The tests drive `arc mcp` (and `arc corpus list --json`, `arc search text
+--json` and `arc search semantic --json`, for the CLI-parity checks) as a real
+child process over pipes. A scenario swaps the client factories the retrieval
+core builds its clients from, and the query embedder's model loader, so no
+service runs and no model loads:
 
 - ``fake``: three corpora, both services up; each index holds ``DOCUMENTS``
   chunks of ``CONTENT_CHARS`` characters, and each corpus records the source
@@ -14,8 +15,14 @@ so no service runs:
 - ``noisy``: ``fake``, but the listing prints to stdout through every channel a
   library might use (print, a raw fd 1 write, logging, warnings, rich)
 - ``stall``: the listing and the text search block, for the per-call timeout
+- ``uncached``: ``fake``, but no query model is in the local cache
+- ``embed-stall``: ``fake``, but loading a query model blocks
 - ``qdrant-down`` / ``meili-down``: that service refuses connections
 - ``real``: no fakes (start-up checks that never call a tool)
+
+Every fake Qdrant write and every fake model load prints a line to stderr
+(``fake qdrant write: …``, ``fake model load: …``) for the tests to count.
+Collections carry no prompt policy, so a semantic search may stamp one.
 """
 
 from __future__ import annotations
@@ -57,10 +64,47 @@ def _documents(corpus: str) -> list[dict]:
     return documents
 
 
+def _report(line: str) -> None:
+    os.write(2, (line + "\n").encode())
+
+
+def semantic_score(corpus_rank: int, i: int) -> float:
+    """A fake similarity: best chunk first, corpora interleaved by score."""
+    return round(0.95 - i / 40 - corpus_rank / 200, 4)
+
+
 class FakeQdrant:
     def __init__(self, metadata, down=False):
         self.metadata = metadata
         self.down = down
+
+    def collection_exists(self, name):
+        if self.down:
+            raise ConnectionError("[Errno 61] Connection refused")
+        return name in self.metadata
+
+    def query_points(
+        self, collection_name, query_filter=None, limit=10, offset=0, score_threshold=None, **_kw
+    ):
+        rank = list(self.metadata).index(collection_name)
+        points = []
+        for i, document in enumerate(_documents(collection_name)):
+            payload = {
+                key: value
+                for key, value in document.items()
+                if key not in ("id", "_formatted", "_rankingScore")
+            }
+            conditions = (query_filter.must or []) if query_filter is not None else []
+            if any(payload.get(c.key) != c.match.value for c in conditions):
+                continue
+            score = semantic_score(rank, i)
+            if score_threshold is not None and score < score_threshold:
+                continue
+            points.append(SimpleNamespace(id=document["id"], score=score, payload=payload))
+        return SimpleNamespace(points=points[offset : offset + limit])
+
+    def upsert(self, collection_name, **_kwargs):
+        _report(f"fake qdrant write: upsert {collection_name}")
 
     def get_collections(self):
         if self.down:
@@ -137,6 +181,46 @@ def _chatter():
     Console().print("rich chatter")
 
 
+class FakeModel:
+    def query_embed(self, texts):
+        for _text in texts:
+            yield [0.1, 0.2, 0.3]
+
+
+def fake_embedding_client(scenario: str):
+    """The query embedder's model loader: no model loads, and none downloads."""
+
+    class FakeEmbeddingClient:
+        def __init__(self, cache_dir=None, allow_download=True, **_kwargs):
+            self.allow_download = allow_download
+            self.models = {}
+
+        def is_model_cached(self, _model_key):
+            return scenario != "uncached"
+
+        def get_model(self, model_key):
+            if model_key not in self.models:
+                if scenario == "embed-stall":
+                    time.sleep(60)
+                if not self.is_model_cached(model_key):
+                    _report(f"fake model download: {model_key}")
+                _report(f"fake model load: {model_key}")
+                self.models[model_key] = FakeModel()
+            return self.models[model_key]
+
+        @property
+        def local_models(self):
+            return sorted(self.models)
+
+        def unload_model(self, model_key):
+            self.models.pop(model_key, None)
+
+        def close(self):
+            pass
+
+    return FakeEmbeddingClient
+
+
 def install(scenario: str, command: list[str]) -> None:
     if scenario == "real":
         return
@@ -164,6 +248,14 @@ def install(scenario: str, command: list[str]) -> None:
 
     corpora.get_collection_metadata = get_collection_metadata
     cli_utils.create_qdrant_client = lambda *args, **kwargs: qdrant
+
+    if command[:1] == ["mcp"] or command[:2] == ["search", "semantic"]:
+        import arcaneum.search.embedder as search_embedder
+
+        search_embedder.EmbeddingClient = fake_embedding_client(scenario)
+        search_embedder.SearchEmbedder.detect_collection_model = staticmethod(
+            lambda _client, name, _vector_name=None: metadata[name]["model"]
+        )
     cli_utils.create_meili_client = lambda *args, **kwargs: meili
     if command[:1] == ["corpus"]:
         import arcaneum.cli.corpus as cli_corpus
@@ -175,6 +267,10 @@ def install(scenario: str, command: list[str]) -> None:
 
         cli_fulltext.create_qdrant_client = cli_utils.create_qdrant_client
         cli_fulltext.create_meili_client = cli_utils.create_meili_client
+    if command[:2] == ["search", "semantic"]:
+        import arcaneum.cli.search as cli_search
+
+        cli_search.create_qdrant_client = cli_utils.create_qdrant_client
 
 
 def main() -> int:

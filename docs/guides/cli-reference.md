@@ -130,6 +130,9 @@ and cite grammar. `--json` cannot be combined with `--format text` or
   Useful to cut weak matches when a query has few good hits.
 - `--include-references`: Include PDF reference-section chunks. References are
   excluded from semantic search by default.
+- `--offline`: Use only embedding models already in the local cache. A model
+  that is missing or incomplete fails `semantic-unavailable` instead of
+  downloading on first use.
 - `--collection`: *(Deprecated)* Collection to search — use `--corpus`.
 
 **`arc search text` only:**

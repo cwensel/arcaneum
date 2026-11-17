@@ -504,6 +504,27 @@ def _model_download_error(model_name: str, error: Exception) -> Exception:
     return error
 
 
+class ModelNotCachedError(Exception):
+    """The model cannot load from the local cache, and downloads are off (RDR-026 Q9).
+
+    Raised before any load when the model is missing from the cache, and after a
+    failed local load when the cache is incomplete (a model directory without
+    its weights, say), in place of the network retry a download would make.
+    """
+
+    def __init__(self, model_key: str, cause: BaseException | None = None):
+        self.model_key = model_key
+        where = (
+            f"could not load from the local model cache ({cause})"
+            if cause is not None
+            else "is not in the local model cache"
+        )
+        super().__init__(
+            f"Embedding model '{model_key}' {where} and downloads are disabled; "
+            "cache it with `arc models`, or use text search"
+        )
+
+
 def _unknown_model_error(model_name: str) -> ValueError:
     """Build the canonical ValueError for an unknown embedding model."""
     return ValueError(
@@ -609,6 +630,9 @@ def _sentence_transformers_missing_error(model_name: str, config: Dict) -> Runti
 class EmbeddingClient:
     """Manages embedding model instances with caching and GPU acceleration (RDR-013 Phase 2)."""
 
+    # Class default, so an instance built without __init__ keeps download-on-use.
+    _allow_download = True
+
     def __init__(
         self,
         cache_dir: str = None,
@@ -616,6 +640,7 @@ class EmbeddingClient:
         cpu_workers: int = None,
         allow_experimental_coreml: bool = False,
         remote_routing: bool = True,
+        allow_download: bool = True,
     ):
         """Initialize embedding client.
 
@@ -633,6 +658,10 @@ class EmbeddingClient:
             remote_routing: Follow the process's remote embedding router (RDR-025).
                         The embedding server's own client passes False so it always
                         embeds locally.
+            allow_download: Fetch model files missing from the local cache. When
+                        False, no loader touches the network: a model that cannot
+                        load from the cache raises ModelNotCachedError, and an
+                        incomplete cache is left as it is (RDR-026 Q9).
 
         GPU Support (RDR-013):
             - SentenceTransformers models (stella, jina-code): MPS on Apple Silicon, CUDA on NVIDIA
@@ -646,6 +675,7 @@ class EmbeddingClient:
         """
         self.cache_dir = cache_dir or str(get_models_dir())
         self.use_gpu = use_gpu
+        self._allow_download = allow_download
         self._allow_experimental_coreml = allow_experimental_coreml
         self._warn_if_previous_coreml_session_killed()
         self._device = self._detect_device() if use_gpu else "cpu"
@@ -913,7 +943,9 @@ class EmbeddingClient:
                     device="cpu",
                 ),
             )
-        except Exception:
+        except Exception as error:
+            if not self._allow_download:
+                raise ModelNotCachedError(model_name, error) from error
             model = SentenceTransformer(
                 config["name"],
                 **_sentence_transformer_load_kwargs(
@@ -1075,7 +1107,9 @@ class EmbeddingClient:
                 "model_name": model_name,
                 "device": self._device,
                 "cache_dir": self.cache_dir,
-                "local_files_only": self.is_model_cached(model_name),
+                "local_files_only": not self._allow_download or self.is_model_cached(model_name),
+                # Downloads off: the worker must not retry a failed local load online.
+                "strict_local_files_only": not self._allow_download,
             },
         )
         self._local_models.add(model_name)
@@ -1289,6 +1323,8 @@ class EmbeddingClient:
             elif backend == "fastembed":
                 # Check if model is cached to avoid unnecessary network calls
                 is_cached = self.is_model_cached(model_name)
+                if not is_cached and not self._allow_download:
+                    raise ModelNotCachedError(model_name)
 
                 # Show loading indicator for models that take time
                 if not is_cached:
@@ -1313,6 +1349,10 @@ class EmbeddingClient:
                         )
                     except Exception as e:
                         last_error = e
+
+                # Downloads off: no network retry, and no purge of the incomplete cache.
+                if model_obj is None and not self._allow_download:
+                    raise ModelNotCachedError(model_name, last_error) from last_error
 
                 if model_obj is None:
                     if last_error is not None:
@@ -1398,6 +1438,8 @@ class EmbeddingClient:
 
                 # Check if model is cached to avoid unnecessary network calls
                 is_cached = self.is_model_cached(model_name)
+                if not is_cached and not self._allow_download:
+                    raise ModelNotCachedError(model_name)
 
                 # Show loading indicator for models that take time
                 if not is_cached:
@@ -1436,6 +1478,10 @@ class EmbeddingClient:
                         # If local_files_only fails, cache may be incomplete (e.g., missing custom code)
                         # Save error and try with network access
                         last_error = e
+
+                # Downloads off: an incomplete cache stays a local failure.
+                if model_obj is None and not self._allow_download:
+                    raise ModelNotCachedError(model_name, last_error) from last_error
 
                 # If not cached or local_files_only failed, try with network access
                 if model_obj is None:
@@ -1573,12 +1619,16 @@ class EmbeddingClient:
                 *description.get("additional_files", []),
             ],
         }
+        local_error: BaseException | None = None
         try:
             snapshot = _snapshot_download(local_files_only=True, **request)
             if os.path.isfile(os.path.join(snapshot, model_file)):
                 return snapshot
-        except Exception:
+        except Exception as error:
+            local_error = error
             logger.debug("Pinned snapshot of %s is not cached", model_name, exc_info=True)
+        if not self._allow_download:
+            raise ModelNotCachedError(model_name, local_error)
         print("   Downloading model files...", flush=True, file=sys.stderr)
         snapshot = _snapshot_download(local_files_only=False, **request)
         if not os.path.isfile(os.path.join(snapshot, model_file)):
@@ -1603,7 +1653,12 @@ class EmbeddingClient:
 
         try:
             return load()
+        except ModelNotCachedError:
+            raise
         except Exception as error:
+            if not self._allow_download:
+                # Downloads off: no purge, since nothing could heal it.
+                raise ModelNotCachedError(model_name, error) from error
             if not (
                 self._is_missing_fastembed_artifact_error(error)
                 and self._purge_fastembed_model_cache(model_name)

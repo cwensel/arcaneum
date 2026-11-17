@@ -23,6 +23,9 @@ protocol messages alone:
   (``retrieval.semantic.SemanticSession``). It never downloads a model or
   stamps a prompt policy; an uncached model or an embedder busy past the
   call's time is ``semantic-unavailable``.
+- **Passage**: ``get_passage`` expands a hit's ``chunk_id`` into the text
+  around it (``retrieval.passage``), from whichever system holds the chunk,
+  creating no payload index and changing no MeiliSearch setting.
 - **Launch config**: ``--print-config claude|codex`` prints a client config
   that names an absolute command (``launch_command``), so a client started
   under launchd's fixed PATH still finds arc, and exits before any server
@@ -171,6 +174,62 @@ SEARCH_SEMANTIC_TOOL: dict[str, Any] = {
             },
         },
         "required": ["query", "corpora"],
+        "additionalProperties": False,
+    },
+}
+
+# MCP-only passage policy (RDR-026 Q8): the text defaults to 8,000 characters,
+# where the CLI's default is unlimited. The neighbour bound is the core's.
+PASSAGE_NEIGHBOURS_DEFAULT = 1
+PASSAGE_NEIGHBOURS_MAX = 5
+PASSAGE_MAX_CHARS_DEFAULT = 8000
+
+GET_PASSAGE_TOOL: dict[str, Any] = {
+    "name": "get_passage",
+    "title": "Get passage",
+    "description": (
+        "The text around a search hit: the hit's chunk plus up to `before` and "
+        "`after` neighbouring chunks of the same file and version, in order, "
+        "with chunk overlap removed. Pass a hit's corpus and chunk_id from "
+        "search_text or search_semantic. Returns the hit's cite and the window's "
+        "first and last chunk ids, to page further; truncated says the text was "
+        "cut. Same data as `arc search passage --json`."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "corpus": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The hit's corpus, as list_corpora names it.",
+            },
+            "chunk_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The hit's chunk_id.",
+            },
+            "before": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": PASSAGE_NEIGHBOURS_MAX,
+                "default": PASSAGE_NEIGHBOURS_DEFAULT,
+                "description": "Chunks to include before the hit's chunk.",
+            },
+            "after": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": PASSAGE_NEIGHBOURS_MAX,
+                "default": PASSAGE_NEIGHBOURS_DEFAULT,
+                "description": "Chunks to include after the hit's chunk.",
+            },
+            "max_chars": {
+                "type": "integer",
+                "minimum": 0,
+                "default": PASSAGE_MAX_CHARS_DEFAULT,
+                "description": "Maximum characters of passage text; 0 means unlimited.",
+            },
+        },
+        "required": ["corpus", "chunk_id"],
         "additionalProperties": False,
     },
 }
@@ -427,6 +486,38 @@ def cap_search(data: dict[str, Any], max_chars: int) -> dict[str, Any]:
     return _cap_tail(data, "hits", "omitted_hits", max_chars, refusal)
 
 
+def cap_passage(data: dict[str, Any], max_chars: int) -> dict[str, Any]:
+    """Fit a passage into ``max_chars`` by shortening its ``text``.
+
+    Applied after the call's ``max_chars``. A shortened passage keeps the
+    longest prefix of its text that fits and sets ``truncated``.
+
+    Raises:
+        InvalidArgumentError: the passage does not fit even with an empty text
+    """
+    if len(serialize(data)) <= max_chars:
+        return data
+    text = data["text"]
+
+    def keep(count: int) -> dict[str, Any]:
+        return {**data, "text": text[:count], "truncated": True}
+
+    if len(serialize(keep(0))) > max_chars:
+        raise InvalidArgumentError(
+            f"get_passage's result does not fit --max-output-chars {max_chars} "
+            "even with an empty text"
+        )
+    # The serialized size grows with the kept prefix: find the longest that fits.
+    low, high = 0, len(text) - 1
+    while low < high:
+        middle = (low + high + 1) // 2
+        if len(serialize(keep(middle))) <= max_chars:
+            low = middle
+        else:
+            high = middle - 1
+    return keep(low)
+
+
 def success_result(data: dict[str, Any]) -> mcp_types.CallToolResult:
     import mcp_types
 
@@ -640,7 +731,12 @@ class ArcTools:
         read_only = mcp_types.ToolAnnotations(read_only_hint=True)
         return [
             mcp_types.Tool(**definition, annotations=read_only)
-            for definition in (LIST_CORPORA_TOOL, SEARCH_TEXT_TOOL, SEARCH_SEMANTIC_TOOL)
+            for definition in (
+                LIST_CORPORA_TOOL,
+                SEARCH_TEXT_TOOL,
+                SEARCH_SEMANTIC_TOOL,
+                GET_PASSAGE_TOOL,
+            )
         ]
 
     def abandoned_calls_running(self) -> bool:
@@ -655,6 +751,7 @@ class ArcTools:
             "list_corpora": self.list_corpora,
             "search_text": self.search_text,
             "search_semantic": self.search_semantic,
+            "get_passage": self.get_passage,
         }
         handler = handlers.get(name)
         if handler is None:
@@ -770,6 +867,43 @@ class ArcTools:
         )
         data = result.to_data(max_content_chars=args["max_content_chars"])
         return cap_search(data, self.max_output_chars)
+
+    def get_passage(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
+        """``arc search passage --json``'s ``data`` under the MCP bounds and the output cap.
+
+        Every argument and the allowlist are checked before any client is made.
+        """
+        _reject_arguments("get_passage", arguments, GET_PASSAGE_TOOL["input_schema"]["properties"])
+        corpus = _string_argument(arguments, "corpus", required=True)
+        if not corpus:
+            raise InvalidArgumentError("corpus must be a non-empty corpus name")
+        chunk_id = _string_argument(arguments, "chunk_id", required=True)
+        if not chunk_id:
+            raise InvalidArgumentError("chunk_id must be a non-empty chunk id")
+        neighbours = {
+            name: _integer_argument(
+                arguments,
+                name,
+                PASSAGE_NEIGHBOURS_DEFAULT,
+                minimum=0,
+                maximum=PASSAGE_NEIGHBOURS_MAX,
+            )
+            for name in ("before", "after")
+        }
+        max_chars = _integer_argument(arguments, "max_chars", PASSAGE_MAX_CHARS_DEFAULT, minimum=0)
+        require_allowed(self.allowlist, [corpus])
+
+        from .retrieval import get_passage
+
+        result = get_passage(
+            corpus,
+            chunk_id,
+            max_chars=max_chars,
+            qdrant_client=_qdrant_search_client(),
+            meili_client=_meili_client(),
+            **neighbours,
+        )
+        return cap_passage(result.to_data(), self.max_output_chars)
 
 
 # ---------------------------------------------------------------------------

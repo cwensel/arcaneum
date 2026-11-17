@@ -1312,6 +1312,7 @@ def store(
         'arc search semantic "conceptual query" --corpus CorpusName',
         'arc search text "identifier" --corpus CorpusName',
         "arc search text '\"exact phrase\"' --corpus CorpusName",
+        "arc search passage CHUNK_ID --corpus CorpusName",
     ],
 )
 def search():
@@ -1319,7 +1320,8 @@ def search():
 
     Use semantic for concepts and paraphrases. Use text for identifiers,
     keywords, and quoted phrases. Text search is bounded and ranked; it does
-    not evaluate regular expressions.
+    not evaluate regular expressions. Use passage to read the text around a
+    hit, by the chunk_id either search reports.
 
     For LLMs and shell pipelines, use --format compact for plain locations and
     content snippets. Control snippet length with --max-content-chars N.
@@ -1515,6 +1517,55 @@ def search_text(
         verbose,
         output_format=output_format,
         max_content_chars=max_content_chars,
+    )
+
+
+@search.command("passage")
+@click.argument("chunk_id")
+@click.option("--corpus", required=True, help="Corpus that holds the chunk")
+@click.option(
+    "--before",
+    type=click.IntRange(0, 5),
+    default=1,
+    show_default=True,
+    help="Neighbouring chunks to include before the hit (0-5)",
+)
+@click.option(
+    "--after",
+    type=click.IntRange(0, 5),
+    default=1,
+    show_default=True,
+    help="Neighbouring chunks to include after the hit (0-5)",
+)
+@click.option(
+    "--max-chars",
+    type=click.IntRange(min=0),
+    default=0,
+    help=(
+        "Maximum characters of passage text; 0 (the default) means unlimited. Truncation is marked."
+    ),
+)
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
+def search_passage(chunk_id, corpus, before, after, max_chars, output_json):
+    """Read the text around a search hit: its chunk plus neighbouring chunks.
+
+    CHUNK_ID is a hit's chunk_id from `arc search text` or `arc search
+    semantic` (shown with --json). The passage holds the hit's chunk and up to
+    --before and --after chunks of the same file and version, in order, with
+    chunk overlap removed. Its first and last chunk ids let you page further.
+
+    \b
+    arc search passage 08385e99-ad1e-4481-a84e-81cc973fd3f5 --corpus DevRef --after 3
+    """
+    from arcaneum.cli.search import passage_command
+
+    passage_command(
+        chunk_id,
+        corpus,
+        before=before,
+        after=after,
+        max_chars=max_chars,
+        output_json=output_json,
     )
 
 

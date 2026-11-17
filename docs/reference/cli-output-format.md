@@ -405,6 +405,49 @@ A cite is `<corpus>:<locator>`, and the locator is a path plus an optional
 
 Text and compact output print each hit's cite in place of its path.
 
+#### `search passage --json`
+
+`arc search passage CHUNK_ID --corpus C` returns the text around a hit: the
+hit's chunk plus up to `--before` and `--after` neighbouring chunks (default 1,
+at most 5) of the same file and version, in order (RDR-026 Q8):
+
+```json
+{
+  "status": "success",
+  "message": "Passage of 3 chunks",
+  "data": {
+    "schema_version": 1,
+    "corpus": "DevRef",
+    "chunk_id": "0b6f2c1e-6f1a-4d55-9a57-3c1c3f9b1a21",
+    "cite": "DevRef:Database-Books/db(31).pdf#page=89",
+    "first_chunk_id": "5d0c9e2a-8b1f-4c3e-9a7d-2f4b6c8e0a13",
+    "last_chunk_id": "9e7a1b3c-2d4f-4a6b-8c0e-1f3a5b7d9c24",
+    "chunks": [
+      {"chunk_id": "5d0c9e2a-8b1f-4c3e-9a7d-2f4b6c8e0a13", "chunk_index": 41},
+      {"chunk_id": "0b6f2c1e-6f1a-4d55-9a57-3c1c3f9b1a21", "chunk_index": 42},
+      {"chunk_id": "9e7a1b3c-2d4f-4a6b-8c0e-1f3a5b7d9c24", "chunk_index": 43}
+    ],
+    "text": "...the keys move to the new page. A page split moves half...",
+    "truncated": false
+  },
+  "errors": []
+}
+```
+
+- `CHUNK_ID` is a hit's `chunk_id` from either search mode. The lookup tries
+  Qdrant, then MeiliSearch, and takes the window from the system that holds
+  the chunk.
+- `cite` is the hit chunk's cite. `first_chunk_id` and `last_chunk_id` name the
+  window's ends, so a reader can page further with `--before 0` or
+  `--after 0` from one of them.
+- `text` stitches the chunks with each chunk overlap appearing once; chunks
+  that share no overlap are joined with a blank line.
+- `--max-chars N` bounds `text` (`0`, the default, is unlimited), and
+  `truncated` says whether it was cut.
+- A chunk with no `chunk_index` (an `arc index text code` definition) is its
+  own passage: one `chunks` entry whose `chunk_index` is `null`.
+- An unknown id, or one a resync replaced, fails `unknown-chunk` (exit 3).
+
 ## Error Format
 
 ### Error Response Structure
@@ -430,6 +473,7 @@ The search and listing commands report these codes (RDR-026):
 | Code | Exit | Raised when |
 | --- | --- | --- |
 | `unknown-corpus` | 3 | No requested corpus exists |
+| `unknown-chunk` | 3 | `search passage` finds the chunk id in neither system |
 | `bad-filter` | 2 | The filter does not parse or names an unfilterable field |
 | `bad-argument` | 2 | Any other bad argument, including a command-line usage error |
 | `service-down` | 1 | Qdrant or MeiliSearch is unreachable; the message names which |

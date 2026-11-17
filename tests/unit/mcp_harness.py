@@ -3,14 +3,16 @@
 usage: python mcp_harness.py <scenario> <arc arguments...>
 
 The tests drive `arc mcp` (and `arc corpus list --json`, `arc search text
---json` and `arc search semantic --json`, for the CLI-parity checks) as a real
-child process over pipes. A scenario swaps the client factories the retrieval
-core builds its clients from, and the query embedder's model loader, so no
-service runs and no model loads:
+--json`, `arc search semantic --json` and `arc search passage --json`, for the
+CLI-parity checks) as a real child process over pipes. A scenario swaps the
+client factories the retrieval core builds its clients from, and the query
+embedder's model loader, so no service runs and no model loads:
 
 - ``fake``: three corpora, both services up; each index holds ``DOCUMENTS``
-  chunks of ``CONTENT_CHARS`` characters, and each corpus records the source
-  root ``/src/<corpus>``
+  chunks of ``CONTENT_CHARS`` characters, each in a file of its own, and each
+  corpus records the source root ``/src/<corpus>``. Each corpus also holds
+  ``book.md``, ``BOOK_CHUNKS`` overlapping chunks of one file under UUID ids,
+  which only a ``file_path`` filter or a passage lookup reaches
 - ``many``: 200 corpora, for the output cap
 - ``noisy``: ``fake``, but the listing prints to stdout through every channel a
   library might use (print, a raw fd 1 write, logging, warnings, rich)
@@ -20,8 +22,9 @@ service runs and no model loads:
 - ``qdrant-down`` / ``meili-down``: that service refuses connections
 - ``real``: no fakes (start-up checks that never call a tool)
 
-Every fake Qdrant write and every fake model load prints a line to stderr
-(``fake qdrant write: …``, ``fake model load: …``) for the tests to count.
+Every fake Qdrant or MeiliSearch write and every fake model load prints a line
+to stderr (``fake qdrant write: …``, ``fake meili write: …``, ``fake model
+load: …``) for the tests to count.
 Collections carry no prompt policy, so a semantic search may stamp one.
 """
 
@@ -43,6 +46,63 @@ CORPORA = {
 
 DOCUMENTS = 30
 CONTENT_CHARS = 2000
+
+METADATA_POINT_ID = "00000000-0000-0000-0000-000000000001"
+BOOK_CHUNKS = 6
+BOOK_STEP, BOOK_SIZE = 150, 200  # words; each chunk overlaps the next by 50
+BOOK_WORDS = [f"w{n:04d}" for n in range(BOOK_STEP * (BOOK_CHUNKS - 1) + BOOK_SIZE)]
+
+
+def book_path(corpus: str) -> str:
+    return f"/src/{corpus}/book.md"
+
+
+def book_chunk_id(corpus: str, i: int) -> str:
+    return f"00000000-0000-4000-8{list(CORPORA).index(corpus):03d}-{i:012d}"
+
+
+def book_text(first: int, last: int) -> str:
+    """The stitched text of book chunks ``first`` through ``last``."""
+    return " ".join(BOOK_WORDS[first * BOOK_STEP : last * BOOK_STEP + BOOK_SIZE])
+
+
+def _book(corpus: str) -> list[dict]:
+    """The chunks of one multi-chunk file, as MeiliSearch documents."""
+    if corpus not in CORPORA:
+        return []
+    return [
+        {
+            "id": book_chunk_id(corpus, i),
+            "file_path": book_path(corpus),
+            "chunk_index": i,
+            "section": "Book",
+            "content": book_text(i, i),
+        }
+        for i in range(BOOK_CHUNKS)
+    ]
+
+
+def _book_point(document: dict) -> SimpleNamespace:
+    """A book chunk as Qdrant stores it: its text under ``text``."""
+    payload = {key: value for key, value in document.items() if key not in ("id", "content")}
+    payload["text"] = document["content"]
+    return SimpleNamespace(id=document["id"], payload=payload)
+
+
+def _matches(payload: dict, conditions) -> bool:
+    for condition in conditions:
+        value = payload.get(condition.key)
+        if getattr(condition, "match", None) is not None and value != condition.match.value:
+            return False
+        bounds = getattr(condition, "range", None)
+        if bounds is not None:
+            if not isinstance(value, int):
+                return False
+            if (bounds.gte is not None and value < bounds.gte) or (
+                bounds.lte is not None and value > bounds.lte
+            ):
+                return False
+    return True
 
 
 def _documents(corpus: str) -> list[dict]:
@@ -87,14 +147,17 @@ class FakeQdrant:
         self, collection_name, query_filter=None, limit=10, offset=0, score_threshold=None, **_kw
     ):
         rank = list(self.metadata).index(collection_name)
+        conditions = (query_filter.must or []) if query_filter is not None else []
+        documents = _documents(collection_name)
+        if conditions:
+            documents += _book(collection_name)
         points = []
-        for i, document in enumerate(_documents(collection_name)):
+        for i, document in enumerate(documents):
             payload = {
                 key: value
                 for key, value in document.items()
                 if key not in ("id", "_formatted", "_rankingScore")
             }
-            conditions = (query_filter.must or []) if query_filter is not None else []
             if any(payload.get(c.key) != c.match.value for c in conditions):
                 continue
             score = semantic_score(rank, i)
@@ -105,6 +168,9 @@ class FakeQdrant:
 
     def upsert(self, collection_name, **_kwargs):
         _report(f"fake qdrant write: upsert {collection_name}")
+
+    def create_payload_index(self, collection_name, **_kwargs):
+        _report(f"fake qdrant write: create_payload_index {collection_name}")
 
     def get_collections(self):
         if self.down:
@@ -124,13 +190,25 @@ class FakeQdrant:
             hits=[SimpleNamespace(value=f"/{collection_name}/{i}", count=1) for i in range(2)]
         )
 
-    def scroll(self, **_kwargs):
-        return [], None
-
-    def retrieve(self, collection_name, **_kwargs):
+    def scroll(self, collection_name=None, scroll_filter=None, **_kwargs):
         if self.down:
             raise ConnectionError("[Errno 61] Connection refused")
-        return [SimpleNamespace(payload={"source_roots": [f"/src/{collection_name}"]})]
+        conditions = (scroll_filter.must or []) if scroll_filter is not None else []
+        if not any(condition.key == "file_path" for condition in conditions):
+            return [], None
+        points = [_book_point(document) for document in _book(collection_name)]
+        return [point for point in points if _matches(point.payload, conditions)], None
+
+    def retrieve(self, collection_name, ids=(), **_kwargs):
+        if self.down:
+            raise ConnectionError("[Errno 61] Connection refused")
+        wanted = {str(point_id) for point_id in ids}
+        if METADATA_POINT_ID in wanted:
+            payload = {"is_metadata": True, "source_roots": [f"/src/{collection_name}"]}
+            return [SimpleNamespace(id=METADATA_POINT_ID, payload=payload)]
+        return [
+            _book_point(document) for document in _book(collection_name) if document["id"] in wanted
+        ]
 
 
 class FakeMeili:
@@ -162,12 +240,23 @@ class FakeMeili:
             match = re.fullmatch(r'(\w+) = "([^"]*)"', filter)
             if match is None or match.group(1) not in ("file_path", "language"):
                 raise RuntimeError(f"invalid_search_filter: Attribute `{filter}` is not filterable")
-            documents = [d for d in documents if d.get(match.group(1)) == match.group(2)]
+            documents = [
+                d for d in documents + _book(name) if d.get(match.group(1)) == match.group(2)
+            ]
         return {
             "hits": documents[offset : offset + limit],
             "estimatedTotalHits": len(documents),
             "processingTimeMs": 1,
         }
+
+    def get_document(self, name, document_id):
+        for document in _documents(name) + _book(name):
+            if document["id"] == document_id:
+                return dict(document)
+        return None
+
+    def update_index_settings(self, name, _settings):
+        _report(f"fake meili write: update_index_settings {name}")
 
 
 def _chatter():
@@ -267,10 +356,11 @@ def install(scenario: str, command: list[str]) -> None:
 
         cli_fulltext.create_qdrant_client = cli_utils.create_qdrant_client
         cli_fulltext.create_meili_client = cli_utils.create_meili_client
-    if command[:2] == ["search", "semantic"]:
+    if command[:2] in (["search", "semantic"], ["search", "passage"]):
         import arcaneum.cli.search as cli_search
 
         cli_search.create_qdrant_client = cli_utils.create_qdrant_client
+        cli_search.create_meili_client = cli_utils.create_meili_client
 
 
 def main() -> int:

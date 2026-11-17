@@ -1,7 +1,8 @@
-"""CLI command for semantic search (RDR-007 with RDR-006 enhancements).
+"""CLI commands for semantic search and passages (RDR-007, RDR-006, RDR-026).
 
-The command formats ``arcaneum.retrieval.search_semantic``; the search itself
-and its coded errors live in the print-free core (RDR-026).
+The commands format ``arcaneum.retrieval.search_semantic`` and
+``arcaneum.retrieval.get_passage``; the lookups themselves and their coded
+errors live in the print-free core (RDR-026).
 """
 
 import logging
@@ -11,12 +12,12 @@ from typing import List
 
 from rich.console import Console
 
-from ..retrieval import search_semantic
+from ..retrieval import get_passage, search_semantic
 from ..search import format_summary, format_text_results
 from ..utils.search_output import format_compact_results
 from .interaction_logger import interaction_logger
 from .output import format_json_response
-from .utils import create_qdrant_client
+from .utils import create_meili_client, create_qdrant_client, resolve_config_path
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -156,3 +157,63 @@ def search_command(
             console.print(output, markup=False, highlight=False)
 
     sys.exit(0)
+
+
+def _chunk_span(chunks) -> str:
+    indexes = [chunk.chunk_index for chunk in chunks if chunk.chunk_index is not None]
+    if not indexes:
+        return "1 chunk"
+    if indexes[0] == indexes[-1]:
+        return f"chunk {indexes[0]}"
+    return f"chunks {indexes[0]}-{indexes[-1]}"
+
+
+def passage_command(
+    chunk_id: str,
+    corpus: str,
+    *,
+    before: int,
+    after: int,
+    max_chars: int,
+    output_json: bool,
+):
+    """Print the text around a search hit (``arc search passage``).
+
+    Args:
+        chunk_id: A hit's ``chunk_id``, from either search mode
+        corpus: The corpus that holds the chunk
+        before: Neighbouring chunks before the hit (0-5)
+        after: Neighbouring chunks after the hit (0-5)
+        max_chars: Bound on the passage text; zero is unlimited
+        output_json: Print the ``{status, message, data, errors}`` envelope
+    """
+    logging.basicConfig(level=logging.WARNING, format="[%(levelname)s] %(message)s")
+    with interaction_logger.track(
+        "search", "passage", corpora=[corpus], chunk_id=chunk_id, before=before, after=after
+    ) as ctx:
+        result = get_passage(
+            corpus,
+            chunk_id,
+            before=before,
+            after=after,
+            max_chars=max_chars,
+            qdrant_client=create_qdrant_client(
+                config_path=resolve_config_path(migrate=False), for_search=True
+            ),
+            meili_client=create_meili_client(generate_key=False),
+        )
+        ctx["result_count"] = len(result.chunks)
+
+    if output_json:
+        data = result.to_data()
+        print(format_json_response("success", f"Passage of {len(result.chunks)} chunks", data))
+        return
+
+    # Plain print: passage text is source text, never rich markup.
+    print(f"{result.cite} ({_chunk_span(result.chunks)})")
+    print(f"first: {result.first_chunk_id}")
+    print(f"last:  {result.last_chunk_id}")
+    print()
+    print(result.text)
+    if result.truncated:
+        print("[truncated]")

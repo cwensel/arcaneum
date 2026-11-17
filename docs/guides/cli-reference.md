@@ -71,6 +71,7 @@ arc corpus delete <name>                      # Delete both collection and index
 arc search semantic <query> --corpus <name>                 # Semantic search (Qdrant)
 arc search semantic <query> --corpus <n1> --corpus <n2>     # Multi-corpus search
 arc search text <query> --corpus <name>                     # Full-text search (MeiliSearch)
+arc search passage <chunk-id> --corpus <name>               # Text around a hit
 ```
 
 **IMPORTANT:** The subcommand (`semantic` or `text`) must come *before* the query.
@@ -144,6 +145,29 @@ and cite grammar. `--json` cannot be combined with `--format text` or
 arc search semantic "query" --corpus MyCorpus --score-threshold 0.5
 arc search semantic "query" --corpus MyCorpus --vector-name dense
 ```
+
+**`arc search passage`** reads the text around a hit without a second search.
+Pass the hit's `chunk_id` (shown with `--json`) and its corpus:
+
+```bash
+arc search passage 0b6f2c1e-6f1a-4d55-9a57-3c1c3f9b1a21 --corpus DevRef
+arc search passage 0b6f2c1e-6f1a-4d55-9a57-3c1c3f9b1a21 --corpus DevRef --after 3 --json
+```
+
+- `--corpus`: The corpus that holds the chunk (required).
+- `--before N`, `--after N`: Neighbouring chunks to include on each side of the
+  hit's chunk, 0 to 5 (default 1). Neighbours come from the same file and
+  version, in order, with chunk overlap removed.
+- `--max-chars N`: Maximum characters of passage text; `0` (the default) is
+  unlimited. Shortened text is marked `[truncated]`, or `truncated: true` in
+  JSON.
+- `--json`: Output JSON format.
+
+Terminal output prints the hit's cite, the window's chunk range, its first and
+last chunk ids (to page further), and then the text. An unknown id, or one a
+resync replaced, fails `unknown-chunk` (exit 3); search again for a current id.
+[CLI Output Format](../reference/cli-output-format.md#search-passage---json)
+gives the JSON schema.
 
 ### Search Filters
 

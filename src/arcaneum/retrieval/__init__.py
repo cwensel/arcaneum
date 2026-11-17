@@ -8,13 +8,16 @@ model only when the caller allows it. It uses neither rich nor click.
 """
 
 from .corpora import CorpusListing, list_corpora
+from .passage import PassageResult, get_passage
 from .semantic import SemanticSearchResult, search_semantic
 from .text import TextSearchResult, search_text
 
 __all__ = [
     "CorpusListing",
+    "PassageResult",
     "SemanticSearchResult",
     "TextSearchResult",
+    "get_passage",
     "list_corpora",
     "search_semantic",
     "search_text",

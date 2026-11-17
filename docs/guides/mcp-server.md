@@ -4,10 +4,9 @@
 as review sessions, where a reviewer cannot run `arc` directly. Sessions that do have a shell keep using the `arc`
 CLI.
 
-The server serves three tools, each returning the same `data` as an `arc` command's `--json` output:
-`list_corpora` (`arc corpus list`), `search_text` (`arc search text`) and `search_semantic` (`arc search semantic`).
-RDR-026 specifies a fourth, `get_passage`, which is not served yet. Search hits follow the
-[cite grammar](#cite-grammar) below.
+The server serves four tools, each returning the same `data` as an `arc` command's `--json` output:
+`list_corpora` (`arc corpus list`), `search_text` (`arc search text`), `search_semantic` (`arc search semantic`) and
+`get_passage` (`arc search passage`). Search hits follow the [cite grammar](#cite-grammar) below.
 
 Design record: [RDR-026](../rdr/RDR-026-arc-mcp-server.md). Option reference: [CLI Reference](cli-reference.md#mcp-server).
 
@@ -95,8 +94,9 @@ With an allowlist, `list_corpora` shows only the allowed corpora, and a call nam
 - `--timeout SECONDS` (default 30): each call runs under this timeout. Every tool is read-only, so the server can
   abandon a stalled call; it fails `timeout`.
 - `--max-output-chars N` (default 40000, at least 4000): bounds the serialized result of every call. A listing over it
-  drops whole entries from the tail and adds `output_truncated: true` and `omitted_corpora`. A result that does not fit
-  even with no entries fails `bad-argument`, naming the cap.
+  drops whole entries from the tail and adds `output_truncated: true` and `omitted_corpora`; a search drops whole hits
+  and adds `output_truncated: true` and `omitted_hits`; a passage shortens its `text` and sets `truncated`. A result
+  that does not fit even with no entries, no hits or an empty text fails `bad-argument`, naming the cap.
 
 ## Results and error codes
 
@@ -135,6 +135,18 @@ The server only uses models already in the local cache: one that is missing, or 
 `semantic-unavailable` rather than downloading. `arc search semantic --offline` behaves the same way. Where
 `arc search semantic` stamps the current prompt policy on a legacy collection that records none, the server
 searches under that policy without stamping it, so a call writes nothing.
+
+## Passages
+
+`get_passage` takes a hit's `corpus` and `chunk_id`, from either search tool, and returns the hit's chunk plus up to
+`before` and `after` neighbouring chunks (default 1, at most 5) of the same file and version, in order, with chunk
+overlap removed. Its `max_chars` bounds the text (default 8000; `0` is unlimited) and `truncated` says whether it was
+cut. The result carries the hit's `cite` and the window's `first_chunk_id` and `last_chunk_id`, so a reviewer can
+page further from either end.
+
+The lookup tries Qdrant, then MeiliSearch, and takes the window from the system that holds the chunk, so it still
+works while Qdrant is down. It creates no payload index and changes no MeiliSearch setting. An id that neither system
+holds, such as one a resync replaced, fails `unknown-chunk`; search again for a current id.
 
 ## Cite grammar
 

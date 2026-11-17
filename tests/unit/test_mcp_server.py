@@ -1,6 +1,7 @@
-"""The `arc mcp` stdio server and its list_corpora, search_text and search_semantic tools.
+"""The `arc mcp` stdio server and its list_corpora, search_text, search_semantic and
+get_passage tools.
 
-RDR-026 Q1, Q2, Q3, Q9 and Q10.
+RDR-026 Q1, Q2, Q3, Q8, Q9 and Q10.
 
 Review sessions launch the server fresh for every review, so these tests drive
 it as a child process over pipes, the way a client does. `mcp_harness.py`
@@ -18,6 +19,7 @@ import threading
 import time
 from pathlib import Path
 
+import mcp_harness
 import pytest
 
 from arcaneum import __version__
@@ -195,7 +197,12 @@ def test_every_tool_is_read_only(server):
     proc = server()
     proc.initialize()
     tools = proc.request("tools/list")["result"]["tools"]
-    assert [tool["name"] for tool in tools] == ["list_corpora", "search_text", "search_semantic"]
+    assert [tool["name"] for tool in tools] == [
+        "list_corpora",
+        "search_text",
+        "search_semantic",
+        "get_passage",
+    ]
     for tool in tools:
         assert tool["annotations"]["readOnlyHint"] is True
         assert tool["inputSchema"]["type"] == "object"
@@ -730,6 +737,241 @@ def test_search_semantic_output_cap_drops_whole_hits_and_says_so(server, tmp_pat
 
 
 # ---------------------------------------------------------------------------
+# get_passage
+# ---------------------------------------------------------------------------
+
+
+def _cli_passage(chunk_id, corpus, *, scenario="fake", **options):
+    args = ["search", "passage", chunk_id, "--corpus", corpus, "--json"]
+    for name in ("before", "after", "max_chars"):
+        if options.get(name) is not None:
+            args += [f"--{name.replace('_', '-')}", str(options[name])]
+    return subprocess.run(
+        [sys.executable, str(mcp_harness.__file__), scenario, *args],
+        capture_output=True,
+        text=True,
+        env=_env(),
+        cwd=str(ROOT),
+        timeout=60,
+    )
+
+
+def _cli_passage_data(chunk_id, corpus, **options):
+    result = _cli_passage(chunk_id, corpus, **options)
+    assert result.returncode == 0, result.stderr
+    envelope = json.loads(result.stdout)
+    assert envelope["status"] == "success"
+    return envelope["data"]
+
+
+def _book_hit(hits, i, corpus="Alpha"):
+    """The chunk id of book chunk ``i`` among search hits."""
+    ids = [hit["chunk_id"] for hit in hits]
+    chunk_id = mcp_harness.book_chunk_id(corpus, i)
+    assert chunk_id in ids, ids
+    return chunk_id
+
+
+def test_get_passage_schema_advertises_its_bounds(server):
+    proc = server()
+    proc.initialize()
+    tools = {tool["name"]: tool for tool in proc.request("tools/list")["result"]["tools"]}
+    schema = tools["get_passage"]["inputSchema"]
+    assert schema["required"] == ["corpus", "chunk_id"]
+    assert schema["additionalProperties"] is False
+    properties = schema["properties"]
+    assert set(properties) == {"corpus", "chunk_id", "before", "after", "max_chars"}
+    for name in ("before", "after"):
+        assert properties[name]["minimum"] == 0
+        assert properties[name]["maximum"] == 5
+        assert properties[name]["default"] == 1
+    assert properties["max_chars"]["minimum"] == 0
+    assert properties["max_chars"]["default"] == 8000
+
+
+def test_get_passage_from_a_text_hit_matches_cli_data(server):
+    proc = server()
+    proc.initialize()
+    hits = proc.call(
+        "search_text",
+        {
+            "query": "w0300",
+            "corpora": ["Alpha"],
+            "filter": f"file_path={mcp_harness.book_path('Alpha')}",
+        },
+    )["structuredContent"]["hits"]
+    chunk_id = _book_hit(hits, 2)
+
+    arguments = {"corpus": "Alpha", "chunk_id": chunk_id, "before": 1, "after": 2, "max_chars": 0}
+    result = proc.call("get_passage", arguments)
+    assert result.get("isError") in (None, False), result
+
+    expected = _cli_passage_data(chunk_id, "Alpha", before=1, after=2, max_chars=0)
+    assert result["structuredContent"] == expected
+    assert json.loads(result["content"][0]["text"]) == expected
+    assert expected["chunks"] == [
+        {"chunk_id": mcp_harness.book_chunk_id("Alpha", i), "chunk_index": i} for i in (1, 2, 3, 4)
+    ]
+    assert expected["first_chunk_id"] == mcp_harness.book_chunk_id("Alpha", 1)
+    assert expected["last_chunk_id"] == mcp_harness.book_chunk_id("Alpha", 4)
+    assert expected["text"] == mcp_harness.book_text(1, 4)
+    assert expected["truncated"] is False
+    assert expected["cite"] == "Alpha:book.md#book"
+
+
+def test_get_passage_from_a_semantic_hit_equals_the_text_hit_window(server, tmp_path):
+    proc = server(env=_semantic_env(tmp_path))
+    proc.initialize()
+    book = f"file_path={mcp_harness.book_path('Alpha')}"
+    semantic = proc.call(
+        "search_semantic", {"query": "w0300", "corpora": ["Alpha"], "filter": book}
+    )
+    text = proc.call("search_text", {"query": "w0300", "corpora": ["Alpha"], "filter": book})
+    from_semantic = _book_hit(semantic["structuredContent"]["hits"], 2)
+    from_text = _book_hit(text["structuredContent"]["hits"], 2)
+
+    windows = [
+        proc.call("get_passage", {"corpus": "Alpha", "chunk_id": chunk_id})["structuredContent"]
+        for chunk_id in (from_semantic, from_text)
+    ]
+    assert windows[0] == windows[1]
+    assert windows[0]["text"] == mcp_harness.book_text(1, 3)
+    assert "fake qdrant write" not in _stderr_once_exited(proc)
+
+
+def test_get_passage_defaults_match_the_cli_at_8000_characters(server):
+    proc = server()
+    proc.initialize()
+    chunk_id = mcp_harness.book_chunk_id("Alpha", 0)
+    data = proc.call("get_passage", {"corpus": "Alpha", "chunk_id": chunk_id})["structuredContent"]
+    assert data == _cli_passage_data(chunk_id, "Alpha", max_chars=8000)
+    assert [chunk["chunk_index"] for chunk in data["chunks"]] == [0, 1]
+
+    capped = proc.call("get_passage", {"corpus": "Alpha", "chunk_id": chunk_id, "max_chars": 100})
+    assert capped["structuredContent"]["text"] == mcp_harness.book_text(0, 1)[:100]
+    assert capped["structuredContent"]["truncated"] is True
+
+
+def test_get_passage_unknown_chunk_is_unknown_chunk(server):
+    proc = server()
+    proc.initialize()
+    unknown = mcp_harness.book_chunk_id("Alpha", 99)
+    error = _error(proc.call("get_passage", {"corpus": "Alpha", "chunk_id": unknown}))
+    assert error["code"] == "unknown-chunk"
+    assert unknown in error["message"]
+
+    cli = _cli_passage(unknown, "Alpha")
+    assert cli.returncode == 3
+    envelope = json.loads(cli.stdout)
+    assert envelope["status"] == "error"
+    assert envelope["errors"][0]["code"] == "unknown-chunk"
+
+
+def test_get_passage_qdrant_down_takes_the_window_from_meilisearch(server):
+    proc = server("qdrant-down")
+    proc.initialize()
+    chunk_id = mcp_harness.book_chunk_id("Alpha", 2)
+    result = proc.call("get_passage", {"corpus": "Alpha", "chunk_id": chunk_id})
+    assert result.get("isError") in (None, False), result
+    data = result["structuredContent"]
+    assert data["text"] == mcp_harness.book_text(1, 3)
+    # No Qdrant, so no recorded root: the cite falls back to the absolute path.
+    assert data["cite"] == "Alpha:/src/Alpha/book.md#book"
+    assert data == _cli_passage_data(chunk_id, "Alpha", scenario="qdrant-down", max_chars=8000)
+
+
+def test_get_passage_corpus_outside_the_allowlist_is_unknown_corpus(server):
+    proc = server("fake", "--corpus", "Alpha")
+    proc.initialize()
+    chunk_id = mcp_harness.book_chunk_id("Beta", 2)
+    error = _error(proc.call("get_passage", {"corpus": "Beta", "chunk_id": chunk_id}))
+    assert error["code"] == "unknown-corpus"
+    assert "Beta" in error["message"]
+
+
+def test_get_passage_output_cap_shortens_the_text_and_says_so(server):
+    proc = server("fake", "--max-output-chars", "4000")
+    proc.initialize()
+    chunk_id = mcp_harness.book_chunk_id("Alpha", 2)
+    arguments = {"corpus": "Alpha", "chunk_id": chunk_id, "before": 5, "after": 5, "max_chars": 0}
+    result = proc.call("get_passage", arguments)
+    data = result["structuredContent"]
+
+    full = mcp_harness.book_text(0, mcp_harness.BOOK_CHUNKS - 1)
+    assert len(full) > 4000
+    assert 0 < len(data["text"]) < len(full)
+    assert full.startswith(data["text"])
+    assert data["truncated"] is True
+    assert len(data["chunks"]) == mcp_harness.BOOK_CHUNKS
+    assert len(result["content"][0]["text"]) <= 4000
+    assert json.loads(result["content"][0]["text"]) == data
+
+
+def test_get_passage_writes_nothing(server):
+    proc = server()
+    proc.initialize()
+    chunk_id = mcp_harness.book_chunk_id("Alpha", 2)
+    result = proc.call("get_passage", {"corpus": "Alpha", "chunk_id": chunk_id, "before": 5})
+    assert result.get("isError") in (None, False), result
+    stderr = _stderr_once_exited(proc)
+    assert "fake qdrant write" not in stderr and "fake meili write" not in stderr
+
+
+def test_cli_passage_migrates_no_config_and_generates_no_key(tmp_path):
+    home = tmp_path / "home"
+    legacy = home / ".arcaneum"
+    legacy.mkdir(parents=True)
+    (legacy / "config.yaml").write_text("qdrant:\n  url: http://127.0.0.1:9\n")
+    before = _tree(home)
+    env = _env(
+        HOME=str(home),
+        XDG_CONFIG_HOME=str(home / ".config"),
+        XDG_CACHE_HOME=str(home / ".cache"),
+        XDG_DATA_HOME=str(home / ".local" / "share"),
+        XDG_STATE_HOME=str(home / ".local" / "state"),
+        ARC_QDRANT_URL="http://127.0.0.1:9",
+        MEILISEARCH_URL="http://127.0.0.1:9",
+    )
+    env.pop("MEILISEARCH_API_KEY", None)
+    chunk_id = mcp_harness.book_chunk_id("Alpha", 2)
+    result = subprocess.run(
+        [sys.executable, str(HARNESS), "real", "search", "passage", chunk_id, "--corpus", "Alpha"],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(ROOT),
+        timeout=60,
+    )
+    assert result.returncode == 1, result.stderr
+    # Neither the legacy config is migrated nor a MeiliSearch key generated.
+    cache_dirs = [".cache", ".cache/arcaneum", ".cache/arcaneum/models"]
+    assert _tree(home) == sorted(before + cache_dirs)
+
+
+def test_get_passage_hands_the_core_its_8000_character_default(monkeypatch):
+    import arcaneum.mcp_server as mcp_server
+    import arcaneum.retrieval as retrieval
+    from arcaneum.retrieval.passage import PassageChunk, PassageResult
+
+    calls = []
+
+    def get_passage(corpus, chunk_id, **options):
+        calls.append(options)
+        chunk = PassageChunk(chunk_id=chunk_id, chunk_index=0, text="x", payload={})
+        return PassageResult(corpus, chunk_id, f"{corpus}:doc.md", [chunk], "x", False, "qdrant")
+
+    monkeypatch.setattr(retrieval, "get_passage", get_passage)
+    monkeypatch.setattr(mcp_server, "_qdrant_search_client", lambda: object())
+    monkeypatch.setattr(mcp_server, "_meili_client", lambda: object())
+    tools = mcp_server.ArcTools(allowlist=frozenset({"A"}))
+
+    tools.get_passage({"corpus": "A", "chunk_id": "c"})
+    tools.get_passage({"corpus": "A", "chunk_id": "c", "max_chars": 0})
+    assert [call["max_chars"] for call in calls] == [8000, 0]
+    assert [(call["before"], call["after"]) for call in calls] == [(1, 1), (1, 1)]
+
+
+# ---------------------------------------------------------------------------
 # Start-up
 # ---------------------------------------------------------------------------
 
@@ -944,6 +1186,91 @@ class TestSearchSemanticArguments:
         with pytest.raises(UnknownCorpusError) as exc_info:
             tools.search_semantic({"query": "q", "corpora": ["A", "B"]})
         assert "B" in str(exc_info.value)
+
+
+class TestGetPassageArguments:
+    """Argument checks run before any client or core call."""
+
+    @pytest.fixture
+    def tools(self, monkeypatch):
+        import arcaneum.mcp_server as mcp_server
+
+        def refuse(*_args, **_kwargs):
+            raise AssertionError("a refused call reached a client")
+
+        monkeypatch.setattr(mcp_server, "_meili_client", refuse)
+        monkeypatch.setattr(mcp_server, "_qdrant_search_client", refuse)
+        return mcp_server.ArcTools(allowlist=frozenset({"A"}))
+
+    @pytest.mark.parametrize(
+        "arguments, field",
+        [
+            ({"chunk_id": "c"}, "corpus"),
+            ({"corpus": "", "chunk_id": "c"}, "corpus"),
+            ({"corpus": 3, "chunk_id": "c"}, "corpus"),
+            ({"corpus": "A"}, "chunk_id"),
+            ({"corpus": "A", "chunk_id": ""}, "chunk_id"),
+            ({"corpus": "A", "chunk_id": 7}, "chunk_id"),
+            ({"corpus": "A", "chunk_id": "c", "before": 6}, "before"),
+            ({"corpus": "A", "chunk_id": "c", "before": -1}, "before"),
+            ({"corpus": "A", "chunk_id": "c", "after": 6}, "after"),
+            ({"corpus": "A", "chunk_id": "c", "after": True}, "after"),
+            ({"corpus": "A", "chunk_id": "c", "max_chars": -1}, "max_chars"),
+            ({"corpus": "A", "chunk_id": "c", "corpora": ["A"]}, "corpora"),
+        ],
+    )
+    def test_a_bad_argument_names_its_field(self, tools, arguments, field):
+        with pytest.raises(InvalidArgumentError) as exc_info:
+            tools.get_passage(arguments)
+        assert exc_info.value.code == "bad-argument"
+        assert field in str(exc_info.value)
+
+    def test_a_corpus_outside_the_allowlist_is_refused_before_any_client(self, tools):
+        with pytest.raises(UnknownCorpusError) as exc_info:
+            tools.get_passage({"corpus": "B", "chunk_id": "c"})
+        assert "B" in str(exc_info.value)
+
+
+class TestPassageCap:
+    def _data(self, text):
+        return {
+            "schema_version": 1,
+            "corpus": "C",
+            "chunk_id": "c2",
+            "cite": "C:doc.md",
+            "first_chunk_id": "c1",
+            "last_chunk_id": "c3",
+            "chunks": [{"chunk_id": f"c{i}", "chunk_index": i} for i in (1, 2, 3)],
+            "text": text,
+            "truncated": False,
+        }
+
+    def test_a_passage_under_the_cap_is_unchanged(self):
+        from arcaneum.mcp_server import cap_passage
+
+        data = self._data("x" * 100)
+        assert cap_passage(data, 4000) == data
+
+    def test_a_passage_over_the_cap_shortens_its_text(self):
+        from arcaneum.mcp_server import cap_passage, serialize
+
+        text = '\u00e9"' * 3000  # characters JSON escapes, so length is not linear
+        capped = cap_passage(self._data(text), 4000)
+        assert len(serialize(capped)) <= 4000
+        assert text.startswith(capped["text"]) and capped["text"]
+        assert capped["truncated"] is True
+        # The longest prefix that fits: one more character would not.
+        longer = {**capped, "text": text[: len(capped["text"]) + 1]}
+        assert len(serialize(longer)) > 4000
+        assert capped["chunks"] == self._data(text)["chunks"]
+
+    def test_a_cap_no_text_fits_is_bad_argument(self):
+        from arcaneum.mcp_server import cap_passage
+
+        data = {**self._data("text"), "cite": "C:" + "x" * 5000}
+        with pytest.raises(InvalidArgumentError) as exc_info:
+            cap_passage(data, 4000)
+        assert "4000" in str(exc_info.value)
 
 
 class TestSearchCap:

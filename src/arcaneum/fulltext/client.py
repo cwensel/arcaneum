@@ -368,6 +368,7 @@ class FullTextClient:
         offset: int = 0,
         attributes_to_highlight: Optional[List[str]] = None,
         show_ranking_score: bool = False,
+        attributes_to_retrieve: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Search an index.
@@ -380,6 +381,7 @@ class FullTextClient:
             offset: Number of results to skip (for pagination)
             attributes_to_highlight: Fields to highlight in results
             show_ranking_score: Add each hit's ``_rankingScore``
+            attributes_to_retrieve: Fields each hit returns (all when None)
 
         Returns:
             Search results with hits, processing time, etc.
@@ -396,8 +398,20 @@ class FullTextClient:
             search_params["attributesToHighlight"] = attributes_to_highlight
         if show_ranking_score:
             search_params["showRankingScore"] = True
+        if attributes_to_retrieve:
+            search_params["attributesToRetrieve"] = attributes_to_retrieve
 
         return index.search(query, search_params)
+
+    def get_document(self, index_name: str, document_id: str) -> Optional[Dict[str, Any]]:
+        """One document by id, as a dict; None when the index does not hold it."""
+        try:
+            document = self.get_index(index_name).get_document(document_id)
+        except meilisearch.errors.MeilisearchApiError as e:
+            if e.code in ("document_not_found", "index_not_found"):
+                return None
+            raise
+        return dict(vars(document))
 
     def get_index_stats(self, index_name: str) -> Dict[str, Any]:
         """Get statistics for an index."""

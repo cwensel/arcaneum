@@ -39,6 +39,7 @@ implementation.
 | 020 | [GPU Fallback Stability for Unattended Indexing](RDR-020-gpu-fallback-stability.md) | Final | High |
 | 021 | [Contextual Embedding Enrichment](RDR-021-contextual-embedding-enrichment.md) | Final | Medium |
 | 025 | [Remote Embedding Worker Pool](RDR-025-remote-embedding-worker-pool.md) | Final | Medium |
+| 026 | [Read-Only arc MCP Server for Review Sessions](RDR-026-arc-mcp-server.md) | Final | High |
 
 ## Workflow
 

@@ -112,9 +112,10 @@ class TestSearchSemantic:
         assert result.missing_corpora == []
         data = result.to_data()
         assert data["query"] == "query"
-        assert data["collection"] == "[A, B]"
+        assert data["corpora"] == ["A", "B"]
         assert data["missing_corpora"] == []
-        assert [hit["point_id"] for hit in data["results"]] == ["b1", "a2"]
+        assert [hit["chunk_id"] for hit in data["hits"]] == ["b1", "a2"]
+        assert [hit["corpus"] for hit in data["hits"]] == ["B", "A"]
 
     def test_missing_corpus_in_multi_search_is_reported_not_fatal(self, semantic):
         result = semantic.module.search_semantic(
@@ -413,12 +414,13 @@ class TestSearchText:
 
         assert [hit["id"] for hit in result.hits] == ["a1", "b1", "a2"]
         assert [hit["_corpus"] for hit in result.hits] == ["A", "B", "A"]
+        assert result.estimated_total_hits == 3
+        assert result.processing_time_ms == 6
         data = result.to_data()
         assert data["query"] == "query"
-        assert data["index"] == "[A, B]"
         assert data["corpora"] == ["A", "B"]
-        assert data["estimatedTotalHits"] == 3
-        assert data["processingTimeMs"] == 6
+        assert [hit["chunk_id"] for hit in data["hits"]] == ["a1", "b1", "a2"]
+        assert [hit["corpus"] for hit in data["hits"]] == ["A", "B", "A"]
         assert data["missing_corpora"] == []
 
     def test_missing_corpus_in_multi_search_is_reported_not_fatal(self, text_client):

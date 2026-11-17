@@ -15,6 +15,15 @@ from arcaneum.cli.errors import ArcaneumError, ResourceNotFoundError, ServiceDow
 from arcaneum.cli.fulltext import search_text_command
 
 
+@pytest.fixture(autouse=True)
+def no_qdrant(monkeypatch):
+    """Text search reads cite roots from Qdrant; keep these tests off the network.
+
+    A bare mock holds no ``source_roots``, so cites use the absolute path.
+    """
+    monkeypatch.setattr("arcaneum.cli.fulltext.create_qdrant_client", lambda **kwargs: MagicMock())
+
+
 class TestSearchTextBasicExecution:
     """Test basic search text command execution."""
 
@@ -77,6 +86,7 @@ class TestSearchTextBasicExecution:
             limit=10,
             offset=0,
             attributes_to_highlight=["content"],
+            show_ranking_score=True,
         )
 
     def test_search_with_json_output(self, mock_client, sample_search_results, capsys):
@@ -103,12 +113,13 @@ class TestSearchTextBasicExecution:
         output = json.loads(captured.out)
 
         assert output["status"] == "success"
+        assert output["message"] == "Found 1 results"
         assert "data" in output
+        assert output["data"]["schema_version"] == 1
         assert output["data"]["query"] == "def authenticate"
-        assert output["data"]["index"] == "MyCode-fulltext"
+        assert output["data"]["corpora"] == ["MyCode-fulltext"]
+        assert output["data"]["missing_corpora"] == []
         assert "hits" in output["data"]
-        assert "estimatedTotalHits" in output["data"]
-        assert "processingTimeMs" in output["data"]
 
 
 class TestExactPhraseSearchInCode:
@@ -181,10 +192,11 @@ class TestExactPhraseSearchInCode:
         assert len(hits) == 1
 
         hit = hits[0]
-        assert hit["function_name"] == "authenticate"
-        assert "def authenticate" in hit["content"]
-        # Highlighting shows matched phrase
-        assert "<em>def authenticate</em>" in hit["_formatted"]["content"]
+        assert hit["cite"] == "MyCode-fulltext:/src/auth/verify.py#L42-67"
+        assert hit["chunk_id"] == "func_authenticate_1"
+        assert "def authenticate" in hit["snippet"]
+        # Highlight markup stays out of the hit (RDR-026 Q2)
+        assert "_formatted" not in hit
 
 
 class TestKeywordSearchWithFilters:
@@ -245,7 +257,7 @@ class TestKeywordSearchWithFilters:
                         limit=10,
                         offset=0,
                         output_json=True,
-                        verbose=False,
+                        verbose=True,
                     )
 
                 assert exc_info.value.code == 0
@@ -258,6 +270,7 @@ class TestKeywordSearchWithFilters:
             limit=10,
             offset=0,
             attributes_to_highlight=["content"],
+            show_ranking_score=True,
         )
 
         captured = capsys.readouterr()
@@ -267,8 +280,12 @@ class TestKeywordSearchWithFilters:
         hits = output["data"]["hits"]
         assert len(hits) == 2
         for hit in hits:
-            assert hit["language"] == "python"
-            assert "calculate" in hit["content"]
+            assert hit["metadata"]["language"] == "python"
+            assert "calculate" in hit["snippet"]
+        assert [hit["cite"] for hit in hits] == [
+            "MyCode-fulltext:/src/utils.py",
+            "MyCode-fulltext:/src/pricing.py",
+        ]
 
 
 class TestPDFSearchWithPageFilter:
@@ -325,7 +342,7 @@ class TestPDFSearchWithPageFilter:
                         limit=10,
                         offset=0,
                         output_json=True,
-                        verbose=False,
+                        verbose=True,
                     )
 
                 assert exc_info.value.code == 0
@@ -338,6 +355,7 @@ class TestPDFSearchWithPageFilter:
             limit=10,
             offset=0,
             attributes_to_highlight=["content"],
+            show_ranking_score=True,
         )
 
         captured = capsys.readouterr()
@@ -347,8 +365,12 @@ class TestPDFSearchWithPageFilter:
         hits = output["data"]["hits"]
         assert len(hits) == 2
         for hit in hits:
-            assert hit["page_number"] > 5
-            assert "neural network" in hit["content"].lower()
+            assert hit["metadata"]["page_number"] > 5
+            assert "neural network" in hit["snippet"].lower()
+        assert [hit["cite"] for hit in hits] == [
+            "PDFs:/docs/research-paper.pdf#page=7",
+            "PDFs:/docs/research-paper.pdf#page=12",
+        ]
 
 
 class TestErrorHandlingMissingIndex:
@@ -464,23 +486,31 @@ class TestJSONOutputForProgrammaticUse:
         assert "data" in output
 
         data = output["data"]
-        assert "query" in data
+        assert set(data) == {
+            "schema_version",
+            "query",
+            "corpora",
+            "missing_corpora",
+            "limit",
+            "offset",
+            "hits",
+        }
         assert data["query"] == "test"
-        assert "index" in data
-        assert data["index"] == "MyCode-fulltext"
-        assert "hits" in data
-        assert "estimatedTotalHits" in data
-        assert "processingTimeMs" in data
-        assert "limit" in data
-        assert "offset" in data
+        assert data["corpora"] == ["MyCode-fulltext"]
+        assert (data["limit"], data["offset"]) == (10, 0)
 
-        # Verify hit structure
+        # Verify hit structure (RDR-026 Q2)
         hits = data["hits"]
         assert len(hits) == 1
-        hit = hits[0]
-        assert "file_path" in hit
-        assert "content" in hit
-        assert "_formatted" in hit
+        assert hits[0] == {
+            "corpus": "MyCode-fulltext",
+            "chunk_id": "test_doc",
+            "locator": "/test/file.py",
+            "cite": "MyCode-fulltext:/test/file.py",
+            "score": None,
+            "snippet": "test content",
+            "snippet_truncated": False,
+        }
 
 
 class TestPaginationOptions:
@@ -522,6 +552,7 @@ class TestPaginationOptions:
             limit=50,
             offset=0,
             attributes_to_highlight=["content"],
+            show_ranking_score=True,
         )
 
     def test_custom_offset_is_passed_to_search(self, mock_client, capsys):
@@ -552,6 +583,7 @@ class TestPaginationOptions:
             limit=30,  # limit + offset combined for internal merging
             offset=0,
             attributes_to_highlight=["content"],
+            show_ranking_score=True,
         )
 
 
@@ -645,7 +677,7 @@ class TestNoResultsHandling:
         output = json.loads(captured.out)
 
         assert output["data"]["hits"] == []
-        assert output["data"]["estimatedTotalHits"] == 0
+        assert output["message"] == "Found 0 results"
 
 
 class TestInteractionLogging:
@@ -783,8 +815,9 @@ class TestHighlightingFormatting:
         client.index_exists.return_value = True
         return client
 
-    def test_formatted_content_preserved_in_json(self, mock_client, capsys):
-        """Test that _formatted field is preserved in JSON output."""
+    @pytest.mark.parametrize("verbose", [False, True])
+    def test_formatted_content_stays_out_of_json(self, mock_client, capsys, verbose):
+        """MeiliSearch's _formatted highlight never reaches a hit (RDR-026 Q2)."""
         mock_client.search.return_value = {
             "hits": [
                 {
@@ -807,15 +840,17 @@ class TestHighlightingFormatting:
                         limit=10,
                         offset=0,
                         output_json=True,
-                        verbose=False,
+                        verbose=verbose,
                     )
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
 
         hit = output["data"]["hits"][0]
-        assert "_formatted" in hit
-        assert "<em>authenticate</em>" in hit["_formatted"]["content"]
+        assert hit["snippet"] == "def authenticate():"
+        assert "_formatted" not in hit
+        assert "_formatted" not in hit.get("metadata", {})
+        assert "<em>" not in json.dumps(output)
 
 
 class TestJSONModeFailureEnvelope:
@@ -893,3 +928,18 @@ class TestJSONModeFailureEnvelope:
 
         assert exit_code == 1
         assert json.loads(captured.out)["errors"][0]["code"] == "service-down"
+
+
+def test_source_roots_client_gets_a_short_timeout(monkeypatch):
+    """Roots are optional for text search, so a slow Qdrant must not hold it up."""
+    from arcaneum.cli import fulltext
+
+    calls = []
+    monkeypatch.setattr(
+        fulltext, "create_qdrant_client", lambda **kwargs: calls.append(kwargs) or MagicMock()
+    )
+
+    fulltext._source_roots_client()
+
+    assert calls[0]["timeout"] == fulltext.SOURCE_ROOTS_TIMEOUT_SECONDS
+    assert fulltext.SOURCE_ROOTS_TIMEOUT_SECONDS <= 5

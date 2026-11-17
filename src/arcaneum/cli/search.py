@@ -4,7 +4,6 @@ The command formats ``arcaneum.retrieval.search_semantic``; the search itself
 and its coded errors live in the print-free core (RDR-026).
 """
 
-import json
 import logging
 import sys
 import time
@@ -16,6 +15,7 @@ from ..retrieval import search_semantic
 from ..search import format_summary, format_text_results
 from ..utils.search_output import format_compact_results
 from .interaction_logger import interaction_logger
+from .output import format_json_response
 from .utils import create_qdrant_client
 
 console = Console()
@@ -105,20 +105,16 @@ def search_command(
         if result.missing_corpora:
             logger.warning(f"Missing corpora: {', '.join(result.missing_corpora)}")
 
-    # Format and output results
+    # Format and output results; the cites come from the core's hit builder.
+    cites = [hit["cite"] for hit in result.to_hits(max_content_chars=0)]
     if output_format == "compact":
         print(
             format_compact_results(
                 query,
                 corpora,
                 [
-                    {
-                        "location": r.location,
-                        "content": r.content,
-                        "score": r.score,
-                        "corpus": r.collection,
-                    }
-                    for r in results
+                    {"cite": cite, "content": r.content, "score": r.score}
+                    for cite, r in zip(cites, results)
                 ],
                 offset=offset,
                 max_content_chars=500 if max_content_chars is None else max_content_chars,
@@ -126,9 +122,9 @@ def search_command(
         )
     elif output_json or output_format == "json":
         data = result.to_data(verbose=verbose, max_content_chars=max_content_chars)
-        # print() not console.print() for JSON to avoid Rich wrapping;
-        # ensure_ascii escapes the control characters PDF text can carry.
-        print(json.dumps(data, indent=2, ensure_ascii=True))
+        # print() not console.print() for JSON to avoid Rich wrapping; the
+        # envelope's ensure_ascii escapes what PDF text can carry.
+        print(format_json_response("success", f"Found {len(data['hits'])} results", data))
     else:
         # Human-readable text output
         if verbose:
@@ -145,6 +141,7 @@ def search_command(
         output = format_text_results(
             query=query,
             results=results,
+            cites=cites,
             offset=offset,
             verbose=verbose,
             max_content_chars=max_content_chars,

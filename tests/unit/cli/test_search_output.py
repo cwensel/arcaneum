@@ -52,6 +52,7 @@ def search_cli(request, monkeypatch):
                         "start_line": 42,
                         "end_line": 68,
                         "content": state["content"],
+                        "_rankingScore": 0.5,
                         "_formatted": {"content": "<em>" + state["content"] + "</em>"},
                     }
                 ]
@@ -66,6 +67,7 @@ def search_cli(request, monkeypatch):
     monkeypatch.setattr(semantic, "search_collection", semantic_results)
     monkeypatch.setattr(search, "interaction_logger", MagicMock())
     monkeypatch.setattr(fulltext, "create_meili_client", lambda: client)
+    monkeypatch.setattr(fulltext, "create_qdrant_client", lambda **kwargs: client)
     monkeypatch.setattr(fulltext, "interaction_logger", MagicMock())
     client.search.side_effect = text_results
 
@@ -88,10 +90,15 @@ def test_compact_preserves_source_and_default_budget(search_cli, verbose):
     mode, state, run = search_cli
     result = run("--format", "compact", *(["--verbose"] if verbose else []))
     assert result.exit_code == 0, result.output
-    score = " score=0.875" if mode == "semantic" else ""
+    # A semantic code hit has no line range, so its cite is the path alone.
+    header = (
+        "Code:src/example.py score=0.875"
+        if mode == "semantic"
+        else "Code:src/example.py#L42-68 score=0.5"
+    )
     assert result.stdout == (
         "Q: a 'query' | corpus: Code | returned: 1\n---\n"
-        f"[1] src/example.py:42-68{score}\n{state['content'][:500]}\n[truncated]\n"
+        f"[1] {header}\n{state['content'][:500]}\n[truncated]\n"
     )
     assert "\x1b" not in result.stdout
     assert "<em>" not in result.stdout
@@ -120,7 +127,7 @@ def test_compact_multiple_corpora_and_offset(search_cli):
     result = run("--format", "compact", "--corpus", "Other", "--offset", "1")
     assert result.exit_code == 0, result.output
     assert "corpus: Code, Other | returned: 1" in result.stdout
-    assert "[2] src/example.py:42-68 | corpus: Other" in result.stdout
+    assert "[2] Other:src/example.py" in result.stdout
 
 
 def test_compact_exact_budget_and_empty_content(search_cli):
@@ -157,9 +164,13 @@ def test_legacy_json_defaults_and_alias(search_cli, json_args):
     result = run(*json_args)
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
-    hit = payload["results"][0] if mode == "semantic" else payload["data"]["hits"][0]
-    assert hit["content"] == (state["content"][:500] if mode == "semantic" else state["content"])
-    assert "content_truncated" not in hit
+    assert payload["status"] == "success"
+    assert payload["errors"] == []
+    hit = payload["data"]["hits"][0]
+    # Both modes bound the snippet to 500 characters by default.
+    assert hit["snippet"] == state["content"][:500]
+    assert hit["snippet_truncated"] is True
+    assert "metadata" not in hit
 
 
 @pytest.mark.parametrize("budget", [0, 10, 1200])
@@ -168,12 +179,13 @@ def test_json_budget_overrides_defaults_and_verbose(search_cli, budget):
     result = run("--json", "--verbose", "--max-content-chars", str(budget))
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
-    hit = payload["results"][0] if mode == "semantic" else payload["data"]["hits"][0]
-    assert hit["content"] == (state["content"][:budget] if budget else state["content"])
-    assert hit["content_truncated"] == bool(budget)
-    nested = hit["metadata"] if mode == "semantic" else hit["_formatted"]
-    if budget:
-        assert len(nested["content"]) == budget
+    hit = payload["data"]["hits"][0]
+    assert hit["snippet"] == (state["content"][:budget] if budget else state["content"])
+    assert hit["snippet_truncated"] == bool(budget)
+    # Verbose metadata carries the stored fields, never a second copy of the content.
+    assert hit["metadata"]["file_path"] == "src/example.py"
+    assert "content" not in hit["metadata"]
+    assert "_formatted" not in hit
 
 
 def test_json_budget_can_exceed_legacy_semantic_cap(search_cli):
@@ -181,8 +193,8 @@ def test_json_budget_can_exceed_legacy_semantic_cap(search_cli):
     result = run("--json", "--max-content-chars", "1200")
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
-    hit = payload["results"][0] if mode == "semantic" else payload["data"]["hits"][0]
-    assert hit["content"] == state["content"][:1200]
+    hit = payload["data"]["hits"][0]
+    assert hit["snippet"] == state["content"][:1200]
 
 
 def test_terminal_budget_overrides_line_limit(search_cli):

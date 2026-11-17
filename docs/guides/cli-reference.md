@@ -98,22 +98,29 @@ arc search text "authenticate" --corpus Code --format compact
 arc search semantic "authentication" --corpus Code --json --max-content-chars 0
 ```
 
-Compact output includes the query, corpora, returned count, numbered locations,
-source corpus for multi-corpus searches, and scores when available (semantic
-search). It preserves content indentation and long lines without terminal
+Compact output includes the query, corpora, returned count, and each hit's
+numbered cite (such as `DevRef:Database-Books/db(31).pdf#page=89`) with its
+score. It preserves content indentation and long lines without terminal
 styling or wrapping. Numbering respects `--offset`. The default is 500 source
 characters per hit, including with `--verbose`; shortened content is followed
 by a separate `[truncated]` line outside that character budget. Empty searches
 print a header with `returned: 0`. Diagnostics go to stderr and failures exit
 nonzero, so no stderr suppression is needed.
 
-Without an explicit content limit, existing text and JSON output retain their
-previous defaults. With a limit, terminal text uses raw content and overrides
-its usual snippet and line limits. JSON keeps its existing schema (semantic:
-`results`; text: `data.hits`) and adds `content_truncated` to each hit; duplicate
-content in metadata and highlighted fields is also bounded. The marker is true
-if any of those content fields was shortened. `--json` cannot be combined with
-`--format text` or `--format compact`.
+Terminal text output also prints each hit's cite. Without an explicit content
+limit it keeps its usual snippet and line limits; with one it shows raw content
+up to the limit.
+
+Both modes emit the same JSON: the `{status, message, data, errors}` envelope,
+with `data.hits` holding `corpus`, `chunk_id`, `locator`, `cite`, `score`,
+`snippet` and `snippet_truncated`. The snippet is bounded to 500 characters
+unless `--max-content-chars` says otherwise, and `--verbose` adds each hit's
+stored `metadata`. A cite is `<corpus>:<path>[#page=N|#L<a>-<b>|#<heading>]`,
+with the path relative to a sync root that `arc corpus sync` records, or
+absolute (home as `~`) until one is recorded.
+[CLI Output Format](../reference/cli-output-format.md) gives the full schema
+and cite grammar. `--json` cannot be combined with `--format text` or
+`--format compact`.
 
 **`arc search semantic` only:**
 

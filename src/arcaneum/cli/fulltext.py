@@ -7,14 +7,15 @@ import time
 import click
 from typing import List, Optional
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from ..fulltext.client import FullTextClient
 from ..fulltext.indexes import get_index_settings
-from .output import print_json, print_error, print_info, print_success
+from .output import format_json_response, print_json, print_error, print_info, print_success
 from .interaction_logger import interaction_logger
 from .errors import InvalidArgumentError, ResourceNotFoundError
-from .utils import create_meili_client
+from .utils import create_meili_client, create_qdrant_client
 from ..retrieval import search_text
 from ..schema.document import persisted_metadata_fields
 from ..utils.formatting import format_size
@@ -40,46 +41,22 @@ def _require_meili() -> FullTextClient:
     return client
 
 
-def format_location(hit: dict) -> str:
-    """Format location with full context from RDR-011 metadata.
+# Cite roots are optional for text search: past this, a slow Qdrant only means
+# absolute-path cites.
+SOURCE_ROOTS_TIMEOUT_SECONDS = 3
 
-    Handles three cases:
-    1. Source code with line ranges and function/class context
-    2. PDF documents with page numbers
-    3. Simple file paths (fallback)
 
-    Args:
-        hit: Search result hit containing metadata
+def _source_roots_client():
+    """A Qdrant client for reading cite roots, or None when one cannot be made.
 
-    Returns:
-        Formatted location string (e.g., "file.py:42-67 (my_func function)")
+    Text search does not need Qdrant: a failed read only means absolute-path
+    cites (RDR-026 Q4).
     """
-    file_path = hit.get("file_path") or hit.get("filename", "Unknown")
-
-    # Source code: Include line range and function/class name
-    if "start_line" in hit:
-        start = hit["start_line"]
-        end = hit.get("end_line", start)
-        if start == end:
-            location = f"{file_path}:{start}"
-        else:
-            location = f"{file_path}:{start}-{end}"
-
-        if hit.get("function_name"):
-            location += f" ({hit['function_name']} function)"
-        elif hit.get("class_name"):
-            location += f" ({hit['class_name']} class)"
-        return location
-
-    # PDF: Include page number
-    if "page_number" in hit:
-        return f"{file_path}:page{hit['page_number']}"
-
-    # Legacy support: single line_number field
-    if "line_number" in hit:
-        return f"{file_path}:{hit['line_number']}"
-
-    return file_path
+    try:
+        return create_qdrant_client(timeout=SOURCE_ROOTS_TIMEOUT_SECONDS)
+    except Exception as e:
+        logger.debug("No Qdrant client for source roots: %s", e)
+        return None
 
 
 def search_text_command(
@@ -136,6 +113,7 @@ def search_text_command(
             limit=limit,
             offset=offset,
             client=create_meili_client(),
+            qdrant_client=_source_roots_client(),
             verbose=verbose,
         )
         ctx["result_count"] = len(result.hits)
@@ -146,7 +124,8 @@ def search_text_command(
         if result.missing_corpora:
             logger.warning(f"Missing corpora: {', '.join(result.missing_corpora)}")
 
-    # Format and output results
+    # Format and output results; the cites come from the core's hit builder.
+    cites = [hit["cite"] for hit in result.to_hits(max_content_chars=0)]
     if output_format == "compact":
         print(
             format_compact_results(
@@ -154,24 +133,19 @@ def search_text_command(
                 corpora,
                 [
                     {
-                        "location": format_location(hit),
+                        "cite": cite,
                         "content": hit.get("content"),
-                        "corpus": hit.get("_corpus"),
+                        "score": hit.get("_rankingScore"),
                     }
-                    for hit in hits
+                    for cite, hit in zip(cites, hits)
                 ],
                 offset=offset,
                 max_content_chars=500 if max_content_chars is None else max_content_chars,
             )
         )
     elif output_json or output_format == "json":
-        output = {
-            "status": "success",
-            "message": f"Found {result.estimated_total_hits} results",
-            "data": result.to_data(max_content_chars=max_content_chars),
-            "errors": [],
-        }
-        print(json.dumps(output, indent=2))
+        data = result.to_data(verbose=verbose, max_content_chars=max_content_chars)
+        print(format_json_response("success", f"Found {result.estimated_total_hits} results", data))
     else:
         # Human-readable text output
         console.print(f"\n[bold]Search Results[/bold] ({result.processing_time_ms}ms)")
@@ -180,14 +154,9 @@ def search_text_command(
         if not hits:
             console.print("[dim]No results found[/dim]")
         else:
-            for i, hit in enumerate(hits, 1):
-                # Get file location with full context (RDR-012 enhancement)
-                location = format_location(hit)
-
-                # Show source corpus for multi-corpus searches
-                corpus_tag = f" [{hit.get('_corpus', '?')}]" if len(corpora) > 1 else ""
-
-                console.print(f"[cyan]{i}. {location}{corpus_tag}[/cyan]")
+            for i, (cite, hit) in enumerate(zip(cites, hits), 1):
+                # The cite names the corpus, so a multi-corpus search needs no tag.
+                console.print(f"[cyan]{i}. {escape(cite)}[/cyan]", highlight=False)
 
                 # Show metadata if available
                 if verbose:

@@ -367,6 +367,7 @@ class FullTextClient:
         limit: int = 20,
         offset: int = 0,
         attributes_to_highlight: Optional[List[str]] = None,
+        show_ranking_score: bool = False,
     ) -> Dict[str, Any]:
         """
         Search an index.
@@ -378,6 +379,7 @@ class FullTextClient:
             limit: Maximum results
             offset: Number of results to skip (for pagination)
             attributes_to_highlight: Fields to highlight in results
+            show_ranking_score: Add each hit's ``_rankingScore``
 
         Returns:
             Search results with hits, processing time, etc.
@@ -392,6 +394,8 @@ class FullTextClient:
             search_params["filter"] = filter
         if attributes_to_highlight:
             search_params["attributesToHighlight"] = attributes_to_highlight
+        if show_ranking_score:
+            search_params["showRankingScore"] = True
 
         return index.search(query, search_params)
 

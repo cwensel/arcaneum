@@ -58,8 +58,8 @@ Options:
 - `--score-threshold 0.0-1.0` — drop low-confidence hits
 - `--filter FILTER` — metadata filter (see [Filters](#filters))
 - `--vector-name NAME` — pick a specific embedding model (auto-detected otherwise)
-- `--json` — structured output for parsing
-- `-v` / `--verbose` — show scores and metadata
+- `--json` — structured output for parsing (see [Results and cites](#results-and-cites))
+- `-v` / `--verbose` — show more detail; with `--json`, add each hit's stored `metadata`
 
 ## Full-text search (MeiliSearch)
 
@@ -105,6 +105,23 @@ they are `filename`, `file_path`, `section` and `tags`. In code corpora, semanti
 Advanced: each backend's native syntax also works, but only in its own mode. Text search takes a
 MeiliSearch expression (`"page_number > 80 AND filename = \"db(31).pdf\""`). Semantic search takes
 Qdrant JSON with a top-level `must`, `should` or `must_not`.
+
+## Results and cites
+
+Every output format prints each hit's cite. Both modes' `--json` share one schema:
+`data.hits[]` holds `corpus`, `chunk_id`, `locator`, `cite`, `score`, `snippet` and
+`snippet_truncated`. The snippet is 500 characters unless `--max-content-chars N` says
+otherwise (`0` is unlimited).
+
+A cite is `<corpus>:<path>` plus `#page=N` for a PDF, `#<heading-slug>` for markdown, or
+`#L<start>-<end>` for a code hit that carries a line range (semantic code hits cite the path
+alone). The path is relative to the corpus's sync root, or absolute with `~` for the home
+directory until a sync records one. `#`, `%` and space in the path appear as `%23`, `%25` and
+`%20`. Example: `DevRef:Database-Books/db(31).pdf#page=89`. Quote a cite in backticks when
+citing a hit; `chunk_id` names the chunk itself.
+
+Scores compare only within one mode, and text scores only within one corpus: multi-corpus
+text results interleave each corpus's ranking rather than sorting by score.
 
 ## Common patterns
 

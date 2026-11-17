@@ -87,12 +87,18 @@ arc search $ARGUMENTS
 
 **Result Format:**
 
-Both commands show:
+Both commands show, for each hit in ranked order:
 
-- Ranked result order
-- Source file path
-- Matching content snippet
-- Metadata (git info for code, page numbers for PDFs)
+- A cite, `<corpus>:<path>` plus `#page=N` (PDF), `#<heading-slug>` (markdown)
+  or `#L<start>-<end>` (code with a line range), e.g.
+  `DevRef:Database-Books/db(31).pdf#page=89`. Quote it in backticks to cite a hit.
+- The score: semantic similarity, or MeiliSearch's ranking score for text
+  (text search prints it in compact and JSON output only)
+- A bounded content snippet
+
+`--json` gives both modes one schema: `data.hits[]` with `corpus`, `chunk_id`,
+`locator`, `cite`, `score`, `snippet` and `snippet_truncated`; `--verbose` adds
+the stored `metadata`. See `docs/reference/cli-output-format.md`.
 
 **Related Commands:**
 

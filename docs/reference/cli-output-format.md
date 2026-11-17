@@ -334,33 +334,76 @@ All errors use the `[ERROR]` prefix:
 
 ### Search Commands
 
-#### `search --json`
+#### `search semantic --json` and `search text --json`
+
+Both search modes emit the same `data` and the same hit (RDR-026 Q2):
 
 ```json
 {
   "status": "success",
-  "message": "Found 5 results",
+  "message": "Found 2 results",
   "data": {
-    "query": "authentication patterns",
-    "collection": "Code",
-    "vector_name": "jina-code",
-    "total_results": 5,
-    "execution_time_ms": 234.5,
-    "results": [
+    "schema_version": 1,
+    "query": "b-tree page split",
+    "corpora": ["DevRef", "Notes"],
+    "missing_corpora": [],
+    "limit": 10,
+    "offset": 0,
+    "hits": [
       {
-        "score": 0.95,
-        "id": 12345,
-        "file_path": "/code/auth.py",
-        "programming_language": "python",
-        "git_project_identifier": "myproject#main",
-        "chunk_index": 0,
-        "content": "def authenticate_user(username, password):..."
+        "corpus": "DevRef",
+        "chunk_id": "0b6f2c1e-6f1a-4d55-9a57-3c1c3f9b1a21",
+        "locator": "Database-Books/db(31).pdf#page=89",
+        "cite": "DevRef:Database-Books/db(31).pdf#page=89",
+        "score": 0.83,
+        "snippet": "A page split moves half of the keys...",
+        "snippet_truncated": true
       }
     ]
   },
   "errors": []
 }
 ```
+
+- `chunk_id` is the Qdrant point id or the MeiliSearch document id.
+- `score` is the Qdrant similarity for semantic hits and MeiliSearch's
+  `_rankingScore` for text hits. A score compares only within one mode, and a
+  text score only within one corpus.
+- Semantic hits are ordered by score across corpora. Text hits from several
+  corpora are interleaved round-robin, keeping each corpus's own order.
+- `snippet` is the chunk text cut to `--max-content-chars` (500 by default,
+  `0` for unlimited), and `snippet_truncated` says whether it was cut.
+- `--verbose` adds `metadata`: every stored field except the content. Without
+  it, no hit carries stored fields such as `quality_manifest`. MeiliSearch's
+  `_formatted` and `_rankingScore` never appear.
+- `missing_corpora` lists requested corpora that do not exist, when at least
+  one other does.
+
+#### Cites
+
+A cite is `<corpus>:<locator>`, and the locator is a path plus an optional
+`#` fragment:
+
+| Hit | Fragment | Example |
+| --- | --- | --- |
+| PDF | `page=<n>` | `DevRef:Database-Books/db(31).pdf#page=89` |
+| Markdown | slug of the deepest heading | `Notes:guides/setup.md#install-qdrant` |
+| Code with `start_line` and `end_line` | `L<start>-<end>` | `Libs:pkg/parse.py#L12-48` |
+| Corpus code chunk (no line range) | none | `Arcaneum:src/arcaneum/cli/errors.py` |
+
+- The path is relative to the longest sync root that contains the file.
+  `arc corpus sync` records each directory it is given (and, for a code corpus,
+  each git repository it finds) as the corpus's `source_roots`. If no root
+  matches, as before a corpus's next sync, or when Qdrant is down during a text
+  search, the path is absolute with the home directory written as `~`.
+- In the path, `#`, `%` and space are written `%23`, `%25` and `%20`. Nothing
+  else is escaped, so a cite holds no space and splits at its first `:` and
+  its only `#`.
+- The heading slug is lowercased. It keeps letters, digits and `-`, turns
+  spaces into `-`, and drops everything else. A chunk before the first heading
+  cites the path alone.
+
+Text and compact output print each hit's cite in place of its path.
 
 ## Error Format
 

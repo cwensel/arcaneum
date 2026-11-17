@@ -24,9 +24,9 @@ from ..search.filters import (
     semantic_filterable_fields,
     to_qdrant_filter,
 )
-from ..search.formatter import build_json_results
 from ..search.searcher import SearchResult, search_collection
 from .failures import is_connection_failure, service_down
+from .hits import build_hit, read_corpora_source_roots, search_data
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +73,7 @@ class SemanticSearchResult:
     results: List[SearchResult]
     missing_corpora: List[str] = field(default_factory=list)
     filter_description: Optional[str] = None
+    source_roots: Dict[str, List[str]] = field(default_factory=dict)
 
     @property
     def display_collection(self) -> str:
@@ -81,21 +82,37 @@ class SemanticSearchResult:
             return self.corpora[0]
         return f"[{', '.join(self.corpora)}]"
 
+    def to_hits(
+        self, verbose: bool = False, max_content_chars: int | None = None
+    ) -> List[Dict[str, Any]]:
+        """The merged results as RDR-026 Q2 hits, in score order."""
+        return [
+            build_hit(
+                corpus=r.collection,
+                chunk_id=r.point_id,
+                payload=r.metadata,
+                content=r.content,
+                score=r.score,
+                roots=self.source_roots.get(r.collection, ()),
+                max_content_chars=max_content_chars,
+                verbose=verbose,
+                content_keys=("content",) if "content" in r.metadata else ("text",),
+            )
+            for r in self.results
+        ]
+
     def to_data(
         self, verbose: bool = False, max_content_chars: int | None = None
     ) -> Dict[str, Any]:
-        """The JSON ``data`` the CLI and the MCP server emit."""
-        data = build_json_results(
+        """The JSON ``data`` the CLI and the MCP server emit (RDR-026 Q2)."""
+        return search_data(
             query=self.query,
-            collection=self.display_collection,
-            results=self.results,
+            corpora=self.corpora,
+            missing_corpora=self.missing_corpora,
             limit=self.limit,
             offset=self.offset,
-            verbose=verbose,
-            max_content_chars=max_content_chars,
+            hits=self.to_hits(verbose=verbose, max_content_chars=max_content_chars),
         )
-        data["missing_corpora"] = list(self.missing_corpora)
-        return data
 
 
 def search_semantic(
@@ -211,13 +228,15 @@ def search_semantic(
 
     merged = [hit for hits in per_corpus for hit in hits]
     merged.sort(key=lambda hit: hit.score, reverse=True)
+    page = merged[offset : offset + limit]
 
     return SemanticSearchResult(
         query=query,
         corpora=list(corpora),
         limit=limit,
         offset=offset,
-        results=merged[offset : offset + limit],
+        results=page,
         missing_corpora=missing_corpora,
         filter_description=filter_description,
+        source_roots=read_corpora_source_roots(client, sorted({r.collection for r in page})),
     )

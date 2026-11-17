@@ -43,13 +43,15 @@ def format_compact_results(
     offset: int = 0,
     max_content_chars: int = 500,
 ) -> str:
-    """Render normalized hits without terminal styling, wrapping or indentation."""
+    """Render hits without terminal styling, wrapping or indentation.
+
+    Each result needs ``cite`` and ``content``; its header is the cite (which
+    names the corpus) plus the score when the hit has one.
+    """
     lines = [f"Q: {query} | corpus: {', '.join(corpora)} | returned: {len(results)}"]
     for rank, result in enumerate(results, offset + 1):
         lines.append("---")
-        header = f"[{rank}] {result['location']}"
-        if len(corpora) > 1:
-            header += f" | corpus: {result['corpus']}"
+        header = f"[{rank}] {result['cite']}"
         if result.get("score") is not None:
             header += f" score={result['score']}"
         lines.append(header)

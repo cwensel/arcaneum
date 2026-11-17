@@ -5,7 +5,6 @@ from .filters import parse_filter, build_filter_description
 from .searcher import SearchResult, search_collection, format_location
 from .formatter import (
     format_text_results,
-    format_json_results,
     format_metadata,
     extract_snippet,
     format_summary,
@@ -23,7 +22,6 @@ __all__ = [
     "format_location",
     # Formatter
     "format_text_results",
-    "format_json_results",
     "format_metadata",
     "extract_snippet",
     "format_summary",

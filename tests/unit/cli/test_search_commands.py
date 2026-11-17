@@ -261,7 +261,8 @@ class TestSearchNoResults:
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
         output = json.loads(captured.out)
-        assert output["results"] == []
+        assert output["status"] == "success"
+        assert output["data"]["hits"] == []
 
 
 class TestSearchInvalidFilter:
@@ -428,10 +429,10 @@ class TestMultiCorpusSearch:
         output = json.loads(captured.out)
 
         # Verify results are merged
-        assert output["total_results"] == 4
+        assert len(output["data"]["hits"]) == 4
 
         # Verify results are sorted by score (descending)
-        scores = [r["score"] for r in output["results"]]
+        scores = [r["score"] for r in output["data"]["hits"]]
         assert scores == sorted(scores, reverse=True)
 
     def test_multi_corpus_search_with_pagination(
@@ -471,7 +472,7 @@ class TestMultiCorpusSearch:
         output = json.loads(captured.out)
 
         # Should return 2 results (limit) after skipping 1 (offset)
-        assert output["total_results"] == 2
+        assert len(output["data"]["hits"]) == 2
 
     def test_multi_corpus_partial_failure_continues(
         self, mock_qdrant_client, mock_embedder, corpus1_results, capsys
@@ -510,4 +511,4 @@ class TestMultiCorpusSearch:
         output = json.loads(captured.out)
 
         # Should still return results from Corpus1
-        assert output["total_results"] == 2
+        assert len(output["data"]["hits"]) == 2

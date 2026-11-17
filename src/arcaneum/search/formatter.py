@@ -1,10 +1,9 @@
 """Result formatters for search output (RDR-007)."""
 
-import json
-import re
-from typing import List, Dict, Any
+from typing import Any, Dict, List
+
+from ..utils.search_output import content_preview
 from .searcher import SearchResult
-from ..utils.search_output import content_preview, limit_json_content
 
 
 def format_text_results(
@@ -13,6 +12,7 @@ def format_text_results(
     offset: int = 0,
     verbose: bool = False,
     max_content_chars: int | None = None,
+    cites: List[str] | None = None,
 ) -> str:
     """Format search results for human-readable terminal display.
 
@@ -32,6 +32,7 @@ def format_text_results(
         offset: Number of results skipped (for pagination)
         verbose: If True, show more metadata and longer snippets
         max_content_chars: Override snippet and line limits; zero means unlimited
+        cites: Each result's cite (RDR-026 Q4), printed in place of its location
 
     Returns:
         Formatted string for terminal output
@@ -52,6 +53,7 @@ def format_text_results(
 
     # Format each result (numbered from offset + 1)
     for i, result in enumerate(results, offset + 1):
+        location = cites[i - offset - 1] if cites else result.location
         # Score and metadata header
         score_pct = int(result.score * 100)
         metadata_str = format_metadata(result.metadata, verbose=verbose)
@@ -62,7 +64,7 @@ def format_text_results(
             lines.append(f"[{i}] Score: {score_pct}%")
 
         # Location
-        lines.append(f"    {result.location}")
+        lines.append(f"    {location}")
         lines.append("")  # Blank line
 
         if max_content_chars is not None:
@@ -80,99 +82,6 @@ def format_text_results(
         lines.append("")  # Blank line between results
 
     return "\n".join(lines)
-
-
-def format_json_results(
-    query: str,
-    collection: str,
-    results: List[SearchResult],
-    limit: int = 10,
-    offset: int = 0,
-    verbose: bool = False,
-    max_content_chars: int | None = None,
-) -> str:
-    """Format search results as a JSON string (see ``build_json_results``)."""
-    output = build_json_results(
-        query=query,
-        collection=collection,
-        results=results,
-        limit=limit,
-        offset=offset,
-        verbose=verbose,
-        max_content_chars=max_content_chars,
-    )
-    # ensure_ascii=True escapes ALL non-ASCII and control characters
-    # This is the safest option for PDF text which may contain unusual characters
-    return json.dumps(output, indent=2, ensure_ascii=True)
-
-
-def build_json_results(
-    query: str,
-    collection: str,
-    results: List[SearchResult],
-    limit: int = 10,
-    offset: int = 0,
-    verbose: bool = False,
-    max_content_chars: int | None = None,
-) -> Dict[str, Any]:
-    """Build the JSON-ready search results object.
-
-    Output structure:
-        {
-            "query": "search query",
-            "collection": "MyCollection",
-            "limit": 10,
-            "offset": 0,
-            "total_results": 5,
-            "results": [
-                {
-                    "score": 0.95,
-                    "location": "/path/to/file.py",
-                    "content": "...",
-                    "metadata": {...}
-                }
-            ]
-        }
-
-    Args:
-        query: Original search query
-        collection: Collection name
-        results: List of SearchResult objects
-        limit: Maximum number of results requested
-        offset: Number of results skipped (for pagination)
-        verbose: If True, include full metadata and longer content
-        max_content_chars: Override the content limit and add truncation flags; zero is unlimited
-
-    Returns:
-        Results dictionary, ready for ``json.dumps``
-    """
-    # Truncate content unless verbose mode
-    content_length = None if verbose or max_content_chars is not None else 500
-
-    output = {
-        "query": query,
-        "collection": collection,
-        "limit": limit,
-        "offset": offset,
-        "total_results": len(results),
-        "results": [
-            {
-                "score": r.score,
-                "location": _sanitize_for_json(r.location),  # Sanitize location too
-                "content": _sanitize_for_json(
-                    r.content[:content_length] if content_length else r.content
-                ),
-                "metadata": r.metadata if verbose else _filter_metadata(r.metadata),
-                "point_id": r.point_id,
-            }
-            for r in results
-        ],
-    }
-
-    if max_content_chars is not None:
-        output["results"] = [limit_json_content(r, max_content_chars) for r in output["results"]]
-
-    return output
 
 
 def format_metadata(metadata: Dict[str, Any], verbose: bool = False) -> str:
@@ -241,61 +150,6 @@ def extract_snippet(content: str, max_length: int = 200) -> str:
         snippet = snippet[:last_space]
 
     return snippet + "..."
-
-
-def _sanitize_for_json(text: str) -> str:
-    """Sanitize text for JSON output by removing/replacing problematic control characters.
-
-    Python's json.dumps handles newlines and tabs correctly, but some PDFs contain
-    other control characters (0x00-0x1F) that can cause JSON parsing errors.
-
-    Args:
-        text: Raw text that may contain control characters
-
-    Returns:
-        Sanitized text safe for JSON serialization
-    """
-    if not text:
-        return text
-
-    # Replace problematic control characters (0x00-0x1F) except common ones
-    # Keep: \n (0x0A), \r (0x0D), \t (0x09)
-    # Remove: all other control characters
-    def replace_control_char(match):
-        char = match.group(0)
-        # Keep newline, carriage return, tab
-        if char in ("\n", "\r", "\t"):
-            return char
-        # Replace other control chars with space
-        return " "
-
-    # Pattern matches all control characters (0x00-0x1F)
-    sanitized = re.sub(r"[\x00-\x1f]", replace_control_char, text)
-
-    return sanitized
-
-
-def _filter_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
-    """Filter metadata to essential fields for non-verbose JSON output.
-
-    Args:
-        metadata: Full metadata dictionary
-
-    Returns:
-        Filtered metadata with only essential fields
-    """
-    # Essential fields to always include
-    essential_fields = {
-        "file_path",
-        "programming_language",
-        "git_project_name",
-        "git_branch",
-        "page_number",
-        "chunk_index",
-    }
-
-    # Return only essential fields that exist
-    return {k: v for k, v in metadata.items() if k in essential_fields}
 
 
 def format_summary(

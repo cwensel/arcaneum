@@ -230,6 +230,7 @@ from ..indexing.common.text_source import (
 from ..indexing.dual_indexer import DualIndexer
 from ..indexing.git_metadata_sync import GitMetadataSync
 from ..indexing.git_operations import GitProjectDiscovery, apply_git_metadata
+from ..retrieval.hits import SOURCE_ROOTS_FIELD
 from ..schema.document import DualIndexDocument, persisted_metadata_fields
 from ..utils.formatting import format_size
 from .corpus_defaults import DEFAULT_MODELS_BY_CORPUS_TYPE
@@ -658,14 +659,37 @@ def _remove_indexed_paths(
     return removed + len(paths)
 
 
-def _stamp_last_sync_metadata(qdrant, corpus: str) -> None:
-    """Record that a non-dry-run corpus sync completed successfully."""
+def _sync_source_roots(
+    dir_paths: List[Path],
+    corpus_type: Optional[str],
+    *git_root_lists: List[str],
+) -> List[str]:
+    """The cite roots a sync records (RDR-026 Q4): each resolved directory
+    argument, plus each git toplevel discovered for a code corpus."""
+    roots = [str(path) for path in dir_paths]
+    if corpus_type == "code":
+        for git_roots in git_root_lists:
+            roots.extend(str(root) for root in git_roots)
+    return list(dict.fromkeys(roots))
+
+
+def _stamp_last_sync_metadata(qdrant, corpus: str, source_roots: List[str] = ()) -> None:
+    """Record that a non-dry-run corpus sync completed successfully.
+
+    Also merges this sync's ``source_roots`` after the ones already recorded,
+    so a corpus synced from several places keeps every root its cites strip.
+    """
     try:
-        update_collection_metadata(
-            qdrant,
-            corpus,
-            last_sync=datetime.now(timezone.utc).isoformat(),
-        )
+        updates: Dict[str, Any] = {"last_sync": datetime.now(timezone.utc).isoformat()}
+        if source_roots:
+            recorded = get_collection_metadata(qdrant, corpus).get(SOURCE_ROOTS_FIELD)
+            recorded = (
+                [r for r in recorded if isinstance(r, str)] if isinstance(recorded, list) else []
+            )
+            merged = list(dict.fromkeys([*recorded, *source_roots]))
+            if merged != recorded:
+                updates[SOURCE_ROOTS_FIELD] = merged
+        update_collection_metadata(qdrant, corpus, **updates)
     except Exception as e:
         logger.warning("Failed to update last sync metadata for %s: %s", corpus, e)
 
@@ -3193,11 +3217,21 @@ def _sync_directory_locked(
             files.extend(dir_files)
             discovered_git_roots.extend(dir_roots)
         # Add single files directly (already validated for extension)
+        single_file_git_roots: List[str] = []
         for single_file in single_files:
             file_git_root = _find_git_root(single_file)
+            if file_git_root:
+                single_file_git_roots.append(file_git_root)
             if file_git_root in skip_git_roots:
                 continue
             files.append(single_file)
+        source_roots = _sync_source_roots(
+            dir_paths,
+            corpus_type,
+            all_dir_git_roots,
+            discovered_git_roots,
+            single_file_git_roots,
+        )
 
         # Order the combined set once, here. Per-directory discovery cannot
         # produce this: multiple paths (and explicitly listed single files)
@@ -3207,7 +3241,7 @@ def _sync_directory_locked(
 
         if not files:
             if not dry_run:
-                _stamp_last_sync_metadata(qdrant, corpus)
+                _stamp_last_sync_metadata(qdrant, corpus, source_roots)
             if output_json:
                 print_json("success", "No files to index", data={"indexed": 0})
             else:
@@ -3600,7 +3634,7 @@ def _sync_directory_locked(
                         _stamp_git_sync_heads(
                             qdrant, corpus, metadata, all_dir_git_roots, clean_git_heads
                         )
-                    _stamp_last_sync_metadata(qdrant, corpus)
+                    _stamp_last_sync_metadata(qdrant, corpus, source_roots)
                 interaction_logger.finish(result_count=files_renamed)
                 return
 
@@ -3618,7 +3652,7 @@ def _sync_directory_locked(
                     _stamp_git_sync_heads(
                         qdrant, corpus, metadata, all_dir_git_roots, clean_git_heads
                     )
-                _stamp_last_sync_metadata(qdrant, corpus)
+                _stamp_last_sync_metadata(qdrant, corpus, source_roots)
             if output_json:
                 print_json(
                     "success",
@@ -4750,7 +4784,7 @@ def _sync_directory_locked(
                 )
             if automatic_git_fast_path:
                 _stamp_git_sync_heads(qdrant, corpus, metadata, all_dir_git_roots, clean_git_heads)
-            _stamp_last_sync_metadata(qdrant, corpus)
+            _stamp_last_sync_metadata(qdrant, corpus, source_roots)
 
         # Output results
         data = {

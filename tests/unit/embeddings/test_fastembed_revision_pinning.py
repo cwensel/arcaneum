@@ -37,7 +37,7 @@ def test_pinned_fastembed_model_loads_the_snapshot_as_specific_model_path(tmp_pa
 
     with (
         patch("arcaneum.embeddings.client._snapshot_download", return_value=str(snapshot)) as dl,
-        patch("arcaneum.embeddings.client.TextEmbedding") as text_embedding,
+        patch("fastembed.TextEmbedding") as text_embedding,
     ):
         client.get_model("arctic-m")
 
@@ -69,7 +69,7 @@ def test_pinned_fastembed_model_downloads_the_revision_when_not_cached(tmp_path)
 
     with (
         patch("arcaneum.embeddings.client._snapshot_download", side_effect=download),
-        patch("arcaneum.embeddings.client.TextEmbedding") as text_embedding,
+        patch("fastembed.TextEmbedding") as text_embedding,
     ):
         client.get_model("arctic-m")
 
@@ -89,7 +89,7 @@ def test_pinned_snapshot_missing_its_model_file_is_redownloaded(tmp_path):
             "arcaneum.embeddings.client._snapshot_download",
             side_effect=lambda **kwargs: next(results),
         ) as dl,
-        patch("arcaneum.embeddings.client.TextEmbedding") as text_embedding,
+        patch("fastembed.TextEmbedding") as text_embedding,
     ):
         client.get_model("arctic-m")
 
@@ -102,7 +102,7 @@ def test_unpinned_fastembed_models_keep_the_existing_loader(tmp_path):
 
     with (
         patch("arcaneum.embeddings.client._snapshot_download") as dl,
-        patch("arcaneum.embeddings.client.TextEmbedding") as text_embedding,
+        patch("fastembed.TextEmbedding") as text_embedding,
     ):
         client.get_model("bge-small")
 
@@ -163,7 +163,7 @@ def test_incomplete_pinned_cache_is_purged_and_redownloaded(tmp_path):
 
     with (
         patch("arcaneum.embeddings.client._snapshot_download", return_value=str(snapshot)),
-        patch("arcaneum.embeddings.client.TextEmbedding", side_effect=text_embedding),
+        patch("fastembed.TextEmbedding", side_effect=text_embedding),
         patch.object(client, "_purge_fastembed_model_cache", return_value=True) as purge,
     ):
         client.get_model("arctic-m")

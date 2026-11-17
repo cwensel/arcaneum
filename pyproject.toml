@@ -78,6 +78,9 @@ dependencies = [
     "meilisearch>=0.43.0",
     # Embedding inference engine used by fastembed; pinned directly for CPU perf gains
     "onnxruntime>=1.28.0",
+    # `arc mcp` stdio server (RDR-026 Q1): the SDK's low-level Server. A core
+    # dependency, since the launchd review worker runs the server.
+    "mcp>=2,<3",
 ]
 
 [project.optional-dependencies]

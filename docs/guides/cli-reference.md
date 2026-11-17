@@ -152,6 +152,7 @@ arc models stop                            # Stop remote embedding workers
 arc models start                           # Start stopped remote embedding workers
 arc models wake                            # Wake sleeping workers (Wake-on-LAN)
 arc models serve                           # Run an embedding worker (on a worker host)
+arc mcp                                    # Serve read-only arc tools to an MCP client
 arc store <file> --collection <name>       # Store agent content for long-term memory
 ```
 
@@ -2512,6 +2513,37 @@ expose a `--bind all` port beyond it.
 **Options (`workers`):**
 
 - `--json`: Output JSON format
+
+## MCP Server
+
+`arc mcp` serves read-only arc tools to an MCP client over stdio, for sessions
+that have no shell (RDR-026). Today it serves one tool, `list_corpora`, whose
+result is the same `data` that `arc corpus list --json` prints. stdout carries
+only protocol messages; logs and diagnostics go to stderr. The server runs no
+migration and downloads no model at start.
+
+```bash
+arc mcp                                       # Serve every corpus
+arc mcp --corpus DevRef --corpus Notes        # Serve only these corpora
+ARC_MCP_CORPORA=DevRef,Notes arc mcp          # The same, from the environment
+arc mcp --timeout 20 --max-output-chars 8000  # Tighter per-call limits
+```
+
+**Options:**
+
+- `--corpus NAME`: Serve only this corpus (repeatable). Overrides
+  `ARC_MCP_CORPORA`, a comma-separated list. With neither, every corpus is served.
+- `--timeout SECONDS`: Per-call timeout (default 30). A call past it fails with
+  the `timeout` code.
+- `--max-output-chars N`: Bound on each result's serialized `data` (default
+  40000, at least 4000). A listing over it drops whole entries from the tail and
+  adds `output_truncated: true` and `omitted_corpora`. An error whose
+  `{code, message}` would exceed it gets a shortened message ending in
+  `[truncated]`.
+
+A failed call sets `isError`, carries `{code, message}` as its structured
+content, and reads `<code>: <message>`. The codes are the ones `--json` errors
+carry, for example `service-down` (naming Qdrant or MeiliSearch) and `timeout`.
 
 ## Store
 

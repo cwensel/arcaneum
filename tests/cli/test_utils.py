@@ -84,7 +84,7 @@ class TestCreateQdrantClient:
     """Tests for create_qdrant_client function."""
 
     @patch.dict("os.environ", {}, clear=True)
-    @patch("arcaneum.cli.utils.QdrantClient")
+    @patch("qdrant_client.QdrantClient")
     def test_defaults(self, mock_client_class):
         """Test client creation with defaults."""
         mock_client = MagicMock()
@@ -107,7 +107,7 @@ class TestCreateQdrantClient:
         },
         clear=True,
     )
-    @patch("arcaneum.cli.utils.QdrantClient")
+    @patch("qdrant_client.QdrantClient")
     def test_unprefixed_env_configures_hosted_qdrant(self, mock_client_class):
         """Test QDRANT_* environment variable support."""
         create_qdrant_client(config_path=Path("/does/not/exist.yaml"))
@@ -128,7 +128,7 @@ class TestCreateQdrantClient:
         },
         clear=True,
     )
-    @patch("arcaneum.cli.utils.QdrantClient")
+    @patch("qdrant_client.QdrantClient")
     def test_prefixed_env_takes_precedence(self, mock_client_class):
         """Test ARC_QDRANT_* wins over QDRANT_*."""
         create_qdrant_client(config_path=Path("/does/not/exist.yaml"))
@@ -140,7 +140,7 @@ class TestCreateQdrantClient:
         )
 
     @patch.dict("os.environ", {}, clear=True)
-    @patch("arcaneum.cli.utils.QdrantClient")
+    @patch("qdrant_client.QdrantClient")
     def test_config_file_credentials(self, mock_client_class, tmp_path):
         """Test Qdrant API key can be loaded from config."""
         config_path = tmp_path / "config.yaml"
@@ -167,7 +167,7 @@ qdrant:
         )
 
     @patch.dict("os.environ", {}, clear=True)
-    @patch("arcaneum.cli.utils.QdrantClient")
+    @patch("qdrant_client.QdrantClient")
     def test_default_config_path_uses_xdg_config(self, mock_client_class, tmp_path, monkeypatch):
         """Test default config path uses XDG config directory."""
         monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
@@ -195,7 +195,7 @@ qdrant:
         )
 
     @patch.dict("os.environ", {}, clear=True)
-    @patch("arcaneum.cli.utils.QdrantClient")
+    @patch("qdrant_client.QdrantClient")
     def test_legacy_config_is_migrated_to_xdg_config(
         self, mock_client_class, tmp_path, monkeypatch
     ):
@@ -233,7 +233,7 @@ qdrant:
         )
 
     @patch.dict("os.environ", {}, clear=True)
-    @patch("arcaneum.cli.utils.QdrantClient")
+    @patch("qdrant_client.QdrantClient")
     def test_legacy_config_read_failure_does_not_create_xdg_config(
         self, mock_client_class, tmp_path, monkeypatch
     ):
@@ -253,7 +253,7 @@ qdrant:
         )
 
     @patch.dict("os.environ", {}, clear=True)
-    @patch("arcaneum.cli.utils.QdrantClient")
+    @patch("qdrant_client.QdrantClient")
     def test_legacy_config_used_when_xdg_parent_is_file(
         self, mock_client_class, tmp_path, monkeypatch
     ):
@@ -293,7 +293,7 @@ qdrant:
         },
         clear=True,
     )
-    @patch("arcaneum.cli.utils.QdrantClient")
+    @patch("qdrant_client.QdrantClient")
     def test_env_overrides_default_xdg_config(self, mock_client_class, tmp_path, monkeypatch):
         """Test environment variables still override XDG config credentials."""
         monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
@@ -328,7 +328,7 @@ qdrant:
         },
         clear=True,
     )
-    @patch("arcaneum.cli.utils.QdrantClient")
+    @patch("qdrant_client.QdrantClient")
     def test_env_only_default_does_not_create_xdg_config_dir(
         self, mock_client_class, tmp_path, monkeypatch
     ):
@@ -352,7 +352,7 @@ qdrant:
         },
         clear=True,
     )
-    @patch("arcaneum.cli.utils.QdrantClient")
+    @patch("qdrant_client.QdrantClient")
     def test_params_override_env(self, mock_client_class):
         """Test explicit params override environment credentials."""
         create_qdrant_client(
@@ -369,7 +369,7 @@ qdrant:
         )
 
     @patch.dict("os.environ", {"ARC_QDRANT_API_KEY": "super-secret"}, clear=True)
-    @patch("arcaneum.cli.utils.QdrantClient")
+    @patch("qdrant_client.QdrantClient")
     def test_api_key_not_logged(self, mock_client_class, caplog):
         """Test secret values are not written to logs."""
         create_qdrant_client(config_path=Path("/does/not/exist.yaml"))

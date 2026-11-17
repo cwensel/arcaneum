@@ -9,10 +9,9 @@ import sys
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, TimeoutError, wait
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import numpy as np
-from fastembed import TextEmbedding
 
 from arcaneum.embeddings.batch_scheduler import (
     BatchBudget,
@@ -34,6 +33,11 @@ from arcaneum.embeddings.worker_protocol import (
     WorkerTimeoutError,
 )
 from arcaneum.paths import get_models_dir, get_state_dir
+
+if TYPE_CHECKING:
+    # fastembed is imported where a model loads, keeping it off the `arc` start
+    # path (RDR-026 Q11).
+    from fastembed import TextEmbedding
 
 logger = logging.getLogger(__name__)
 
@@ -462,10 +466,20 @@ def model_revision(model_key: str) -> Optional[str]:
     return EMBEDDING_MODELS[model_key].get("revision") or None
 
 
-def _fastembed_description(model_path: str) -> Dict[str, Any]:
-    import fastembed
+def _fastembed_supported_models() -> List[Dict[str, Any]]:
+    """fastembed's model catalogue, imported on first use (RDR-026 Q11).
 
-    for description in fastembed.TextEmbedding.list_supported_models():
+    Read from the class's defining module rather than ``fastembed.TextEmbedding``,
+    the name the model loaders construct through, so replacing the constructor
+    (as the loader tests do) leaves the catalogue intact.
+    """
+    from fastembed.text.text_embedding import TextEmbedding
+
+    return TextEmbedding.list_supported_models()
+
+
+def _fastembed_description(model_path: str) -> Dict[str, Any]:
+    for description in _fastembed_supported_models():
         if description.get("model") == model_path:
             return description
     raise ValueError(f"fastembed does not support model '{model_path}'")
@@ -1232,6 +1246,8 @@ class EmbeddingClient:
         Raises:
             ValueError: If model_name is not recognized
         """
+        from fastembed import TextEmbedding
+
         if model_name not in EMBEDDING_MODELS:
             raise _unknown_model_error(model_name)
 
@@ -1573,6 +1589,8 @@ class EmbeddingClient:
 
     def _load_pinned_fastembed_model(self, model_name: str):
         """Load a pinned snapshot, healing an incomplete cache like the unpinned loader."""
+        from fastembed import TextEmbedding
+
         config = EMBEDDING_MODELS[model_name]
 
         def load():
@@ -2721,7 +2739,7 @@ class EmbeddingClient:
     def _fastembed_required_model_file(model_path: str) -> Optional[str]:
         """Look up the model file FastEmbed needs for a supported model."""
         try:
-            supported_models = TextEmbedding.list_supported_models()
+            supported_models = _fastembed_supported_models()
         except Exception:
             logger.debug("Could not inspect FastEmbed supported models", exc_info=True)
             return None

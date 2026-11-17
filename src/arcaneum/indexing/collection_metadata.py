@@ -5,13 +5,12 @@ This module provides utilities to store and validate collection types,
 ensuring PDFs, source code, and markdown are not mixed in the same collection.
 """
 
+from __future__ import annotations
+
 import logging
 import os
 from datetime import datetime
-from typing import Any, Dict, Optional, Sequence
-
-from qdrant_client import QdrantClient
-from qdrant_client.models import Condition, FieldCondition, Filter, MatchValue
+from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence
 
 from arcaneum.embeddings.client import (
     get_embedding_prompt_policies,
@@ -23,6 +22,12 @@ from arcaneum.schema.document import (
     PERSISTED_SCHEMA_VERSION_FIELD,
     persisted_metadata_fields,
 )
+
+if TYPE_CHECKING:
+    # qdrant_client is imported where it is used, keeping it off the `arc`
+    # start path (RDR-026 Q11).
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import Condition, Filter
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +73,8 @@ def user_point_count(
     Qdrant's collection point count includes reserved manifest points, so an
     exact filtered count is required when the manifest payload index exists.
     """
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
+
     if collection_info is None:
         collection_info = client.get_collection(collection_name)
     total_points = collection_info.points_count
@@ -553,6 +560,8 @@ def _condition_list(
 
 def metadata_exclusion_filter(query_filter: Optional[Filter] = None) -> Filter:
     """Return a Qdrant filter that excludes reserved metadata points."""
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
+
     metadata_condition = FieldCondition(
         key=METADATA_PAYLOAD_KEY,
         match=MatchValue(value=True),

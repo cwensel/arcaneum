@@ -1,24 +1,16 @@
 """Metadata-based sync for incremental indexing (RDR-004)."""
 
+from __future__ import annotations
+
 import logging
 import multiprocessing as mp
 import os
 import shlex
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 import xxhash
-from qdrant_client import QdrantClient
-from qdrant_client.models import (
-    FieldCondition,
-    Filter,
-    FilterSelector,
-    MatchValue,
-    PayloadSchemaType,
-    PointIdsList,
-    PointStruct,
-)
 
 from ..collection_metadata import (
     FILE_MANIFEST_PAYLOAD_KEY,
@@ -31,6 +23,13 @@ from ..collection_metadata import (
 from ..policy import build_indexing_policy, policy_is_current
 from .multiprocessing import get_mp_context, worker_init
 from .text_source import read_text_source
+
+if TYPE_CHECKING:
+    # qdrant_client is imported where it is used: this module sits on the `arc`
+    # start path (cli.utils -> text_source), and the import is most of its
+    # start time (RDR-026 Q11).
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import Filter, PointStruct
 
 logger = logging.getLogger(__name__)
 
@@ -399,6 +398,8 @@ class MetadataBasedSync:
 
     @staticmethod
     def _manifest_filter() -> Filter:
+        from qdrant_client.models import FieldCondition, Filter, MatchValue
+
         return Filter(
             must=[
                 FieldCondition(
@@ -473,6 +474,8 @@ class MetadataBasedSync:
 
     def ensure_file_manifest_payload_index(self, collection_name: str) -> None:
         """Create the keyword index required for efficient manifest scans."""
+        from qdrant_client.models import PayloadSchemaType
+
         if collection_name in self._manifest_indexes_ready:
             return
         info = self.qdrant.get_collection(collection_name)
@@ -524,6 +527,8 @@ class MetadataBasedSync:
         indexing_policy: Optional[Dict[str, Any]] = None,
     ) -> PointStruct:
         """Build a reserved manifest point for one physical source path."""
+        from qdrant_client.models import PointStruct
+
         absolute_path = str(Path(file_path).absolute())
         payload: Dict[str, Any] = {
             METADATA_PAYLOAD_KEY: True,
@@ -568,6 +573,8 @@ class MetadataBasedSync:
 
     def delete_file_manifest(self, collection_name: str, file_path: str) -> None:
         """Delete the manifest for one physical source path."""
+        from qdrant_client.models import PointIdsList
+
         self.qdrant.delete(
             collection_name=collection_name,
             points_selector=PointIdsList(
@@ -589,6 +596,8 @@ class MetadataBasedSync:
         store_type: Optional[str] = None,
     ) -> None:
         """Copy manifest metadata to a duplicate or renamed physical path."""
+        from qdrant_client.models import FieldCondition, Filter, MatchValue
+
         source = self.qdrant.retrieve(
             collection_name=collection_name,
             ids=[self.file_manifest_id(collection_name, source_path)],
@@ -674,6 +683,8 @@ class MetadataBasedSync:
         that is already searchable. Returns False, writing nothing, when no
         chunk exists or the chunks lack the metadata a manifest needs.
         """
+        from qdrant_client.models import FieldCondition, Filter, MatchValue
+
         points, _ = self.qdrant.scroll(
             collection_name=collection_name,
             scroll_filter=metadata_exclusion_filter(
@@ -713,6 +724,8 @@ class MetadataBasedSync:
         self, collection_name: str, file_path: str, canonical_path: str
     ) -> None:
         """Repoint an existing physical-path manifest to a live canonical source."""
+        from qdrant_client.models import PointIdsList
+
         self.qdrant.set_payload(
             collection_name=collection_name,
             payload={"canonical_path": str(Path(canonical_path).absolute())},
@@ -732,6 +745,8 @@ class MetadataBasedSync:
         leaves a partial set non-authoritative, so legacy scanning remains safe
         and a later run can resume by deterministically overwriting points.
         """
+        from qdrant_client.models import PointStruct
+
         self.ensure_file_manifest_payload_index(collection_name)
         manifests: Dict[str, Dict[str, Any]] = {}
         offset = None
@@ -1187,6 +1202,8 @@ class MetadataBasedSync:
         Returns:
             Number of points deleted (0 if no chunks found)
         """
+        from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchValue
+
         try:
             # Count chunks before deletion
             points_before, _ = self.qdrant.scroll(
@@ -1245,6 +1262,8 @@ class MetadataBasedSync:
         Returns:
             Number of points deleted (0 if no chunks found)
         """
+        from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchValue
+
         path_filter = metadata_exclusion_filter(
             Filter(must=[FieldCondition(key="file_path", match=MatchValue(value=file_path))])
         )
@@ -1303,6 +1322,8 @@ class MetadataBasedSync:
             True if at least one chunk for the path remains, False otherwise.
             On query error, returns True (conservative: cannot certify cleanliness).
         """
+        from qdrant_client.models import FieldCondition, Filter, MatchValue
+
         path_filter = metadata_exclusion_filter(
             Filter(
                 must=[
@@ -1346,6 +1367,8 @@ class MetadataBasedSync:
         Returns:
             List of file_paths that have this content hash
         """
+        from qdrant_client.models import FieldCondition, Filter, MatchValue
+
         try:
             paths = []
             offset = None
@@ -1423,6 +1446,8 @@ class MetadataBasedSync:
         Returns:
             Number of files successfully renamed
         """
+        from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchValue
+
         if not renames:
             return 0
 
@@ -1559,6 +1584,8 @@ class MetadataBasedSync:
         self, collection_name: str, file_hash: str, path_to_remove: str
     ) -> Optional[int]:
         """Remove one physical alias, or return ``None`` when no chunks exist."""
+        from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchValue
+
         points, _ = self.qdrant.scroll(
             collection_name=collection_name,
             scroll_filter=metadata_exclusion_filter(
@@ -1618,6 +1645,8 @@ class MetadataBasedSync:
         Returns:
             Number of chunks updated
         """
+        from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchValue
+
         try:
             # First, get one chunk to see current file_paths state
             points, _ = self.qdrant.scroll(

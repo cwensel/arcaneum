@@ -102,7 +102,7 @@ class TestGetModelReturnsCPUWhenPoisoned:
         # jina-code is a FastEmbed default — get_model should try to load it normally
         # We mock the actual loading to avoid needing the model files
         mock_model = MagicMock()
-        with patch("arcaneum.embeddings.client.TextEmbedding", return_value=mock_model):
+        with patch("fastembed.TextEmbedding", return_value=mock_model):
             with patch.object(embedding_client, "is_model_cached", return_value=True):
                 result = embedding_client.get_model("jina-code")
 
@@ -112,7 +112,7 @@ class TestGetModelReturnsCPUWhenPoisoned:
         """FastEmbed cache may exist without backend-specific ONNX artifacts."""
         mock_model = MagicMock()
         with patch(
-            "arcaneum.embeddings.client.TextEmbedding",
+            "fastembed.TextEmbedding",
             side_effect=[OSError("incomplete onnx cache"), mock_model],
         ) as mock_text_embedding:
             with patch.object(embedding_client, "is_model_cached", return_value=True):
@@ -137,7 +137,7 @@ class TestGetModelReturnsCPUWhenPoisoned:
         mock_model = MagicMock()
 
         with patch(
-            "arcaneum.embeddings.client.TextEmbedding",
+            "fastembed.TextEmbedding",
             side_effect=[missing_model_error, missing_model_error, mock_model],
         ) as mock_text_embedding:
             with patch.object(embedding_client, "is_model_cached", return_value=True):
@@ -225,7 +225,7 @@ class TestFastEmbedCoreMLPolicy:
         with patch("arcaneum.embeddings.client.sys.platform", "darwin"):
             with patch("arcaneum.embeddings.client.platform.machine", return_value="arm64"):
                 with patch(
-                    "arcaneum.embeddings.client.TextEmbedding",
+                    "fastembed.TextEmbedding",
                     return_value=mock_model,
                 ) as mock_text_embedding:
                     with patch.object(embedding_client, "is_model_cached", return_value=True):

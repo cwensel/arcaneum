@@ -75,6 +75,11 @@ def cli(ctx, output_json, help_all):
             click.echo(render_help_all(ctx), nl=False)
         ctx.exit()
 
+    # The MCP server starts with no migration, prompt or config write: review
+    # sessions launch it fresh for every review (RDR-026 Q1).
+    if ctx.invoked_subcommand == "mcp":
+        return
+
     # A backup preview must not migrate user data before its callback runs.
     command_args = ctx.meta.get("subcommand_args", [])
     if ctx.invoked_subcommand == "container" and command_args[:1] in (
@@ -2867,6 +2872,46 @@ def doctor(verbose, output_json):
     from arcaneum.cli.doctor import doctor_command
 
     return doctor_command(verbose, output_json)
+
+
+@cli.command("mcp")
+@click.option(
+    "--corpus",
+    "corpora",
+    multiple=True,
+    help=(
+        "Serve only this corpus (repeatable); every other name is unknown-corpus. "
+        "Defaults to ARC_MCP_CORPORA (comma-separated), else every corpus."
+    ),
+)
+@click.option(
+    "--timeout",
+    type=click.FloatRange(min=0, min_open=True),
+    default=30.0,
+    show_default=True,
+    help="Per-call timeout in seconds; a call past it fails with the timeout code.",
+)
+@click.option(
+    "--max-output-chars",
+    type=click.IntRange(min=4000),
+    default=40000,
+    show_default=True,
+    help="Bound on each result's serialized data; whole entries are dropped to fit.",
+)
+def mcp(corpora, timeout, max_output_chars):
+    """Serve read-only arc tools to an MCP client over stdio (RDR-026).
+
+    stdout carries only protocol messages; logs and diagnostics go to stderr.
+
+    \b
+    Examples:
+        arc mcp
+        arc mcp --corpus DevRef --corpus Notes --timeout 20
+        ARC_MCP_CORPORA=DevRef,Notes arc mcp
+    """
+    from arcaneum.mcp_server import serve
+
+    return serve(corpora=corpora, timeout=timeout, max_output_chars=max_output_chars)
 
 
 @cli.group("log")

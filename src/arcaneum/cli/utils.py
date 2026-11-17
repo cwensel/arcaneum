@@ -4,16 +4,19 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import List, Optional, Set
+from typing import TYPE_CHECKING, List, Optional, Set
 
 import click
-from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams
 
 from ..config import load_config
 from ..embeddings.client import EMBEDDING_MODELS, _unknown_model_error
 from ..indexing.common.text_source import is_compressed, logical_suffix
 from ..paths import get_legacy_arcaneum_dir
+
+if TYPE_CHECKING:
+    # qdrant_client costs most of the CLI's import time, so it is imported
+    # where a client is built (RDR-026 Q11).
+    from qdrant_client import QdrantClient
 
 logger = logging.getLogger(__name__)
 
@@ -227,8 +230,12 @@ def set_process_priority(priority: str, disable_worker_nice: bool = False) -> No
         logger.warning(f"Process priority not supported on platform: {sys.platform}")
 
 
-def resolve_config_path() -> Path:
-    """Resolve the default Arcaneum config path, migrating legacy config if needed."""
+def resolve_config_path(migrate: bool = True) -> Path:
+    """Resolve the default Arcaneum config path, migrating legacy config if needed.
+
+    With ``migrate=False`` nothing is written: a legacy config that has no
+    current counterpart is returned to be read in place.
+    """
     config_home = os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))
     config_path = Path(config_home) / "arcaneum" / "config.yaml"
     temp_config_path = config_path.with_name(f".{config_path.name}.{os.getpid()}.tmp")
@@ -236,6 +243,9 @@ def resolve_config_path() -> Path:
 
     if config_path.exists():
         return config_path
+
+    if not migrate:
+        return legacy_config_path if legacy_config_path.exists() else config_path
 
     if legacy_config_path.exists():
         try:
@@ -278,7 +288,7 @@ def create_qdrant_client(
     timeout: Optional[int] = None,
     for_search: bool = False,
     config_path: Optional[Path] = None,
-) -> QdrantClient:
+) -> "QdrantClient":
     """Create QdrantClient with proper timeout configuration.
 
     This helper ensures consistent client creation across all CLI commands,
@@ -351,12 +361,33 @@ def create_qdrant_client(
         "set" if final_api_key else "unset",
     )
 
+    from qdrant_client import QdrantClient
+
     return QdrantClient(url=final_url, api_key=final_api_key, timeout=final_timeout)
+
+
+def existing_meilisearch_api_key() -> Optional[str]:
+    """The MeiliSearch API key ``get_meilisearch_api_key`` would return, if one exists.
+
+    Reads ``MEILISEARCH_API_KEY``, then the stored key file, and writes nothing:
+    None when neither holds a key.
+    """
+    env_key = os.environ.get("MEILISEARCH_API_KEY")
+    if env_key and len(env_key) >= 16:
+        return env_key
+    config_home = os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))
+    key_file = Path(config_home) / "arcaneum" / "meilisearch.key"
+    try:
+        key = key_file.read_text().strip()
+    except (OSError, UnicodeError):
+        return None
+    return key if len(key) >= 16 else None
 
 
 def create_meili_client(
     url: Optional[str] = None,
     api_key: Optional[str] = None,
+    generate_key: bool = True,
 ):
     """Create MeiliSearch FullTextClient with proper configuration.
 
@@ -366,6 +397,8 @@ def create_meili_client(
     Args:
         url: MeiliSearch server URL (defaults to env or localhost:7700)
         api_key: API key (defaults to auto-generated key from paths module)
+        generate_key: When False, use only an existing key and never generate
+            or store one
 
     Returns:
         Configured FullTextClient instance
@@ -384,7 +417,9 @@ def create_meili_client(
     # Determine API key (priority: param > auto-generated)
     final_api_key = api_key
     if not final_api_key:
-        final_api_key = get_meilisearch_api_key()
+        final_api_key = (
+            get_meilisearch_api_key() if generate_key else existing_meilisearch_api_key()
+        )
 
     logger.debug(f"Creating MeiliSearch client: url={final_url}")
 
@@ -441,6 +476,8 @@ def build_vectors_config(model_list: List[str]) -> dict:
         >>> config = build_vectors_config(['stella', 'jina-code-0.5b'])
         >>> # Returns {'stella': VectorParams(size=1024, ...), ...}
     """
+    from qdrant_client.models import Distance, VectorParams
+
     validate_models(model_list)
 
     vectors_config = {}

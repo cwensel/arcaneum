@@ -125,7 +125,7 @@ def test_local_model_loads_are_recorded(tmp_path):
     with (
         patch("arcaneum.embeddings.client._snapshot_download", return_value=str(tmp_path)),
         patch("arcaneum.embeddings.client.os.path.isfile", return_value=True),
-        patch("arcaneum.embeddings.client.TextEmbedding"),
+        patch("fastembed.TextEmbedding"),
     ):
         client.get_model("arctic-m")
 

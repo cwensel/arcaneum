@@ -1,9 +1,9 @@
 """Query embedding pipeline for semantic search (RDR-007)."""
 
-from pathlib import Path
-from typing import List, Tuple
+from __future__ import annotations
 
-from qdrant_client import QdrantClient
+from pathlib import Path
+from typing import TYPE_CHECKING, List, Tuple
 
 from ..embeddings.client import EMBEDDING_MODELS, EmbeddingClient
 from ..indexing.collection_metadata import (
@@ -13,6 +13,11 @@ from ..indexing.collection_metadata import (
     prompt_policy_can_be_backfilled,
     prompt_policy_issues,
 )
+
+if TYPE_CHECKING:
+    # qdrant_client is imported where it is used, keeping it off the `arc` start
+    # path (RDR-026 Q11).
+    from qdrant_client import QdrantClient
 
 
 class ModelNotCachedError(Exception):

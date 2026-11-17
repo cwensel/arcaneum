@@ -1,8 +1,14 @@
 """Metadata filter DSL parser for search (RDR-007)."""
 
-from qdrant_client.http import models
+from __future__ import annotations
+
 import json
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    # qdrant_client is imported where it is used, keeping it off the `arc` start
+    # path (RDR-026 Q11).
+    from qdrant_client.http import models
 
 
 def parse_filter(filter_arg: str) -> Optional[models.Filter]:
@@ -47,6 +53,8 @@ def parse_simple_filter(filter_str: str) -> Optional[models.Filter]:
     Returns:
         Qdrant Filter with must conditions
     """
+    from qdrant_client.http import models
+
     conditions = []
 
     for pair in filter_str.split(","):
@@ -76,6 +84,8 @@ def parse_json_filter(json_str: str) -> models.Filter:
     Raises:
         ValueError: If JSON is invalid or doesn't match Filter schema
     """
+    from qdrant_client.http import models
+
     try:
         filter_dict = json.loads(json_str)
         return models.Filter(**filter_dict)
@@ -102,6 +112,8 @@ def parse_extended_filter(filter_str: str) -> Optional[models.Filter]:
     Returns:
         Qdrant Filter with must conditions
     """
+    from qdrant_client.http import models
+
     conditions = []
 
     for term in filter_str.split(","):
@@ -148,6 +160,8 @@ def build_filter_description(filter_obj: Optional[models.Filter]) -> str:
     Returns:
         Human-readable filter description
     """
+    from qdrant_client.http import models
+
     if not filter_obj:
         return "No filters applied"
 

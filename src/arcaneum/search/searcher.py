@@ -1,11 +1,11 @@
 """Core search functionality for Qdrant collections (RDR-007)."""
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from qdrant_client import QdrantClient
-from qdrant_client.http import models
 from tenacity import (
     before_sleep_log,
     retry,
@@ -17,6 +17,12 @@ from tenacity import (
 from arcaneum.indexing.collection_metadata import metadata_exclusion_filter
 
 from .embedder import SearchEmbedder
+
+if TYPE_CHECKING:
+    # qdrant_client is imported where it is used, keeping it off the `arc` start
+    # path (RDR-026 Q11).
+    from qdrant_client import QdrantClient
+    from qdrant_client.http import models
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +118,8 @@ def search_collection(
         ConnectionError, OSError, TimeoutError: After 3 retry attempts
         Exception: For other Qdrant connection errors
     """
+    from qdrant_client.http import models
+
     # Step 1: Generate query embedding with auto-detected or specified model
     # This will validate the collection exists and has vectors
     model_key, query_vector = embedder.generate_query_embedding(

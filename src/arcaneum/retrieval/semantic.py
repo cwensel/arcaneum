@@ -16,12 +16,42 @@ from ..cli.errors import (
 from ..cli.search_merge import fetch_from_corpora, per_corpus_limit
 from ..paths import get_models_dir
 from ..search.embedder import ModelNotCachedError, QueryEmbeddingError, SearchEmbedder
-from ..search.filters import build_filter_description, parse_filter
+from ..search.filters import (
+    NeutralFilter,
+    check_filterable,
+    describe_filter,
+    parse_filter,
+    semantic_filterable_fields,
+    to_qdrant_filter,
+)
 from ..search.formatter import build_json_results
 from ..search.searcher import SearchResult, search_collection
 from .failures import is_connection_failure, service_down
 
 logger = logging.getLogger(__name__)
+
+
+def _collection_type(client, collection_name: str) -> Optional[str]:
+    from ..indexing.collection_metadata import get_collection_type
+
+    return get_collection_type(client, collection_name)
+
+
+def _check_semantic_fields(client, corpora: List[str], parsed: NeutralFilter) -> None:
+    """Refuse a neutral filter on a field the corpus type does not filter on.
+
+    Missing corpora are left to the fetch, which reports them.
+    """
+    for corpus_name in corpora:
+        if not client.collection_exists(corpus_name):
+            continue
+        fields = semantic_filterable_fields(_collection_type(client, corpus_name))
+        if fields is None:
+            continue
+        try:
+            check_filterable(parsed, fields, corpus_name)
+        except ValueError as e:
+            raise BadFilterError(str(e)) from e
 
 
 class _MissingCollection(Exception):
@@ -89,7 +119,8 @@ def search_semantic(
         query: Search query text
         corpora: Collection/corpus names to search
         vector_name: Named vector to use (auto-detected when None)
-        filter: Metadata filter string (``search/filters.py`` dialect)
+        filter: Metadata filter (``search/filters.py``: the neutral dialect,
+            or native Qdrant JSON)
         limit: Maximum number of merged results
         offset: Number of merged results to skip
         score_threshold: Minimum similarity score
@@ -102,7 +133,8 @@ def search_semantic(
 
     Raises:
         UnknownCorpusError: no requested corpus exists
-        BadFilterError: the filter does not parse
+        BadFilterError: the filter does not parse, is a MeiliSearch
+            expression, or names a field the corpus type does not filter on
         ServiceDownError: Qdrant is unreachable
         SemanticUnavailableError: no embedder slot, or the model is uncached
             with downloads off
@@ -110,12 +142,14 @@ def search_semantic(
             vector, unconfigured model, stale prompt policy)
         ArcaneumError: any other search failure
     """
+    parsed = None
     query_filter = None
     filter_description = None
     if filter:
         try:
-            query_filter = parse_filter(filter)
-            filter_description = build_filter_description(query_filter)
+            parsed = parse_filter(filter)
+            query_filter = to_qdrant_filter(parsed)
+            filter_description = describe_filter(parsed) if parsed else None
         except ValueError as e:
             raise BadFilterError(f"Invalid filter: {e}") from e
 
@@ -124,6 +158,10 @@ def search_semantic(
             from ..cli.utils import create_qdrant_client
 
             client = create_qdrant_client(for_search=True)
+
+        # Before the embedder slot: a bad field fails without waiting on a model.
+        if isinstance(parsed, NeutralFilter):
+            _check_semantic_fields(client, corpora, parsed)
 
         # Cap concurrent embedder loads (file-lock semaphore). Cold-loading
         # the embedding model in N parallel processes thrashes RAM/swap on

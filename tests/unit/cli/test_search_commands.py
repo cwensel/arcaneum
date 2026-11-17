@@ -75,29 +75,26 @@ class TestSearchSemantic:
                     "arcaneum.retrieval.semantic.search_collection",
                     return_value=sample_search_results,
                 ) as mock_search:
-                    with patch("arcaneum.retrieval.semantic.parse_filter") as mock_parse:
-                        mock_parse.return_value = MagicMock()
-                        with patch(
-                            "arcaneum.retrieval.semantic.build_filter_description",
-                            return_value="test filter",
-                        ):
-                            with nullcontext():
-                                with patch("arcaneum.cli.search.interaction_logger"):
-                                    with pytest.raises(SystemExit) as exc_info:
-                                        search_command(
-                                            query="authentication",
-                                            corpora=["TestCollection"],
-                                            vector_name=None,
-                                            filter_arg="page_number > 3",
-                                            limit=10,
-                                            offset=0,
-                                            score_threshold=None,
-                                            output_json=True,
-                                            verbose=False,
-                                        )
+                    with patch("arcaneum.cli.search.interaction_logger"):
+                        with pytest.raises(SystemExit) as exc_info:
+                            search_command(
+                                query="authentication",
+                                corpora=["TestCollection"],
+                                vector_name=None,
+                                filter_arg="page_number:gt:3",
+                                limit=10,
+                                offset=0,
+                                score_threshold=None,
+                                output_json=True,
+                                verbose=False,
+                            )
+
+        from qdrant_client.http import models
 
         assert exc_info.value.code == 0
-        mock_parse.assert_called_once_with("page_number > 3")
+        assert mock_search.call_args.kwargs["query_filter"] == models.Filter(
+            must=[models.FieldCondition(key="page_number", range=models.Range(gt=3))]
+        )
 
     def test_pagination(self, mock_qdrant_client, mock_embedder, sample_search_results, capsys):
         """Test search with pagination (limit and offset)."""

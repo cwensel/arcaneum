@@ -138,12 +138,84 @@ class TestSearchSemantic:
             semantic.module.search_semantic(
                 "query",
                 ["A"],
-                filter='{"filename": "db(31).pdf"}',
+                filter='{"filename": {"nested": 1}}',
                 client=semantic.client,
                 embedder=semantic.embedder,
             )
 
         assert exc_info.value.code == "bad-filter"
+        assert semantic.calls == []
+
+    def test_neutral_json_filter_reaches_qdrant(self, semantic, monkeypatch):
+        from qdrant_client.http import models
+
+        monkeypatch.setattr(semantic.module, "_collection_type", lambda client, name: "pdf")
+
+        result = semantic.module.search_semantic(
+            "query",
+            ["A"],
+            filter='{"filename": "db(31).pdf"}',
+            client=semantic.client,
+            embedder=semantic.embedder,
+        )
+
+        assert semantic.calls[0]["query_filter"] == models.Filter(
+            must=[
+                models.FieldCondition(key="filename", match=models.MatchValue(value="db(31).pdf"))
+            ]
+        )
+        assert result.filter_description == "filename=db(31).pdf"
+
+    def test_unfilterable_field_is_bad_filter_naming_filterable_fields(self, semantic, monkeypatch):
+        monkeypatch.setattr(semantic.module, "_collection_type", lambda client, name: "pdf")
+
+        with pytest.raises(errors.BadFilterError) as exc_info:
+            semantic.module.search_semantic(
+                "query",
+                ["A"],
+                filter="chunk_index=3",
+                client=semantic.client,
+                embedder=semantic.embedder,
+            )
+
+        message = str(exc_info.value)
+        assert "'chunk_index' is not filterable" in message
+        assert "page_number" in message
+        assert semantic.calls == []
+
+    def test_native_qdrant_filter_skips_the_field_check(self, semantic, monkeypatch):
+        monkeypatch.setattr(semantic.module, "_collection_type", lambda client, name: "pdf")
+
+        semantic.module.search_semantic(
+            "query",
+            ["A"],
+            filter='{"must": [{"key": "chunk_index", "match": {"value": 3}}]}',
+            client=semantic.client,
+            embedder=semantic.embedder,
+        )
+
+        assert semantic.calls[0]["query_filter"].must[0].key == "chunk_index"
+
+    def test_untyped_collection_skips_the_field_check(self, semantic, monkeypatch):
+        monkeypatch.setattr(semantic.module, "_collection_type", lambda client, name: None)
+
+        semantic.module.search_semantic(
+            "query", ["A"], filter="anything=1", client=semantic.client, embedder=semantic.embedder
+        )
+
+        assert semantic.calls[0]["query_filter"].must
+
+    def test_meilisearch_expression_is_bad_filter(self, semantic):
+        with pytest.raises(errors.BadFilterError) as exc_info:
+            semantic.module.search_semantic(
+                "query",
+                ["A"],
+                filter="page_number > 10",
+                client=semantic.client,
+                embedder=semantic.embedder,
+            )
+
+        assert "MeiliSearch" in str(exc_info.value)
         assert semantic.calls == []
 
     def test_unreachable_qdrant_is_service_down(self, semantic):
@@ -394,6 +466,37 @@ class TestSearchText:
         assert "file_path" in message
         assert "page_number" in message
         text_client.get_index_settings.assert_called_once_with("A")
+
+    def test_neutral_filter_reaches_meilisearch_quoted(self, text_client):
+        from arcaneum.retrieval import search_text
+
+        search_text("query", ["A"], filter='{"filename": "db(31).pdf"}', client=text_client)
+
+        assert text_client.search.call_args.kwargs["filter"] == 'filename = "db(31).pdf"'
+
+    def test_native_expression_reaches_meilisearch_unchanged(self, text_client):
+        from arcaneum.retrieval import search_text
+
+        search_text("query", ["A"], filter="page_number > 10", client=text_client)
+
+        assert text_client.search.call_args.kwargs["filter"] == "page_number > 10"
+
+    @pytest.mark.parametrize(
+        "text, needle",
+        [
+            ('{"must": [{"key": "a", "match": {"value": "b"}}]}', "Qdrant"),
+            ("file_path:contains:/src/", "contains"),
+            ("page_number:gte:ten", "number"),
+        ],
+    )
+    def test_untranslatable_filter_is_bad_filter_before_search(self, text_client, text, needle):
+        from arcaneum.retrieval import search_text
+
+        with pytest.raises(errors.BadFilterError) as exc_info:
+            search_text("query", ["A"], filter=text, client=text_client)
+
+        assert needle in str(exc_info.value)
+        text_client.search.assert_not_called()
 
     def test_unexpected_failure_keeps_its_message(self, text_client):
         from arcaneum.retrieval import search_text

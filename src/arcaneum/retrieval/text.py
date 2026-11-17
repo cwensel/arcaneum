@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from ..cli.errors import ArcaneumError, BadFilterError, ServiceDownError
 from ..cli.search_merge import fetch_from_corpora, per_corpus_limit
+from ..search.filters import parse_filter, to_meilisearch_filter, unfilterable_field_message
 from ..utils.search_output import limit_json_content
 from .failures import is_connection_failure, service_down
 
@@ -77,10 +78,6 @@ def _bad_filter(client, corpus_name: str, exc: Exception) -> BadFilterError:
     """Name the rejected attribute and list the index's filterable ones."""
     attr_match = re.search(r"Attribute `([^`]+)`", str(exc))
     bad_attr = attr_match.group(1) if attr_match else None
-    if bad_attr:
-        lines = [f"Filter attribute '{bad_attr}' is not filterable."]
-    else:
-        lines = [f"Invalid filter: {getattr(exc, 'message', None) or exc}"]
 
     try:
         settings = client.get_index_settings(corpus_name)
@@ -88,14 +85,16 @@ def _bad_filter(client, corpus_name: str, exc: Exception) -> BadFilterError:
     except Exception:
         filterable = None
 
+    if bad_attr and filterable is not None:
+        return BadFilterError(unfilterable_field_message(bad_attr, filterable, corpus_name))
+
+    if bad_attr:
+        lines = [f"Filter attribute '{bad_attr}' is not filterable."]
+    else:
+        lines = [f"Invalid filter: {getattr(exc, 'message', None) or exc}"]
     if filterable:
         lines.append(f"Available filterable attributes for index '{corpus_name}':")
         lines.extend(f"  - {attr}" for attr in filterable)
-        if bad_attr:
-            for attr in filterable:
-                if bad_attr.lower() in attr.lower() or attr.lower() in bad_attr.lower():
-                    lines.append(f'Hint: Try --filter "{attr}=<value>"')
-                    break
     elif filterable is not None:
         lines.append(
             f"Index '{corpus_name}' has no filterable attributes configured; "
@@ -119,7 +118,9 @@ def search_text(
     Args:
         query: Search query (quotes for exact phrases)
         corpora: MeiliSearch index names to search
-        filter: MeiliSearch filter expression
+        filter: Metadata filter (``search/filters.py``: the neutral dialect,
+            translated with every value quoted, or a native MeiliSearch
+            expression)
         limit: Maximum number of merged hits
         offset: Number of merged hits to skip
         client: FullTextClient (created from config when None)
@@ -127,10 +128,18 @@ def search_text(
 
     Raises:
         UnknownCorpusError: no requested corpus exists
-        BadFilterError: MeiliSearch rejects the filter
+        BadFilterError: the filter does not parse, is Qdrant JSON, uses
+            ``contains``, or MeiliSearch rejects it (e.g. an unfilterable field)
         ServiceDownError: MeiliSearch is unreachable
         ArcaneumError: any other search failure
     """
+    meili_filter = None
+    if filter:
+        try:
+            meili_filter = to_meilisearch_filter(parse_filter(filter))
+        except ValueError as e:
+            raise BadFilterError(f"Invalid filter: {e}") from e
+
     if client is None:
         from ..cli.utils import create_meili_client
 
@@ -149,13 +158,13 @@ def search_text(
             results = client.search(
                 corpus_name,
                 query,
-                filter=filter,
+                filter=meili_filter,
                 limit=fetch_limit,
                 offset=0,  # Apply offset after merge
                 attributes_to_highlight=["content"],
             )
         except Exception as e:
-            if filter and _is_filter_error(e):
+            if meili_filter and _is_filter_error(e):
                 raise _bad_filter(client, corpus_name, e) from e
             raise
         hits = results.get("hits", [])

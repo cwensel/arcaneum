@@ -250,11 +250,11 @@ class TestKeywordSearchWithFilters:
 
                 assert exc_info.value.code == 0
 
-        # Verify filter was passed to search
+        # Verify the neutral filter reached MeiliSearch with its value quoted
         mock_client.search.assert_called_once_with(
             "MyCode-fulltext",
             "calculate",
-            filter="language = python",
+            filter='language = "python"',
             limit=10,
             offset=0,
             attributes_to_highlight=["content"],

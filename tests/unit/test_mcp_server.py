@@ -1,4 +1,4 @@
-"""The `arc mcp` stdio server and its list_corpora tool (RDR-026 Q1, Q2, Q3, Q10).
+"""The `arc mcp` stdio server and its list_corpora and search_text tools (RDR-026 Q1, Q2, Q3, Q10).
 
 Review sessions launch the server fresh for every review, so these tests drive
 it as a child process over pipes, the way a client does. `mcp_harness.py`
@@ -27,7 +27,7 @@ PROTOCOL_VERSION = "2025-06-18"
 
 
 def _env(**extra):
-    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src"), "ARC_INTERACTION_LOG": "0"}
     env.pop("ARC_MCP_CORPORA", None)
     env.update(extra)
     return env
@@ -148,6 +148,25 @@ def _cli_list_data(scenario="fake"):
     return json.loads(result.stdout)["data"]
 
 
+def _cli_text_data(query, corpora, *, limit, max_content_chars, offset=0, filter=None):
+    args = ["search", "text", query, "--json", "--limit", str(limit), "--offset", str(offset)]
+    args += ["--max-content-chars", str(max_content_chars)]
+    for name in corpora:
+        args += ["--corpus", name]
+    if filter is not None:
+        args += ["--filter", filter]
+    result = subprocess.run(
+        [sys.executable, str(HARNESS), "fake", *args],
+        capture_output=True,
+        text=True,
+        env=_env(),
+        cwd=str(ROOT),
+        timeout=60,
+        check=True,
+    )
+    return json.loads(result.stdout)["data"]
+
+
 def _error(result):
     assert result["isError"] is True, result
     structured = result["structuredContent"]
@@ -170,13 +189,34 @@ def test_initialize_reports_arcaneum_version(server):
     assert response["result"]["serverInfo"]["version"] == __version__
 
 
-def test_list_corpora_is_the_only_tool_and_read_only(server):
+def test_every_tool_is_read_only(server):
     proc = server()
     proc.initialize()
     tools = proc.request("tools/list")["result"]["tools"]
-    assert [tool["name"] for tool in tools] == ["list_corpora"]
-    assert tools[0]["annotations"]["readOnlyHint"] is True
-    assert tools[0]["inputSchema"]["type"] == "object"
+    assert [tool["name"] for tool in tools] == ["list_corpora", "search_text"]
+    for tool in tools:
+        assert tool["annotations"]["readOnlyHint"] is True
+        assert tool["inputSchema"]["type"] == "object"
+
+
+def test_search_text_schema_advertises_its_bounds(server):
+    proc = server()
+    proc.initialize()
+    tools = {tool["name"]: tool for tool in proc.request("tools/list")["result"]["tools"]}
+    schema = tools["search_text"]["inputSchema"]
+    assert schema["required"] == ["query", "corpora"]
+    assert schema["additionalProperties"] is False
+    properties = schema["properties"]
+    assert set(properties) == {"query", "corpora", "limit", "offset", "filter", "max_content_chars"}
+    assert properties["limit"] == {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 25,
+        "default": 10,
+        "description": properties["limit"]["description"],
+    }
+    assert properties["max_content_chars"]["default"] == 1200
+    assert properties["corpora"]["minItems"] == 1
 
 
 def test_stdout_carries_only_json_rpc_when_a_dependency_prints(server):
@@ -322,6 +362,142 @@ def test_max_output_chars_below_the_floor_is_refused():
 
 
 # ---------------------------------------------------------------------------
+# search_text
+# ---------------------------------------------------------------------------
+
+
+def test_search_text_matches_cli_data(server):
+    proc = server()
+    proc.initialize()
+    arguments = {
+        "query": "lorem",
+        "corpora": ["Alpha", "Beta"],
+        "limit": 5,
+        "offset": 1,
+        "filter": "language=python",
+        "max_content_chars": 300,
+    }
+    result = proc.call("search_text", arguments)
+
+    expected = _cli_text_data(
+        "lorem",
+        ["Alpha", "Beta"],
+        limit=5,
+        offset=1,
+        filter="language=python",
+        max_content_chars=300,
+    )
+    assert result.get("isError") in (None, False), result
+    assert result["structuredContent"] == expected
+    assert json.loads(result["content"][0]["text"]) == expected
+    hits = expected["hits"]
+    assert len(hits) == 5
+    assert {hit["corpus"] for hit in hits} == {"Alpha", "Beta"}
+    for hit in hits:
+        # The filter reached the backend, and the source roots shorten each cite.
+        assert int(hit["chunk_id"].split("-")[1]) % 2 == 1
+        assert hit["cite"] == f"{hit['corpus']}:{hit['locator']}"
+        assert hit["locator"].startswith("doc")
+        assert len(hit["snippet"]) <= 300 and hit["snippet_truncated"] is True
+
+
+def test_search_text_defaults_to_ten_hits_of_1200_characters(server):
+    proc = server()
+    proc.initialize()
+    data = proc.call("search_text", {"query": "lorem", "corpora": ["Gamma"]})["structuredContent"]
+
+    assert data == _cli_text_data("lorem", ["Gamma"], limit=10, max_content_chars=1200)
+    assert data["limit"] == 10 and data["offset"] == 0
+    assert len(data["hits"]) == 10
+    assert "output_truncated" not in data
+    for hit in data["hits"]:
+        assert len(hit["snippet"]) <= 1200 and hit["snippet_truncated"] is True
+
+
+def test_search_text_refuses_a_limit_above_25(server):
+    proc = server()
+    proc.initialize()
+    error = _error(proc.call("search_text", {"query": "lorem", "corpora": ["Alpha"], "limit": 26}))
+    assert error["code"] == "bad-argument"
+    assert "limit" in error["message"] and "25" in error["message"]
+
+    data = proc.call("search_text", {"query": "lorem", "corpora": ["Alpha"], "limit": 25})[
+        "structuredContent"
+    ]
+    assert len(data["hits"]) == 25
+
+
+def test_search_text_corpus_outside_the_allowlist_is_unknown_corpus(server):
+    proc = server("fake", "--corpus", "Alpha")
+    proc.initialize()
+    for corpora in (["Beta"], ["Alpha", "Beta"]):
+        error = _error(proc.call("search_text", {"query": "lorem", "corpora": corpora}))
+        assert error["code"] == "unknown-corpus"
+        assert "Beta" in error["message"]
+
+
+def test_search_text_no_existing_corpus_is_unknown_corpus(server):
+    proc = server()
+    proc.initialize()
+    error = _error(proc.call("search_text", {"query": "lorem", "corpora": ["Nope"]}))
+    assert error["code"] == "unknown-corpus"
+
+    data = proc.call("search_text", {"query": "lorem", "corpora": ["Alpha", "Nope"]})[
+        "structuredContent"
+    ]
+    assert data["missing_corpora"] == ["Nope"]
+    assert data["hits"]
+
+
+def test_search_text_output_cap_drops_whole_hits_and_says_so(server):
+    proc = server("fake", "--max-output-chars", "4000")
+    proc.initialize()
+    arguments = {"query": "lorem", "corpora": ["Alpha", "Beta"], "limit": 25}
+    result = proc.call("search_text", arguments)
+    data = result["structuredContent"]
+
+    full = _cli_text_data("lorem", ["Alpha", "Beta"], limit=25, max_content_chars=1200)
+    kept = len(data["hits"])
+    assert 0 < kept < 25
+    assert data["hits"] == full["hits"][:kept]
+    assert data["output_truncated"] is True
+    assert data["omitted_hits"] == 25 - kept
+    assert len(result["content"][0]["text"]) <= 4000
+    assert json.loads(result["content"][0]["text"]) == data
+
+
+def test_search_text_query_longer_than_the_cap_is_bad_argument(server):
+    proc = server("fake", "--max-output-chars", "4000")
+    proc.initialize()
+    error = _error(proc.call("search_text", {"query": "q" * 5000, "corpora": ["Alpha"]}))
+    assert error["code"] == "bad-argument"
+    assert "4000" in error["message"]
+
+
+def test_search_text_qdrant_json_filter_is_bad_filter(server):
+    proc = server()
+    proc.initialize()
+    arguments = {"query": "lorem", "corpora": ["Alpha"], "filter": '{"must": []}'}
+    error = _error(proc.call("search_text", arguments))
+    assert error["code"] == "bad-filter"
+
+
+def test_search_text_meilisearch_down_is_service_down(server):
+    proc = server("meili-down")
+    proc.initialize()
+    error = _error(proc.call("search_text", {"query": "lorem", "corpora": ["Alpha"]}))
+    assert error["code"] == "service-down"
+    assert "MeiliSearch" in error["message"]
+
+
+def test_search_text_stall_is_timeout(server):
+    proc = server("stall", "--timeout", "1")
+    proc.initialize()
+    error = _error(proc.call("search_text", {"query": "lorem", "corpora": ["Alpha"]}, timeout=15))
+    assert error["code"] == "timeout"
+
+
+# ---------------------------------------------------------------------------
 # Start-up
 # ---------------------------------------------------------------------------
 
@@ -357,7 +533,11 @@ def test_start_runs_no_migration_and_writes_no_config(server, tmp_path):
     assert (legacy / "data" / "store.json").read_text() == "{}"
 
 
-def test_list_corpora_migrates_no_config_and_generates_no_key(server, tmp_path):
+@pytest.mark.parametrize(
+    "tool, arguments",
+    [("list_corpora", {}), ("search_text", {"query": "lorem", "corpora": ["Alpha"]})],
+)
+def test_a_call_migrates_no_config_and_generates_no_key(server, tmp_path, tool, arguments):
     home = tmp_path / "home"
     legacy = home / ".arcaneum"
     legacy.mkdir(parents=True)
@@ -376,7 +556,7 @@ def test_list_corpora_migrates_no_config_and_generates_no_key(server, tmp_path):
     env.pop("MEILISEARCH_API_KEY", None)
     proc = server("real", env=env)
     proc.initialize()
-    error = _error(proc.call("list_corpora"))
+    error = _error(proc.call(tool, arguments))
     proc.close()
 
     assert error["code"] == "service-down"
@@ -445,4 +625,88 @@ class TestListingCap:
 
         with pytest.raises(InvalidArgumentError) as exc_info:
             cap_listing({"corpora": [], "service_errors": ["x" * 5000]}, 4000)
+        assert "4000" in str(exc_info.value)
+
+
+class TestSearchTextArguments:
+    """Argument checks run before any client or core call."""
+
+    @pytest.fixture
+    def tools(self, monkeypatch):
+        import arcaneum.mcp_server as mcp_server
+
+        def refuse(*_args, **_kwargs):
+            raise AssertionError("a refused call reached a client")
+
+        monkeypatch.setattr(mcp_server, "_meili_client", refuse)
+        monkeypatch.setattr(mcp_server, "_source_roots_client", refuse)
+        return mcp_server.ArcTools(allowlist=frozenset({"A"}))
+
+    @pytest.mark.parametrize(
+        "arguments, field",
+        [
+            ({"corpora": ["A"]}, "query"),
+            ({"query": 3, "corpora": ["A"]}, "query"),
+            ({"query": "q"}, "corpora"),
+            ({"query": "q", "corpora": []}, "corpora"),
+            ({"query": "q", "corpora": "A"}, "corpora"),
+            ({"query": "q", "corpora": ["A", ""]}, "corpora"),
+            ({"query": "q", "corpora": ["A"], "limit": 26}, "limit"),
+            ({"query": "q", "corpora": ["A"], "limit": 0}, "limit"),
+            ({"query": "q", "corpora": ["A"], "limit": "5"}, "limit"),
+            ({"query": "q", "corpora": ["A"], "limit": True}, "limit"),
+            ({"query": "q", "corpora": ["A"], "limit": 2.5}, "limit"),
+            ({"query": "q", "corpora": ["A"], "offset": -1}, "offset"),
+            ({"query": "q", "corpora": ["A"], "max_content_chars": -1}, "max_content_chars"),
+            ({"query": "q", "corpora": ["A"], "filter": 1}, "filter"),
+            ({"query": "q", "corpora": ["A"], "verbose": True}, "verbose"),
+        ],
+    )
+    def test_a_bad_argument_names_its_field(self, tools, arguments, field):
+        with pytest.raises(InvalidArgumentError) as exc_info:
+            tools.search_text(arguments)
+        assert exc_info.value.code == "bad-argument"
+        assert field in str(exc_info.value)
+
+    def test_a_corpus_outside_the_allowlist_is_refused_before_any_client(self, tools):
+        with pytest.raises(UnknownCorpusError) as exc_info:
+            tools.search_text({"query": "q", "corpora": ["A", "B"]})
+        assert "B" in str(exc_info.value)
+
+
+class TestSearchCap:
+    def _data(self, count):
+        return {
+            "schema_version": 1,
+            "query": "q",
+            "corpora": ["C"],
+            "missing_corpora": [],
+            "limit": count,
+            "offset": 0,
+            "hits": [{"cite": f"C:doc{i}.md", "snippet": "x" * 300} for i in range(count)],
+        }
+
+    def test_a_result_under_the_cap_is_unchanged(self):
+        from arcaneum.mcp_server import cap_search
+
+        data = self._data(3)
+        assert cap_search(data, 4000) == data
+
+    def test_a_result_over_the_cap_drops_tail_hits(self):
+        from arcaneum.mcp_server import cap_search, serialize
+
+        capped = cap_search(self._data(25), 4000)
+        assert len(serialize(capped)) <= 4000
+        kept = len(capped["hits"])
+        assert 0 < kept < 25
+        assert capped["hits"] == self._data(25)["hits"][:kept]
+        assert capped["omitted_hits"] == 25 - kept
+        assert capped["output_truncated"] is True
+
+    def test_a_cap_no_hit_fits_is_bad_argument(self):
+        from arcaneum.mcp_server import cap_search
+
+        data = {**self._data(1), "query": "q" * 5000}
+        with pytest.raises(InvalidArgumentError) as exc_info:
+            cap_search(data, 4000)
         assert "4000" in str(exc_info.value)

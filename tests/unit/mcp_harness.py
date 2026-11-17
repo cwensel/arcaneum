@@ -2,15 +2,18 @@
 
 usage: python mcp_harness.py <scenario> <arc arguments...>
 
-The tests drive `arc mcp` (and `arc corpus list --json`, for the CLI-parity
-check) as a real child process over pipes. A scenario swaps the client
-factories the retrieval core builds its clients from, so no service runs:
+The tests drive `arc mcp` (and `arc corpus list --json` and `arc search text
+--json`, for the CLI-parity checks) as a real child process over pipes. A
+scenario swaps the client factories the retrieval core builds its clients from,
+so no service runs:
 
-- ``fake``: three corpora, both services up
+- ``fake``: three corpora, both services up; each index holds ``DOCUMENTS``
+  chunks of ``CONTENT_CHARS`` characters, and each corpus records the source
+  root ``/src/<corpus>``
 - ``many``: 200 corpora, for the output cap
 - ``noisy``: ``fake``, but the listing prints to stdout through every channel a
   library might use (print, a raw fd 1 write, logging, warnings, rich)
-- ``stall``: the listing blocks, for the per-call timeout
+- ``stall``: the listing and the text search block, for the per-call timeout
 - ``qdrant-down`` / ``meili-down``: that service refuses connections
 - ``real``: no fakes (start-up checks that never call a tool)
 """
@@ -19,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 import time
 import warnings
@@ -29,6 +33,28 @@ CORPORA = {
     "Beta": {"collection_type": "markdown", "model": "arctic-m", "description": "Beta notes"},
     "Gamma": {"collection_type": "code", "model": "jina-code", "description": "Gamma code"},
 }
+
+DOCUMENTS = 30
+CONTENT_CHARS = 2000
+
+
+def _documents(corpus: str) -> list[dict]:
+    """The chunks a fake index holds, best match first."""
+    documents = []
+    for i in range(DOCUMENTS):
+        content = f"{corpus} chunk {i} " + "lorem " * (CONTENT_CHARS // 6)
+        documents.append(
+            {
+                "id": f"{corpus}-{i}",
+                "file_path": f"/src/{corpus}/doc{i}.md",
+                "section": f"Part {i}",
+                "language": "python" if i % 2 else "markdown",
+                "content": content[:CONTENT_CHARS],
+                "_formatted": {"content": content[:CONTENT_CHARS]},
+                "_rankingScore": round(1 - i / 100, 2),
+            }
+        )
+    return documents
 
 
 class FakeQdrant:
@@ -57,11 +83,17 @@ class FakeQdrant:
     def scroll(self, **_kwargs):
         return [], None
 
+    def retrieve(self, collection_name, **_kwargs):
+        if self.down:
+            raise ConnectionError("[Errno 61] Connection refused")
+        return [SimpleNamespace(payload={"source_roots": [f"/src/{collection_name}"]})]
+
 
 class FakeMeili:
-    def __init__(self, names, healthy=True):
+    def __init__(self, names, healthy=True, stall=False):
         self.names = list(names)
         self.healthy = healthy
+        self.stall = stall
 
     def health_check(self):
         return self.healthy
@@ -71,6 +103,27 @@ class FakeMeili:
 
     def get_stats(self):
         return {"indexes": {name: {"numberOfDocuments": 4} for name in self.names}}
+
+    def index_exists(self, name):
+        return name in self.names
+
+    def get_index_settings(self, _name):
+        return {"filterableAttributes": ["file_path", "language"]}
+
+    def search(self, name, _query, filter=None, limit=20, offset=0, **_kwargs):
+        if self.stall:
+            time.sleep(60)
+        documents = _documents(name)
+        if filter:
+            match = re.fullmatch(r'(\w+) = "([^"]*)"', filter)
+            if match is None or match.group(1) not in ("file_path", "language"):
+                raise RuntimeError(f"invalid_search_filter: Attribute `{filter}` is not filterable")
+            documents = [d for d in documents if d.get(match.group(1)) == match.group(2)]
+        return {
+            "hits": documents[offset : offset + limit],
+            "estimatedTotalHits": len(documents),
+            "processingTimeMs": 1,
+        }
 
 
 def _chatter():
@@ -100,7 +153,7 @@ def install(scenario: str, command: list[str]) -> None:
         metadata = dict(CORPORA)
 
     qdrant = FakeQdrant(metadata, down=scenario == "qdrant-down")
-    meili = FakeMeili(metadata, healthy=scenario != "meili-down")
+    meili = FakeMeili(metadata, healthy=scenario != "meili-down", stall=scenario == "stall")
 
     def get_collection_metadata(_client, name):
         if scenario == "noisy":
@@ -117,6 +170,11 @@ def install(scenario: str, command: list[str]) -> None:
 
         cli_corpus.create_qdrant_client = cli_utils.create_qdrant_client
         cli_corpus.create_meili_client = cli_utils.create_meili_client
+    if command[:2] == ["search", "text"]:
+        import arcaneum.cli.fulltext as cli_fulltext
+
+        cli_fulltext.create_qdrant_client = cli_utils.create_qdrant_client
+        cli_fulltext.create_meili_client = cli_utils.create_meili_client
 
 
 def main() -> int:

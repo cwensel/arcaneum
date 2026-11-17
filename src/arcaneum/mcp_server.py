@@ -70,6 +70,70 @@ LIST_CORPORA_TOOL: dict[str, Any] = {
     "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
 }
 
+# MCP-only policy for the search tools (RDR-026 Q2, Q3): the server refuses a
+# limit above the maximum rather than clamping it, since the inputSchema
+# advertises the bound. The CLI's own defaults differ (no snippet cap in JSON).
+SEARCH_LIMIT_DEFAULT = 10
+SEARCH_LIMIT_MAX = 25
+SEARCH_CONTENT_CHARS_DEFAULT = 1200
+
+SEARCH_TEXT_TOOL: dict[str, Any] = {
+    "name": "search_text",
+    "title": "Search text",
+    "description": (
+        "Ranked full-text search for keywords, identifiers and quoted phrases "
+        "across one or more arc corpora. Each hit carries a cite "
+        "(<corpus>:<locator>) and a snippet. Same data as "
+        "`arc search text --json`."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": (
+                    "Keywords or identifiers; wrap a phrase in double quotes for an "
+                    "exact match. No regular expressions."
+                ),
+            },
+            "corpora": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "minItems": 1,
+                "description": "The corpora to search, as list_corpora names them.",
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": SEARCH_LIMIT_MAX,
+                "default": SEARCH_LIMIT_DEFAULT,
+                "description": "Maximum number of hits.",
+            },
+            "offset": {
+                "type": "integer",
+                "minimum": 0,
+                "default": 0,
+                "description": "Number of hits to skip, for paging.",
+            },
+            "filter": {
+                "type": "string",
+                "description": (
+                    "Metadata filter: key=value, key:op:value, a JSON object such as "
+                    '{"language": "python"}, or a MeiliSearch expression.'
+                ),
+            },
+            "max_content_chars": {
+                "type": "integer",
+                "minimum": 0,
+                "default": SEARCH_CONTENT_CHARS_DEFAULT,
+                "description": "Maximum characters per snippet; 0 means unlimited.",
+            },
+        },
+        "required": ["query", "corpora"],
+        "additionalProperties": False,
+    },
+}
+
 
 # ---------------------------------------------------------------------------
 # Allowlist
@@ -255,6 +319,41 @@ def serialize(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
 
 
+def _cap_tail(
+    data: dict[str, Any], key: str, omitted_key: str, max_chars: int, refusal: str
+) -> dict[str, Any]:
+    """Fit ``data`` into ``max_chars`` by dropping whole ``data[key]`` items from the tail.
+
+    A capped result gains ``output_truncated: true`` and ``omitted_key``.
+
+    Raises:
+        InvalidArgumentError: ``refusal``, when the result does not fit even with no items
+    """
+    if len(serialize(data)) <= max_chars:
+        return data
+    entries = data[key]
+
+    def keep(count: int) -> dict[str, Any]:
+        return {
+            **data,
+            key: entries[:count],
+            "output_truncated": True,
+            omitted_key: len(entries) - count,
+        }
+
+    if len(serialize(keep(0))) > max_chars:
+        raise InvalidArgumentError(refusal)
+    # The serialized size grows with the kept prefix: find the longest that fits.
+    low, high = 0, len(entries) - 1
+    while low < high:
+        middle = (low + high + 1) // 2
+        if len(serialize(keep(middle))) <= max_chars:
+            low = middle
+        else:
+            high = middle - 1
+    return keep(low)
+
+
 def cap_listing(data: dict[str, Any], max_chars: int) -> dict[str, Any]:
     """Fit a listing into ``max_chars`` by dropping whole entries from the tail.
 
@@ -263,32 +362,28 @@ def cap_listing(data: dict[str, Any], max_chars: int) -> dict[str, Any]:
     Raises:
         InvalidArgumentError: the listing does not fit even with no entries
     """
-    if len(serialize(data)) <= max_chars:
-        return data
-    corpora = data["corpora"]
+    refusal = (
+        f"list_corpora's result does not fit --max-output-chars {max_chars} even with no entries"
+    )
+    return _cap_tail(data, "corpora", "omitted_corpora", max_chars, refusal)
 
-    def keep(count: int) -> dict[str, Any]:
-        return {
-            **data,
-            "corpora": corpora[:count],
-            "output_truncated": True,
-            "omitted_corpora": len(corpora) - count,
-        }
 
-    if len(serialize(keep(0))) > max_chars:
-        raise InvalidArgumentError(
-            f"list_corpora's result does not fit --max-output-chars {max_chars} "
-            "even with no entries"
-        )
-    # The serialized size grows with the kept prefix: find the longest that fits.
-    low, high = 0, len(corpora) - 1
-    while low < high:
-        middle = (low + high + 1) // 2
-        if len(serialize(keep(middle))) <= max_chars:
-            low = middle
-        else:
-            high = middle - 1
-    return keep(low)
+def cap_search(data: dict[str, Any], max_chars: int) -> dict[str, Any]:
+    """Fit a search result into ``max_chars`` by dropping whole hits from the tail.
+
+    Applied after ``max_content_chars`` bounds each snippet, so no hit is cut
+    mid-way. A capped result gains ``output_truncated: true`` and
+    ``omitted_hits``.
+
+    Raises:
+        InvalidArgumentError: the result does not fit even with no hits (a
+            query or corpus list longer than the cap)
+    """
+    refusal = (
+        f"the search result does not fit --max-output-chars {max_chars} even with "
+        "no hits; shorten the query or name fewer corpora"
+    )
+    return _cap_tail(data, "hits", "omitted_hits", max_chars, refusal)
 
 
 def success_result(data: dict[str, Any]) -> mcp_types.CallToolResult:
@@ -367,10 +462,74 @@ def _meili_client():
     return utils.create_meili_client(generate_key=False)
 
 
+def _source_roots_client():
+    """A Qdrant client for reading cite roots, or None when one cannot be made.
+
+    Text search does not need Qdrant: a failed read only means absolute-path
+    cites (RDR-026 Q4). It gets the CLI's short timeout, and a legacy config
+    is read, not migrated.
+    """
+    from .cli import utils
+    from .cli.fulltext import SOURCE_ROOTS_TIMEOUT_SECONDS
+
+    try:
+        return utils.create_qdrant_client(
+            config_path=utils.resolve_config_path(migrate=False),
+            timeout=SOURCE_ROOTS_TIMEOUT_SECONDS,
+        )
+    except Exception as error:
+        logger.debug("No Qdrant client for source roots: %s", error)
+        return None
+
+
 def _reject_arguments(tool: str, arguments: Mapping[str, Any], allowed: Iterable[str]) -> None:
     unexpected = sorted(set(arguments) - set(allowed))
     if unexpected:
         raise InvalidArgumentError(f"{tool} got unexpected arguments: {', '.join(unexpected)}")
+
+
+def _string_argument(arguments: Mapping[str, Any], name: str, *, required: bool) -> str | None:
+    value = arguments.get(name)
+    if value is None:
+        if required:
+            raise InvalidArgumentError(f"{name} is required")
+        return None
+    if not isinstance(value, str):
+        raise InvalidArgumentError(f"{name} must be a string, got {type(value).__name__}")
+    return value
+
+
+def _corpora_argument(arguments: Mapping[str, Any]) -> list[str]:
+    value = arguments.get("corpora")
+    if value is None:
+        raise InvalidArgumentError("corpora is required: name one or more corpora")
+    if not isinstance(value, list) or not value:
+        raise InvalidArgumentError("corpora must be a non-empty array of corpus names")
+    if not all(isinstance(name, str) and name for name in value):
+        raise InvalidArgumentError("corpora must hold only non-empty corpus names")
+    return value
+
+
+def _integer_argument(
+    arguments: Mapping[str, Any],
+    name: str,
+    default: int,
+    minimum: int,
+    maximum: int | None = None,
+) -> int:
+    """An integer argument within its advertised bounds; out of bounds is refused, not clamped."""
+    value = arguments.get(name)
+    if value is None:
+        return default
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise InvalidArgumentError(f"{name} must be an integer, got {value!r}")
+    if value < minimum:
+        raise InvalidArgumentError(f"{name} must be at least {minimum}, got {value}")
+    if maximum is not None and value > maximum:
+        raise InvalidArgumentError(f"{name} must be at most {maximum}, got {value}")
+    return value
 
 
 class ArcTools:
@@ -393,7 +552,10 @@ class ArcTools:
         import mcp_types
 
         read_only = mcp_types.ToolAnnotations(read_only_hint=True)
-        return [mcp_types.Tool(**LIST_CORPORA_TOOL, annotations=read_only)]
+        return [
+            mcp_types.Tool(**definition, annotations=read_only)
+            for definition in (LIST_CORPORA_TOOL, SEARCH_TEXT_TOOL)
+        ]
 
     def abandoned_calls_running(self) -> bool:
         """True while an abandoned call (timed out or cancelled) still runs."""
@@ -405,6 +567,7 @@ class ArcTools:
     ) -> mcp_types.CallToolResult:
         handlers: dict[str, Callable[[Mapping[str, Any]], dict[str, Any]]] = {
             "list_corpora": self.list_corpora,
+            "search_text": self.search_text,
         }
         handler = handlers.get(name)
         if handler is None:
@@ -462,6 +625,38 @@ class ArcTools:
         if self.allowlist is not None:
             data["corpora"] = [c for c in data["corpora"] if c["name"] in self.allowlist]
         return cap_listing(data, self.max_output_chars)
+
+    def search_text(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
+        """``arc search text --json``'s ``data`` under the MCP bounds and the output cap.
+
+        Every argument and the allowlist are checked before any client is made.
+        """
+        _reject_arguments("search_text", arguments, SEARCH_TEXT_TOOL["input_schema"]["properties"])
+        query = _string_argument(arguments, "query", required=True)
+        corpora = _corpora_argument(arguments)
+        limit = _integer_argument(
+            arguments, "limit", SEARCH_LIMIT_DEFAULT, minimum=1, maximum=SEARCH_LIMIT_MAX
+        )
+        offset = _integer_argument(arguments, "offset", 0, minimum=0)
+        filter_text = _string_argument(arguments, "filter", required=False)
+        max_content_chars = _integer_argument(
+            arguments, "max_content_chars", SEARCH_CONTENT_CHARS_DEFAULT, minimum=0
+        )
+        require_allowed(self.allowlist, corpora)
+
+        from .retrieval import search_text
+
+        result = search_text(
+            query,
+            corpora,
+            filter=filter_text or None,
+            limit=limit,
+            offset=offset,
+            client=_meili_client(),
+            qdrant_client=_source_roots_client(),
+        )
+        data = result.to_data(max_content_chars=max_content_chars)
+        return cap_search(data, self.max_output_chars)
 
 
 # ---------------------------------------------------------------------------

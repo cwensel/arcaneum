@@ -2527,6 +2527,8 @@ arc mcp                                       # Serve every corpus
 arc mcp --corpus DevRef --corpus Notes        # Serve only these corpora
 ARC_MCP_CORPORA=DevRef,Notes arc mcp          # The same, from the environment
 arc mcp --timeout 20 --max-output-chars 8000  # Tighter per-call limits
+arc mcp --corpus DevRef --print-config claude # Print a Claude Code --mcp-config JSON
+arc mcp --corpus DevRef --print-config codex  # Print a codex mcp_servers.arc TOML table
 ```
 
 **Options:**
@@ -2540,10 +2542,22 @@ arc mcp --timeout 20 --max-output-chars 8000  # Tighter per-call limits
   adds `output_truncated: true` and `omitted_corpora`. An error whose
   `{code, message}` would exceed it gets a shortened message ending in
   `[truncated]`.
+- `--print-config claude|codex`: Print a client config that launches this `arc`
+  by absolute path, then exit without serving. `claude` prints a
+  `--mcp-config` JSON document; `codex` prints an `[mcp_servers.arc]` TOML
+  table followed by the same settings as `codex -c` overrides. The command is
+  the running `arc` script when its shebang names an absolute interpreter; a
+  script whose shebang needs PATH (a checkout's `bin/arc`) runs under the
+  running Python; under `python -m` it is the running Python with
+  `-m arcaneum.cli.main`. Either way a client under launchd's fixed PATH still
+  finds it. The snippet's `args` carry the allowlist (from `--corpus` or
+  `ARC_MCP_CORPORA`) and any non-default `--timeout` or `--max-output-chars`.
 
 A failed call sets `isError`, carries `{code, message}` as its structured
 content, and reads `<code>: <message>`. The codes are the ones `--json` errors
 carry, for example `service-down` (naming Qdrant or MeiliSearch) and `timeout`.
+The [arc MCP Server guide](mcp-server.md) covers launching it from Claude Code
+and codex, the allowlist, the error codes and the cite grammar.
 
 ## Store
 

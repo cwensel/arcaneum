@@ -2898,7 +2898,18 @@ def doctor(verbose, output_json):
     show_default=True,
     help="Bound on each result's serialized data; whole entries are dropped to fit.",
 )
-def mcp(corpora, timeout, max_output_chars):
+@click.option(
+    "--print-config",
+    "print_config",
+    type=click.Choice(["claude", "codex"]),
+    default=None,
+    help=(
+        "Print a client config that launches this arc by absolute path with these "
+        "options, then exit without serving: claude's --mcp-config JSON, or codex's "
+        "mcp_servers.arc TOML table and -c overrides."
+    ),
+)
+def mcp(corpora, timeout, max_output_chars, print_config):
     """Serve read-only arc tools to an MCP client over stdio (RDR-026).
 
     stdout carries only protocol messages; logs and diagnostics go to stderr.
@@ -2908,7 +2919,22 @@ def mcp(corpora, timeout, max_output_chars):
         arc mcp
         arc mcp --corpus DevRef --corpus Notes --timeout 20
         ARC_MCP_CORPORA=DevRef,Notes arc mcp
+        arc mcp --corpus DevRef --print-config claude > arc-mcp.json
     """
+    if print_config:
+        from arcaneum.mcp_server import allowlist_names, launch_command, render_config
+
+        click.echo(
+            render_config(
+                print_config,
+                launch_command(),
+                corpora=allowlist_names(corpora, os.environ),
+                timeout=timeout,
+                max_output_chars=max_output_chars,
+            )
+        )
+        return 0
+
     from arcaneum.mcp_server import serve
 
     return serve(corpora=corpora, timeout=timeout, max_output_chars=max_output_chars)

@@ -16,6 +16,8 @@
 - **[MeiliSearch Tuning](guides/meilisearch-tuning.md)** - Container sizing for slow indexing and sync timeout warnings
 - **[Remote Embedding Workers](guides/remote-embedding-workers.md)** - Optional: run
   document embedding on spare machines over the LAN or a tailnet
+- **[arc MCP Server](guides/mcp-server.md)** - Serve read-only arc tools to MCP
+  clients such as review sessions: launch config, allowlist, error codes, cite grammar
 
 ## Testing
 

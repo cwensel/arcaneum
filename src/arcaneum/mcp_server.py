@@ -18,6 +18,10 @@ protocol messages alone:
 - **Per call**: the core runs in a worker thread under ``--timeout``; a stalled
   call is abandoned (every core call is read-only) and reported as ``timeout``.
   ``--max-output-chars`` bounds the serialized ``data`` of every result.
+- **Launch config**: ``--print-config claude|codex`` prints a client config
+  that names an absolute command (``launch_command``), so a client started
+  under launchd's fixed PATH still finds arc, and exits before any server
+  start.
 - **Results**: a success carries ``data`` as ``structuredContent`` and as one
   JSON text block; a failure sets ``isError`` with ``{code, message}`` and the
   text ``<code>: <message>``, the codes of ``arcaneum.cli.errors``. The output
@@ -72,6 +76,17 @@ LIST_CORPORA_TOOL: dict[str, Any] = {
 # ---------------------------------------------------------------------------
 
 
+def allowlist_names(flag_corpora: Iterable[str], environ: Mapping[str, str]) -> list[str]:
+    """The allowlisted corpus names in order: ``--corpus`` names, else ``ARC_MCP_CORPORA``.
+
+    Empty when neither names a corpus. Repeated names appear once.
+    """
+    names = [name.strip() for name in flag_corpora if name.strip()]
+    if not names:
+        names = [name.strip() for name in environ.get(ALLOWLIST_ENV, "").split(",") if name.strip()]
+    return list(dict.fromkeys(names))
+
+
 def resolve_allowlist(
     flag_corpora: Iterable[str], environ: Mapping[str, str]
 ) -> frozenset[str] | None:
@@ -79,10 +94,7 @@ def resolve_allowlist(
 
     Returns None (every corpus allowed) when neither names a corpus.
     """
-    names = [name.strip() for name in flag_corpora if name.strip()]
-    if not names:
-        names = [name.strip() for name in environ.get(ALLOWLIST_ENV, "").split(",") if name.strip()]
-    return frozenset(names) or None
+    return frozenset(allowlist_names(flag_corpora, environ)) or None
 
 
 def require_allowed(allowlist: frozenset[str] | None, names: Iterable[str]) -> None:
@@ -95,6 +107,142 @@ def require_allowed(allowlist: frozenset[str] | None, names: Iterable[str]) -> N
         raise UnknownCorpusError(
             f"Unknown corpus: {', '.join(refused)} (this server serves {served})"
         )
+
+
+# ---------------------------------------------------------------------------
+# Launch config (--print-config)
+# ---------------------------------------------------------------------------
+
+PRINT_CONFIG_TARGETS = ("claude", "codex")
+# The module an interpreter runs as arc. Not ``arcaneum`` (a package
+# ``__main__.py``): the repo's .gitignore ignores ``_*`` files bar __init__.py.
+LAUNCH_MODULE = "arcaneum.cli.main"
+
+
+def _shebang_interpreter(script: str) -> str | None:
+    """The interpreter ``script``'s shebang names, or None when it has no shebang."""
+    try:
+        with open(script, "rb") as handle:
+            first = handle.readline(1024)
+    except OSError:
+        return None
+    if not first.startswith(b"#!"):
+        return None
+    words = first[2:].split()
+    return os.fsdecode(words[0]) if words else ""
+
+
+def _absolute_interpreter(interpreter: str) -> bool:
+    """True when ``interpreter`` is an existing executable named by absolute path.
+
+    ``/usr/bin/env`` does not count: env searches PATH, which a
+    launchd-started client does not share with the shell that printed the
+    config. ``/bin/sh`` (pip's wrapper for a long interpreter path) does.
+    """
+    return (
+        os.path.isabs(interpreter)
+        and os.path.basename(interpreter) != "env"
+        and os.path.isfile(interpreter)
+        and os.access(interpreter, os.X_OK)
+    )
+
+
+def launch_command(argv0: str | None = None, executable: str | None = None) -> list[str]:
+    """An absolute command that starts this ``arc``, with no PATH lookup.
+
+    The running script (``argv0``, resolved) when it is executable and its
+    shebang names an absolute interpreter, as an installed console script's
+    does. An executable script whose shebang needs PATH (a checkout's
+    ``bin/arc``, ``#!/usr/bin/env python3``) runs under the running
+    interpreter, so the script keeps its own ``sys.path`` setup (``bin/arc``
+    puts the checkout's ``src`` first). Otherwise (``python -m
+    arcaneum.cli.main``) the running interpreter with ``-m arcaneum.cli.main``.
+    """
+    argv0 = sys.argv[0] if argv0 is None else argv0
+    executable = sys.executable if executable is None else executable
+    if argv0 and os.path.isfile(argv0) and os.access(argv0, os.X_OK):
+        script = os.path.realpath(argv0)
+        interpreter = _shebang_interpreter(script)
+        if interpreter is not None:
+            if _absolute_interpreter(interpreter):
+                return [script]
+            return [executable, script]
+    return [executable, "-m", LAUNCH_MODULE]
+
+
+def _format_seconds(seconds: float) -> str:
+    """``seconds`` as text that parses back to the same float (``20.0`` as ``20``)."""
+    text = repr(float(seconds))
+    return text[:-2] if text.endswith(".0") else text
+
+
+def server_args(
+    corpora: Iterable[str] = (),
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS,
+) -> list[str]:
+    """The ``arc mcp`` arguments that serve ``corpora`` under these limits.
+
+    Defaults are left out, so the launched server tracks arc's own.
+    """
+    args = ["mcp"]
+    for name in corpora:
+        args += ["--corpus", name]
+    if timeout != DEFAULT_TIMEOUT_SECONDS:
+        args += ["--timeout", _format_seconds(timeout)]
+    if max_output_chars != DEFAULT_MAX_OUTPUT_CHARS:
+        args += ["--max-output-chars", str(max_output_chars)]
+    return args
+
+
+def _toml_value(value: str | list[str]) -> str:
+    # A JSON string or array of strings is a TOML basic string or array, once
+    # DEL, which JSON leaves raw and TOML forbids, is escaped. Non-ASCII stays
+    # raw: JSON's surrogate-pair escapes are not valid TOML.
+    return json.dumps(value, ensure_ascii=False).replace("\x7f", "\\u007f")
+
+
+def render_config(
+    target: str,
+    command: list[str],
+    *,
+    corpora: Iterable[str] = (),
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS,
+) -> str:
+    """A client config snippet that launches ``command`` as the ``arc`` MCP server.
+
+    ``claude``: a ``--mcp-config`` JSON document. ``codex``: an
+    ``[mcp_servers.arc]`` TOML table, followed by comments giving the same
+    settings as ``codex -c`` overrides.
+
+    Raises:
+        ValueError: ``target`` is not one of ``PRINT_CONFIG_TARGETS``
+    """
+    executable, prefix = command[0], command[1:]
+    args = [*prefix, *server_args(corpora, timeout, max_output_chars)]
+    if target == "claude":
+        config = {"mcpServers": {SERVER_NAME: {"command": executable, "args": args}}}
+        return json.dumps(config, ensure_ascii=False, indent=2)
+    if target == "codex":
+        import shlex
+
+        table = f"mcp_servers.{SERVER_NAME}"
+        overrides = [
+            f"#   -c {shlex.quote(f'{table}.command={_toml_value(executable)}')}",
+            f"#   -c {shlex.quote(f'{table}.args={_toml_value(args)}')}",
+        ]
+        return "\n".join(
+            [
+                f"[{table}]",
+                f"command = {_toml_value(executable)}",
+                f"args = {_toml_value(args)}",
+                "",
+                "# The same settings as codex -c overrides:",
+                *overrides,
+            ]
+        )
+    raise ValueError(f"unknown --print-config target: {target}")
 
 
 # ---------------------------------------------------------------------------

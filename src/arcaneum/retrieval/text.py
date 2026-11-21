@@ -1,27 +1,27 @@
-"""Full-text (MeiliSearch) search for the retrieval core (RDR-026)."""
+"""Full-text search for the retrieval core (RDR-026), through a ``TextBackend`` (RDR-027 Q1)."""
 
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from ..cli.errors import ArcaneumError, BadFilterError, ServiceDownError
+from ..cli.errors import ArcaneumError, BadFilterError
 from ..cli.search_merge import fetch_from_corpora, per_corpus_limit
-from ..search.filters import parse_filter, to_meilisearch_filter, unfilterable_field_message
+from ..search.filters import parse_filter
 from .failures import is_connection_failure, service_down
 from .hits import build_hit, read_corpora_source_roots, search_data
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from .text_backend import TextBackend
 
-MEILI_START_HINT = "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
+logger = logging.getLogger(__name__)
 
 
 class _MissingCorpus(Exception):
     """Sentinel raised by the per-corpus fetch when an index is absent.
 
-    MeiliSearch's index_exists() is an upfront check, so there is no driver
+    The backend's exists() is an upfront check, so there is no driver
     exception to inspect: ``fetch_from_corpora``'s ``is_missing`` predicate
     matches on this type.
     """
@@ -29,7 +29,7 @@ class _MissingCorpus(Exception):
 
 @dataclass
 class TextSearchResult:
-    """Merged MeiliSearch hits across the requested corpora."""
+    """Merged text-backend hits across the requested corpora."""
 
     query: str
     corpora: List[str]
@@ -83,44 +83,6 @@ class TextSearchResult:
         )
 
 
-def _is_filter_error(exc: Exception) -> bool:
-    message = str(exc)
-    return (
-        getattr(exc, "code", None) == "invalid_search_filter"
-        or "invalid_search_filter" in message
-        or "is not filterable" in message
-    )
-
-
-def _bad_filter(client, corpus_name: str, exc: Exception) -> BadFilterError:
-    """Name the rejected attribute and list the index's filterable ones."""
-    attr_match = re.search(r"Attribute `([^`]+)`", str(exc))
-    bad_attr = attr_match.group(1) if attr_match else None
-
-    try:
-        settings = client.get_index_settings(corpus_name)
-        filterable = list(settings.get("filterableAttributes") or [])
-    except Exception:
-        filterable = None
-
-    if bad_attr and filterable is not None:
-        return BadFilterError(unfilterable_field_message(bad_attr, filterable, corpus_name))
-
-    if bad_attr:
-        lines = [f"Filter attribute '{bad_attr}' is not filterable."]
-    else:
-        lines = [f"Invalid filter: {getattr(exc, 'message', None) or exc}"]
-    if filterable:
-        lines.append(f"Available filterable attributes for index '{corpus_name}':")
-        lines.extend(f"  - {attr}" for attr in filterable)
-    elif filterable is not None:
-        lines.append(
-            f"Index '{corpus_name}' has no filterable attributes configured; "
-            "filters cannot be used with this index."
-        )
-    return BadFilterError("\n".join(lines))
-
-
 def search_text(
     query: str,
     corpora: List[str],
@@ -128,21 +90,22 @@ def search_text(
     filter: Optional[str] = None,
     limit: int = 10,
     offset: int = 0,
-    client=None,
+    text_backend: Optional["TextBackend"] = None,
     qdrant_client=None,
     verbose: bool = False,
 ) -> TextSearchResult:
-    """Search MeiliSearch indexes and merge hits round-robin across corpora.
+    """Search the corpora's text backend and merge hits round-robin across corpora.
 
     Args:
         query: Search query (quotes for exact phrases)
-        corpora: MeiliSearch index names to search
+        corpora: Corpus names to search
         filter: Metadata filter (``search/filters.py``: the neutral dialect,
             translated with every value quoted, or a native MeiliSearch
             expression)
         limit: Maximum number of merged hits
         offset: Number of merged hits to skip
-        client: FullTextClient (created from config when None)
+        text_backend: The corpora's ``TextBackend`` (MeiliSearch from config
+            when None)
         qdrant_client: Qdrant client used only to read each corpus's
             ``source_roots`` for its cites; None, or a failed read, cites the
             absolute path (RDR-026 Q4)
@@ -150,52 +113,45 @@ def search_text(
 
     Raises:
         UnknownCorpusError: no requested corpus exists
-        BadFilterError: the filter does not parse, is Qdrant JSON, uses
-            ``contains``, or MeiliSearch rejects it (e.g. an unfilterable field)
-        ServiceDownError: MeiliSearch is unreachable
+        BadFilterError: the filter does not parse, or the backend refuses it
+            (MeiliSearch: Qdrant JSON, ``contains``, an unfilterable field)
+        ServiceDownError: the text backend is unreachable
         ArcaneumError: any other search failure
     """
-    meili_filter = None
+    parsed = None
     if filter:
         try:
-            meili_filter = to_meilisearch_filter(parse_filter(filter))
+            parsed = parse_filter(filter)
         except ValueError as e:
             raise BadFilterError(f"Invalid filter: {e}") from e
 
-    if client is None:
+    if text_backend is None:
         from ..cli.utils import create_meili_client
+        from ..fulltext.backend import MeiliTextBackend
 
-        client = create_meili_client()
+        text_backend = MeiliTextBackend(create_meili_client())
 
-    if not client.health_check():
-        raise ServiceDownError(f"MeiliSearch server not available. {MEILI_START_HINT}")
+    text_backend.check_filter(parsed)
+    text_backend.health()
 
     fetch_limit = per_corpus_limit(corpora, limit, offset)
     totals = {"processing_time_ms": 0, "estimated_total_hits": 0}
 
     def _fetch(corpus_name: str) -> list:
-        if not client.index_exists(corpus_name):
+        if not text_backend.exists(corpus_name):
             raise _MissingCorpus(corpus_name)
-        try:
-            results = client.search(
-                corpus_name,
-                query,
-                filter=meili_filter,
-                limit=fetch_limit,
-                offset=0,  # Apply offset after merge
-                attributes_to_highlight=["content"],
-                show_ranking_score=True,
-            )
-        except Exception as e:
-            if meili_filter and _is_filter_error(e):
-                raise _bad_filter(client, corpus_name, e) from e
-            raise
-        hits = results.get("hits", [])
-        for hit in hits:
+        page = text_backend.search(
+            corpus_name,
+            query,
+            filter=parsed,
+            limit=fetch_limit,
+            offset=0,  # Apply offset after merge
+        )
+        for hit in page.hits:
             hit["_corpus"] = corpus_name
-        totals["processing_time_ms"] += results.get("processingTimeMs", 0)
-        totals["estimated_total_hits"] += results.get("estimatedTotalHits", 0)
-        return hits
+        totals["processing_time_ms"] += page.processing_time_ms
+        totals["estimated_total_hits"] += page.estimated_total_hits
+        return page.hits
 
     try:
         per_corpus_hits, missing_corpora = fetch_from_corpora(
@@ -209,7 +165,7 @@ def search_text(
         raise
     except Exception as e:
         if is_connection_failure(e):
-            raise service_down("MeiliSearch", e) from e
+            raise service_down(text_backend.service, e) from e
         raise ArcaneumError(f"Search failed: {e}") from e
 
     # MeiliSearch scores are not shown comparable across indexes (RDR-026

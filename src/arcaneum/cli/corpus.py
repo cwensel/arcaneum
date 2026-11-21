@@ -22,6 +22,7 @@ from ..cli.utils import (
     create_qdrant_client,
     get_model_dimensions,
 )
+from ..fulltext.backend import MeiliTextBackend
 from ..fulltext.indexes import get_index_settings
 from ..indexing.collection_metadata import (
     get_collection_metadata,
@@ -129,7 +130,7 @@ def list_corpora_command(details: bool, output_json: bool):
         listing = list_corpora(
             details=details,
             qdrant_factory=create_qdrant_client,
-            meili_factory=create_meili_client,
+            text_factory=lambda: MeiliTextBackend(create_meili_client()),
         )
     except Exception as e:
         interaction_logger.finish(error=str(e))
@@ -596,41 +597,11 @@ def _get_meili_item_count(client, index_name: str, collection_type: str) -> int:
         file_paths = client.get_all_file_paths(index_name)
         return len(file_paths)
 
-    index = client.get_index(index_name)
-    projects = set()
-    offset = 0
-    limit = 1000
-
-    while True:
-        result = index.get_documents(
-            {
-                "offset": offset,
-                "limit": limit,
-                "fields": ["git_project_identifier"],
-            }
-        )
-
-        if hasattr(result, "results"):
-            docs = result.results
-        else:
-            docs = result.get("results", [])
-
-        if not docs:
-            break
-
-        for doc in docs:
-            if hasattr(doc, "git_project_identifier"):
-                identifier = doc.git_project_identifier
-            elif isinstance(doc, dict):
-                identifier = doc.get("git_project_identifier")
-            else:
-                identifier = None
-            if identifier:
-                projects.add(identifier)
-
-        offset += limit
-        if len(docs) < limit:
-            break
+    projects = {
+        doc["git_project_identifier"]
+        for doc in MeiliTextBackend(client).iter_documents(index_name, ["git_project_identifier"])
+        if doc.get("git_project_identifier")
+    }
 
     return len(projects)
 
@@ -923,8 +894,6 @@ def _scan_meili_parity_items(
     With ids_only, fetches just the grouping fields in large pages: enough
     for a parity comparison and many times faster on large indexes.
     """
-    index = meili.get_index(name)
-    batch_offset = 0
     batch_size = 10000 if ids_only else 1000
 
     # Determine fields to fetch based on collection type
@@ -946,54 +915,26 @@ def _scan_meili_parity_items(
         doc_fields = ["file_path", "filename", "language", "programming_language"]
 
     meili_items = {}
-    while True:
-        result = index.get_documents(
-            {
-                "offset": batch_offset,
-                "limit": batch_size,
-                "fields": doc_fields,
-            }
-        )
-
-        # Handle both dict and object results
-        if hasattr(result, "results"):
-            docs = result.results
+    for doc in MeiliTextBackend(meili).iter_documents(name, doc_fields, batch_size=batch_size):
+        # For code collections, group by git_project_identifier
+        # For other types, group by file_path
+        if collection_type == "code":
+            item_id = doc.get("git_project_identifier")
         else:
-            docs = result.get("results", [])
+            item_id = doc.get("file_path") or doc.get("filename")
 
-        if not docs:
-            break
-
-        for doc in docs:
-            # Extract field values handling both dict and object docs
-            def _get(field):
-                if isinstance(doc, dict):
-                    return doc.get(field)
-                return getattr(doc, field, None)
-
-            # For code collections, group by git_project_identifier
-            # For other types, group by file_path
-            if collection_type == "code":
-                item_id = _get("git_project_identifier")
-            else:
-                item_id = _get("file_path") or _get("filename")
-
-            if item_id and item_id not in meili_items:
-                meili_items[item_id] = {
-                    "file_path": _get("file_path"),
-                    "filename": _get("filename"),
-                    "language": _get("language") or _get("programming_language"),
-                    "git_project_identifier": _get("git_project_identifier"),
-                    "git_project_name": _get("git_project_name"),
-                    "git_branch": _get("git_branch"),
-                    "meili_chunks": 1,
-                }
-            elif item_id:
-                meili_items[item_id]["meili_chunks"] += 1
-
-        batch_offset += len(docs)
-        if len(docs) < batch_size:
-            break
+        if item_id and item_id not in meili_items:
+            meili_items[item_id] = {
+                "file_path": doc.get("file_path"),
+                "filename": doc.get("filename"),
+                "language": doc.get("language") or doc.get("programming_language"),
+                "git_project_identifier": doc.get("git_project_identifier"),
+                "git_project_name": doc.get("git_project_name"),
+                "git_branch": doc.get("git_branch"),
+                "meili_chunks": 1,
+            }
+        elif item_id:
+            meili_items[item_id]["meili_chunks"] += 1
 
     return meili_items
 

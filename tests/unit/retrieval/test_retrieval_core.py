@@ -17,6 +17,7 @@ from meilisearch.errors import MeilisearchApiError, MeilisearchCommunicationErro
 from qdrant_client.http.exceptions import ResponseHandlingException
 
 from arcaneum.cli import errors
+from arcaneum.fulltext.backend import MeiliTextBackend
 from arcaneum.search.searcher import SearchResult
 
 
@@ -830,7 +831,9 @@ class TestSearchText:
     def test_hits_interleave_round_robin(self, text_client):
         from arcaneum.retrieval import search_text
 
-        result = search_text("query", ["A", "B"], limit=10, client=text_client)
+        result = search_text(
+            "query", ["A", "B"], limit=10, text_backend=MeiliTextBackend(text_client)
+        )
 
         assert [hit["id"] for hit in result.hits] == ["a1", "b1", "a2"]
         assert [hit["_corpus"] for hit in result.hits] == ["A", "B", "A"]
@@ -846,7 +849,7 @@ class TestSearchText:
     def test_missing_corpus_in_multi_search_is_reported_not_fatal(self, text_client):
         from arcaneum.retrieval import search_text
 
-        result = search_text("query", ["A", "Gone"], client=text_client)
+        result = search_text("query", ["A", "Gone"], text_backend=MeiliTextBackend(text_client))
 
         assert result.missing_corpora == ["Gone"]
         assert result.to_data()["missing_corpora"] == ["Gone"]
@@ -855,7 +858,7 @@ class TestSearchText:
         from arcaneum.retrieval import search_text
 
         with pytest.raises(errors.UnknownCorpusError):
-            search_text("query", ["Gone"], client=text_client)
+            search_text("query", ["Gone"], text_backend=MeiliTextBackend(text_client))
 
     def test_unhealthy_meilisearch_is_service_down(self, text_client):
         from arcaneum.retrieval import search_text
@@ -863,7 +866,7 @@ class TestSearchText:
         text_client.health_check.return_value = False
 
         with pytest.raises(errors.ServiceDownError) as exc_info:
-            search_text("query", ["A"], client=text_client)
+            search_text("query", ["A"], text_backend=MeiliTextBackend(text_client))
 
         assert "MeiliSearch" in str(exc_info.value)
 
@@ -873,7 +876,7 @@ class TestSearchText:
         text_client.search.side_effect = MeilisearchCommunicationError("connection refused")
 
         with pytest.raises(errors.ServiceDownError):
-            search_text("query", ["A"], client=text_client)
+            search_text("query", ["A"], text_backend=MeiliTextBackend(text_client))
 
     def test_unfilterable_attribute_is_bad_filter_naming_filterable_fields(self, text_client):
         from arcaneum.retrieval import search_text
@@ -881,7 +884,12 @@ class TestSearchText:
         text_client.search.side_effect = _meili_filter_error("filename")
 
         with pytest.raises(errors.BadFilterError) as exc_info:
-            search_text("query", ["A"], filter='filename = "db(31).pdf"', client=text_client)
+            search_text(
+                "query",
+                ["A"],
+                filter='filename = "db(31).pdf"',
+                text_backend=MeiliTextBackend(text_client),
+            )
 
         message = str(exc_info.value)
         assert "filename" in message
@@ -892,14 +900,21 @@ class TestSearchText:
     def test_neutral_filter_reaches_meilisearch_quoted(self, text_client):
         from arcaneum.retrieval import search_text
 
-        search_text("query", ["A"], filter='{"filename": "db(31).pdf"}', client=text_client)
+        search_text(
+            "query",
+            ["A"],
+            filter='{"filename": "db(31).pdf"}',
+            text_backend=MeiliTextBackend(text_client),
+        )
 
         assert text_client.search.call_args.kwargs["filter"] == 'filename = "db(31).pdf"'
 
     def test_native_expression_reaches_meilisearch_unchanged(self, text_client):
         from arcaneum.retrieval import search_text
 
-        search_text("query", ["A"], filter="page_number > 10", client=text_client)
+        search_text(
+            "query", ["A"], filter="page_number > 10", text_backend=MeiliTextBackend(text_client)
+        )
 
         assert text_client.search.call_args.kwargs["filter"] == "page_number > 10"
 
@@ -915,7 +930,7 @@ class TestSearchText:
         from arcaneum.retrieval import search_text
 
         with pytest.raises(errors.BadFilterError) as exc_info:
-            search_text("query", ["A"], filter=text, client=text_client)
+            search_text("query", ["A"], filter=text, text_backend=MeiliTextBackend(text_client))
 
         assert needle in str(exc_info.value)
         text_client.search.assert_not_called()
@@ -926,17 +941,21 @@ class TestSearchText:
         text_client.search.side_effect = RuntimeError("index exploded")
 
         with pytest.raises(errors.ArcaneumError) as exc_info:
-            search_text("query", ["A"], client=text_client)
+            search_text("query", ["A"], text_backend=MeiliTextBackend(text_client))
 
         assert "index exploded" in str(exc_info.value)
 
     def test_writes_nothing_to_stdout(self, text_client, capsys):
         from arcaneum.retrieval import search_text
 
-        search_text("query", ["A", "Gone"], client=text_client, verbose=True)
+        search_text(
+            "query", ["A", "Gone"], text_backend=MeiliTextBackend(text_client), verbose=True
+        )
         text_client.search.side_effect = _meili_filter_error()
         with pytest.raises(errors.BadFilterError):
-            search_text("query", ["A"], filter="filename = x", client=text_client)
+            search_text(
+                "query", ["A"], filter="filename = x", text_backend=MeiliTextBackend(text_client)
+            )
 
         assert capsys.readouterr().out == ""
 
@@ -1021,7 +1040,9 @@ class TestListCorpora:
 
         qdrant = _ListQdrant(["Docs"])
         listing = list_corpora(
-            details=details, qdrant_client=qdrant, meili_client=_ListMeili({"Docs": 3})
+            details=details,
+            qdrant_client=qdrant,
+            text_backend=MeiliTextBackend(_ListMeili({"Docs": 3})),
         )
 
         data = listing.to_data()
@@ -1037,7 +1058,8 @@ class TestListCorpora:
         from arcaneum.retrieval import list_corpora
 
         listing = list_corpora(
-            qdrant_client=_ListQdrant(["Docs"]), meili_client=_ListMeili({}, healthy=False)
+            qdrant_client=_ListQdrant(["Docs"]),
+            text_backend=MeiliTextBackend(_ListMeili({}, healthy=False)),
         )
 
         data = listing.to_data()
@@ -1053,7 +1075,10 @@ class TestListCorpora:
                 raise ResponseHandlingException(httpx.ConnectError("connection refused"))
 
         with pytest.raises(errors.ServiceDownError) as exc_info:
-            list_corpora(qdrant_client=DownQdrant(), meili_client=_ListMeili({}, healthy=False))
+            list_corpora(
+                qdrant_client=DownQdrant(),
+                text_backend=MeiliTextBackend(_ListMeili({}, healthy=False)),
+            )
 
         assert "Qdrant" in str(exc_info.value)
         assert "MeiliSearch" in str(exc_info.value)
@@ -1069,7 +1094,7 @@ class TestListCorpora:
 
         listing = list_corpora(
             qdrant_client=FailsOnSecond(["Docs", "Later"]),
-            meili_client=_ListMeili({"Docs": 3, "Later": 1}),
+            text_backend=MeiliTextBackend(_ListMeili({"Docs": 3, "Later": 1})),
         )
 
         data = listing.to_data()
@@ -1089,7 +1114,7 @@ class TestListCorpora:
 
         listing = list_corpora(
             qdrant_client=FailsOnSecond(["Docs", "Later"]),
-            meili_client=_ListMeili({}, healthy=False),
+            text_backend=MeiliTextBackend(_ListMeili({}, healthy=False)),
         )
 
         assert [corpus["name"] for corpus in listing.corpora] == ["Docs"]
@@ -1102,7 +1127,7 @@ class TestListCorpora:
             raise PermissionError("meili key file unreadable")
 
         listing = list_corpora(
-            qdrant_factory=lambda: _ListQdrant(["Docs"]), meili_factory=unreadable_key
+            qdrant_factory=lambda: _ListQdrant(["Docs"]), text_factory=unreadable_key
         )
 
         data = listing.to_data()
@@ -1112,9 +1137,13 @@ class TestListCorpora:
     def test_writes_nothing_to_stdout(self, list_metadata, capsys):
         from arcaneum.retrieval import list_corpora
 
-        list_corpora(qdrant_client=_ListQdrant(["Docs"]), meili_client=_ListMeili({"Docs": 3}))
         list_corpora(
-            qdrant_client=_ListQdrant(["Docs"]), meili_client=_ListMeili({}, healthy=False)
+            qdrant_client=_ListQdrant(["Docs"]),
+            text_backend=MeiliTextBackend(_ListMeili({"Docs": 3})),
+        )
+        list_corpora(
+            qdrant_client=_ListQdrant(["Docs"]),
+            text_backend=MeiliTextBackend(_ListMeili({}, healthy=False)),
         )
 
         assert capsys.readouterr().out == ""

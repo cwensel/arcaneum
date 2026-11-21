@@ -188,6 +188,8 @@ def passage_command(
         output_json: Print the ``{status, message, data, errors}`` envelope
     """
     logging.basicConfig(level=logging.WARNING, format="[%(levelname)s] %(message)s")
+    from ..fulltext.backend import MeiliTextBackend
+
     with interaction_logger.track(
         "search", "passage", corpora=[corpus], chunk_id=chunk_id, before=before, after=after
     ) as ctx:
@@ -200,7 +202,7 @@ def passage_command(
             qdrant_client=create_qdrant_client(
                 config_path=resolve_config_path(migrate=False), for_search=True
             ),
-            meili_client=create_meili_client(generate_key=False),
+            text_backend=MeiliTextBackend(create_meili_client(generate_key=False)),
         )
         ctx["result_count"] = len(result.chunks)
 

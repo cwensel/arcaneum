@@ -81,7 +81,7 @@ def check_qdrant_connection(verbose: bool = False) -> Tuple[bool, str]:
 def check_meilisearch_connection(verbose: bool = False) -> Tuple[bool, str]:
     """Check MeiliSearch server connectivity."""
     try:
-        from meilisearch import Client
+        from arcaneum.fulltext.client import FullTextClient
     except ImportError:
         return False, "meilisearch not installed"
 
@@ -91,13 +91,12 @@ def check_meilisearch_connection(verbose: bool = False) -> Tuple[bool, str]:
         # Use default MeiliSearch URL
         meilisearch_url = os.getenv("MEILISEARCH_URL", "http://localhost:7700")
         api_key = get_meilisearch_api_key()
-        client = Client(meilisearch_url, api_key)
+        client = FullTextClient(meilisearch_url, api_key)
 
         # Try to get health to verify connectivity
         health = client.health()
         if health.get("status") == "available":
-            indexes = client.get_indexes()
-            return True, f"MeiliSearch connected ({len(indexes['results'])} indexes)"
+            return True, f"MeiliSearch connected ({len(client.list_indexes())} indexes)"
         else:
             return False, f"MeiliSearch status: {health.get('status', 'unknown')}"
     except Exception as e:

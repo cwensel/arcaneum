@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
+from ..fulltext.backend import MeiliTextBackend
 from ..fulltext.client import FullTextClient
 from ..fulltext.indexes import get_index_settings
 from .output import format_json_response, print_json, print_error, print_info, print_success
@@ -112,7 +113,7 @@ def search_text_command(
             filter=filter_arg,
             limit=limit,
             offset=offset,
-            client=create_meili_client(),
+            text_backend=MeiliTextBackend(create_meili_client()),
             qdrant_client=_source_roots_client(),
             verbose=verbose,
         )

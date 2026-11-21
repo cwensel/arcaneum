@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from arcaneum.fulltext.backend import MeiliTextBackend
 from arcaneum.retrieval.hits import (
     build_cite,
     build_locator,
@@ -313,7 +314,7 @@ class TestSearchCoreRoots:
         from arcaneum.retrieval import search_text
 
         meili = self._meili({"DevRef": [{**PDF, "id": "p1", "_rankingScore": 0.9993}]})
-        result = search_text("q", ["DevRef"], client=meili)
+        result = search_text("q", ["DevRef"], text_backend=MeiliTextBackend(meili))
 
         assert meili.search.call_args.kwargs["show_ranking_score"] is True
         assert result.to_data()["hits"][0]["score"] == 0.9993
@@ -324,7 +325,9 @@ class TestSearchCoreRoots:
         qdrant = MagicMock()
         qdrant.retrieve.return_value = [SimpleNamespace(payload={"source_roots": [f"{HOME}/Refs"]})]
         meili = self._meili({"DevRef": [{**PDF, "id": "p1"}]})
-        result = search_text("q", ["DevRef"], client=meili, qdrant_client=qdrant)
+        result = search_text(
+            "q", ["DevRef"], text_backend=MeiliTextBackend(meili), qdrant_client=qdrant
+        )
 
         assert result.to_data()["hits"][0]["cite"] == "DevRef:Database-Books/db(31).pdf#page=89"
 
@@ -334,7 +337,9 @@ class TestSearchCoreRoots:
         qdrant = MagicMock()
         qdrant.retrieve.side_effect = ConnectionError("refused")
         meili = self._meili({"DevRef": [{**PDF, "id": "p1"}]})
-        result = search_text("q", ["DevRef"], client=meili, qdrant_client=qdrant)
+        result = search_text(
+            "q", ["DevRef"], text_backend=MeiliTextBackend(meili), qdrant_client=qdrant
+        )
 
         assert result.to_data()["hits"][0]["cite"] == (
             "DevRef:~/Refs/Database-Books/db(31).pdf#page=89"
@@ -346,7 +351,9 @@ class TestSearchCoreRoots:
         qdrant = MagicMock()
         qdrant.retrieve.side_effect = TimeoutError("timed out")
         meili = self._meili({"A": [{**CODE, "id": "a1"}], "B": [{**PDF, "id": "b1"}]})
-        result = search_text("q", ["A", "B"], client=meili, qdrant_client=qdrant)
+        result = search_text(
+            "q", ["A", "B"], text_backend=MeiliTextBackend(meili), qdrant_client=qdrant
+        )
 
         assert qdrant.retrieve.call_count == 1
         assert [hit["cite"].startswith(("A:/work/", "B:~/")) for hit in result.to_data()["hits"]] == [
@@ -366,7 +373,7 @@ class TestSearchCoreRoots:
                 "B": [{**CODE, "id": "b1", "_rankingScore": 0.99}],
             }
         )
-        hits = search_text("q", ["A", "B"], client=meili).to_data()["hits"]
+        hits = search_text("q", ["A", "B"], text_backend=MeiliTextBackend(meili)).to_data()["hits"]
 
         assert [(h["corpus"], h["chunk_id"]) for h in hits] == [
             ("A", "a1"),

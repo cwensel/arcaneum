@@ -200,6 +200,7 @@ from ..embeddings.client import (
 from ..embeddings.remote.config import RemoteEmbeddingConfigError
 from ..embeddings.remote.errors import RemoteEmbeddingUnavailable
 from ..embeddings.remote.routing import configure_remote_embedding
+from ..fulltext.backend import MeiliTextBackend
 from ..fulltext.client import FullTextClient
 from ..indexing.collection_metadata import (
     METADATA_PAYLOAD_KEY,
@@ -272,7 +273,6 @@ def _finalize_embedding_clients(clients, model_names, verbose, output_json):
 
 
 logger = logging.getLogger(__name__)
-MEILI_RENAME_UPDATE_TIMEOUT_MS = 300000
 GIT_SYNC_HEADS_FIELD = "git_sync_heads"
 
 
@@ -391,14 +391,7 @@ def _delete_file_manifests(
 
 def _meili_has_documents_for_path(meili: FullTextClient, corpus: str, file_path: str) -> bool:
     """Read back whether MeiliSearch still exposes documents for ``file_path``."""
-    escaped_path = file_path.replace("\\", "\\\\").replace('"', '\\"')
-    result = meili.search(
-        index_name=corpus,
-        query="",
-        filter=f'file_path = "{escaped_path}"',
-        limit=1,
-    )
-    return bool(result.get("hits", []))
+    return MeiliTextBackend(meili).has_file(corpus, file_path)
 
 
 def _rollback_pdf_canonical_promotion(
@@ -1953,13 +1946,12 @@ def _handle_renames_meili(
     if not renames:
         return 0, []
 
-    docs_by_rename: Dict[Tuple[str, str], List[Dict[str, str]]] = {}
+    ids_by_rename: Dict[Tuple[str, str], List[str]] = {}
     alias_renames: List[Tuple[str, str]] = []
-    index = meili.get_index(corpus)
 
     for old_path, new_path in renames:
         # Scroll Qdrant to find all point IDs with the old file_path
-        update_docs = []
+        point_ids = []
         offset = None
 
         while True:
@@ -1977,20 +1969,13 @@ def _handle_renames_meili(
             if not points:
                 break
 
-            for point in points:
-                update_docs.append(
-                    {
-                        "id": str(point.id),
-                        "file_path": new_path,
-                        "filename": Path(new_path).name,
-                    }
-                )
+            point_ids.extend(str(point.id) for point in points)
 
             if offset is None:
                 break
 
-        if update_docs:
-            docs_by_rename[(old_path, new_path)] = update_docs
+        if point_ids:
+            ids_by_rename[(old_path, new_path)] = point_ids
             continue
 
         # Deduplicated PDF aliases do not have independent MeiliSearch
@@ -2008,24 +1993,20 @@ def _handle_renames_meili(
         if alias_points:
             alias_renames.append((old_path, new_path))
 
-    if not docs_by_rename:
+    if not ids_by_rename:
         return 0, alias_renames
 
-    update_docs = [doc for docs in docs_by_rename.values() for doc in docs]
+    chunk_count = sum(len(ids) for ids in ids_by_rename.values())
     try:
-        task = index.update_documents(update_docs)
-        meili.client.wait_for_task(
-            task.task_uid,
-            timeout_in_ms=MEILI_RENAME_UPDATE_TIMEOUT_MS,
-        )
+        MeiliTextBackend(meili).rename(corpus, ids_by_rename)
     except Exception as e:
         logger.error(
-            f"Failed to update MeiliSearch for {len(docs_by_rename)} renames "
-            f"({len(update_docs)} chunks): {e}"
+            f"Failed to update MeiliSearch for {len(ids_by_rename)} renames "
+            f"({chunk_count} chunks): {e}"
         )
         return 0, []
 
-    return len(update_docs), list(docs_by_rename.keys()) + alias_renames
+    return chunk_count, list(ids_by_rename.keys()) + alias_renames
 
 
 def _rename_tuples_with_metadata(renames: List[Tuple[str, str]]) -> List[Tuple[str, str, Dict]]:
@@ -5332,90 +5313,52 @@ def _repair_meili_metadata(
     # Use get_documents API (not search) to iterate through ALL documents
     docs_to_repair = []
     docs_needing_version_id = []  # Docs that have git metadata but missing version_identifier
-    batch_offset = 0
     batch_size = 1000
 
     if not output_json:
         console.print("[dim]Scanning MeiliSearch for documents missing git metadata...[/dim]")
 
-    index = meili.get_index(corpus)
-    while True:
-        result = index.get_documents(
-            {
-                "offset": batch_offset,
-                "limit": batch_size,
-                "fields": [
-                    "id",
-                    "file_path",
-                    "chunk_index",
-                    "git_project_identifier",
-                    "git_project_name",
-                    "git_branch",
-                    "git_commit_hash",
-                    "git_version_identifier",
-                ],
-            }
-        )
+    repair_fields = [
+        "id",
+        "file_path",
+        "chunk_index",
+        "git_project_identifier",
+        "git_project_name",
+        "git_branch",
+        "git_commit_hash",
+        "git_version_identifier",
+    ]
+    backend = MeiliTextBackend(meili)
+    for doc in backend.iter_documents(corpus, repair_fields, batch_size=batch_size):
+        has_git_id = bool(doc.get("git_project_identifier"))
+        doc_id = doc.get("id")
+        file_path = doc.get("file_path")
+        chunk_index = doc.get("chunk_index", 0)
+        project_name = doc.get("git_project_name")
+        branch = doc.get("git_branch")
+        commit_hash = doc.get("git_commit_hash")
 
-        # Handle both dict and object results
-        if hasattr(result, "results"):
-            docs = result.results
-        else:
-            docs = result.get("results", [])
-
-        if not docs:
-            break
-
-        for doc in docs:
-            # Get field values handling both dict and object
-            if isinstance(doc, dict):
-                has_git_id = bool(doc.get("git_project_identifier"))
-                doc_id = doc.get("id")
-                file_path = doc.get("file_path")
-                chunk_index = doc.get("chunk_index", 0)
-                project_name = doc.get("git_project_name")
-                branch = doc.get("git_branch")
-                commit_hash = doc.get("git_commit_hash")
-            else:
-                has_git_id = bool(getattr(doc, "git_project_identifier", None))
-                doc_id = getattr(doc, "id", None)
-                file_path = getattr(doc, "file_path", None)
-                chunk_index = getattr(doc, "chunk_index", 0)
-                project_name = getattr(doc, "git_project_name", None)
-                branch = getattr(doc, "git_branch", None)
-                commit_hash = getattr(doc, "git_commit_hash", None)
-
-            # Check if git_project_identifier is missing - needs full repair from Qdrant
-            if not has_git_id:
-                docs_to_repair.append(
+        # Check if git_project_identifier is missing - needs full repair from Qdrant
+        if not has_git_id:
+            docs_to_repair.append(
+                {
+                    "id": doc_id,
+                    "file_path": file_path,
+                    "chunk_index": chunk_index,
+                }
+            )
+        # Check if doc has git metadata but version_identifier is missing or incorrect
+        elif project_name and branch and commit_hash:
+            expected_version_id = f"{project_name}#{branch}@{commit_hash[:7]}"
+            # Repair if missing OR if format doesn't match expected
+            if doc.get("git_version_identifier") != expected_version_id:
+                docs_needing_version_id.append(
                     {
                         "id": doc_id,
-                        "file_path": file_path,
-                        "chunk_index": chunk_index,
+                        **persisted_metadata_fields(),
+                        "git_version_identifier": expected_version_id,
                     }
                 )
-            # Check if doc has git metadata but version_identifier is missing or incorrect
-            elif project_name and branch and commit_hash:
-                expected_version_id = f"{project_name}#{branch}@{commit_hash[:7]}"
-                # Get current value for comparison
-                if isinstance(doc, dict):
-                    current_version_id = doc.get("git_version_identifier")
-                else:
-                    current_version_id = getattr(doc, "git_version_identifier", None)
-
-                # Repair if missing OR if format doesn't match expected
-                if current_version_id != expected_version_id:
-                    docs_needing_version_id.append(
-                        {
-                            "id": doc_id,
-                            **persisted_metadata_fields(),
-                            "git_version_identifier": expected_version_id,
-                        }
-                    )
-
-        batch_offset += len(docs)
-        if len(docs) < batch_size:
-            break
 
     if not docs_to_repair and not docs_needing_version_id:
         if not output_json:
@@ -5481,15 +5424,11 @@ def _repair_meili_metadata(
     update_batch_size = 1000
 
     try:
-        index = meili.get_index(corpus)
-
         for i in range(0, len(updates), update_batch_size):
             batch = updates[i : i + update_batch_size]
             try:
-                # Use update_documents which will update existing docs by id
-                task = index.update_documents(batch)
-                # Wait for task to complete using meilisearch client
-                meili.client.wait_for_task(task.task_uid)
+                # Partial updates merge into the existing docs by id
+                backend.update_documents(corpus, batch)
                 docs_updated += len(batch)
             except Exception as e:
                 logger.error(f"Failed to update batch: {e}")
@@ -5548,6 +5487,8 @@ def _backfill_qdrant_to_meili(
     files_failed = 0
     chunks_success = 0
 
+    backend = MeiliTextBackend(meili)
+
     # Track completed file uploads (for atomicity)
     upload_tasks_by_file: Dict[str, List[int]] = {}  # file_path -> [task_uids]
     completed_files: Set[str] = set()
@@ -5561,14 +5502,12 @@ def _backfill_qdrant_to_meili(
             return True
 
         try:
-            index = meili.get_index(corpus)
             task_uids = []
 
             # Upload in batches, but track all tasks for this file
             for i in range(0, len(docs), batch_size):
                 batch = docs[i : i + batch_size]
-                task = index.add_documents(batch)
-                task_uids.append(task.task_uid)
+                task_uids.append(backend.enqueue_documents(corpus, batch))
 
             # Track tasks for this file
             upload_tasks_by_file[file_path] = task_uids
@@ -5637,15 +5576,9 @@ def _backfill_qdrant_to_meili(
         task_results: Dict[int, bool] = {}  # task_uid -> success
         for task_uid in all_task_uids:
             try:
-                result = meili.client.wait_for_task(task_uid, timeout_in_ms=180000)
-                status = getattr(result, "status", None) or (
-                    result.get("status") if isinstance(result, dict) else None
-                )
+                status, error = backend.wait_for_task(task_uid, timeout_ms=180000)
                 task_results[task_uid] = status == "succeeded"
                 if status == "failed":
-                    error = getattr(result, "error", None) or (
-                        result.get("error") if isinstance(result, dict) else None
-                    )
                     logger.error(f"Upload task {task_uid} failed: {error}")
             except Exception as e:
                 task_results[task_uid] = False
@@ -5683,7 +5616,7 @@ def _backfill_qdrant_to_meili(
             if not output_json:
                 progress.console.print("[dim]Cleaning up partial uploads for failed files...[/dim]")
             try:
-                meili.delete_documents_by_file_paths(corpus, files_with_failed_uploads)
+                backend.delete_files(corpus, files_with_failed_uploads)
                 if not output_json:
                     progress.console.print(
                         f"[dim]  Cleaned up {len(files_with_failed_uploads)} partial file uploads[/dim]"

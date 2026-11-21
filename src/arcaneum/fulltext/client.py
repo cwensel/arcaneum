@@ -441,6 +441,10 @@ class FullTextClient:
         task = index.update_settings(settings)
         self._wait_for_task_with_retries(task.task_uid, MEILI_INDEX_TASK_TIMEOUT_MS)
 
+    def health(self) -> Dict[str, Any]:
+        """The server's health response; raises when the server cannot be reached."""
+        return self.client.health()
+
     def health_check(self) -> bool:
         """Check if MeiliSearch server is healthy."""
         try:

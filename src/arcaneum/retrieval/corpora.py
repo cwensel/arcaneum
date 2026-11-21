@@ -492,24 +492,14 @@ def _qdrant_collections(
         }
 
 
-def _meili_indexes(meili) -> Dict[str, Dict[str, Any]]:
-    if not meili.health_check():
-        raise ConnectionError("server not available")
-    indexes: Dict[str, Dict[str, Any]] = {}
+def _text_indexes(backend) -> Dict[str, Dict[str, Any]]:
+    from ..cli.errors import ServiceDownError
+
     try:
-        all_stats = meili.get_stats().get("indexes", {})
-    except Exception:
-        all_stats = None
-    for idx in meili.list_indexes():
-        name = idx["uid"]
-        try:
-            stats = all_stats.get(name, {}) if all_stats is not None else None
-            if stats is None:
-                stats = meili.get_index_stats(name)
-            indexes[name] = {"chunks": stats.get("numberOfDocuments", 0)}
-        except Exception:
-            indexes[name] = {"chunks": 0}
-    return indexes
+        backend.health()
+    except ServiceDownError as e:
+        raise ConnectionError("server not available") from e
+    return {name: {"chunks": chunks} for name, chunks in backend.corpora().items()}
 
 
 def _service_error(service: str, exc: Exception) -> str:
@@ -522,31 +512,32 @@ def _default_qdrant_client():
     return create_qdrant_client()
 
 
-def _default_meili_client():
+def _default_text_backend():
     from ..cli.utils import create_meili_client
+    from ..fulltext.backend import MeiliTextBackend
 
-    return create_meili_client()
+    return MeiliTextBackend(create_meili_client())
 
 
 def list_corpora(
     *,
     details: bool = False,
     qdrant_client=None,
-    meili_client=None,
+    text_backend=None,
     qdrant_factory=None,
-    meili_factory=None,
+    text_factory=None,
 ) -> CorpusListing:
     """List every corpus with its parity status, writing nothing.
 
     Args:
         details: Allow an exact scroll when a bounded facet count caps
         qdrant_client: Qdrant client (built by ``qdrant_factory`` when None)
-        meili_client: FullTextClient (built by ``meili_factory`` when None)
+        text_backend: The ``TextBackend`` (built by ``text_factory`` when None)
         qdrant_factory: Builds the Qdrant client (from config when None)
-        meili_factory: Builds the FullTextClient (from config when None)
+        text_factory: Builds the text backend (MeiliSearch from config when None)
 
-    A client is built inside its service's error handling, so one service
-    failing to construct does not hide the other's corpora.
+    A client or backend is built inside its service's error handling, so one
+    service failing to construct does not hide the other's corpora.
 
     Returns:
         The listing. When one service fails, the listing holds the other's
@@ -569,9 +560,9 @@ def list_corpora(
 
     meili_indexes: Dict[str, Dict[str, Any]] = {}
     try:
-        if meili_client is None:
-            meili_client = (meili_factory or _default_meili_client)()
-        meili_indexes = _meili_indexes(meili_client)
+        if text_backend is None:
+            text_backend = (text_factory or _default_text_backend)()
+        meili_indexes = _text_indexes(text_backend)
     except Exception as e:
         logger.debug("listing MeiliSearch indexes failed", exc_info=True)
         service_errors.append(_service_error("MeiliSearch", e))

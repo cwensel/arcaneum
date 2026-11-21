@@ -10,14 +10,15 @@ def _connection_error_types() -> tuple[type[BaseException], ...]:
     # failed, and the core stays cheap to import.
     import httpx
     import requests
-    from meilisearch.errors import MeilisearchCommunicationError
+
+    from ..fulltext.backend import connection_error_types as meili_connection_error_types
 
     return (
         ConnectionError,
         httpx.ConnectError,
         httpx.ConnectTimeout,
         requests.exceptions.ConnectionError,
-        MeilisearchCommunicationError,
+        *meili_connection_error_types(),
     )
 
 

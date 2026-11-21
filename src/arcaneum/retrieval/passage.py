@@ -59,7 +59,6 @@ MEILISEARCH = "meilisearch"
 
 _QDRANT_SCROLL_PAGE = 64
 _QDRANT_SCROLL_PAGES = 8
-_MEILI_PAGE = 1000
 
 _UNSIGNED = re.compile(r"[0-9]+")
 _MEILI_ID = re.compile(r"[A-Za-z0-9_-]{1,511}")
@@ -234,17 +233,19 @@ def _qdrant_seed(client, corpus: str, chunk_id: str) -> Tuple[bool, Optional[Pas
     return True, None
 
 
-def _meili_seed(client, corpus: str, chunk_id: str) -> Tuple[bool, Optional[PassageChunk]]:
-    """Whether MeiliSearch holds the corpus, and the seed chunk when it holds the id."""
-    if not client.health_check():
-        raise ConnectionError("health check failed")
-    if not client.index_exists(corpus):
+def _meili_seed(backend, corpus: str, chunk_id: str) -> Tuple[bool, Optional[PassageChunk]]:
+    """Whether the text backend holds the corpus, and the seed chunk when it holds the id."""
+    try:
+        backend.health()
+    except ServiceDownError as e:
+        raise ConnectionError("health check failed") from e
+    if not backend.exists(corpus):
         return False, None
     # Not a document id MeiliSearch accepts: never sent, so it cannot reach
     # another route of the documents endpoint.
     if not _MEILI_ID.fullmatch(chunk_id):
         return True, None
-    document = client.get_document(corpus, chunk_id)
+    document = backend.get_document(corpus, chunk_id)
     if document is None:
         return True, None
     return True, _chunk(document.get("id", chunk_id), document)
@@ -292,49 +293,31 @@ def _qdrant_window(client, corpus: str, seed: PassageChunk, low: int, high: int)
 _MEILI_LIST_FIELDS = ["id", "file_path", "chunk_index", *VERSION_KEYS]
 
 
-def _meili_window(client, corpus: str, seed: PassageChunk, low: int, high: int):
-    """The MeiliSearch documents of the seed's file and version with ``chunk_index`` in range.
+def _meili_window(backend, corpus: str, seed: PassageChunk, low: int, high: int):
+    """The text backend's chunks of the seed's file and version with ``chunk_index`` in range.
 
-    Pages a placeholder search filtered on ``file_path`` (listing ids only),
-    then fetches the window's documents. Returns the candidates and whether the
-    listing stopped short of the file (``maxTotalHits``).
+    Lists the file's chunks (ids and ordinals only), then fetches the window's
+    documents. Returns the candidates and whether the listing stopped short of
+    the file (MeiliSearch's ``maxTotalHits``).
     """
-    from ..search.filters import _meili_value
-
-    path_filter = f"file_path = {_meili_value(seed.payload['file_path'])}"
+    listing, total = backend.file_documents(corpus, seed.payload["file_path"], _MEILI_LIST_FIELDS)
     wanted: List[str] = []
-    listed = 0
-    total = 0
-    while True:
-        response = client.search(
-            corpus,
-            "",
-            filter=path_filter,
-            limit=_MEILI_PAGE,
-            offset=listed,
-            attributes_to_retrieve=_MEILI_LIST_FIELDS,
-        )
-        hits = response.get("hits", [])
-        total = response.get("estimatedTotalHits", response.get("totalHits", 0)) or 0
-        listed += len(hits)
-        for hit in hits:
-            index = _int(hit.get("chunk_index"))
-            if (
-                index is not None
-                and low <= index <= high
-                and _version(hit) == _version(seed.payload)
-                and str(hit.get("id")) != seed.chunk_id
-            ):
-                wanted.append(str(hit.get("id")))
-        if len(hits) < _MEILI_PAGE:
-            break
+    for hit in listing:
+        index = _int(hit.get("chunk_index"))
+        if (
+            index is not None
+            and low <= index <= high
+            and _version(hit) == _version(seed.payload)
+            and str(hit.get("id")) != seed.chunk_id
+        ):
+            wanted.append(str(hit.get("id")))
 
     candidates = []
     for document_id in wanted:
-        document = client.get_document(corpus, document_id)
+        document = backend.get_document(corpus, document_id)
         if document is not None:
             candidates.append(_chunk(document.get("id", document_id), document))
-    return candidates, total > listed
+    return candidates, total > len(listing)
 
 
 def _select(seed: PassageChunk, candidates: List[PassageChunk], low: int, high: int):
@@ -388,7 +371,7 @@ def get_passage(
     after: int = DEFAULT_NEIGHBOURS,
     max_chars: int = 0,
     qdrant_client=None,
-    meili_client=None,
+    text_backend=None,
 ) -> PassageResult:
     """The chunk ``chunk_id`` of ``corpus`` with up to ``before``/``after`` neighbours.
 
@@ -399,7 +382,8 @@ def get_passage(
         after: Neighbouring chunks after the hit, 0 to ``MAX_NEIGHBOURS``
         max_chars: Bound on the stitched text; zero is unlimited
         qdrant_client: Qdrant client (created from config when None)
-        meili_client: FullTextClient (created from config when None)
+        text_backend: The corpus's ``TextBackend`` (MeiliSearch from config
+            when None)
 
     Raises:
         InvalidArgumentError: a bound is out of range, or the id is empty
@@ -435,12 +419,13 @@ def get_passage(
     if seed is None:
         source = MEILISEARCH
         try:
-            if meili_client is None:
+            if text_backend is None:
                 from ..cli.utils import create_meili_client
+                from ..fulltext.backend import MeiliTextBackend
 
                 # A read-only lookup: use an existing key, never generate one.
-                meili_client = create_meili_client(generate_key=False)
-            found, seed = _meili_seed(meili_client, corpus, chunk_id)
+                text_backend = MeiliTextBackend(create_meili_client(generate_key=False))
+            found, seed = _meili_seed(text_backend, corpus, chunk_id)
             corpus_found = corpus_found or found
         except ArcaneumError:
             raise
@@ -459,7 +444,7 @@ def get_passage(
         low = max(seed.chunk_index - before, 0)
         high = seed.chunk_index + after
         fetch = _qdrant_window if source == QDRANT else _meili_window
-        client = qdrant_client if source == QDRANT else meili_client
+        client = qdrant_client if source == QDRANT else text_backend
         try:
             candidates, partial = fetch(client, corpus, seed, low, high)
         except ArcaneumError:

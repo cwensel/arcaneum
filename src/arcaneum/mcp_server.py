@@ -603,6 +603,13 @@ def _meili_client():
     return utils.create_meili_client(generate_key=False)
 
 
+def _text_backend():
+    """The text backend over ``_meili_client``."""
+    from .fulltext.backend import MeiliTextBackend
+
+    return MeiliTextBackend(_meili_client())
+
+
 def _source_roots_client():
     """A Qdrant client for reading cite roots, or None when one cannot be made.
 
@@ -802,7 +809,7 @@ class ArcTools:
         _reject_arguments("list_corpora", arguments, ())
         from .retrieval import list_corpora
 
-        listing = list_corpora(qdrant_factory=_qdrant_client, meili_factory=_meili_client)
+        listing = list_corpora(qdrant_factory=_qdrant_client, text_factory=_text_backend)
         if listing.service_errors:
             raise _service_errors_down(listing.service_errors)
         data = listing.to_data()
@@ -826,7 +833,7 @@ class ArcTools:
             filter=args["filter"],
             limit=args["limit"],
             offset=args["offset"],
-            client=_meili_client(),
+            text_backend=_text_backend(),
             qdrant_client=_source_roots_client(),
         )
         data = result.to_data(max_content_chars=args["max_content_chars"])
@@ -900,7 +907,7 @@ class ArcTools:
             chunk_id,
             max_chars=max_chars,
             qdrant_client=_qdrant_search_client(),
-            meili_client=_meili_client(),
+            text_backend=_text_backend(),
             **neighbours,
         )
         return cap_passage(result.to_data(), self.max_output_chars)

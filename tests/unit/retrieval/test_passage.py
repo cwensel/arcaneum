@@ -18,6 +18,7 @@ from arcaneum.cli.errors import (
     UnknownChunkError,
     UnknownCorpusError,
 )
+from arcaneum.fulltext.backend import MeiliTextBackend
 from arcaneum.indexing.collection_metadata import METADATA_POINT_ID
 
 GUIDE = "/root/docs/guide.md"
@@ -212,7 +213,11 @@ def _passage(stores, chunk_id, corpus="Docs", **options):
     from arcaneum.retrieval import get_passage
 
     return get_passage(
-        corpus, chunk_id, qdrant_client=stores.qdrant, meili_client=stores.meili, **options
+        corpus,
+        chunk_id,
+        qdrant_client=stores.qdrant,
+        text_backend=MeiliTextBackend(stores.meili),
+        **options,
     )
 
 
@@ -341,7 +346,7 @@ class TestWindow:
 
         monkeypatch.setattr(cli_utils, "resolve_config_path", resolve_config_path)
         monkeypatch.setattr(cli_utils, "create_qdrant_client", create_qdrant_client)
-        get_passage("Docs", _uuid(2), meili_client=stores.meili)
+        get_passage("Docs", _uuid(2), text_backend=MeiliTextBackend(stores.meili))
         assert migrations == [False]
         assert options == [{"config_path": "config.yaml", "for_search": True}]
 

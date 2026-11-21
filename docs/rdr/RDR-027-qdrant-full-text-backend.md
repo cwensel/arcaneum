@@ -112,16 +112,18 @@ its rollback, when MeiliSearch becomes optional, and the Qdrant upgrade the feat
 
 ### Critical Assumptions
 
-- [ ] qdrant-client 1.20 exposes `TextQuery`, and its `TextIndexParams` carries `scoring`, `phrase_matching`, custom
-  `stopwords` and a memory placement for text indexes. — **Status**: Unverified — **Method**: Source Search, after
-  the lock moves to 1.20.
-- [ ] An in-place upgrade 1.18.2 → 1.19.2 → 1.20.x keeps every collection, point and vector intact. — **Status**:
-  Unverified (Docs Only; S1 verified snapshot recovery 1.18 → 1.20, not an in-place step) — **Method**: Spike (the
-  policy's upgrade test).
-- [ ] The text index covers every chunk with non-empty text. S1 reported 101,860 indexed points for DevRef's 102,950
-  chunks; that may be a per-segment statistic or chunks that never enter the index. — **Status**: Unverified —
-  **Method**: Spike (an exact count of points matching each chunk's own phrase over a sample, and the index's
-  coverage after optimisation).
+- [x] qdrant-client 1.20 exposes `TextQuery`, and its `TextIndexParams` carries `scoring`, `phrase_matching`, custom
+  `stopwords` and a memory placement for text indexes. — **Status**: Verified (client 1.20.0 against Qdrant 1.20.2;
+  `using` is a `query_points` argument) — **Method**: Spike (C1 of the assumptions spike).
+- [x] An in-place upgrade 1.18.2 → 1.19.2 → 1.20.x keeps every collection, point and vector intact. — **Status**:
+  Verified on StateMachineRes copied into fresh 1.18.2 storage: identical id, vector and payload digests and top-10
+  results after each step — **Method**: Spike (C2).
+- [x] The text index covers every chunk whose text yields a token. — **Status**: Verified per chunk on DevRef and
+  StateMachineRes. S1's DevRef gap is exactly the 1,090 chunks that yield no token (underscores, backticks, `###` and
+  `**` left by extraction), so coverage is measured against tokenful chunks (Q8) — **Method**: Spike (C3).
+- [x] A chunk is findable by a distinctive span of its own text. — **Status**: Verified as membership (the chunk's own
+  id AND `MatchPhrase`, all 1,218 sampled chunks). As a top-10 search it fails 1.2% of chunks, whose spans other
+  chunks share, so Q9's gate counts membership — **Method**: Spike (C4).
 - [x] Both stores hold the same text under the same ids. — **Status**: Verified — **Method**: Spike (store parity).
 - [x] Qdrant's text search meets the latency bar during syncs within the laptop's 2-CPU, 4 GiB envelope. —
   **Status**: Verified on the box (p95 23.2 ms cold) — **Method**: Spike (`arcaneum#159` B5).
@@ -257,8 +259,13 @@ search alike; semantic refuses it today.
 
 #### Q8. Status, parity and doctor
 
-For a Qdrant corpus, "parity" becomes text coverage: chunks with text against chunks the text index holds. These
-commands follow the corpus's backend:
+For a Qdrant corpus, "parity" becomes text coverage: chunks that yield a token against chunks the text index holds.
+A chunk whose text yields no token under Q3's rules (only punctuation and markup, 1,090 of DevRef's chunks) is never in
+the index and matches no query on either backend. Sync and the migration's reconcile tokenize each chunk with Q3's
+rules, the same tokenizer Q5's highlighting needs, and store `text_tokens: false` (an indexed bool) on a chunk that
+yields none. Coverage is complete when the index's points equal the chunk points minus those flagged. Flagged chunks
+are reported as a chunking finding (`arcaneum#128`), not a coverage gap; the full reindex is where the chunker drops
+them. These commands follow the corpus's backend:
 
 - `arc corpus list|info|items|verify|doctor|parity|repair`;
 - `arc doctor`.
@@ -286,9 +293,11 @@ for MeiliSearch corpora. `research doctor` reads only `.data.corpora[].name` (RD
      `meili` with the repair to run.
 3. **Index:** ensure Q3's indexes, wait for green, and require the coverage of Q8 to be complete.
 4. **Prove:**
-   - **Gate:** a sample of chunks (1%, at least 200) each searched by a distinctive span of its own text as a phrase;
-     every one must return its own chunk.
-   - **Report, not gate:** a query sample through both backends with its top-10 overlap.
+   - **Gate:** a sample of tokenful chunks (1%, at least 200), each with its most distinctive span of its own text
+     (highest summed IDF): an exact count of the chunk's own id AND `MatchPhrase` of the span must be 1 for every one.
+     Ranking is not gated, since a span is often shared by other chunks.
+   - **Report, not gate:** the share of sampled chunks in the top 10 of their own span's search, and a query sample
+     through both backends with its top-10 overlap.
 5. **Switch:** set `text_backend: qdrant` with a migration stamp (time, counts, arc and Qdrant versions).
 6. **Keep MeiliSearch's index:** it is left in place and goes stale. `--finalize` deletes it.
 
@@ -319,8 +328,8 @@ in 1.20 is unverified, and this RDR does not depend on it.
 
 #### Q12. Qdrant upgrade
 
-The server moves 1.18.2 → 1.19.2 → 1.20.x, with every collection snapshotted first. `qdrant-client` floor and lock move
-to 1.20. The pins move in:
+The server moves 1.18.2 → 1.19.2 → 1.20.x in place, with every collection snapshotted first. The `qdrant-client`
+floor and lock move to 1.20. The pins move in:
 
 - `deploy/docker-compose.yml`;
 - CI (`.github/workflows/test.yml`);
@@ -470,11 +479,12 @@ latency bar by a wide margin.
 
 ### Risks and Mitigations
 
-- **Risk**: the text index misses some chunks (the DevRef count in S1).
-  **Mitigation**: the migration requires complete coverage before it switches (Q9 step 3), and the self-retrieval gate
-  proves findability.
+- **Risk**: the text index misses some chunks.
+  **Mitigation**: the migration requires complete coverage before it switches (Q9 step 3), and the membership gate
+  proves findability. The spike found no tokenful chunk missing; S1's DevRef gap was zero-token chunks.
 - **Risk**: the in-place Qdrant upgrade damages a collection.
-  **Mitigation**: snapshots before each step, the policy's upgrade test, and S1's verified snapshot recovery into 1.20.
+  **Mitigation**: snapshots before each step and the policy's upgrade test. The in-place steps kept a real collection
+  byte-identical (spike C2), and S1 verified snapshot recovery into 1.20 as the fallback.
 - **Risk**: phrase queries are slower than MeiliSearch's (S1: 25 ms vs 4 ms p95).
   **Mitigation**: still an order of magnitude under the 200 ms bar. During syncs MeiliSearch is the slow one (469 ms).
 - **Risk**: an agent's habitual MeiliSearch filter fails on a Qdrant corpus.
@@ -513,7 +523,7 @@ On the laptop after the Qdrant upgrade:
 #### Step 1: Qdrant 1.20 and payload indexes
 
 The upgrade path of Q12, the client lock, the pins, the policy note and upgrade test, and the `file_path` and
-`chunk_index` indexes ensured on create and sync. Verify the first two Critical Assumptions here.
+`chunk_index` indexes ensured on create and sync.
 
 #### Step 2: The backend seam
 
@@ -528,7 +538,7 @@ message. Contract tests over every filter form in `remote-arc/search-usage-filte
 #### Step 4: The Qdrant backend and the switch
 
 `QdrantTextBackend` (Q3-Q5), the `text_backend` setting, `arc corpus create --text-backend`, the write paths of Q7,
-and the size-split upserts. Verify the coverage assumption here.
+the `text_tokens` flag of Q8, and the size-split upserts.
 
 #### Step 5: Status surfaces
 
@@ -582,6 +592,9 @@ MeiliSearch service of Q10.
    **Expected**: one hit schema, round-robin merged, cites unchanged.
 7. **Scenario**: the same chunk returned by `arc search text --verbose --json` before and after its corpus migrates.
    **Expected**: identical `cite`, `snippet` and `metadata` keys and values; only `score` differs.
+8. **Scenario**: a fixture corpus with a chunk of only punctuation and markup, migrated and then synced.
+   **Expected**: the chunk carries `text_tokens: false`, coverage reports complete, and doctor lists the chunk as a
+   chunking finding.
 
 ### Performance Expectations
 
@@ -607,16 +620,18 @@ corpora, and covers the observed native forms in the neutral dialect for Qdrant 
 
 ### Assumption Verification
 
-Three Critical Assumptions are unverified: the 1.20 client API, the in-place upgrade, and text index coverage. Steps
-1 and 4 verify them before the code that depends on them.
+Every Critical Assumption is verified. The 1.20 client API, the in-place upgrade, text index coverage and phrase
+findability rest on the assumptions spike
+(`arcaneum-evidence:notes/remote-arc/spike-2026-11-21-qdrant-120-assumptions`); text parity and latency on the earlier
+spikes.
 
 #### API Verification
 
 | API Call | Library | Verification |
 | --- | --- | --- |
-| `query_points(query=TextQuery(...), using="text")` | qdrant-client 1.20 | Docs Only (REST shape verified by spike) |
-| `create_payload_index(field_schema=TextIndexParams(scoring, phrase_matching, stopwords, memory))` | qdrant-client 1.20 | Docs Only (REST shape verified by spike) |
-| `MatchPhrase`, `MatchText` filters | qdrant-client 1.18.0 | Source Search |
+| `query_points(query=TextQuery(...), using="text")` | qdrant-client 1.20.0 | Spike (C1) |
+| `create_payload_index(field_schema=TextIndexParams(scoring, phrase_matching, stopwords, memory))` | qdrant-client 1.20.0 | Spike (C1) |
+| `MatchPhrase`, `MatchText` filters | qdrant-client 1.20.0 | Spike (C1) |
 | `set_payload(points=[id], payload={"text": ...})` | qdrant-client 1.18.0 | Source Search (used at `indexing/common/sync.py:1551-1565`) |
 
 ### Scope Verification
@@ -650,7 +665,8 @@ paragraphs if the owner prefers.
   - `store-text-parity.md`;
   - `search-usage-filters.md`;
   - `spike-2026-11-19-qdrant-text-vs-meili/README.md` (S1);
-  - `spike-2026-11-19-index-load-qdrant-vs-meili/README.md` (load spike).
+  - `spike-2026-11-19-index-load-qdrant-vs-meili/README.md` (load spike);
+  - `spike-2026-11-21-qdrant-120-assumptions/README.md` (assumptions spike).
 - RDR-024 (adaptive cross-file index batching); RDR-026 (MCP server, Q6 filter dialect, Q7 text ranking).
 - Qdrant documentation:
   - Upgrades: <https://qdrant.tech/documentation/upgrades/>;

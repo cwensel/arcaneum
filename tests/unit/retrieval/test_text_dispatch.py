@@ -207,3 +207,153 @@ def test_the_mcp_tool_serves_a_mixed_set(monkeypatch, stores):
         ("Qdrant", "Qdrant:q/b.py"),
     ]
     assert len({tuple(sorted(hit)) for hit in data["hits"]}) == 1
+
+
+# -- the filter dialect on Qdrant text corpora (RDR-027 Q6) --------------------
+
+
+def _two_chunks():
+    return [
+        _chunk(_uuid(1), "/src/app/a.py", "def scan(): pass", line_number=1, chunk_index=0),
+        _chunk(_uuid(2), "/src/app/b.py", "def scan_all(): pass", line_number=9, chunk_index=1),
+    ]
+
+
+def _ids(result):
+    return sorted(hit["chunk_id"] for hit in result.to_data()["hits"])
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("project=app", [1, 2]),
+        ("project=other", []),
+        ("language = python AND line_number >= 5", [2]),
+        ('filename="a.py"', [1]),
+        ("chunk_index=1", [2]),
+        ("file_path:contains:/b.py", [2]),
+        ('{"file_path": ["/src/app/a.py", "/src/app/b.py"]}', [1, 2]),
+        ('{"must": [{"key": "git_branch", "match": {"value": "main"}}]}', [1, 2]),
+        (
+            '{"should": [{"key": "filename", "match": {"value": "a.py"}}, '
+            '{"key": "filename", "match": {"value": "nope.py"}}]}',
+            [1],
+        ),
+    ],
+)
+def test_a_filter_runs_on_a_qdrant_corpus(stores, text, expected):
+    stores.corpus("Code", "qdrant", _two_chunks())
+
+    assert _ids(stores.search("scan", ["Code"], filter=text)) == [_uuid(n) for n in expected]
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["language = python OR language = java", "NOT language = python", "tags EXISTS"],
+)
+def test_meilisearch_syntax_on_a_qdrant_corpus_is_bad_filter_with_the_json_form(stores, text):
+    stores.corpus("Code", "qdrant", _two_chunks())
+    stores.qdrant.query_calls.clear()
+
+    with pytest.raises(errors.BadFilterError) as exc_info:
+        stores.search("scan", ["Code"], filter=text)
+
+    message = str(exc_info.value)
+    assert "must_not" in message and "should" in message
+    assert stores.qdrant.query_calls == []
+
+
+def test_a_field_no_chunk_carries_is_refused_by_name_before_any_query(stores):
+    stores.corpus("Code", "qdrant", _two_chunks())
+    stores.qdrant.query_calls.clear()
+
+    with pytest.raises(errors.BadFilterError) as exc_info:
+        stores.search("scan", ["Code"], filter="page=3")
+
+    assert "'page' is not filterable" in str(exc_info.value)
+    assert "'Code'" in str(exc_info.value)
+    assert stores.qdrant.query_calls == []
+
+
+def test_the_user_filter_is_anded_with_q4_and_the_metadata_exclusion(stores):
+    stores.corpus("Code", "qdrant", _two_chunks())
+    stores.qdrant.query_calls.clear()
+
+    stores.search("scan", ["Code"], filter="project=app AND line_number > 3")
+
+    query_filter = stores.qdrant.query_calls[0]["query_filter"]
+    text_conditions = [c for c in query_filter.must if getattr(c, "key", None) == "text"]
+    (user_filter,) = [c for c in query_filter.must if getattr(c, "key", None) != "text"]
+    assert text_conditions  # Q4's MatchText on the query words
+    assert [c.key for c in user_filter.must] == ["git_project_name", "line_number"]
+    assert query_filter.must_not  # no metadata point, no file manifest
+
+
+@pytest.fixture
+def mixed(stores, monkeypatch):
+    stores.corpus("Meili", "meili", [_chunk(_uuid(3), "/src/m/a.py", "def scan(): pass")])
+    stores.corpus("Q1", "qdrant", _two_chunks())
+    stores.corpus("Q2", "qdrant", [_chunk(_uuid(4), "/src/q/c.py", "def scan(): pass")])
+    stores.qdrant.query_calls.clear()
+    meili_calls = []
+    real_search = stores.meili_client.search
+
+    def search(*args, **kwargs):
+        meili_calls.append(args)
+        return real_search(*args, **kwargs)
+
+    monkeypatch.setattr(stores.meili_client, "search", search)
+    stores.meili_calls = meili_calls
+    return stores
+
+
+def test_a_mixed_set_with_a_native_or_names_only_the_qdrant_corpora(mixed):
+    with pytest.raises(errors.BadFilterError) as exc_info:
+        mixed.search(
+            "scan", ["Meili", "Q1", "Q2"], filter="filename = a.py OR filename = c.py"
+        )
+
+    message = str(exc_info.value)
+    assert "cannot run on: Q1, Q2" in message
+    assert "Meili," not in message.split("cannot run on:")[1]
+    assert mixed.qdrant.query_calls == []
+    assert mixed.meili_calls == []
+
+
+def test_a_mixed_set_with_qdrant_json_names_the_meili_corpora(mixed):
+    with pytest.raises(errors.BadFilterError) as exc_info:
+        mixed.search(
+            "scan",
+            ["Meili", "Q1"],
+            filter='{"must": [{"key": "filename", "match": {"value": "a.py"}}]}',
+        )
+
+    assert str(exc_info.value).endswith("cannot run on: Meili.")
+    assert mixed.qdrant.query_calls == []
+    assert mixed.meili_calls == []
+
+
+def test_a_mixed_set_with_contains_names_the_meili_corpora(mixed):
+    with pytest.raises(errors.BadFilterError) as exc_info:
+        mixed.search("scan", ["Q1", "Meili"], filter="file_path:contains:/src/")
+
+    assert "contains" in str(exc_info.value)
+    assert str(exc_info.value).endswith("cannot run on: Meili.")
+
+
+def test_a_mixed_set_runs_a_neutral_filter_on_both_backends(mixed):
+    result = mixed.search("scan", ["Meili", "Q1"], filter="language=python")
+
+    assert _ids(result) == [_uuid(1), _uuid(2), _uuid(3)]
+
+
+def test_a_meili_corpus_keeps_its_messages(stores):
+    stores.corpus("Meili", "meili", [_chunk(_uuid(3), "/src/m/a.py", "def scan(): pass")])
+
+    with pytest.raises(errors.BadFilterError) as exc_info:
+        stores.search("scan", ["Meili"], filter="file_path:contains:/src/")
+    assert "cannot run on" not in str(exc_info.value)
+
+    with pytest.raises(errors.BadFilterError) as exc_info:
+        stores.search("scan", ["Meili"], filter="chunk_index=1")
+    assert "'chunk_index' is not filterable" in str(exc_info.value)

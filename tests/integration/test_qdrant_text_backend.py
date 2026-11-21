@@ -211,3 +211,31 @@ def test_scenario_7_the_same_chunk_from_either_backend(qdrant, collection):
     assert {k: v for k, v in before[0].items() if k != "score"} == {
         k: v for k, v in after[0].items() if k != "score"
     }
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ('filename="0.pdf"', [0]),
+        ("filename='1.pdf' AND page_number >= 2", [1]),
+        ("page_number >= 2 AND page_number <= 3", [1, 2]),
+        ("page_number=4", [3]),
+        ("page_number:in:1|5", [0, 4]),
+        ("chunk_index = 3", [3]),
+        ("file_path:contains:/docs/2", [2]),
+        ('{"filename": ["0.pdf", "2.pdf"]}', [0, 2]),
+        ('{"should": [{"key": "chunk_index", "match": {"value": 1}}]}', [1]),
+    ],
+)
+def test_scenario_2_filter_forms_on_the_server(qdrant, collection, text, expected):
+    """Scenario 2's Qdrant-corpus half: the neutral, grown and native Qdrant forms."""
+    from arcaneum.search.filters import parse_filter
+
+    name = collection()
+    backend = QdrantTextBackend(qdrant, corpus_types={name: "pdf"})
+    parsed = parse_filter(text)
+    backend.check_fields(name, parsed)
+
+    page = backend.search(name, "", filter=parsed, limit=10)
+
+    assert sorted(_ids(page)) == sorted(_id(n) for n in expected)

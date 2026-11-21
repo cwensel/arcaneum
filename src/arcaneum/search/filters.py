@@ -2,7 +2,9 @@
 
 ``parse_filter`` reads a ``--filter`` string once into a backend-neutral
 filter, which translates to a Qdrant ``Filter`` (``to_qdrant_filter``) and to
-a MeiliSearch expression (``to_meilisearch_filter``). Neutral forms:
+a MeiliSearch expression (``to_meilisearch_filter``); a Qdrant text corpus
+takes ``to_qdrant_text_filter``, which also accepts MeiliSearch field names.
+Neutral forms:
 
 - terms joined by ``,`` or the upper-case word ``AND``, each either
   ``key op value``, op one of ``=``, ``>``, ``>=``, ``<`` or ``<=`` (the
@@ -29,7 +31,7 @@ from __future__ import annotations
 import json
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Iterable, List, Optional, Sequence, Tuple, Union
 
 if TYPE_CHECKING:
@@ -75,6 +77,34 @@ _QDRANT_FIELD_NAMES = {
     "project": "git_project_name",
     "branch": "git_branch",
 }
+
+# Payload keys every chunk point has (schema/document.py::to_qdrant_point).
+_QDRANT_CHUNK_FIELDS = ("file_path", "filename", "file_extension", "chunk_index", "chunk_count")
+# Payload keys to_qdrant_point writes when the corpus type's chunks carry them.
+_QDRANT_TYPE_FIELDS = {
+    "pdf": (
+        "page_number",
+        "section_type",
+        "section_title",
+        "document_type",
+        "title",
+        "author",
+        "file_hash",
+    ),
+    "markdown": ("section", "headings", "tags", "title"),
+    "code": (
+        "line_number",
+        "function_names",
+        "class_names",
+        "git_project_name",
+        "git_branch",
+        "git_project_identifier",
+        "git_commit_hash",
+        "git_remote_url",
+        "git_version_identifier",
+    ),
+}
+_QDRANT_TYPE_ALIASES = {"pdf-docs": "pdf", "markdown-docs": "markdown", "source-code": "code"}
 
 
 @dataclass(frozen=True)
@@ -359,9 +389,10 @@ def meilisearch_syntax_refusal(expression: str) -> str:
         "terms joined by ',' or AND, each key=value, key op value with op one of >, >=, <, <= "
         "(e.g. page_number >= 39), or key:op:value (e.g. page_number:gt:10), any value "
         "quoted if it holds a comma; flat JSON (e.g. {\"filename\": \"a.pdf\"}); or Qdrant's "
-        "JSON with must, should and must_not, e.g. {\"should\": [{\"key\": \"language\", "
-        "\"match\": {\"value\": \"python\"}}, {\"key\": \"language\", \"match\": "
-        "{\"value\": \"java\"}}]} for OR, or {\"must_not\": [...]} for NOT and !=."
+        "JSON with must, should and must_not over payload fields, e.g. {\"should\": "
+        "[{\"key\": \"filename\", \"match\": {\"value\": \"a.pdf\"}}, {\"key\": "
+        "\"filename\", \"match\": {\"value\": \"b.pdf\"}}]} for OR, or "
+        "{\"must_not\": [...]} for NOT and !=."
     )
 
 
@@ -383,6 +414,26 @@ def to_qdrant_filter(parsed: Optional[ParsedFilter]) -> Optional[models.Filter]:
         except Exception as e:
             raise FilterError(f"Invalid Qdrant filter structure: {e}") from e
     return models.Filter(must=[_qdrant_condition(c) for c in parsed.conditions])
+
+
+def to_qdrant_text_filter(parsed: Optional[ParsedFilter]) -> Optional[models.Filter]:
+    """Translate a parsed filter for text search on a Qdrant corpus (RDR-027 Q6).
+
+    As ``to_qdrant_filter``, except that a neutral term may name a field by its
+    MeiliSearch name (``language``, ``project``, ``branch``), as the corpus's
+    hits do (Q5), so one filter runs on a mixed set of corpora. Qdrant JSON
+    names payload fields and is not renamed.
+
+    Raises:
+        FilterError: a MeiliSearch expression, or malformed Qdrant JSON
+    """
+    if isinstance(parsed, NeutralFilter):
+        parsed = NeutralFilter(
+            tuple(
+                replace(c, key=_QDRANT_FIELD_NAMES.get(c.key, c.key)) for c in parsed.conditions
+            )
+        )
+    return to_qdrant_filter(parsed)
 
 
 # ---------------------------------------------------------------------------
@@ -488,6 +539,27 @@ def semantic_filterable_fields(collection_type: Any) -> Optional[List[str]]:
     except ValueError:
         return None
     return [_QDRANT_FIELD_NAMES.get(f, f) for f in settings.get("filterableAttributes", [])]
+
+
+def qdrant_text_filterable_fields(collection_type: Any) -> Optional[List[str]]:
+    """Fields a neutral text filter may name on a Qdrant corpus of a type (RDR-027 Q6).
+
+    Qdrant filters any payload field, so the list is the payload keys the
+    type's chunk points carry: semantic search's fields, the keys every chunk
+    has (``chunk_index`` among them) and the type's optional keys, each with
+    its MeiliSearch name where it has one (``to_qdrant_text_filter`` renames
+    it). A field no chunk carries (``page``) stays refused. None (no check)
+    for an untyped or unknown collection.
+    """
+    semantic = semantic_filterable_fields(collection_type)
+    if semantic is None:
+        return None
+    type_fields = _QDRANT_TYPE_FIELDS.get(
+        _QDRANT_TYPE_ALIASES.get(collection_type, collection_type), ()
+    )
+    payload = list(dict.fromkeys([*semantic, *_QDRANT_CHUNK_FIELDS, *type_fields]))
+    aliases = [name for name, key in _QDRANT_FIELD_NAMES.items() if key in payload]
+    return payload + aliases
 
 
 def _describe_value(value: Any) -> str:

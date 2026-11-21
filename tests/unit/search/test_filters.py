@@ -14,9 +14,11 @@ from arcaneum.search.filters import (
     check_filterable,
     describe_filter,
     parse_filter,
+    qdrant_text_filterable_fields,
     semantic_filterable_fields,
     to_meilisearch_filter,
     to_qdrant_filter,
+    to_qdrant_text_filter,
 )
 
 
@@ -409,3 +411,110 @@ class TestFilterableFields:
     @pytest.mark.parametrize("collection_type", [None, "", "mystery", 3])
     def test_untyped_collection_has_no_field_list(self, collection_type):
         assert semantic_filterable_fields(collection_type) is None
+
+
+# MeiliSearch names a Qdrant text filter accepts, as to_qdrant_point stores them.
+_PAYLOAD_NAMES = {"language": "programming_language", "project": "git_project_name"}
+
+
+def _payload_named(condition):
+    """``condition`` with each MeiliSearch field name as its Qdrant payload name."""
+    if isinstance(condition, models.Filter):
+        return condition.model_copy(update={"should": [_payload_named(c) for c in condition.should]})
+    return condition.model_copy(update={"key": _PAYLOAD_NAMES.get(condition.key, condition.key)})
+
+
+class TestQdrantTextFilter:
+    """A filter on a Qdrant text corpus (RDR-027 Q6)."""
+
+    @pytest.mark.parametrize(
+        "text, must, _meili",
+        NEUTRAL_TABLE + GROWN_TABLE,
+        ids=[t[0] for t in NEUTRAL_TABLE + GROWN_TABLE],
+    )
+    def test_neutral_and_grown_forms_translate_as_semantic_search_does(self, text, must, _meili):
+        assert to_qdrant_text_filter(parse_filter(text)) == models.Filter(
+            must=[_payload_named(c) for c in must]
+        )
+
+    def test_meilisearch_names_become_payload_names(self):
+        parsed = parse_filter("language=python,project=app,branch=main")
+
+        assert to_qdrant_text_filter(parsed) == models.Filter(
+            must=[
+                _match("programming_language", "python"),
+                _match("git_project_name", "app"),
+                _match("git_branch", "main"),
+            ]
+        )
+
+    def test_qdrant_json_passes_through_unrenamed(self):
+        text = '{"should": [{"key": "chunk_index", "match": {"value": 3}}]}'
+
+        assert to_qdrant_text_filter(parse_filter(text)) == models.Filter(
+            should=[_match("chunk_index", 3)]
+        )
+
+    def test_contains_is_match_text(self):
+        assert to_qdrant_text_filter(parse_filter("file_path:contains:/src/")) == models.Filter(
+            must=[models.FieldCondition(key="file_path", match=models.MatchText(text="/src/"))]
+        )
+
+    @pytest.mark.parametrize("text", TestNativeForms.NATIVE_MEILISEARCH)
+    def test_meilisearch_syntax_is_refused_with_the_json_form(self, text):
+        with pytest.raises(FilterError) as exc_info:
+            to_qdrant_text_filter(parse_filter(text))
+
+        message = str(exc_info.value)
+        assert "MeiliSearch" in message
+        for needle in ("must", "should", "must_not"):
+            assert needle in message
+
+    def test_the_json_hint_names_a_field_every_corpus_type_stores(self):
+        """Native Qdrant JSON names payload fields, so the example must not use ``language``."""
+        with pytest.raises(FilterError) as exc_info:
+            to_qdrant_text_filter(parse_filter("NOT language = python"))
+
+        assert '"key": "language"' not in str(exc_info.value)
+        assert '"key": "filename"' in str(exc_info.value)
+
+
+class TestQdrantTextFilterableFields:
+    def test_pdf_chunk_and_section_fields_pass(self):
+        fields = qdrant_text_filterable_fields("pdf")
+
+        check_filterable(parse_filter("chunk_index=3,section_type=table"), fields, "Pdfs")
+        check_filterable(parse_filter("page_number >= 2,filename=a.pdf"), fields, "Pdfs")
+
+    @pytest.mark.parametrize("field", ["page", "language"])
+    def test_pdf_refuses_a_field_no_chunk_carries_by_name(self, field):
+        with pytest.raises(FilterError, match=f"'{field}' is not filterable"):
+            check_filterable(
+                parse_filter(f"{field}=x"), qdrant_text_filterable_fields("pdf"), "Pdfs"
+            )
+
+    def test_code_accepts_meilisearch_and_payload_names(self):
+        fields = qdrant_text_filterable_fields("code")
+
+        for text in ("project=x", "git_project_name=x", "language=python", "line_number > 3"):
+            check_filterable(parse_filter(text), fields, "Code")
+
+    def test_markdown_fields(self):
+        fields = qdrant_text_filterable_fields("markdown")
+
+        for text in ("section=Intro", "tags=a", "headings=b", "title=c", "chunk_count=2"):
+            check_filterable(parse_filter(text), fields, "Notes")
+
+    def test_includes_the_semantic_fields(self):
+        for corpus_type in ("pdf", "code", "markdown"):
+            assert set(semantic_filterable_fields(corpus_type)) <= set(
+                qdrant_text_filterable_fields(corpus_type)
+            )
+
+    @pytest.mark.parametrize("collection_type", [None, "", "mystery", 3])
+    def test_untyped_collection_has_no_field_list(self, collection_type):
+        assert qdrant_text_filterable_fields(collection_type) is None
+
+    def test_semantic_fields_are_unchanged(self):
+        assert "chunk_index" not in semantic_filterable_fields("pdf")
+        assert "section_type" not in semantic_filterable_fields("pdf")

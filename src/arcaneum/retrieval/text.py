@@ -88,6 +88,38 @@ class TextSearchResult:
         )
 
 
+def _check_filter(
+    parsed, corpora: List[str], backend_names: Dict[str, str], backends: Dict[str, "TextBackend"]
+) -> None:
+    """Refuse a filter any searched corpus cannot run, before any request (RDR-027 Q6).
+
+    A refusal on a set spanning both backends names the corpora it would not
+    run on; a single-backend set keeps the backend's message. Each Qdrant
+    corpus then checks the filter's fields against its type's payload fields.
+    """
+    refusals: Dict[str, BadFilterError] = {}
+    for name, backend in backends.items():
+        try:
+            backend.check_filter(parsed)
+        except BadFilterError as e:
+            refusals[name] = e
+    if refusals:
+        first = next(iter(refusals.values()))
+        if len(backends) == 1:
+            raise first
+        refused = [corpus for corpus in corpora if backend_names[corpus] in refusals]
+        message = "\n".join(dict.fromkeys(str(e) for e in refusals.values()))
+        raise BadFilterError(
+            f"{message}\nThe search spans MeiliSearch and Qdrant corpora; this filter "
+            f"cannot run on: {', '.join(refused)}."
+        ) from first
+    qdrant = backends.get("qdrant")
+    if qdrant is not None:
+        for corpus in corpora:
+            if backend_names[corpus] == "qdrant":
+                qdrant.check_fields(corpus, parsed)
+
+
 def search_text(
     query: str,
     corpora: List[str],
@@ -126,7 +158,9 @@ def search_text(
         ResourceNotFoundError: a Qdrant corpus has lost its text index
         BadFilterError: the filter does not parse, or a corpus's backend
             refuses it (MeiliSearch: Qdrant JSON, ``contains``, an
-            unfilterable field; Qdrant: a MeiliSearch expression)
+            unfilterable field; Qdrant: a MeiliSearch expression, a field
+            the corpus type's chunks lack), naming the corpora it would not
+            run on when the set spans both backends
         ServiceDownError: a searched corpus's backend is unreachable
         ArcaneumError: any other search failure
     """
@@ -161,8 +195,7 @@ def search_text(
         )
 
     # Every filter refusal precedes every request.
-    for backend in backends.values():
-        backend.check_filter(parsed)
+    _check_filter(parsed, corpora, backend_names, backends)
     for backend in backends.values():
         backend.health()
 

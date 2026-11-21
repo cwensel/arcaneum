@@ -37,8 +37,8 @@ from ..search.filters import (
     FilterError,
     ParsedFilter,
     check_filterable,
-    semantic_filterable_fields,
-    to_qdrant_filter,
+    qdrant_text_filterable_fields,
+    to_qdrant_text_filter,
 )
 from .text_backend import Coverage, TextPage
 
@@ -236,6 +236,16 @@ class QdrantTextBackend:
     def check_filter(self, filter: Optional[ParsedFilter]) -> None:
         self._qdrant_filter(filter)
 
+    def check_fields(self, corpus: str, filter: Optional[ParsedFilter]) -> None:
+        """Refuse a neutral filter naming a field the corpus type's chunks lack (Q6)."""
+        fields = qdrant_text_filterable_fields(self._corpus_type(corpus))
+        if fields is None:
+            return
+        try:
+            check_filterable(filter, fields, corpus)
+        except FilterError as e:
+            raise BadFilterError(str(e)) from e
+
     def search(
         self,
         corpus: str,
@@ -248,13 +258,8 @@ class QdrantTextBackend:
         from qdrant_client.http import models
 
         user_filter = self._qdrant_filter(filter)
+        self.check_fields(corpus, filter)
         corpus_type = self._corpus_type(corpus)
-        fields = semantic_filterable_fields(corpus_type)
-        if fields is not None:
-            try:
-                check_filterable(filter, fields, corpus)
-            except FilterError as e:
-                raise BadFilterError(str(e)) from e
 
         phrases, words = split_query(query)
         if not phrases and not words:
@@ -464,7 +469,7 @@ class QdrantTextBackend:
     @staticmethod
     def _qdrant_filter(filter: Optional[ParsedFilter]):
         try:
-            return to_qdrant_filter(filter)
+            return to_qdrant_text_filter(filter)
         except FilterError as e:
             raise BadFilterError(f"Invalid filter: {e}") from e
 

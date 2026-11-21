@@ -90,6 +90,12 @@ def tokenize(text: str, corpus_type: Optional[str]) -> List[str]:
     return [token for _start, _end, token in token_spans(text) if token not in stops]
 
 
+def zero_token(text: str, corpus_type: Optional[str]) -> bool:
+    """Whether ``text`` yields no token in a corpus's text index (Q8's flag)."""
+    stops = set(stop_words(corpus_type))
+    return all(token in stops for _start, _end, token in token_spans(text))
+
+
 def text_index_params(corpus_type: Optional[str]):
     """Q3's text index on ``text`` for a corpus type."""
     from qdrant_client.http import models
@@ -322,22 +328,29 @@ class QdrantTextBackend:
                 )
 
     def ensure(self, corpus: str, corpus_type: str) -> None:
-        """Create Q3's text index on the corpus's collection when it has none."""
+        """Create Q3's text index, and Q8's ``text_tokens`` bool index, when missing."""
+        from qdrant_client.http import models
+
         self._corpus_types[corpus] = corpus_type
-        if _has_text_index(self.client.get_collection(corpus)):
-            return
-        try:
-            self.client.create_payload_index(
-                collection_name=corpus,
-                field_name=TEXT_FIELD,
-                field_schema=text_index_params(corpus_type),
-                wait=True,
-            )
-        except Exception as exc:
-            # Another process may create it between the read and the create.
-            message = str(exc).lower()
-            if "already exists" not in message and "409" not in message:
-                raise
+        info = self.client.get_collection(corpus)
+        wanted = []
+        if not _has_text_index(info):
+            wanted.append((TEXT_FIELD, text_index_params(corpus_type)))
+        if TEXT_TOKENS_FIELD not in (getattr(info, "payload_schema", None) or {}):
+            wanted.append((TEXT_TOKENS_FIELD, models.PayloadSchemaType.BOOL))
+        for field_name, field_schema in wanted:
+            try:
+                self.client.create_payload_index(
+                    collection_name=corpus,
+                    field_name=field_name,
+                    field_schema=field_schema,
+                    wait=True,
+                )
+            except Exception as exc:
+                # Another process may create it between the read and the create.
+                message = str(exc).lower()
+                if "already exists" not in message and "409" not in message:
+                    raise
 
     def drop(self, corpus: str) -> None:
         """Drop the text index; the collection and its vectors stay."""

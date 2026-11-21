@@ -5,13 +5,14 @@ Qdrant (vector search) and MeiliSearch (full-text search) with shared metadata.
 """
 
 import logging
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 from uuid import uuid4
 
 from qdrant_client import QdrantClient
 
 from ..fulltext.client import FullTextClient
 from ..schema.document import DualIndexDocument, to_qdrant_point, to_meilisearch_doc
+from .collection_metadata import DEFAULT_TEXT_BACKEND
 from .qdrant_batching import upsert_in_batches
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,8 @@ class DualIndexer:
         collection_name: str,
         index_name: str,
         batch_size: int = DEFAULT_BATCH_SIZE,
+        corpus_type: Optional[str] = None,
+        text_backend: str = DEFAULT_TEXT_BACKEND,
     ):
         """Initialize dual indexer.
 
@@ -55,12 +58,18 @@ class DualIndexer:
             collection_name: Qdrant collection name
             index_name: MeiliSearch index name
             batch_size: Batch size for Qdrant and MeiliSearch uploads (default 300)
+            corpus_type: The corpus's type, whose stop words decide which
+                chunks yield no token
+            text_backend: The corpus's text backend (RDR-027 Q2); a ``qdrant``
+                corpus's zero-token chunks carry ``text_tokens: False`` (Q8)
         """
         self.qdrant = qdrant_client
         self.meili = meili_client
         self.collection_name = collection_name
         self.index_name = index_name
         self.batch_size = batch_size
+        self.corpus_type = corpus_type
+        self.text_backend = text_backend
 
     def index_batch(self, documents: List[DualIndexDocument], wait: bool = True) -> Tuple[int, int]:
         """Index a batch of documents to both Qdrant and MeiliSearch.
@@ -97,6 +106,8 @@ class DualIndexer:
         # (timeouts on 2800+ chunk documents) and by serialized size (Qdrant's
         # 32 MiB request limit, RDR-027 Q7)
         qdrant_points = [to_qdrant_point(doc) for doc in documents]
+        if self.text_backend == "qdrant":
+            self._flag_zero_token_chunks(qdrant_points)
         qdrant_count = upsert_in_batches(
             self.qdrant,
             self.collection_name,
@@ -131,6 +142,18 @@ class DualIndexer:
         logger.debug(f"Indexed {meili_count} documents to MeiliSearch")
 
         return qdrant_count, meili_count
+
+    def _flag_zero_token_chunks(self, points) -> None:
+        """Set ``text_tokens: False`` on each point whose text yields no token (Q8).
+
+        The key is stored only when false: an absent key means the chunk has
+        tokens, so a tokenful chunk's payload is unchanged.
+        """
+        from ..retrieval.qdrant_text import TEXT_FIELD, TEXT_TOKENS_FIELD, zero_token
+
+        for point in points:
+            if zero_token(point.payload.get(TEXT_FIELD) or "", self.corpus_type):
+                point.payload[TEXT_TOKENS_FIELD] = False
 
     def index_single(self, document: DualIndexDocument, wait: bool = True) -> Tuple[int, int]:
         """Index a single document to both systems.

@@ -400,3 +400,64 @@ def test_index_batch_over_qdrant_request_limit_against_server():
         assert client.count(name, exact=True).count == 300
     finally:
         client.delete_collection(name)
+
+
+def _chunk(chunk_id: int, content: str, extension: str = ".md") -> DualIndexDocument:
+    return DualIndexDocument(
+        id=f"00000000-0000-0000-0000-{chunk_id:012d}",
+        content=content,
+        file_path=f"/docs/note{extension}",
+        filename=f"note{extension}",
+        file_extension=extension,
+        chunk_index=chunk_id,
+        vectors={"stub": [1.0, 0.0]},
+    )
+
+
+def _upserted_payloads(qdrant) -> list:
+    return [p.payload for c in qdrant.upsert.call_args_list for p in c.kwargs["points"]]
+
+
+class TestZeroTokenFlag:
+    """A qdrant corpus's chunk with no token carries ``text_tokens: False`` (RDR-027 Q8)."""
+
+    def _index(self, corpus_type, text_backend, contents, extension=".md"):
+        qdrant, meili = Mock(), Mock()
+        indexer = DualIndexer(
+            qdrant, meili, "corpus", "corpus", corpus_type=corpus_type, text_backend=text_backend
+        )
+        indexer.index_batch([_chunk(i, c, extension) for i, c in enumerate(contents)])
+        return _upserted_payloads(qdrant)
+
+    def test_a_markup_only_chunk_is_flagged_and_a_tokenful_one_is_not(self):
+        markup, tokenful = self._index(
+            "markdown", "qdrant", ["### ** `` ``` __ ___", "## Write-ahead log"]
+        )
+
+        assert markup["text_tokens"] is False
+        assert "text_tokens" not in tokenful
+
+    def test_stop_words_only_is_flagged_on_pdf_but_not_on_code(self):
+        (pdf,) = self._index("pdf", "qdrant", ["the and or to"], ".pdf")
+        (code,) = self._index("code", "qdrant", ["the and or to"], ".py")
+
+        assert pdf["text_tokens"] is False
+        assert "text_tokens" not in code
+
+    def test_a_numeric_token_is_a_token(self):
+        # "404" and "the 404" have no word token but the number (``the`` is a
+        # pdf stop word), so only a kept numeric token leaves them unflagged.
+        payloads = self._index("pdf", "qdrant", ["error 404", "404", "the 404"], ".pdf")
+
+        assert all("text_tokens" not in p for p in payloads)
+
+    def test_a_meili_corpus_never_carries_the_flag(self):
+        payloads = self._index("markdown", "meili", ["### ** ``", "the and or to"])
+
+        assert all("text_tokens" not in p for p in payloads)
+
+    def test_the_default_indexer_never_carries_the_flag(self):
+        qdrant, meili = Mock(), Mock()
+        DualIndexer(qdrant, meili, "corpus", "corpus").index_batch([_chunk(0, "### **")])
+
+        assert "text_tokens" not in _upserted_payloads(qdrant)[0]

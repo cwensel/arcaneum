@@ -211,6 +211,7 @@ from ..indexing.collection_metadata import (
     metadata_exclusion_filter,
     prompt_policy_can_be_backfilled,
     prompt_policy_issues,
+    text_backend_of,
     update_collection_metadata,
     user_point_count,
 )
@@ -3817,7 +3818,12 @@ def _sync_directory_locked(
 
             # Create dual indexer
             dual_indexer = DualIndexer(
-                qdrant_client=qdrant, meili_client=meili, collection_name=corpus, index_name=corpus
+                qdrant_client=qdrant,
+                meili_client=meili,
+                collection_name=corpus,
+                index_name=corpus,
+                corpus_type=corpus_type,
+                text_backend=text_backend_of(metadata),
             )
 
             # A file already indexed at its path was edited since: its old chunks

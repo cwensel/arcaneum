@@ -134,7 +134,22 @@ class TestTextIndex:
         backend.ensure("Docs", "pdf")
         backend.ensure("Docs", "pdf")
 
-        assert client.index_calls == [("Docs", "text")]
+        assert client.index_calls == [("Docs", "text"), ("Docs", "text_tokens")]
+
+    def test_ensure_indexes_the_zero_token_flag_as_a_bool(self, client):
+        from qdrant_client.http import models
+
+        QdrantTextBackend(client).ensure("Docs", "pdf")
+
+        assert client.requested[("Docs", "text_tokens")] == models.PayloadSchemaType.BOOL
+
+    def test_ensure_adds_the_flag_index_beside_an_existing_text_index(self, client):
+        client.create_payload_index("Docs", "text", field_schema=text_index_params("pdf"))
+        client.index_calls.clear()
+
+        QdrantTextBackend(client).ensure("Docs", "pdf")
+
+        assert client.index_calls == [("Docs", "text_tokens")]
 
     def test_reads_create_no_index(self, backend, client):
         client.index_calls.clear()

@@ -1,19 +1,27 @@
-"""One metadata filter dialect for semantic and text search (RDR-026 Q6).
+"""One metadata filter dialect for semantic and text search (RDR-026 Q6, RDR-027 Q6).
 
 ``parse_filter`` reads a ``--filter`` string once into a backend-neutral
 filter, which translates to a Qdrant ``Filter`` (``to_qdrant_filter``) and to
 a MeiliSearch expression (``to_meilisearch_filter``). Neutral forms:
 
-- ``key=value[,key=value]``, whitespace around ``=`` trimmed;
-- ``key:op:value``, op one of ``match``, ``in``, ``gte``, ``gt``, ``lte``,
-  ``lt`` or ``contains``; ``in`` takes ``|``-separated values, since ``,``
-  separates terms;
+- terms joined by ``,`` or the upper-case word ``AND``, each either
+  ``key op value``, op one of ``=``, ``>``, ``>=``, ``<`` or ``<=`` (the
+  comparisons take a number), whitespace around it trimmed; or
+  ``key:op:value``, op one of ``match``, ``in``, ``gte``, ``gt``, ``lte``,
+  ``lt`` or ``contains``, where ``in`` takes ``|``-separated values;
 - flat JSON ``{"field": value | [values]}``, where a list means ``in``.
 
+A value may be quoted, single or double, so a comma, ``AND`` or keyword
+inside it is part of the value; ``\\"``, ``\\'`` and ``\\\\`` escape inside
+quotes. A quote opens a value only where one starts (after an operator, ``,``,
+``|``, ``[`` or ``(``), so ``O'Brien`` and ``The '80s.md`` stay literal.
+
 Native forms pass through to their own mode only. JSON with a top-level
-``must``, ``should`` or ``must_not`` is Qdrant's; a string with a MeiliSearch
-keyword, ``!=``, ``>``, ``<`` or a double quote is MeiliSearch's. Anything
-that does not parse raises ``FilterError``; no term is dropped.
+``must``, ``should`` or ``must_not`` is Qdrant's; a string with MeiliSearch
+syntax the neutral forms lack (``OR``, ``NOT``, ``!=``, ``IN``, ``TO``,
+``EXISTS``, ``IS NULL``, ``IS EMPTY`` or a parenthesized group, outside
+quotes) is MeiliSearch's.
+Anything that does not parse raises ``FilterError``; no term is dropped.
 """
 
 from __future__ import annotations
@@ -40,11 +48,24 @@ OPERATORS = ("match", "in", "gte", "gt", "lte", "lt", "contains")
 _RANGE_SYMBOLS = {"gte": ">=", "gt": ">", "lte": "<=", "lt": "<"}
 _QDRANT_NATIVE_KEYS = ("must", "should", "must_not")
 
-# A MeiliSearch expression: one of its keywords as an upper-case word, a
-# comparison operator, or a double quote (RDR-026 Q6).
-_MEILI_NATIVE = re.compile(r'\b(?:AND|OR|NOT|TO|IN|EXISTS)\b|\bIS\s+(?:NULL|EMPTY)\b|!=|[<>"]')
+# MeiliSearch syntax the neutral forms lack, read outside quoted values: one
+# of its keywords as an upper-case word, !=, or a group's "(" where a term
+# begins (RDR-027 Q6).
+_MEILI_NATIVE = re.compile(
+    r"\b(?:OR|NOT|TO|IN|EXISTS)\b|\bIS\s+(?:NULL|EMPTY)\b|!=|^\(|(?<!\S)AND\s*\("
+)
+_TERM_SEPARATOR = re.compile(r",|(?<!\S)AND(?!\S)")
 _KEY = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]*$")
+# key op value; the key holds no ':', so key:op:value is never read as one.
+_SYMBOLIC_TERM = re.compile(r"^([^:=<>]*)(>=|<=|=|>|<)(.*)$", re.DOTALL)
+_SYMBOLS = {"=": "match", **{symbol: op for op, symbol in _RANGE_SYMBOLS.items()}}
 _EXTENDED_TERM = re.compile(r"^([^:=]+):([^:=]*):(.*)$", re.DOTALL)
+_QUOTES = "\"'"
+# A quote opens a quoted value only at the start of the text or when the last
+# character before it, whitespace skipped, is one of these.
+_QUOTE_OPENS_AFTER = frozenset("=<>:,|[(")
+_QUOTE_ESCAPES = frozenset("\"'\\")
+_PLACEHOLDER = re.compile(r"\x00(\d+)\x00")
 _DIGITS = re.compile(r"^-?\d+$")
 
 # Qdrant payload names for MeiliSearch filterable attributes that
@@ -102,9 +123,10 @@ def parse_filter(filter_arg: Optional[str]) -> Optional[ParsedFilter]:
     text = filter_arg.strip()
     if text.startswith("{"):
         return _parse_json(text)
-    if _MEILI_NATIVE.search(text):
+    quoted = _QuotedValues(text)
+    if _MEILI_NATIVE.search(quoted.masked):
         return NativeFilter("meilisearch", text)
-    return NeutralFilter(tuple(_parse_terms(text)))
+    return NeutralFilter(tuple(_parse_terms(text, quoted)))
 
 
 def _check_key(key: str, source: str) -> str:
@@ -117,27 +139,95 @@ def _check_key(key: str, source: str) -> str:
     return key
 
 
-def _parse_terms(text: str) -> Iterable[Condition]:
+class _QuotedValues:
+    """The filter text with each quoted value masked by a placeholder.
+
+    Terms split and native syntax is detected on ``masked``, so neither sees
+    inside a quoted value. A quote opens only where a value starts and must
+    close with the same quote; one that never closes stays a literal
+    character.
+    """
+
+    def __init__(self, text: str):
+        self.raw: List[str] = []  # each quoted value as typed, quotes included
+        self.values: List[str] = []  # each quoted value unquoted and unescaped
+        out = []
+        i = 0
+        while i < len(text):
+            if text[i] in _QUOTES and self._opens(text, i):
+                end, value = self._read(text, i)
+                if end is not None:
+                    out.append(f"\x00{len(self.values)}\x00")
+                    self.raw.append(text[i:end])
+                    self.values.append(value)
+                    i = end
+                    continue
+            out.append(text[i])
+            i += 1
+        self.masked = "".join(out)
+
+    @staticmethod
+    def _opens(text: str, i: int) -> bool:
+        before = text[:i].rstrip()
+        return not before or before[-1] in _QUOTE_OPENS_AFTER
+
+    @staticmethod
+    def _read(text: str, start: int) -> Tuple[Optional[int], str]:
+        quote = text[start]
+        chars = []
+        i = start + 1
+        while i < len(text):
+            ch = text[i]
+            if ch == "\\" and i + 1 < len(text) and text[i + 1] in _QUOTE_ESCAPES:
+                chars.append(text[i + 1])
+                i += 2
+            elif ch == quote:
+                return i + 1, "".join(chars)
+            else:
+                chars.append(ch)
+                i += 1
+        return None, ""
+
+    def restore(self, masked: str) -> str:
+        """The masked text as typed."""
+        return _PLACEHOLDER.sub(lambda m: self.raw[int(m.group(1))], masked)
+
+    def value(self, masked: str, term: str) -> str:
+        """A term's value: the unquoted value when quoted, else the literal text."""
+        masked = masked.strip()
+        whole = _PLACEHOLDER.fullmatch(masked)
+        if whole:
+            return self.values[int(whole.group(1))]
+        if _PLACEHOLDER.match(masked):
+            raise FilterError(f"Unexpected text after the closing quote in {term!r}")
+        if masked and masked[0] in _QUOTES:
+            raise FilterError(f"Unterminated quote in {term!r}")
+        return self.restore(masked)
+
+
+def _parse_terms(text: str, quoted: _QuotedValues) -> Iterable[Condition]:
     previous_op = None
-    for term in text.split(","):
-        term = term.strip()
-        if not term:
+    for masked in _TERM_SEPARATOR.split(quoted.masked):
+        masked = masked.strip()
+        term = quoted.restore(masked)
+        if not masked:
             raise FilterError(f"Empty term in {text!r}")
-        extended = _EXTENDED_TERM.match(term)
-        if extended:
-            key, op, value = (part.strip() for part in extended.groups())
-            condition = _extended_condition(_check_key(key, term), op, value, term)
-        elif "=" in term:
-            key, value = (part.strip() for part in term.split("=", 1))
-            _check_key(key, term)
-            if not value:
-                raise FilterError(f"Missing value in {term!r}")
-            condition = Condition(key, "match", value)
+        symbolic = _SYMBOLIC_TERM.match(masked)
+        extended = None if symbolic else _EXTENDED_TERM.match(masked)
+        if symbolic:
+            key, symbol, value = symbolic.groups()
+            op = _SYMBOLS[symbol]
+        elif extended:
+            key, op, value = extended.groups()
+            op = quoted.restore(op.strip())
         else:
             hint = " (separate 'in' values with '|')" if previous_op == "in" else ""
             raise FilterError(
-                f"Unparseable term {term!r}: expected key=value or key:op:value{hint}"
+                f"Unparseable term {term!r}: expected key=value, key > value or "
+                f"key:op:value{hint}"
             )
+        key = _check_key(quoted.restore(key.strip()), term)
+        condition = _condition(key, op, value, term, quoted)
         previous_op = condition.op
         yield condition
 
@@ -152,16 +242,17 @@ def _parse_number(value: str, source: str) -> Union[int, float]:
     return int(number) if number.is_integer() else number
 
 
-def _extended_condition(key: str, op: str, value: str, term: str) -> Condition:
+def _condition(key: str, op: str, masked: str, term: str, quoted: _QuotedValues) -> Condition:
     if op not in OPERATORS:
         raise FilterError(
             f"Unknown operator {op!r} in {term!r}; use one of: {', '.join(OPERATORS)}"
         )
     if op == "in":
-        values = tuple(v.strip() for v in value.split("|"))
-        if not value or any(not v for v in values):
+        values = tuple(quoted.value(v, term) for v in masked.split("|"))
+        if any(not v for v in values):
             raise FilterError(f"Empty value in {term!r}")
         return Condition(key, "in", values)
+    value = quoted.value(masked, term)
     if not value:
         raise FilterError(f"Missing value in {term!r}")
     if op in _RANGE_SYMBOLS:
@@ -260,6 +351,20 @@ def _qdrant_condition(condition: Condition):
     )
 
 
+def meilisearch_syntax_refusal(expression: str) -> str:
+    """Refuse MeiliSearch-only syntax on Qdrant, naming what Qdrant takes instead."""
+    return (
+        f"{expression!r} uses MeiliSearch syntax (OR, NOT, !=, IN, TO, EXISTS, IS NULL or "
+        "IS EMPTY), which only text search on a MeiliSearch corpus accepts. Qdrant takes "
+        "terms joined by ',' or AND, each key=value, key op value with op one of >, >=, <, <= "
+        "(e.g. page_number >= 39), or key:op:value (e.g. page_number:gt:10), any value "
+        "quoted if it holds a comma; flat JSON (e.g. {\"filename\": \"a.pdf\"}); or Qdrant's "
+        "JSON with must, should and must_not, e.g. {\"should\": [{\"key\": \"language\", "
+        "\"match\": {\"value\": \"python\"}}, {\"key\": \"language\", \"match\": "
+        "{\"value\": \"java\"}}]} for OR, or {\"must_not\": [...]} for NOT and !=."
+    )
+
+
 def to_qdrant_filter(parsed: Optional[ParsedFilter]) -> Optional[models.Filter]:
     """Translate a parsed filter for semantic search.
 
@@ -272,11 +377,7 @@ def to_qdrant_filter(parsed: Optional[ParsedFilter]) -> Optional[models.Filter]:
         return None
     if isinstance(parsed, NativeFilter):
         if parsed.backend != "qdrant":
-            raise FilterError(
-                f"{parsed.expression!r} is a MeiliSearch expression, which only text search "
-                "accepts. Semantic search takes key=value, key:op:value (e.g. "
-                'page_number:gt:10) or JSON (e.g. {"filename": "a.pdf"}).'
-            )
+            raise FilterError(meilisearch_syntax_refusal(parsed.expression))
         try:
             return models.Filter(**parsed.expression)
         except Exception as e:

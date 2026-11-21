@@ -495,6 +495,36 @@ class TestFilterValidation:
             assert hit.get("programming_language") == "python"
             assert hit.get("code_type") == "function"
 
+    def test_grown_neutral_filter_runs_on_meilisearch(self, meili_client):
+        """A quoted value, AND and a numeric range re-render with every value
+        quoted (RDR-027 Q6), and MeiliSearch still compares the range numerically."""
+        from arcaneum.fulltext.indexes import PDF_DOCS_SETTINGS
+        from arcaneum.search.filters import parse_filter, to_meilisearch_filter
+
+        index_name = "test_workflow_grown_filter"
+        if meili_client.index_exists(index_name):
+            meili_client.delete_index(index_name)
+        meili_client.create_index(name=index_name, primary_key="id", settings=PDF_DOCS_SETTINGS)
+        try:
+            meili_client.add_documents_sync(
+                index_name,
+                [
+                    {"id": f"d{n}p{page}", "filename": name, "page_number": page, "content": "x"}
+                    for n, name in enumerate(("a, b.pdf", "other.pdf"))
+                    for page in (5, 39, 40, 80, 100)
+                ],
+            )
+            expression = to_meilisearch_filter(
+                parse_filter("filename='a, b.pdf' AND page_number >= 39 AND page_number < 80")
+            )
+            results = meili_client.search(index_name, "", filter=expression, limit=100)
+        finally:
+            meili_client.delete_index(index_name)
+
+        assert expression == 'filename = "a, b.pdf" AND page_number >= "39" AND page_number < "80"'
+        assert sorted(h["page_number"] for h in results["hits"]) == [39, 40]
+        assert {h["filename"] for h in results["hits"]} == {"a, b.pdf"}
+
     def test_filter_or_conditions(self, meili_client, indexed_auth_project):
         """Test filtering with OR conditions."""
         index_name = indexed_auth_project["index_name"]

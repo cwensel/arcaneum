@@ -212,7 +212,7 @@ class TestSearchSemantic:
             semantic.module.search_semantic(
                 "query",
                 ["A"],
-                filter="page_number > 10",
+                filter="page_number != 10",
                 client=semantic.client,
                 embedder=semantic.embedder,
             )
@@ -914,10 +914,10 @@ class TestSearchText:
         from arcaneum.retrieval import search_text
 
         search_text(
-            "query", ["A"], filter="page_number > 10", text_backend=MeiliTextBackend(text_client)
+            "query", ["A"], filter="page_number != 10", text_backend=MeiliTextBackend(text_client)
         )
 
-        assert text_client.search.call_args.kwargs["filter"] == "page_number > 10"
+        assert text_client.search.call_args.kwargs["filter"] == "page_number != 10"
 
     @pytest.mark.parametrize(
         "text, needle",

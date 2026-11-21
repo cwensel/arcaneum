@@ -124,9 +124,106 @@ NEUTRAL_TABLE = [
 ]
 
 
+def _range(key, **bounds):
+    return models.FieldCondition(key=key, range=models.Range(**bounds))
+
+
+# The grown forms (RDR-027 Q6): quoted values, AND joins and symbolic
+# comparisons, covering every form in remote-arc/search-usage-filters.md and
+# the interaction logs.
+GROWN_TABLE = [
+    ('filename="a, b.pdf"', [_match("filename", "a, b.pdf")], 'filename = "a, b.pdf"'),
+    ("filename='x.pdf'", [_match("filename", "x.pdf")], 'filename = "x.pdf"'),
+    ("filename='a, b.pdf'", [_match("filename", "a, b.pdf")], 'filename = "a, b.pdf"'),
+    ('filename = "db(31).pdf"', [_match("filename", "db(31).pdf")], 'filename = "db(31).pdf"'),
+    (
+        'filename = "db(31).pdf" AND page_number > 80',
+        [_match("filename", "db(31).pdf"), _range("page_number", gt=80)],
+        'filename = "db(31).pdf" AND page_number > "80"',
+    ),
+    (
+        'page_number > 80 AND filename = "db(31).pdf"',
+        [_range("page_number", gt=80), _match("filename", "db(31).pdf")],
+        'page_number > "80" AND filename = "db(31).pdf"',
+    ),
+    (
+        "filename='V' AND page_number>=39 AND page_number<=43",
+        [_match("filename", "V"), _range("page_number", gte=39), _range("page_number", lte=43)],
+        'filename = "V" AND page_number >= "39" AND page_number <= "43"',
+    ),
+    (
+        "filename = x AND chunk_index = 3",
+        [_match("filename", "x"), _digits("chunk_index", "3")],
+        'filename = "x" AND chunk_index = "3"',
+    ),
+    (
+        "language = python AND project = myapp",
+        [_match("language", "python"), _match("project", "myapp")],
+        'language = "python" AND project = "myapp"',
+    ),
+    ("file_hash = 'abc'", [_match("file_hash", "abc")], 'file_hash = "abc"'),
+    (
+        'filename="INTRO TO X.pdf"',
+        [_match("filename", "INTRO TO X.pdf")],
+        'filename = "INTRO TO X.pdf"',
+    ),
+    (
+        "filename='Ideas IN Motion 10 TO 20.pdf' AND page_number >= 2",
+        [_match("filename", "Ideas IN Motion 10 TO 20.pdf"), _range("page_number", gte=2)],
+        'filename = "Ideas IN Motion 10 TO 20.pdf" AND page_number >= "2"',
+    ),
+    ('title="say \\"hi\\""', [_match("title", 'say "hi"')], 'title = "say \\"hi\\""'),
+    ("title='it\\'s'", [_match("title", "it's")], 'title = "it\'s"'),
+    ('file_path="C:\\\\docs"', [_match("file_path", "C:\\docs")], 'file_path = "C:\\\\docs"'),
+    ("author=O'Brien", [_match("author", "O'Brien")], 'author = "O\'Brien"'),
+    ("section=Rock 'n' roll", [_match("section", "Rock 'n' roll")], 'section = "Rock \'n\' roll"'),
+    (
+        "filename=The '80s.md,section=O'Brien",
+        [_match("filename", "The '80s.md"), _match("section", "O'Brien")],
+        'filename = "The \'80s.md" AND section = "O\'Brien"',
+    ),
+    ("filename=draft (1).md", [_match("filename", "draft (1).md")], 'filename = "draft (1).md"'),
+    ("page_number = 3", [_digits("page_number", "3")], 'page_number = "3"'),
+    ('page_number = "3"', [_digits("page_number", "3")], 'page_number = "3"'),
+    ("page_number > 3", [_range("page_number", gt=3)], 'page_number > "3"'),
+    ("page_number >= 3", [_range("page_number", gte=3)], 'page_number >= "3"'),
+    ("page_number < 3", [_range("page_number", lt=3)], 'page_number < "3"'),
+    ("page_number <= 3", [_range("page_number", lte=3)], 'page_number <= "3"'),
+    ("page_number<1.5", [_range("page_number", lt=1.5)], 'page_number < "1.5"'),
+    ('page_number > "80"', [_range("page_number", gt=80)], 'page_number > "80"'),
+    ("page_number > 10", [_range("page_number", gt=10)], 'page_number > "10"'),
+    ("page_number < 10", [_range("page_number", lt=10)], 'page_number < "10"'),
+    ("page_number >= 10", [_range("page_number", gte=10)], 'page_number >= "10"'),
+    (
+        "filename=a.pdf, page_number >= 2 AND page_number < 5",
+        [_match("filename", "a.pdf"), _range("page_number", gte=2), _range("page_number", lt=5)],
+        'filename = "a.pdf" AND page_number >= "2" AND page_number < "5"',
+    ),
+    (
+        'file_path:match:"C:/a, b.py"',
+        [_match("file_path", "C:/a, b.py")],
+        'file_path = "C:/a, b.py"',
+    ),
+    (
+        "language:in:'a, b'|c",
+        [models.FieldCondition(key="language", match=models.MatchAny(any=["a, b", "c"]))],
+        'language IN ["a, b", "c"]',
+    ),
+    ('page_number:gte:"80"', [_range("page_number", gte=80)], 'page_number >= "80"'),
+]
+
+
 class TestNeutralForms:
     @pytest.mark.parametrize("text, must, meili", NEUTRAL_TABLE, ids=[t[0] for t in NEUTRAL_TABLE])
     def test_translates_to_both_backends(self, text, must, meili):
+        parsed = parse_filter(text)
+
+        assert isinstance(parsed, NeutralFilter)
+        assert to_qdrant_filter(parsed) == models.Filter(must=must)
+        assert to_meilisearch_filter(parsed) == meili
+
+    @pytest.mark.parametrize("text, must, meili", GROWN_TABLE, ids=[t[0] for t in GROWN_TABLE])
+    def test_grown_forms_translate_to_both_backends(self, text, must, meili):
         parsed = parse_filter(text)
 
         assert isinstance(parsed, NeutralFilter)
@@ -182,24 +279,22 @@ class TestNativeForms:
         with pytest.raises(FilterError):
             to_qdrant_filter(parse_filter('{"must": [{"nope": 1}]}'))
 
-    @pytest.mark.parametrize(
-        "text",
-        [
-            "language = python AND project = myapp",
-            "language = python OR language = java",
-            "NOT language = python",
-            "page_number 10 TO 20",
-            'language IN ["python", "java"]',
-            "tags EXISTS",
-            "tags IS NULL",
-            "tags IS EMPTY",
-            "language != python",
-            "page_number > 10",
-            "page_number < 10",
-            "page_number >= 10",
-            'filename = "db(31).pdf"',
-        ],
-    )
+    NATIVE_MEILISEARCH = [
+        "language = python OR language = java",
+        'filename = "a.pdf" OR filename = "b.pdf"',
+        "NOT language = python",
+        "page_number 10 TO 20",
+        'language IN ["python", "java"]',
+        "tags EXISTS",
+        "tags IS NULL",
+        "tags IS EMPTY",
+        "language != python",
+        'filename != "a.pdf" AND page_number > 3',
+        "(page_number > 3 AND page_number < 5)",
+        "page_number > 3 AND (page_number < 5)",
+    ]
+
+    @pytest.mark.parametrize("text", NATIVE_MEILISEARCH)
     def test_meilisearch_expression_passes_through_to_text(self, text):
         parsed = parse_filter(text)
 
@@ -207,9 +302,18 @@ class TestNativeForms:
         assert parsed.backend == "meilisearch"
         assert to_meilisearch_filter(parsed) == text
 
-    def test_meilisearch_expression_is_refused_by_semantic(self):
+    @pytest.mark.parametrize("text", NATIVE_MEILISEARCH)
+    def test_meilisearch_expression_is_refused_by_semantic(self, text):
         with pytest.raises(FilterError, match="MeiliSearch"):
-            to_qdrant_filter(parse_filter("page_number > 10"))
+            to_qdrant_filter(parse_filter(text))
+
+    def test_refusal_gives_qdrant_json_and_the_grown_forms(self):
+        with pytest.raises(FilterError) as exc_info:
+            to_qdrant_filter(parse_filter("language = python OR language = java"))
+
+        message = str(exc_info.value)
+        for needle in ("must", "should", "must_not", "AND", ">="):
+            assert needle in message
 
     def test_lowercase_words_stay_neutral(self):
         parsed = parse_filter("section=Getting to know it and more")
@@ -242,6 +346,16 @@ class TestUnparseable:
             ('{"page_number": 1.5}', "page_number"),
             ('{"": "x"}', "key"),
             ("{}", "empty"),
+            ('filename="x', "quote"),
+            ("filename='x.pdf", "quote"),
+            ('filename="a" b', "quote"),
+            ("page_number > ten", "number"),
+            ('path>"a:b:c"', "number"),
+            ("> 3", "key"),
+            ("filename=", "value"),
+            ('filename=""', "value"),
+            ("a AND", "term"),
+            ("AND a=1", "term"),
         ],
     )
     def test_is_refused_not_dropped(self, text, needle):
@@ -270,7 +384,11 @@ class TestFilterableFields:
         assert "file_path" in message
 
     def test_native_forms_are_not_checked(self):
-        check_filterable(parse_filter("chunk_index > 3"), ["filename"], "DevRef")
+        check_filterable(parse_filter("chunk_index != 3"), ["filename"], "DevRef")
+
+    def test_grown_forms_are_checked(self):
+        with pytest.raises(FilterError, match="'chunk_index' is not filterable"):
+            check_filterable(parse_filter("chunk_index > 3"), ["filename"], "DevRef")
 
     def test_pdf_semantic_fields_are_the_index_filterable_attributes(self):
         fields = semantic_filterable_fields("pdf")

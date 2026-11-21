@@ -65,8 +65,20 @@ class TestSearchSemantic:
             ),
         ]
 
-    def test_with_filter(self, mock_qdrant_client, mock_embedder, sample_search_results, capsys):
-        """Test search with metadata filter."""
+    @pytest.mark.parametrize(
+        "filter_arg, must",
+        [
+            ("page_number:gt:3", [("page_number", {"gt": 3})]),
+            (
+                'filename="a, b.pdf" AND page_number >= 3',
+                [("filename", "a, b.pdf"), ("page_number", {"gte": 3})],
+            ),
+        ],
+    )
+    def test_with_filter(
+        self, mock_qdrant_client, mock_embedder, sample_search_results, capsys, filter_arg, must
+    ):
+        """Test search with metadata filter, including the grown AND form (RDR-027 Q6)."""
         from arcaneum.cli.search import search_command
 
         with patch("arcaneum.cli.search.create_qdrant_client", return_value=mock_qdrant_client):
@@ -81,7 +93,7 @@ class TestSearchSemantic:
                                 query="authentication",
                                 corpora=["TestCollection"],
                                 vector_name=None,
-                                filter_arg="page_number:gt:3",
+                                filter_arg=filter_arg,
                                 limit=10,
                                 offset=0,
                                 score_threshold=None,
@@ -92,9 +104,13 @@ class TestSearchSemantic:
         from qdrant_client.http import models
 
         assert exc_info.value.code == 0
-        assert mock_search.call_args.kwargs["query_filter"] == models.Filter(
-            must=[models.FieldCondition(key="page_number", range=models.Range(gt=3))]
-        )
+        expected = [
+            models.FieldCondition(key=key, range=models.Range(**value))
+            if isinstance(value, dict)
+            else models.FieldCondition(key=key, match=models.MatchValue(value=value))
+            for key, value in must
+        ]
+        assert mock_search.call_args.kwargs["query_filter"] == models.Filter(must=expected)
 
     def test_pagination(self, mock_qdrant_client, mock_embedder, sample_search_results, capsys):
         """Test search with pagination (limit and offset)."""

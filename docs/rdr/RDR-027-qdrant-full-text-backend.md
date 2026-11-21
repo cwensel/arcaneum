@@ -6,7 +6,7 @@
 ## Metadata
 
 - **Date**: 2026-11-20
-- **Status**: Draft
+- **Status**: Final
 - **Type**: Architecture
 - **Priority**: High
 - **Related Issues**: this RDR is `arcaneum#161`; decides `arcaneum#122`; part of the remote-arc program

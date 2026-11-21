@@ -1,6 +1,9 @@
 #!/bin/bash
 # Test all Arcaneum CLI commands for basic functionality
-# Based on: docs/plugin-marketplace-testing.md
+# Based on: docs/guides/claude-code-plugin.md
+#
+# Every check runs without Qdrant or MeiliSearch, and none creates a
+# collection or corpus
 
 set -e
 
@@ -12,12 +15,14 @@ GREEN='\033[0;32m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
-# Test each command with --help
+# Test each command with --help ($cmd is unquoted so a group and its
+# subcommand pass as two arguments)
 echo "1. Testing command --help flags..."
-for cmd in create-collection list-collections collection-info delete-collection \
-           list-models index-pdfs index-source search search-text \
-           create-corpus; do
-    if python -m arcaneum.cli.main "$cmd" --help > /dev/null 2>&1; then
+commands=("collection create" "collection list" "collection info" \
+          "collection delete" "models list" "index pdf" "index code" \
+          "search" "search semantic" "search text" "corpus create")
+for cmd in "${commands[@]}"; do
+    if python -m arcaneum.cli.main $cmd --help > /dev/null 2>&1; then
         echo -e "  ${GREEN}✓${NC} $cmd --help"
     else
         echo -e "  ${RED}❌${NC} $cmd --help failed"
@@ -28,45 +33,44 @@ done
 echo ""
 echo "2. Testing JSON output support..."
 
-# Test JSON output for commands that support it
-if python -m arcaneum.cli.main list-models --json > /dev/null 2>&1; then
-    echo -e "  ${GREEN}✓${NC} list-models --json"
+# Test JSON output (collection list --json needs Qdrant, so it isn't here)
+if python -m arcaneum.cli.main models list --json > /dev/null 2>&1; then
+    echo -e "  ${GREEN}✓${NC} models list --json"
 else
-    echo -e "  ${RED}❌${NC} list-models --json"
-fi
-
-if python -m arcaneum.cli.main list-collections --json > /dev/null 2>&1; then
-    echo -e "  ${GREEN}✓${NC} list-collections --json"
-else
-    echo -e "  ${RED}❌${NC} list-collections --json"
+    echo -e "  ${RED}❌${NC} models list --json"
+    exit 1
 fi
 
 echo ""
 echo "3. Testing error handling..."
 
-# Test invalid arguments (should exit with code 2)
-if python -m arcaneum.cli.main create-collection test --model invalid 2>&1 | grep -q "\[ERROR\]"; then
+# Test invalid arguments (should exit with code 2). The unknown model is
+# rejected before any Qdrant connection, so nothing is created
+if python -m arcaneum.cli.main collection create test --model invalid 2>&1 | grep -q "\[ERROR\]"; then
     echo -e "  ${GREEN}✓${NC} Error messages use [ERROR] prefix"
 else
     echo -e "  ${RED}❌${NC} Error messages missing [ERROR] prefix"
+    exit 1
 fi
 
-# Check exit code for invalid args
-python -m arcaneum.cli.main create-collection test --model invalid > /dev/null 2>&1
-EXIT_CODE=$?
+# Check exit code for invalid args (captured with || so set -e doesn't
+# abort on the expected non-zero status)
+EXIT_CODE=0
+python -m arcaneum.cli.main collection create test --model invalid > /dev/null 2>&1 || EXIT_CODE=$?
 if [ $EXIT_CODE -eq 2 ]; then
     echo -e "  ${GREEN}✓${NC} Invalid args return exit code 2"
 elif [ $EXIT_CODE -eq 1 ]; then
     echo -e "  ${GREEN}✓${NC} Errors return exit code 1"
 else
     echo -e "  ${RED}❌${NC} Unexpected exit code: $EXIT_CODE (expected 1 or 2)"
+    exit 1
 fi
 
 echo ""
 echo "4. Testing JSON structure..."
 
 # Test that JSON output is valid
-OUTPUT=$(python -m arcaneum.cli.main list-models --json 2>&1)
+OUTPUT=$(python -m arcaneum.cli.main models list --json 2>&1)
 if echo "$OUTPUT" | python -m json.tool > /dev/null 2>&1; then
     echo -e "  ${GREEN}✓${NC} JSON output is valid"
 
@@ -112,5 +116,5 @@ echo ""
 echo "Quick test commands:"
 echo "  /plugin marketplace add $(pwd)"
 echo "  /plugin install arc@arcaneum-marketplace"
-echo "  /arc:list-models --json"
-echo "  /arc:list-collections"
+echo "  /arc:models list --json"
+echo "  /arc:collection list"

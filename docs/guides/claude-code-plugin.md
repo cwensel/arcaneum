@@ -102,7 +102,7 @@ From within Claude Code:
 **Verification:**
 
 - Commands appear in `/help` or `/commands`
-- Test a simple command: `/list-collections`
+- Test a simple command: `/arc:collection list`
 
 #### Step 3: Test Slash Commands
 
@@ -136,13 +136,13 @@ Verify error codes and messages:
 
 ```bash
 # Invalid model (should show error with available models)
-/create-collection test --model invalid-model
+/arc:collection create test --model invalid-model
 
-# Nonexistent collection (should show error)
-/search "query" --collection nonexistent
+# Nonexistent corpus (should show error)
+/arc:search semantic "query" --corpus nonexistent
 
 # Missing required argument (Click should show usage)
-/create-collection test
+/arc:collection create
 ```
 
 #### Step 5: Test $ARGUMENTS Expansion
@@ -151,13 +151,13 @@ Verify arguments are passed correctly:
 
 ```bash
 # Multiple flags
-/index-source ~/code --collection MyCode --depth 1 --workers 8 --verbose
+/arc:index code ~/code --collection MyCode --depth 1 --verbose
 
 # JSON output
-/list-collections --json
+/arc:collection list --json
 
 # Complex filter
-/search "auth" --collection Code --filter "language=python" --limit 20
+/arc:search semantic "auth" --corpus Code --filter "language=python" --limit 20
 ```
 
 ### Option 2: Git-Based Local Testing
@@ -318,11 +318,11 @@ python -m arcaneum.cli.main --version && echo "✓ Version command works"
 **Test Commands:**
 
 ```bash
-/list-collections --json
-/list-models --json
-/create-collection test-json --model jina-code --type code --json
-/collection-info test-json --json
-/delete-collection test-json --confirm --json
+/arc:collection list --json
+/arc:models list --json
+/arc:collection create test-json --model jina-code --type code --json
+/arc:collection info test-json --json
+/arc:collection delete test-json --confirm --json
 ```
 
 **Expected Result:**
@@ -339,13 +339,13 @@ python -m arcaneum.cli.main --version && echo "✓ Version command works"
 
 ```bash
 # Invalid model
-/create-collection test --model bad-model
+/arc:collection create test --model bad-model
 
-# Nonexistent collection
-/search "query" --collection nonexistent
+# Nonexistent corpus
+/arc:search semantic "query" --corpus nonexistent
 
 # Missing required arg
-/index-source
+/arc:index code
 ```
 
 **Expected Result:**
@@ -362,8 +362,8 @@ python -m arcaneum.cli.main --version && echo "✓ Version command works"
 **Steps:**
 
 1. Open two Claude Code sessions
-2. In session 1: `/index-source /path/one --collection code`
-3. In session 2: `/index-pdfs /path/two --collection docs`
+2. In session 1: `/arc:index code /path/one --collection code`
+3. In session 2: `/arc:index pdf /path/two --collection docs`
 4. Monitor both complete successfully
 
 **Expected Result:**
@@ -378,7 +378,7 @@ python -m arcaneum.cli.main --version && echo "✓ Version command works"
 
 **Steps:**
 
-1. Index a moderately large directory: `/index-source ~/sandbox/thirdparty --collection test`
+1. Index a moderately large directory: `/arc:index code ~/sandbox/thirdparty --collection test`
 2. Monitor Claude Code output
 
 **Expected Result:**
@@ -518,11 +518,11 @@ Keep a testing log:
 ```markdown
 ## Test Session: 2025-10-28
 
-- ✅ create-collection: Works with --json
-- ✅ list-collections: Table format looks good
-- ❌ search: Filter syntax unclear in help
+- ✅ collection create: Works with --json
+- ✅ collection list: Table format looks good
+- ❌ search semantic: Filter syntax unclear in help
   - Fixed: Updated search.md with filter examples
-- ✅ index-source: Progress tracking works perfectly
+- ✅ index code: Progress tracking works perfectly
 ```
 
 ## Automated Testing
@@ -597,13 +597,14 @@ Create `scripts/test-plugin-commands.sh`:
 echo "Testing all Arcaneum CLI commands..."
 echo ""
 
-# Test each command with --help
-for cmd in create-collection list-collections collection-info delete-collection \
-           list-models index-pdfs index-source search search-text \
-           create-corpus; do
+# Test each command with --help ($cmd is unquoted so a group and its
+# subcommand pass as two arguments)
+commands=("collection create" "collection list" "collection info" \
+          "collection delete" "models list" "index pdf" "index code" \
+          "search" "search semantic" "search text" "corpus create")
+for cmd in "${commands[@]}"; do
     echo "Testing: arc $cmd --help"
-    python -m arcaneum.cli.main "$cmd" --help > /dev/null 2>&1
-    if [ $? -eq 0 ]; then
+    if python -m arcaneum.cli.main $cmd --help > /dev/null 2>&1; then
         echo "  ✓ $cmd"
     else
         echo "  ❌ $cmd failed"
@@ -613,16 +614,14 @@ done
 echo ""
 echo "Testing JSON output..."
 
-# Test JSON output for commands that support it
-python -m arcaneum.cli.main list-models --json > /dev/null 2>&1 && echo "  ✓ list-models --json"
-python -m arcaneum.cli.main list-collections --json > /dev/null 2>&1 && echo "  ✓ list-collections --json"
+# Test JSON output (collection list --json needs Qdrant, so it isn't here)
+python -m arcaneum.cli.main models list --json > /dev/null 2>&1 && echo "  ✓ models list --json"
 
 echo ""
 echo "Testing error handling..."
 
 # Test invalid arguments (should exit with code 2)
-python -m arcaneum.cli.main create-collection test --model invalid 2>&1 | grep -q "\[ERROR\]"
-if [ $? -eq 0 ]; then
+if python -m arcaneum.cli.main collection create test --model invalid 2>&1 | grep -q "\[ERROR\]"; then
     echo "  ✓ Error messages use [ERROR] prefix"
 fi
 
@@ -858,7 +857,7 @@ File issues found during testing as items in the `arcaneum` ledger (or as GitHub
 /help  # Verify commands appear
 
 # Test a command
-/arc:list-collections --json
+/arc:collection list --json
 
 # Update after changes
 /plugin marketplace update arcaneum-marketplace

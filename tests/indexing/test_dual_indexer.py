@@ -314,3 +314,89 @@ class TestDualIndexerWithMultipleModels:
         assert "stella" in points[0].vector
         assert "jina" in points[0].vector
         assert "bge" in points[0].vector
+
+
+def _large_docs(count: int, text_bytes: int):
+    return [
+        DualIndexDocument(
+            id=f"00000000-0000-0000-0000-{i + 1:012d}",
+            content="z" * text_bytes,
+            file_path="/docs/large.pdf",
+            filename="large.pdf",
+            file_extension=".pdf",
+            chunk_index=i,
+            chunk_count=count,
+            vectors={"stub": [1.0, float(i)]},
+        )
+        for i in range(count)
+    ]
+
+
+class TestDualIndexerUpsertBudget:
+    """Qdrant upserts split by serialized size as well as count (RDR-027 Q7)."""
+
+    def test_index_batch_splits_qdrant_upserts_by_size(self, monkeypatch):
+        from arcaneum.indexing import qdrant_batching
+
+        monkeypatch.setattr(qdrant_batching, "QDRANT_UPSERT_BUDGET_BYTES", 3 * 4096)
+        qdrant, meili = Mock(), Mock()
+        indexer = DualIndexer(qdrant, meili, "corpus", "corpus", batch_size=300)
+        docs = _large_docs(10, 3000)
+
+        qdrant_count, _ = indexer.index_batch(docs)
+
+        assert qdrant_count == 10
+        calls = qdrant.upsert.call_args_list
+        assert len(calls) > 1
+        for c in calls:
+            points = c.kwargs["points"]
+            assert sum(qdrant_batching.point_request_bytes(p) for p in points) <= 3 * 4096
+        assert [p.id for c in calls for p in c.kwargs["points"]] == [d.id for d in docs]
+
+    def test_index_batch_names_an_oversized_chunk(self, monkeypatch):
+        from arcaneum.indexing import qdrant_batching
+
+        monkeypatch.setattr(qdrant_batching, "QDRANT_UPSERT_BUDGET_BYTES", 1024)
+        qdrant, meili = Mock(), Mock()
+        indexer = DualIndexer(qdrant, meili, "corpus", "corpus")
+
+        with pytest.raises(qdrant_batching.OversizedPointError, match="/docs/large.pdf"):
+            indexer.index_batch(_large_docs(1, 5000))
+        qdrant.upsert.assert_not_called()
+
+
+@pytest.mark.integration
+def test_index_batch_over_qdrant_request_limit_against_server():
+    """300 chunks of ~120 KB (over 32 MiB in one request) index without a 400.
+
+    Requires QDRANT_URL (default http://localhost:6333); skips otherwise. The
+    collection is the test's own and is removed afterwards.
+    """
+    import os
+    import uuid
+
+    from qdrant_client import QdrantClient
+    from qdrant_client.http import models
+
+    url = os.environ.get("QDRANT_URL", "http://localhost:6333")
+    client = QdrantClient(url=url, timeout=120)
+    try:
+        client.info()
+    except Exception as e:
+        pytest.skip(f"Qdrant not available at {url}: {e}")
+
+    name = f"arc_upsert_budget_it_{uuid.uuid4().hex[:10]}"
+    client.create_collection(
+        name,
+        vectors_config={"stub": models.VectorParams(size=2, distance=models.Distance.COSINE)},
+    )
+    try:
+        indexer = DualIndexer(client, Mock(), name, name, batch_size=300)
+        docs = _large_docs(300, 120 * 1024)
+
+        qdrant_count, _ = indexer.index_batch(docs)
+
+        assert qdrant_count == 300
+        assert client.count(name, exact=True).count == 300
+    finally:
+        client.delete_collection(name)

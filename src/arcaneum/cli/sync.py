@@ -230,6 +230,7 @@ from ..indexing.common.text_source import (
 )
 from ..indexing.dual_indexer import DualIndexer
 from ..indexing.git_metadata_sync import GitMetadataSync
+from ..indexing.qdrant_batching import upsert_in_batches
 from ..indexing.git_operations import GitProjectDiscovery, apply_git_metadata
 from ..retrieval.hits import SOURCE_ROOTS_FIELD
 from ..schema.document import DualIndexDocument, persisted_metadata_fields
@@ -4683,7 +4684,14 @@ def _sync_directory_locked(
 
                         # Upload to Qdrant
                         if points:
-                            qdrant.upsert(collection_name=corpus, points=points, wait=True)
+                            upsert_in_batches(
+                                qdrant,
+                                corpus,
+                                points,
+                                wait=True,
+                                max_count=DualIndexer.DEFAULT_BATCH_SIZE,
+                                delete_sent_on_failure=True,
+                            )
                             _upsert_file_manifest(
                                 manifest_sync_manager,
                                 corpus,
@@ -5989,7 +5997,14 @@ def _backfill_meili_to_qdrant(
 
             # Upload to Qdrant
             if points:
-                qdrant.upsert(collection_name=corpus, points=points, wait=True)
+                upsert_in_batches(
+                    qdrant,
+                    corpus,
+                    points,
+                    wait=True,
+                    max_count=DualIndexer.DEFAULT_BATCH_SIZE,
+                    delete_sent_on_failure=True,
+                )
                 chunks_success += len(points)
 
                 if verbose and not output_json:

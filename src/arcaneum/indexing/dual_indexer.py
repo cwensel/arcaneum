@@ -12,6 +12,7 @@ from qdrant_client import QdrantClient
 
 from ..fulltext.client import FullTextClient
 from ..schema.document import DualIndexDocument, to_qdrant_point, to_meilisearch_doc
+from .qdrant_batching import upsert_in_batches
 
 logger = logging.getLogger(__name__)
 
@@ -92,14 +93,17 @@ class DualIndexer:
             if not doc.id:
                 doc.id = str(uuid4())
 
-        # Convert to Qdrant format and upload in batches
-        # Batching prevents timeout on large documents (e.g., 2800+ chunks)
+        # Convert to Qdrant format and upload in batches split by count
+        # (timeouts on 2800+ chunk documents) and by serialized size (Qdrant's
+        # 32 MiB request limit, RDR-027 Q7)
         qdrant_points = [to_qdrant_point(doc) for doc in documents]
-        qdrant_count = 0
-        for i in range(0, len(qdrant_points), self.batch_size):
-            batch = qdrant_points[i : i + self.batch_size]
-            self.qdrant.upsert(collection_name=self.collection_name, points=batch, wait=wait)
-            qdrant_count += len(batch)
+        qdrant_count = upsert_in_batches(
+            self.qdrant,
+            self.collection_name,
+            qdrant_points,
+            wait=wait,
+            max_count=self.batch_size,
+        )
         logger.debug(f"Indexed {qdrant_count} points to Qdrant")
 
         # Convert to MeiliSearch format and upload in batches

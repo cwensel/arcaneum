@@ -502,3 +502,131 @@ def test_parity_does_not_backfill_pdf_aliases_to_meili():
 
     assert missing == {"/papers/b.pdf"}
     sync_manager.get_alias_file_paths.assert_called_once_with("Papers")
+
+
+def test_backfill_meili_to_qdrant_splits_a_file_over_the_upsert_budget(monkeypatch, tmp_path):
+    from arcaneum.indexing import qdrant_batching
+
+    source = tmp_path / "example.py"
+    source.write_text("print('hello')\n")
+    chunks = [{"text": "y" * 2000, "metadata": {"method": "line"}} for _ in range(6)]
+    monkeypatch.setattr(sync_module, "chunk_code_file", lambda *args, **kwargs: chunks)
+    monkeypatch.setattr(qdrant_batching, "QDRANT_UPSERT_BUDGET_BYTES", 2 * 4096)
+
+    qdrant = MagicMock()
+    embedding_client = MagicMock()
+    embedding_client.embed.side_effect = lambda texts, model, max_internal_batch=None: [
+        [0.1, 0.2] for _ in texts
+    ]
+
+    files_success, chunks_success, files_failed, _ = sync_module._backfill_meili_to_qdrant(
+        qdrant=qdrant,
+        embedding_client=embedding_client,
+        corpus="code-corpus",
+        corpus_type="code",
+        model_list=["model-a"],
+        model_config={"chunk_size": 8000, "chunk_overlap": 20},
+        file_paths=[str(source)],
+        verbose=False,
+        output_json=True,
+        progress=MagicMock(),
+        backfill_task=1,
+        text_workers=1,
+    )
+
+    assert (files_success, chunks_success, files_failed) == (1, 6, 0)
+    chunk_calls = [
+        call
+        for call in qdrant.upsert.call_args_list
+        if call.kwargs["points"][0].payload.get("metadata_type") != "file_manifest"
+    ]
+    assert len(chunk_calls) > 1
+    for call in chunk_calls:
+        size = sum(qdrant_batching.point_request_bytes(p) for p in call.kwargs["points"])
+        assert size <= 2 * 4096
+    sent = [p.payload["chunk_index"] for call in chunk_calls for p in call.kwargs["points"]]
+    assert sent == list(range(6))
+
+
+def test_backfill_meili_to_qdrant_reports_an_oversized_chunk_by_file(monkeypatch, tmp_path):
+    from arcaneum.indexing import qdrant_batching
+
+    source = tmp_path / "example.py"
+    source.write_text("print('hello')\n")
+    chunks = [{"text": "y" * 5000, "metadata": {"method": "line"}}]
+    monkeypatch.setattr(sync_module, "chunk_code_file", lambda *args, **kwargs: chunks)
+    monkeypatch.setattr(qdrant_batching, "QDRANT_UPSERT_BUDGET_BYTES", 1024)
+    errors = []
+    monkeypatch.setattr(sync_module.logger, "error", lambda msg, *a, **k: errors.append(msg))
+
+    qdrant = MagicMock()
+    embedding_client = MagicMock()
+    embedding_client.embed.side_effect = lambda texts, model, max_internal_batch=None: [
+        [0.1, 0.2] for _ in texts
+    ]
+
+    files_success, chunks_success, files_failed, _ = sync_module._backfill_meili_to_qdrant(
+        qdrant=qdrant,
+        embedding_client=embedding_client,
+        corpus="code-corpus",
+        corpus_type="code",
+        model_list=["model-a"],
+        model_config={"chunk_size": 8000, "chunk_overlap": 20},
+        file_paths=[str(source)],
+        verbose=False,
+        output_json=True,
+        progress=MagicMock(),
+        backfill_task=1,
+        text_workers=1,
+    )
+
+    assert (files_success, chunks_success, files_failed) == (0, 0, 1)
+    qdrant.upsert.assert_not_called()
+    assert len(errors) == 1
+    assert str(source.absolute()) in errors[0]
+    assert "bytes" in errors[0]
+
+
+def test_backfill_meili_to_qdrant_removes_a_partial_upload(monkeypatch, tmp_path):
+    from arcaneum.indexing import qdrant_batching
+
+    source = tmp_path / "example.py"
+    source.write_text("print('hello')\n")
+    chunks = [{"text": "y" * 2000, "metadata": {"method": "line"}} for _ in range(6)]
+    monkeypatch.setattr(sync_module, "chunk_code_file", lambda *args, **kwargs: chunks)
+    monkeypatch.setattr(qdrant_batching, "QDRANT_UPSERT_BUDGET_BYTES", 2 * 4096)
+
+    qdrant = MagicMock()
+    sent = []
+
+    def upsert(collection_name, points, wait=True):
+        if sent:
+            raise RuntimeError("upsert refused")
+        sent.extend(points)
+
+    qdrant.upsert.side_effect = upsert
+    embedding_client = MagicMock()
+    embedding_client.embed.side_effect = lambda texts, model, max_internal_batch=None: [
+        [0.1, 0.2] for _ in texts
+    ]
+
+    files_success, chunks_success, files_failed, _ = sync_module._backfill_meili_to_qdrant(
+        qdrant=qdrant,
+        embedding_client=embedding_client,
+        corpus="code-corpus",
+        corpus_type="code",
+        model_list=["model-a"],
+        model_config={"chunk_size": 8000, "chunk_overlap": 20},
+        file_paths=[str(source)],
+        verbose=False,
+        output_json=True,
+        progress=MagicMock(),
+        backfill_task=1,
+        text_workers=1,
+    )
+
+    assert (files_success, chunks_success, files_failed) == (0, 0, 1)
+    assert sent
+    qdrant.delete.assert_called_once()
+    deleted = qdrant.delete.call_args.kwargs["points_selector"].points
+    assert deleted == [p.id for p in sent]

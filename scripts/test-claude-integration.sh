@@ -28,14 +28,14 @@ test_header() {
 
 pass() {
     echo -e "${GREEN}✅ PASS${NC}: $1"
-    ((PASSED_TESTS++))
-    ((TOTAL_TESTS++))
+    PASSED_TESTS=$((PASSED_TESTS + 1))
+    TOTAL_TESTS=$((TOTAL_TESTS + 1))
 }
 
 fail() {
     echo -e "${RED}❌ FAIL${NC}: $1"
-    ((FAILED_TESTS++))
-    ((TOTAL_TESTS++))
+    FAILED_TESTS=$((FAILED_TESTS + 1))
+    TOTAL_TESTS=$((TOTAL_TESTS + 1))
 }
 
 warn() {
@@ -76,9 +76,9 @@ test_exit_code() {
 
     echo "Testing: $desc"
 
-    # Run command and capture exit code
-    python -m arcaneum.cli.main $cmd > /dev/null 2>&1
-    actual_code=$?
+    # Run command and capture exit code (the || keeps set -e from aborting)
+    actual_code=0
+    python -m arcaneum.cli.main $cmd > /dev/null 2>&1 || actual_code=$?
 
     if [ $actual_code -eq $expected_code ]; then
         pass "$desc - exit code $actual_code matches expected $expected_code"
@@ -204,24 +204,17 @@ main() {
             fail "plugin.json has invalid JSON syntax"
         fi
 
-        # Check commands array
-        if grep -q '"commands"' "plugin/.claude-plugin/plugin.json"; then
-            pass "plugin.json has commands array"
-
-            # Verify all command files exist
-            for cmd_file in $(python -c "import json; f=open('plugin/.claude-plugin/plugin.json'); data=json.load(f); print('\n'.join(data['commands']))" 2>/dev/null); do
-                cmd_path="plugin/${cmd_file#./}"  # Remove ./ prefix
-                if [ -f "$cmd_path" ]; then
-                    pass "Command file exists: $cmd_path"
-                else
-                    fail "Command file missing: $cmd_path"
-                fi
-            done
-        else
-            fail "plugin.json missing commands array"
-        fi
     else
         fail "plugin.json not found"
+    fi
+
+    # plugin.json declares no component paths: Claude Code discovers commands
+    # from the default plugin/commands/ directory
+    cmd_count=$(ls plugin/commands/*.md 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$cmd_count" -gt 0 ]; then
+        pass "plugin/commands/ holds $cmd_count command files (default discovery)"
+    else
+        fail "plugin/commands/ holds no command files"
     fi
 
     # Test 7: Command file format
@@ -250,18 +243,17 @@ main() {
                 warn "$(basename $cmd_file) missing argument-hint field (optional)"
             fi
 
-            # Check for execution block
-            if grep -q 'python -m arcaneum.cli.main' "$cmd_file"; then
+            # Check for execution: an **Execution:** block running the
+            # installed arc CLI, or a CLAUDE_PLUGIN_ROOT reference for a
+            # bundled executable (same rule as scripts/validate-plugin.sh)
+            if grep -q 'CLAUDE_PLUGIN_ROOT' "$cmd_file" || awk '
+                /^\*\*Execution:\*\*$/ { in_execution = 1; next }
+                in_execution && $1 == "arc" { found = 1; exit }
+                END { exit(found ? 0 : 1) }
+            ' "$cmd_file"; then
                 pass "$(basename $cmd_file) has execution block"
             else
                 fail "$(basename $cmd_file) missing execution block"
-            fi
-
-            # Check for ${CLAUDE_PLUGIN_ROOT} usage
-            if grep -q '${CLAUDE_PLUGIN_ROOT}' "$cmd_file"; then
-                pass "$(basename $cmd_file) uses \${CLAUDE_PLUGIN_ROOT}"
-            else
-                warn "$(basename $cmd_file) doesn't use \${CLAUDE_PLUGIN_ROOT} (may be intentional)"
             fi
         fi
     done
@@ -270,7 +262,7 @@ main() {
     test_header "Output Encoding"
 
     # Test that output is UTF-8 compatible
-    output=$(python -m arcaneum.cli.main list-models 2>&1)
+    output=$(python -m arcaneum.cli.main list-models 2>&1 || true)
     if echo "$output" | iconv -f UTF-8 -t UTF-8 > /dev/null 2>&1; then
         pass "CLI output is valid UTF-8"
     else

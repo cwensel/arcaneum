@@ -11,21 +11,12 @@ Claude Code installation before publishing to GitHub.
 - Docker running (for Qdrant/MeiliSearch functionality)
 - `arc` CLI installed via pip (`pip install -e .`) - required for commands to work
 
-## Automatic Permission Approval
+## Permission Settings
 
-The Arcaneum plugin includes a PermissionRequest hook that automatically approves
-`arc` commands when the CLI is properly installed:
-
-**How it works:**
-
-1. When Claude Code runs an `arc` command, the hook intercepts the permission request
-2. The hook verifies `arc` is in your PATH (installed via pip)
-3. If found, the command is auto-approved without prompting
-4. If not found, you'll see an error asking you to install via pip
-
-**Location:** `.claude-plugin/hooks/arc-permissions.sh`
-
-**Manual fallback:** If the hook doesn't work, add to `~/.claude/settings.json`:
+The plugin ships no hooks, so Claude Code asks before running an `arc` command unless
+your settings allow it. `plugin/README.md` (Sandbox Configuration) and
+`plugin/settings.example.json` give the full permission and sandbox settings; the
+minimal form, in `~/.claude/settings.json`:
 
 ```json
 {
@@ -95,7 +86,12 @@ From within Claude Code:
 - Registers the local directory as a marketplace
 - Reads `.claude-plugin/marketplace.json`
 - Makes plugins discoverable via `/plugin` menu
-- Changes to files are reflected immediately (no reinstall needed for code changes)
+- Installing copies `plugin/` into Claude Code's plugin cache
+  (`~/.claude/plugins/cache/arcaneum-marketplace/arc/<version>/` on Claude Code 2.1.330;
+  may vary by version), and Claude Code loads that copy: edits under `plugin/` reach it
+  only after a reinstall or an update to a new version
+- Edits under `src/` reach the `arc` CLI the commands call without a reinstall when it
+  is an editable install (`pip install -e .`)
 
 #### Step 2: Install the Plugin
 
@@ -305,12 +301,14 @@ python -m arcaneum.cli.main --version && echo "✓ Version command works"
 
 1. Make a change to a command (e.g., add example to `search.md`)
 2. In Claude Code: `/plugin marketplace update arcaneum-marketplace`
-3. Test the updated command
-4. Verify changes are reflected
+3. Reinstall the plugin: `/plugin uninstall arc`, then `/plugin install arc@arcaneum-marketplace`
+4. Test the updated command
+5. Verify changes are reflected
 
 **Expected Result:**
 
-- Command updates appear without reinstall
+- Command updates appear after the reinstall: installs copy `plugin/` into the plugin
+  cache, so the checkout's edits don't reach Claude Code before it
 - No stale cache issues
 
 ### Scenario 3: JSON Output Validation
@@ -564,10 +562,6 @@ for f in plugin/commands/*.md; do
     head -3 "$f" | grep -q "^description:" || (echo "❌ Missing frontmatter in $f" && exit 1)
 done
 
-# Check hooks directory exists
-echo "✓ Verifying hooks directory..."
-test -f .claude-plugin/hooks/arc-permissions.sh || (echo "❌ Permission hook missing" && exit 1)
-
 # Check arc commands run directly
 echo "✓ Verifying arc commands run directly..."
 count=$(grep -l "^arc " plugin/commands/*.md | wc -l | tr -d ' ')
@@ -714,7 +708,6 @@ This script validates:
 **Solution:**
 
 - Install via pip: `pip install -e /path/to/arcaneum`
-- The PermissionRequest hook will auto-approve when `arc` is found
 - Use `$ARGUMENTS` for user-provided paths
 
 ### ❌ Not Testing All Argument Combinations
@@ -879,7 +872,6 @@ File issues found during testing as items in the `arcaneum` ledger (or as GitHub
 
 - [ ] JSON manifests valid
 - [ ] All commands have frontmatter
-- [ ] Permission hook exists and is executable
 - [ ] `arc` installed via pip and in PATH
 - [ ] CLI loads without errors
 - [ ] Fresh install works

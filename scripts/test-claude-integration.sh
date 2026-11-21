@@ -42,8 +42,10 @@ warn() {
     echo -e "${YELLOW}⚠️  WARN${NC}: $1"
 }
 
-# Test JSON output is valid
-test_json_output() {
+# Test JSON output has the envelope shape, whatever its status: for commands
+# whose status depends on services (doctor reports "error" when Qdrant or
+# MeiliSearch is down)
+test_json_shape() {
     local cmd="$1"
     local desc="$2"
 
@@ -65,6 +67,21 @@ test_json_output() {
         pass "$desc - has required JSON fields (status, message, data)"
     else
         fail "$desc - missing required JSON fields"
+    fi
+}
+
+# Test JSON output is valid and reports success: an error envelope (such as
+# Click's "No such command") has the right shape but is a failure
+test_json_output() {
+    local cmd="$1"
+    local desc="$2"
+
+    test_json_shape "$cmd" "$desc"
+
+    if echo "$output" | python -c 'import json, sys; sys.exit(0 if json.load(sys.stdin).get("status") == "success" else 1)' > /dev/null 2>&1; then
+        pass "$desc - status is success"
+    else
+        fail "$desc - status is not success"
     fi
 }
 
@@ -135,13 +152,15 @@ test_arguments_expansion() {
 
     echo "Testing: $desc"
 
-    # Run command with various flag combinations
-    python -m arcaneum.cli.main $cmd > /dev/null 2>&1 || true
+    # Run command and capture its exit status (Click exits 2 on an unknown
+    # command or option)
+    rc=0
+    python -m arcaneum.cli.main $cmd > /dev/null 2>&1 || rc=$?
 
-    if [ $? -ne 127 ]; then  # 127 = command not found
+    if [ $rc -eq 0 ]; then
         pass "$desc - command accepts arguments"
     else
-        fail "$desc - command not found or doesn't accept arguments"
+        fail "$desc - exit code $rc: command not found or doesn't accept arguments"
     fi
 }
 
@@ -154,36 +173,40 @@ main() {
     echo "Project root: $PROJECT_ROOT"
     cd "$PROJECT_ROOT"
 
-    # Test 1: JSON output for all commands
+    # Every check below runs without Qdrant or MeiliSearch, and none creates a
+    # collection or corpus
+    commands=("index pdf" "index code" "index markdown" "collection create" \
+              "collection list" "search semantic" "search text" "corpus create" \
+              "corpus sync" "doctor")
+
+    # Test 1: JSON output
     test_header "JSON Output Validation"
-    test_json_output "list-models" "list-models command"
-    test_json_output "list-collections" "list-collections command"
-    test_json_output "doctor" "doctor command"
+    test_json_output "models list" "models list command"
+    # doctor reports status "error" when services are down: shape only
+    test_json_shape "doctor" "doctor command"
 
     # Test 2: Help output for all commands
     test_header "Help Output"
-    for cmd in "index-pdfs" "index-source" "create-collection" "list-collections" \
-               "search" "search-text" "create-corpus" "sync-directory" "doctor"; do
+    for cmd in "${commands[@]}"; do
         test_arguments_expansion "$cmd --help" "$cmd --help"
     done
 
     # Test 3: Error message formatting
     test_header "Error Message Format"
-    test_error_format "create-collection InvalidName --model unknown_model" "invalid model error"
-    test_error_format "search 'test query' --collection NonExistent" "collection not found error"
+    # The model is rejected before any Qdrant connection, so nothing is created
+    test_error_format "collection create InvalidName --model unknown_model" "invalid model error"
+    # [ERROR] whether MeiliSearch is down or the corpus is missing
+    test_error_format "search text testquery --corpus NonExistent" "corpus not found error"
 
     # Test 4: Exit codes
     test_header "Exit Codes"
-    test_exit_code "list-models --json" 0 "successful command"
+    test_exit_code "models list --json" 0 "successful command"
     # Note: Can't easily test other exit codes without actual errors
 
     # Test 5: Command registration
     test_header "Command Registration"
-    commands=("index-pdfs" "index-source" "create-collection" "list-collections" \
-              "search" "search-text" "create-corpus" "sync-directory" "doctor")
-
     for cmd in "${commands[@]}"; do
-        if python -m arcaneum.cli.main "$cmd" --help > /dev/null 2>&1; then
+        if python -m arcaneum.cli.main $cmd --help > /dev/null 2>&1; then
             pass "$cmd command is registered"
         else
             fail "$cmd command is not registered or help doesn't work"
@@ -262,7 +285,7 @@ main() {
     test_header "Output Encoding"
 
     # Test that output is UTF-8 compatible
-    output=$(python -m arcaneum.cli.main list-models 2>&1 || true)
+    output=$(python -m arcaneum.cli.main models list 2>&1 || true)
     if echo "$output" | iconv -f UTF-8 -t UTF-8 > /dev/null 2>&1; then
         pass "CLI output is valid UTF-8"
     else

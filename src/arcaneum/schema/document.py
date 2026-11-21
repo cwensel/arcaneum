@@ -5,7 +5,7 @@ Qdrant (vector search) and MeiliSearch (full-text search) with shared metadata.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 from uuid import uuid4
 
 from arcaneum import __version__ as ARCANEUM_VERSION
@@ -282,6 +282,58 @@ def to_qdrant_point(doc: DualIndexDocument, point_id: Optional[int] = None):
     )
 
 
+# The fields of a MeiliSearch document after ``id``, ``schema_version`` and
+# ``app_version``, in document order: each MeiliSearch name (the
+# DualIndexDocument attribute), the Qdrant payload key to_qdrant_point stores
+# it under, and when a document keeps it. to_meilisearch_doc and
+# qdrant_payload_to_meilisearch_doc both read it, so a Qdrant text hit carries
+# exactly a MeiliSearch hit's fields (RDR-027 Q5).
+_ALWAYS = "always"
+_SET = "set"  # kept unless None
+_TRUTHY = "truthy"  # kept when truthy
+
+MEILISEARCH_FIELDS: Tuple[Tuple[str, str, str], ...] = (
+    ("content", "text", _ALWAYS),
+    ("file_path", "file_path", _ALWAYS),
+    ("filename", "filename", _ALWAYS),
+    ("file_extension", "file_extension", _ALWAYS),
+    ("chunk_index", "chunk_index", _ALWAYS),
+    ("language", "programming_language", _TRUTHY),
+    ("line_number", "line_number", _SET),
+    ("page_number", "page_number", _SET),
+    ("section_type", "section_type", _TRUTHY),
+    ("section_title", "section_title", _TRUTHY),
+    ("project", "git_project_name", _TRUTHY),
+    ("branch", "git_branch", _TRUTHY),
+    ("git_project_identifier", "git_project_identifier", _TRUTHY),
+    ("git_version_identifier", "git_version_identifier", _TRUTHY),
+    ("function_names", "function_names", _TRUTHY),
+    ("class_names", "class_names", _TRUTHY),
+    ("title", "title", _TRUTHY),
+    ("author", "author", _TRUTHY),
+    ("document_type", "document_type", _TRUTHY),
+    ("ocr_confidence", "ocr_confidence", _SET),
+    ("ocr_language", "ocr_language", _TRUTHY),
+    ("ocr_pages_processed", "ocr_pages_processed", _SET),
+    ("ocr_pages_failed", "ocr_pages_failed", _SET),
+    ("ocr_low_confidence_word_count", "ocr_low_confidence_word_count", _SET),
+    ("ocr_merge_strategy", "ocr_merge_strategy", _TRUTHY),
+    ("ocr_triggered_by", "ocr_triggered_by", _TRUTHY),
+    ("headings", "headings", _TRUTHY),
+    ("tags", "tags", _TRUTHY),
+    ("section", "section", _TRUTHY),
+    ("quality_manifest", "quality_manifest", _TRUTHY),
+)
+
+
+def _kept(rule: str, value: Any) -> bool:
+    if rule == _ALWAYS:
+        return True
+    if rule == _SET:
+        return value is not None
+    return bool(value)
+
+
 def to_meilisearch_doc(doc: DualIndexDocument) -> Dict[str, Any]:
     """Convert DualIndexDocument to MeiliSearch document format.
 
@@ -294,88 +346,28 @@ def to_meilisearch_doc(doc: DualIndexDocument) -> Dict[str, Any]:
     meili_doc = {
         "id": doc.id,
         **persisted_metadata_fields(doc.schema_version, doc.app_version),
-        "content": doc.content,
-        "file_path": doc.file_path,
-        "filename": doc.filename,
-        "file_extension": doc.file_extension,
-        "chunk_index": doc.chunk_index,
     }
-
-    # Add language with MeiliSearch field name
-    if doc.language:
-        meili_doc["language"] = doc.language
-
-    # Add optional fields if present
-    if doc.line_number is not None:
-        meili_doc["line_number"] = doc.line_number
-
-    if doc.page_number is not None:
-        meili_doc["page_number"] = doc.page_number
-
-    if doc.section_type:
-        meili_doc["section_type"] = doc.section_type
-
-    if doc.section_title:
-        meili_doc["section_title"] = doc.section_title
-
-    if doc.project:
-        meili_doc["project"] = doc.project
-
-    if doc.branch:
-        meili_doc["branch"] = doc.branch
-
-    if doc.git_project_identifier:
-        meili_doc["git_project_identifier"] = doc.git_project_identifier
-
-    if doc.git_version_identifier:
-        meili_doc["git_version_identifier"] = doc.git_version_identifier
-
-    if doc.function_names:
-        meili_doc["function_names"] = doc.function_names
-
-    if doc.class_names:
-        meili_doc["class_names"] = doc.class_names
-
-    if doc.title:
-        meili_doc["title"] = doc.title
-
-    if doc.author:
-        meili_doc["author"] = doc.author
-
-    if doc.document_type:
-        meili_doc["document_type"] = doc.document_type
-
-    if doc.ocr_confidence is not None:
-        meili_doc["ocr_confidence"] = doc.ocr_confidence
-
-    if doc.ocr_language:
-        meili_doc["ocr_language"] = doc.ocr_language
-
-    if doc.ocr_pages_processed is not None:
-        meili_doc["ocr_pages_processed"] = doc.ocr_pages_processed
-
-    if doc.ocr_pages_failed is not None:
-        meili_doc["ocr_pages_failed"] = doc.ocr_pages_failed
-
-    if doc.ocr_low_confidence_word_count is not None:
-        meili_doc["ocr_low_confidence_word_count"] = doc.ocr_low_confidence_word_count
-
-    if doc.ocr_merge_strategy:
-        meili_doc["ocr_merge_strategy"] = doc.ocr_merge_strategy
-
-    if doc.ocr_triggered_by:
-        meili_doc["ocr_triggered_by"] = doc.ocr_triggered_by
-
-    if doc.headings:
-        meili_doc["headings"] = doc.headings
-
-    if doc.tags:
-        meili_doc["tags"] = doc.tags
-
-    if doc.section:
-        meili_doc["section"] = doc.section
-
-    if doc.quality_manifest:
-        meili_doc["quality_manifest"] = doc.quality_manifest
-
+    for name, _payload_key, rule in MEILISEARCH_FIELDS:
+        value = getattr(doc, name)
+        if _kept(rule, value):
+            meili_doc[name] = value
     return meili_doc
+
+
+def qdrant_payload_to_meilisearch_doc(point_id: Any, payload: Mapping[str, Any]) -> Dict[str, Any]:
+    """Project a Qdrant chunk point onto the MeiliSearch document of the same chunk.
+
+    The payload's MeiliSearch fields are kept under their MeiliSearch names
+    (``text`` as ``content``, ``programming_language`` as ``language``, the
+    ``git_*`` names as ``project`` and ``branch``), and every Qdrant-only
+    field is dropped, so a Qdrant text hit's ``--verbose`` metadata equals a
+    MeiliSearch hit's (RDR-027 Q5). A field the payload lacks stays absent.
+    """
+    doc: Dict[str, Any] = {"id": str(point_id)}
+    for key in (PERSISTED_SCHEMA_VERSION_FIELD, PERSISTED_APP_VERSION_FIELD):
+        if key in payload:
+            doc[key] = payload[key]
+    for name, payload_key, rule in MEILISEARCH_FIELDS:
+        if payload_key in payload and _kept(rule, payload[payload_key]):
+            doc[name] = payload[payload_key]
+    return doc

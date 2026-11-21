@@ -2,10 +2,11 @@
 
 import json
 import logging
+import shlex
 import sys
 import time
 import click
-from typing import List, Optional
+from typing import List, Optional, Sequence
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
@@ -48,16 +49,46 @@ SOURCE_ROOTS_TIMEOUT_SECONDS = 3
 
 
 def _source_roots_client():
-    """A Qdrant client for reading cite roots, or None when one cannot be made.
+    """A Qdrant client for each corpus's metadata, or None when one cannot be made.
 
-    Text search does not need Qdrant: a failed read only means absolute-path
-    cites (RDR-026 Q4).
+    The metadata gives the corpus's text backend and cite roots. A MeiliSearch
+    corpus does not need Qdrant: a failed read only means absolute-path cites
+    (RDR-026 Q4). A Qdrant corpus is searched through this client
+    (RDR-027 Q2).
     """
     try:
         return create_qdrant_client(timeout=SOURCE_ROOTS_TIMEOUT_SECONDS)
     except Exception as e:
         logger.debug("No Qdrant client for source roots: %s", e)
         return None
+
+
+def highlight_terms(content: str, query: str, corpus_type: Optional[str]) -> str:
+    """``content`` as rich markup with each query token's words in yellow.
+
+    MeiliSearch marks its own hits (``_formatted``); a Qdrant hit has no
+    marks, so its words are matched with the text index's rules: case- and
+    accent-blind, the corpus type's stop words left unmarked (RDR-027 Q5).
+    Everything outside the marks is escaped.
+    """
+    from ..retrieval.qdrant_text import token_spans, tokenize
+
+    terms = set(tokenize(query, corpus_type))
+    parts: List[str] = []
+    last = 0
+    for start, end, token in token_spans(content):
+        if token in terms:
+            parts.append(escape(content[last:start]))
+            parts.append(f"[yellow]{escape(content[start:end])}[/yellow]")
+            last = end
+    parts.append(escape(content[last:]))
+    return "".join(parts)
+
+
+def semantic_hint(query: str, corpora: Sequence[str]) -> str:
+    """The command to run when text search finds nothing (RDR-027 Q5)."""
+    corpus_args = " ".join(f"--corpus {shlex.quote(c)}" for c in corpora)
+    return f"For a conceptual match try: arc search semantic {shlex.quote(query)} {corpus_args}"
 
 
 def search_text_command(
@@ -146,14 +177,21 @@ def search_text_command(
         )
     elif output_json or output_format == "json":
         data = result.to_data(verbose=verbose, max_content_chars=max_content_chars)
-        print(format_json_response("success", f"Found {result.estimated_total_hits} results", data))
+        # No total: text search reports the hits it returns (RDR-027 Q5).
+        message = f"Found {len(hits)} results"
+        if not hits:
+            message += f". {semantic_hint(query, corpora)}"
+        print(format_json_response("success", message, data))
     else:
         # Human-readable text output
-        console.print(f"\n[bold]Search Results[/bold] ({result.processing_time_ms}ms)")
-        console.print(f"Found {result.estimated_total_hits} matches in '{result.display_index}'\n")
+        console.print("\n[bold]Search Results[/bold]")
+        console.print(
+            f"Found {len(hits)} matches in '{escape(result.display_index)}'\n", highlight=False
+        )
 
         if not hits:
             console.print("[dim]No results found[/dim]")
+            console.print(f"[dim]{escape(semantic_hint(query, corpora))}[/dim]", highlight=False)
         else:
             for i, (cite, hit) in enumerate(zip(cites, hits), 1):
                 # The cite names the corpus, so a multi-corpus search needs no tag.
@@ -179,10 +217,12 @@ def search_text_command(
                     content = content.replace("<em>", "[yellow]").replace("</em>", "[/yellow]")
                     console.print(f"   {content}")
                 elif "content" in hit:
-                    content = hit["content"]
-                    if len(content) > 200:
-                        content = content[:200] + "..."
-                    console.print(f"   {content}")
+                    content = hit["content"] or ""
+                    suffix = "..." if len(content) > 200 else ""
+                    marked = highlight_terms(
+                        content[:200], query, result.corpus_types.get(hit.get("_corpus"))
+                    )
+                    console.print(f"   {marked}{suffix}", highlight=False)
 
                 console.print()  # Blank line between results
 

@@ -837,8 +837,9 @@ class TestSearchText:
 
         assert [hit["id"] for hit in result.hits] == ["a1", "b1", "a2"]
         assert [hit["_corpus"] for hit in result.hits] == ["A", "B", "A"]
-        assert result.estimated_total_hits == 3
-        assert result.processing_time_ms == 6
+        # Text search reports the hits it returns, no total (RDR-027 Q5).
+        assert not hasattr(result, "estimated_total_hits")
+        assert not hasattr(result, "processing_time_ms")
         data = result.to_data()
         assert data["query"] == "query"
         assert data["corpora"] == ["A", "B"]

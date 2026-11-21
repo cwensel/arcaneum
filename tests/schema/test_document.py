@@ -302,3 +302,106 @@ class TestToMeilisearchDoc:
 
         assert meili_doc["function_names"] == ["foo", "bar"]
         assert meili_doc["class_names"] == ["MyClass"]
+
+
+def _every_field_doc() -> DualIndexDocument:
+    """A chunk with every optional field set, so each field-map entry is exercised."""
+    return DualIndexDocument(
+        id="00000000-0000-0000-0000-0000000000c7",
+        content="def scan(): pass",
+        file_path="/src/app/scan.py",
+        filename="scan.py",
+        language="python",
+        chunk_index=3,
+        chunk_count=9,
+        file_extension=".py",
+        line_number=12,
+        page_number=4,
+        section_type="body",
+        section_title="Scanning",
+        project="app",
+        branch="main",
+        git_project_identifier="app#main",
+        git_commit_hash="abc123",
+        git_remote_url="https://example.invalid/app.git",
+        git_version_identifier="app#main@abc123",
+        function_names=["scan"],
+        class_names=["Scanner"],
+        title="Scanner notes",
+        author="A. Author",
+        document_type="report",
+        page_count=40,
+        extraction_floor=True,
+        ocr_confidence=0.0,
+        ocr_language="eng",
+        ocr_pages_processed=2,
+        ocr_pages_failed=0,
+        ocr_low_confidence_word_count=0,
+        ocr_merge_strategy="union",
+        ocr_triggered_by="low_text",
+        headings=["Intro"],
+        tags=["t1"],
+        section="Intro > Scanning",
+        file_hash="h1",
+        source_hash="s1",
+        chunking_version="v2",
+        file_size=1024,
+        quick_hash="q1",
+        quality_manifest={"method": "pymupdf"},
+        vectors={"stub": [1.0, 0.0]},
+    )
+
+
+class TestQdrantPayloadProjection:
+    """A Qdrant chunk payload projects onto the MeiliSearch document (RDR-027 Q5)."""
+
+    def test_projection_equals_the_meilisearch_document(self):
+        from arcaneum.schema.document import qdrant_payload_to_meilisearch_doc
+
+        doc = _every_field_doc()
+        point = to_qdrant_point(doc)
+
+        assert qdrant_payload_to_meilisearch_doc(point.id, point.payload) == to_meilisearch_doc(doc)
+
+    def test_projection_renames_and_drops_qdrant_only_fields(self):
+        from arcaneum.schema.document import qdrant_payload_to_meilisearch_doc
+
+        point = to_qdrant_point(_every_field_doc())
+        projected = qdrant_payload_to_meilisearch_doc(point.id, point.payload)
+
+        assert projected["id"] == "00000000-0000-0000-0000-0000000000c7"
+        assert projected["content"] == "def scan(): pass"
+        assert (projected["language"], projected["project"], projected["branch"]) == (
+            "python",
+            "app",
+            "main",
+        )
+        for qdrant_only in (
+            "text",
+            "programming_language",
+            "git_project_name",
+            "git_branch",
+            "chunk_count",
+            "git_commit_hash",
+            "page_count",
+            "file_hash",
+            "quick_hash",
+            "file_size",
+        ):
+            assert qdrant_only not in projected
+        assert projected["quality_manifest"] == {"method": "pymupdf"}
+
+    def test_a_minimal_chunk_projects_onto_the_same_fields(self):
+        from arcaneum.schema.document import qdrant_payload_to_meilisearch_doc
+
+        doc = DualIndexDocument(
+            content="text", file_path="/d/a.md", filename="a.md", vectors={"stub": [1.0]}
+        )
+        point = to_qdrant_point(doc)
+
+        assert qdrant_payload_to_meilisearch_doc(point.id, point.payload) == to_meilisearch_doc(doc)
+
+    def test_a_point_id_becomes_a_string_id(self):
+        from arcaneum.schema.document import qdrant_payload_to_meilisearch_doc
+
+        assert qdrant_payload_to_meilisearch_doc(7, {"text": "x"})["id"] == "7"

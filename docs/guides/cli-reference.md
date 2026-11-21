@@ -296,6 +296,7 @@ A "corpus" is a paired Qdrant collection and MeiliSearch index with the same nam
 
 ```bash
 arc corpus create <name> --type <type> --models <model>  # Create both
+arc corpus create <name> --type <type> --text-backend qdrant  # Text search from the collection, no MeiliSearch
 arc corpus update <name> --description <text>            # Update metadata
 arc corpus update <name> --clear-description             # Remove the corpus description
 arc corpus delete <name>                                 # Delete both

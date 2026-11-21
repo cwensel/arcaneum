@@ -3,7 +3,8 @@
 A ``TextBackend`` is one full-text store a corpus can use. Search, passage
 lookup and listing hold a backend, never a store's client, so a corpus can
 choose its backend. ``arcaneum.fulltext.backend.MeiliTextBackend`` is the
-MeiliSearch implementation.
+MeiliSearch implementation and ``arcaneum.retrieval.qdrant_text.QdrantTextBackend``
+the Qdrant one.
 
 Nothing here imports a store's SDK.
 """
@@ -33,11 +34,13 @@ RawHit = Dict[str, Any]
 
 @dataclass
 class TextPage:
-    """One corpus's hits for one query."""
+    """One corpus's hits for one query.
+
+    A page carries no total: text search reports the hits it returns, as
+    semantic search does (RDR-027 Q5).
+    """
 
     hits: List[RawHit]
-    estimated_total_hits: int = 0
-    processing_time_ms: int = 0
 
 
 @dataclass

@@ -16,8 +16,15 @@ from arcaneum.search.filters import parse_filter
 
 CORPUS = "Docs"
 
+# Chunk ids are uuids, as sync mints them; a Qdrant point id must be one.
+A0 = "00000000-0000-0000-0000-0000000000a0"
+A1 = "00000000-0000-0000-0000-0000000000a1"
+B0 = "00000000-0000-0000-0000-0000000000b0"
+
 
 def _doc(chunk_id: str, path: str, index: int, content: str) -> DualIndexDocument:
+    # Every chunk carries its vectors, as sync's chunks do: a Qdrant corpus's
+    # text lives in the chunk's point (conftest.VECTOR_NAME).
     return DualIndexDocument(
         id=chunk_id,
         content=content,
@@ -26,6 +33,7 @@ def _doc(chunk_id: str, path: str, index: int, content: str) -> DualIndexDocumen
         file_extension=".pdf",
         chunk_index=index,
         page_number=index + 1,
+        vectors={"stub": [1.0, 0.0]},
     )
 
 
@@ -35,9 +43,9 @@ def corpus(text_backend):
     text_backend.add(
         CORPUS,
         [
-            _doc("a0", "/docs/a.pdf", 0, "the quick brown fox"),
-            _doc("a1", "/docs/a.pdf", 1, "jumps over the lazy dog"),
-            _doc("b0", "/docs/b.pdf", 0, "a quick note on foxes"),
+            _doc(A0, "/docs/a.pdf", 0, "the quick brown fox"),
+            _doc(A1, "/docs/a.pdf", 1, "jumps over the lazy dog"),
+            _doc(B0, "/docs/b.pdf", 0, "a quick note on foxes"),
         ],
     )
     return text_backend
@@ -61,17 +69,16 @@ def test_ensure_creates_the_corpus_once(text_backend):
 def test_search_returns_hits_with_id_text_and_score(corpus):
     page = corpus.search(CORPUS, "quick", limit=10)
 
-    assert _ids(page) == {"a0", "b0"}
+    assert _ids(page) == {A0, B0}
     for hit in page.hits:
         assert hit["content"]
         assert hit["file_path"].startswith("/docs/")
         assert isinstance(hit["_rankingScore"], float)
-    assert page.estimated_total_hits == 2
 
 
 def test_search_applies_a_neutral_filter(corpus):
     page = corpus.search(CORPUS, "quick", filter=parse_filter("file_path=/docs/b.pdf"), limit=10)
-    assert _ids(page) == {"b0"}
+    assert _ids(page) == {B0}
 
 
 def test_search_honours_limit_and_offset(corpus):
@@ -79,7 +86,7 @@ def test_search_honours_limit_and_offset(corpus):
     rest = corpus.search(CORPUS, "", limit=2, offset=2)
     assert len(first.hits) == 2
     assert len(rest.hits) == 1
-    assert _ids(first) | _ids(rest) == {"a0", "a1", "b0"}
+    assert _ids(first) | _ids(rest) == {A0, A1, B0}
 
 
 def test_an_unfilterable_field_is_bad_filter(corpus):
@@ -90,13 +97,13 @@ def test_an_unfilterable_field_is_bad_filter(corpus):
 
 
 def test_get_document_reads_one_chunk_or_none(corpus):
-    assert corpus.get_document(CORPUS, "a1")["content"] == "jumps over the lazy dog"
+    assert corpus.get_document(CORPUS, A1)["content"] == "jumps over the lazy dog"
     assert corpus.get_document(CORPUS, "missing") is None
 
 
 def test_file_documents_lists_a_files_chunks(corpus):
     documents, total = corpus.file_documents(CORPUS, "/docs/a.pdf", ["id", "chunk_index"])
-    assert sorted(d["id"] for d in documents) == ["a0", "a1"]
+    assert sorted(d["id"] for d in documents) == [A0, A1]
     assert total == 2
 
 
@@ -108,14 +115,14 @@ def test_has_file_reads_back_whether_a_path_has_chunks(corpus):
 def test_delete_files_removes_every_chunk_of_a_file(corpus):
     corpus.delete_files(CORPUS, ["/docs/a.pdf"])
 
-    assert _ids(corpus.search(CORPUS, "", limit=10)) == {"b0"}
+    assert _ids(corpus.search(CORPUS, "", limit=10)) == {B0}
     assert corpus.coverage(CORPUS).files == {"/docs/b.pdf": 1}
 
 
 def test_rename_moves_chunks_to_the_new_path(corpus):
-    corpus.rename(CORPUS, {("/docs/a.pdf", "/moved/c.pdf"): ["a0", "a1"]})
+    corpus.rename(CORPUS, {("/docs/a.pdf", "/moved/c.pdf"): [A0, A1]})
 
-    moved = corpus.get_document(CORPUS, "a0")
+    moved = corpus.get_document(CORPUS, A0)
     assert moved["file_path"] == "/moved/c.pdf"
     assert moved["filename"] == "c.pdf"
     assert moved["content"] == "the quick brown fox"

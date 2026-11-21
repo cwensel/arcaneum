@@ -582,6 +582,32 @@ def metadata_exclusion_filter(query_filter: Optional[Filter] = None) -> Filter:
     )
 
 
+# The corpus's full-text backend (RDR-027 Q2): set by `arc corpus create`,
+# changed later only by the migration. An absent key means MeiliSearch.
+TEXT_BACKEND_FIELD = "text_backend"
+TEXT_BACKENDS = ("meili", "qdrant")
+DEFAULT_TEXT_BACKEND = "meili"
+
+
+def validate_text_backend(text_backend: str) -> str:
+    """Return ``text_backend`` when it names a text backend; raise ValueError otherwise."""
+    if text_backend not in TEXT_BACKENDS:
+        raise ValueError(
+            f"Invalid text backend: {text_backend!r}. Must be one of: {', '.join(TEXT_BACKENDS)}"
+        )
+    return text_backend
+
+
+def text_backend_of(metadata: Optional[Dict[str, Any]]) -> str:
+    """The text backend a corpus's metadata records; absent means ``meili``.
+
+    Raises:
+        ValueError: the metadata records an unknown backend
+    """
+    value = (metadata or {}).get(TEXT_BACKEND_FIELD)
+    return DEFAULT_TEXT_BACKEND if value is None else validate_text_backend(value)
+
+
 class CollectionType:
     """Valid collection types."""
 
@@ -619,9 +645,11 @@ def set_collection_metadata(
         **extra_metadata: Additional metadata to store
 
     Raises:
-        ValueError: If collection_type is invalid
+        ValueError: If collection_type or a ``text_backend`` is invalid
     """
     CollectionType.validate(collection_type)
+    if extra_metadata.get(TEXT_BACKEND_FIELD) is not None:
+        validate_text_backend(extra_metadata[TEXT_BACKEND_FIELD])
 
     metadata = {
         **persisted_schema_defaults(),
@@ -698,6 +726,7 @@ def update_collection_metadata(
     collection_type = metadata.get("collection_type")
     if collection_type is not None:
         CollectionType.validate(collection_type)
+    text_backend_of(metadata)
 
     try:
         from qdrant_client.models import PointStruct

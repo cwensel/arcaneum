@@ -25,14 +25,18 @@ from ..cli.utils import (
 from ..fulltext.backend import MeiliTextBackend
 from ..fulltext.indexes import get_index_settings
 from ..indexing.collection_metadata import (
+    DEFAULT_TEXT_BACKEND,
     get_collection_metadata,
     metadata_exclusion_filter,
     set_collection_metadata,
+    text_backend_of,
     update_collection_metadata,
     user_point_count,
+    validate_text_backend,
 )
 from ..indexing.common.sync import MetadataBasedSync
 from ..retrieval import list_corpora
+from ..retrieval.qdrant_text import QdrantTextBackend
 from ..retrieval.corpora import (
     UNKNOWN_LEGACY,
     _item_unit_for_corpus_type,
@@ -152,6 +156,7 @@ def list_corpora_command(details: bool, output_json: bool):
             table = Table(title="Corpora", expand=True)
             table.add_column("Name", style="cyan", no_wrap=True)
             table.add_column("Type", style="blue", no_wrap=True)
+            table.add_column("Text", style="blue", no_wrap=True)
             if details:
                 table.add_column("Model", style="magenta", no_wrap=True)
             table.add_column("Status", style="green", no_wrap=True)
@@ -177,6 +182,7 @@ def list_corpora_command(details: bool, output_json: bool):
                 row = [
                     c["name"],
                     c["type"] or "—",
+                    c["text_backend"],
                 ]
                 if details:
                     row.append(c["model_summary"])
@@ -323,9 +329,14 @@ def delete_corpus_command(
 
 
 def create_corpus_command(
-    name: str, corpus_type: str, models: str | None, description: str | None, output_json: bool
+    name: str,
+    corpus_type: str,
+    models: str | None,
+    description: str | None,
+    output_json: bool,
+    text_backend: str = DEFAULT_TEXT_BACKEND,
 ):
-    """Create both Qdrant collection and MeiliSearch index.
+    """Create the Qdrant collection and the corpus's text index.
 
     This implements the first command of the 2-command workflow:
     1. corpus create (this command) - creates both systems
@@ -337,6 +348,9 @@ def create_corpus_command(
         models: Comma-separated list of embedding models. If None, inferred
             from corpus_type using stable defaults.
         output_json: If True, output JSON format
+        text_backend: ``meili`` (a MeiliSearch index) or ``qdrant`` (a text
+            index on the collection's ``text`` payload; MeiliSearch is never
+            contacted), recorded in the collection metadata (RDR-027 Q2)
     """
     if not models:
         models = default_models_for_type(corpus_type)
@@ -349,12 +363,17 @@ def create_corpus_command(
         corpus_type=corpus_type,
         models=models,
         description=description,
+        text_backend=text_backend,
     )
 
     try:
+        try:
+            validate_text_backend(text_backend)
+        except ValueError as e:
+            raise InvalidArgumentError(str(e))
         if not output_json:
             print_info(f"Creating corpus '{name}'")
-            print_info(f"Type: {corpus_type}, Models: {models}")
+            print_info(f"Type: {corpus_type}, Models: {models}, Text backend: {text_backend}")
 
         # Parse and validate models, build vectors config
         model_list = [m.strip() for m in models.split(",")]
@@ -384,9 +403,12 @@ def create_corpus_command(
                 collection_type=corpus_type,
                 model=models,
                 description=description,
+                text_backend=text_backend,
             )
             # Sync deletes, renames and passage windows filter on these.
             MetadataBasedSync(qdrant).ensure_corpus_payload_indexes(name)
+            if text_backend == "qdrant":
+                QdrantTextBackend(qdrant).ensure(name, corpus_type)
 
             if not output_json:
                 console.print(f"[green]✅ Qdrant collection '{name}' created[/green]")
@@ -397,47 +419,48 @@ def create_corpus_command(
                 raise InvalidArgumentError(f"Qdrant collection '{name}' already exists")
             raise
 
-        # Step 2: Create MeiliSearch index
-        if not output_json:
-            print_info("Step 2/2: Creating MeiliSearch index...")
-
-        meili = create_meili_client()
-
-        try:
-            # Verify MeiliSearch is available
-            if not meili.health_check():
-                raise ResourceNotFoundError(
-                    "MeiliSearch server not available. "
-                    "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
-                )
-
-            # Check if index already exists
-            if meili.index_exists(name):
-                raise InvalidArgumentError(f"MeiliSearch index '{name}' already exists")
-
-            # Get settings based on corpus type
-            canonical_type = map_corpus_type_to_canonical(corpus_type)
-            settings = get_index_settings(canonical_type)
-
-            # Create index with settings
-            meili.create_index(name, primary_key="id", settings=settings)
-
+        # Step 2: Create MeiliSearch index, unless the collection serves text.
+        if text_backend == "meili":
             if not output_json:
-                console.print(f"[green]✅ MeiliSearch index '{name}' created[/green]")
+                print_info("Step 2/2: Creating MeiliSearch index...")
 
-        except InvalidArgumentError:
-            raise
-        except ResourceNotFoundError:
-            raise
-        except Exception as e:
-            # MeiliSearch failed but Qdrant succeeded
-            if not output_json:
-                print_error(f"MeiliSearch index creation failed: {e}")
-                print_info(f"Note: Qdrant collection '{name}' was created successfully")
-                print_info(
-                    "You may need to create the MeiliSearch index manually or delete the Qdrant collection"
-                )
-            raise
+            meili = create_meili_client()
+
+            try:
+                # Verify MeiliSearch is available
+                if not meili.health_check():
+                    raise ResourceNotFoundError(
+                        "MeiliSearch server not available. "
+                        "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
+                    )
+
+                # Check if index already exists
+                if meili.index_exists(name):
+                    raise InvalidArgumentError(f"MeiliSearch index '{name}' already exists")
+
+                # Get settings based on corpus type
+                canonical_type = map_corpus_type_to_canonical(corpus_type)
+                settings = get_index_settings(canonical_type)
+
+                # Create index with settings
+                meili.create_index(name, primary_key="id", settings=settings)
+
+                if not output_json:
+                    console.print(f"[green]✅ MeiliSearch index '{name}' created[/green]")
+
+            except InvalidArgumentError:
+                raise
+            except ResourceNotFoundError:
+                raise
+            except Exception as e:
+                # MeiliSearch failed but Qdrant succeeded
+                if not output_json:
+                    print_error(f"MeiliSearch index creation failed: {e}")
+                    print_info(f"Note: Qdrant collection '{name}' was created successfully")
+                    print_info(
+                        "You may need to create the MeiliSearch index manually or delete the Qdrant collection"
+                    )
+                raise
 
         # Success output
         data = {
@@ -447,7 +470,8 @@ def create_corpus_command(
             "models": model_list,
             "vectors": {m: get_model_dimensions(m) for m in model_list},
             "qdrant_collection": name,
-            "meilisearch_index": name,
+            "text_backend": text_backend,
+            "meilisearch_index": name if text_backend == "meili" else None,
         }
 
         if output_json:
@@ -658,6 +682,7 @@ def corpus_info_command(name: str, output_json: bool):
                 "type": collection_type,
                 "model": metadata.get("model"),
                 "description": metadata.get("description"),
+                "text_backend": text_backend_of(metadata),
                 "vectors": vectors,
                 "hnsw_config": {
                     "m": col_info.config.hnsw_config.m,
@@ -726,6 +751,8 @@ def corpus_info_command(name: str, output_json: bool):
         # Determine item label based on type
         collection_type = qdrant_info.get("type") if qdrant_info else "unknown"
         item_label = _item_unit_for_corpus_type(collection_type)
+        # A corpus Qdrant does not hold is a MeiliSearch index (RDR-027 Q2).
+        text_backend = qdrant_info["text_backend"] if qdrant_info else DEFAULT_TEXT_BACKEND
 
         # Output
         if output_json:
@@ -733,6 +760,7 @@ def corpus_info_command(name: str, output_json: bool):
                 "corpus": name,
                 "type": collection_type,
                 "description": (qdrant_info.get("description") if qdrant_info else None),
+                "text_backend": text_backend,
                 "item_label": item_label,
                 "parity": parity,
                 "qdrant": qdrant_info,
@@ -744,6 +772,7 @@ def corpus_info_command(name: str, output_json: bool):
             # Header
             console.print(f"\n[bold cyan]Corpus: {name}[/bold cyan]")
             console.print(f"Type: [bold]{collection_type}[/bold]")
+            console.print(f"Text backend: [bold]{text_backend}[/bold]")
             if qdrant_info and qdrant_info.get("description") is not None:
                 console.print(f"Description: {qdrant_info['description']}")
 

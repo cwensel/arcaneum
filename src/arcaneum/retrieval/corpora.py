@@ -15,8 +15,10 @@ from typing import Any, Dict, List
 
 from ..embeddings.client import EMBEDDING_MODELS
 from ..indexing.collection_metadata import (
+    DEFAULT_TEXT_BACKEND,
     get_collection_metadata,
     metadata_exclusion_filter,
+    text_backend_of,
     user_point_count,
 )
 
@@ -481,6 +483,7 @@ def _qdrant_collections(
         item_counts = count(qdrant, col.name, collection_type, metadata)
         collections[col.name] = {
             "type": collection_type,
+            "text_backend": text_backend_of(metadata),
             "model": metadata.get("model"),
             "description": metadata.get("description"),
             "models": models,
@@ -594,6 +597,8 @@ def list_corpora(
             {
                 "name": name,
                 "type": q_info.get("type"),
+                # A corpus Qdrant does not hold is a MeiliSearch index (RDR-027 Q2).
+                "text_backend": q_info.get("text_backend", DEFAULT_TEXT_BACKEND),
                 "model": q_info.get("model"),
                 "description": q_info.get("description"),
                 "models": q_info.get("models") or _unknown_models(),

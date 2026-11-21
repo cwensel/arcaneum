@@ -3,6 +3,9 @@
 ``text_backend`` is parametrized by backend name, so a later backend joins the
 contract tests by adding its name to ``TEXT_BACKENDS`` and a branch to
 ``make_text_backend``.
+
+``LocalQdrant`` stands in for a Qdrant server; ``tests/integration`` runs the
+Qdrant backend against a real 1.20 server.
 """
 
 from __future__ import annotations
@@ -12,7 +15,13 @@ from types import SimpleNamespace
 
 import pytest
 
-TEXT_BACKENDS = ["meilisearch"]
+TEXT_BACKENDS = ["meilisearch", "qdrant"]
+
+# The contract's corpus. A Qdrant text corpus is a collection `arc corpus
+# create` made, which the backend's ensure() then indexes, so the Qdrant
+# fixture creates it first.
+CONTRACT_CORPORA = ("Docs",)
+VECTOR_NAME = "stub"  # the contract chunks' one named vector
 
 
 class FakeFullTextClient:
@@ -156,12 +165,104 @@ class FakeFullTextClient:
         return {"hits": hits, "estimatedTotalHits": len(docs), "processingTimeMs": 1}
 
 
+class LocalQdrant:
+    """qdrant-client's local mode, reporting the payload indexes asked of it.
+
+    Local mode builds no payload index and reports none, and runs a text query
+    only over a text index with the default tokenization. This records each
+    requested index and reports it in ``get_collection``'s ``payload_schema``,
+    as the server does, and hands local mode a default-tokenized, scored text
+    index in place of a requested text index, so text queries run. Local mode
+    therefore ignores the stop words and ASCII folding of RDR-027 Q3; the
+    requested parameters stay in ``requested`` for tests to inspect.
+    ``index_calls`` records every index creation, and ``query_calls`` every
+    ``query_points`` argument set.
+    """
+
+    def __init__(self, healthy: bool = True):
+        from qdrant_client import QdrantClient
+
+        self._client = QdrantClient(location=":memory:")
+        self.healthy = healthy
+        self.requested: dict[tuple[str, str], object] = {}
+        self.index_calls: list[tuple[str, str]] = []
+        self.query_calls: list[dict] = []
+
+    def __getattr__(self, name):
+        return getattr(self._client, name)
+
+    def get_collections(self):
+        if not self.healthy:
+            raise ConnectionError("connection refused")
+        return self._client.get_collections()
+
+    def create_collection_with_vector(self, name: str) -> None:
+        from qdrant_client.http import models
+
+        self._client.create_collection(
+            name,
+            vectors_config={
+                VECTOR_NAME: models.VectorParams(size=2, distance=models.Distance.COSINE)
+            },
+        )
+
+    def create_payload_index(self, collection_name, field_name, field_schema=None, **kwargs):
+        import warnings
+
+        from qdrant_client.http import models
+
+        self.index_calls.append((collection_name, field_name))
+        self.requested[(collection_name, field_name)] = field_schema
+        if not isinstance(field_schema, models.TextIndexParams):
+            return None  # local mode builds no other index
+        local_schema = models.TextIndexParams(
+            type=models.TextIndexType.TEXT, scoring=field_schema.scoring
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            return self._client.create_payload_index(
+                collection_name, field_name, field_schema=local_schema, **kwargs
+            )
+
+    def delete_payload_index(self, collection_name, field_name, **kwargs):
+        if self.requested.pop((collection_name, field_name), None) is None:
+            return None
+        return self._client.delete_payload_index(collection_name, field_name, **kwargs)
+
+    def get_collection(self, collection_name):
+        from qdrant_client.http import models
+
+        info = self._client.get_collection(collection_name)
+        schema = {}
+        for (collection, field_name), params in self.requested.items():
+            if collection != collection_name:
+                continue
+            if isinstance(params, models.TextIndexParams):
+                schema[field_name] = models.PayloadIndexInfo(
+                    data_type=models.PayloadSchemaType.TEXT, params=params, points=0
+                )
+            else:
+                schema[field_name] = models.PayloadIndexInfo(data_type=params, points=0)
+        return info.model_copy(update={"payload_schema": schema})
+
+    def query_points(self, collection_name, **kwargs):
+        self.query_calls.append(kwargs)
+        return self._client.query_points(collection_name, **kwargs)
+
+
 def make_text_backend(name: str, healthy: bool = True):
     """A text backend over an in-memory store, up or down."""
     if name == "meilisearch":
         from arcaneum.fulltext.backend import MeiliTextBackend
 
         return MeiliTextBackend(FakeFullTextClient(healthy=healthy))
+    if name == "qdrant":
+        from arcaneum.retrieval.qdrant_text import QdrantTextBackend
+
+        client = LocalQdrant(healthy=healthy)
+        for corpus in CONTRACT_CORPORA:
+            client.create_collection_with_vector(corpus)
+        return QdrantTextBackend(client)
     raise ValueError(f"unknown text backend {name!r}")
 
 

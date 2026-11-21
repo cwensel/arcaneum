@@ -98,11 +98,7 @@ class MeiliTextBackend:
             if native and _is_filter_error(e):
                 raise self._bad_filter(corpus, e) from e
             raise
-        return TextPage(
-            hits=results.get("hits", []),
-            estimated_total_hits=results.get("estimatedTotalHits", 0),
-            processing_time_ms=results.get("processingTimeMs", 0),
-        )
+        return TextPage(hits=results.get("hits", []))
 
     def get_document(self, corpus: str, chunk_id: str) -> Optional[Dict[str, Any]]:
         return self.client.get_document(corpus, chunk_id)

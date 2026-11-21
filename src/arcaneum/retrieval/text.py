@@ -1,4 +1,8 @@
-"""Full-text search for the retrieval core (RDR-026), through a ``TextBackend`` (RDR-027 Q1)."""
+"""Full-text search for the retrieval core (RDR-026), through a ``TextBackend`` (RDR-027 Q1).
+
+Each corpus is searched on the backend its metadata records (RDR-027 Q2):
+MeiliSearch, or Qdrant's text index over the chunk points.
+"""
 
 from __future__ import annotations
 
@@ -6,11 +10,12 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from ..cli.errors import ArcaneumError, BadFilterError
+from ..cli.errors import ArcaneumError, BadFilterError, ResourceNotFoundError
 from ..cli.search_merge import fetch_from_corpora, per_corpus_limit
+from ..indexing.collection_metadata import text_backend_of
 from ..search.filters import parse_filter
 from .failures import is_connection_failure, service_down
-from .hits import build_hit, read_corpora_source_roots, search_data
+from .hits import build_hit, read_corpora_metadata, roots_of, search_data
 
 if TYPE_CHECKING:
     from .text_backend import TextBackend
@@ -36,10 +41,10 @@ class TextSearchResult:
     limit: int
     offset: int
     hits: List[Dict[str, Any]]
-    estimated_total_hits: int = 0
-    processing_time_ms: int = 0
     missing_corpora: List[str] = field(default_factory=list)
     source_roots: Dict[str, List[str]] = field(default_factory=dict)
+    # Each corpus's type, for highlighting with its stop words (RDR-027 Q5).
+    corpus_types: Dict[str, Optional[str]] = field(default_factory=dict)
 
     @property
     def display_index(self) -> str:
@@ -94,28 +99,35 @@ def search_text(
     qdrant_client=None,
     verbose: bool = False,
 ) -> TextSearchResult:
-    """Search the corpora's text backend and merge hits round-robin across corpora.
+    """Search each corpus on its text backend and merge hits round-robin across corpora.
+
+    Each corpus's metadata is read once, before any search, for its
+    ``text_backend`` and its ``source_roots``. A corpus whose metadata records
+    no backend, or cannot be read (Qdrant down, or a MeiliSearch-only index),
+    is a MeiliSearch corpus.
 
     Args:
         query: Search query (quotes for exact phrases)
         corpora: Corpus names to search
         filter: Metadata filter (``search/filters.py``: the neutral dialect,
-            translated with every value quoted, or a native MeiliSearch
-            expression)
+            translated for each backend, or a native expression)
         limit: Maximum number of merged hits
         offset: Number of merged hits to skip
-        text_backend: The corpora's ``TextBackend`` (MeiliSearch from config
-            when None)
-        qdrant_client: Qdrant client used only to read each corpus's
-            ``source_roots`` for its cites; None, or a failed read, cites the
-            absolute path (RDR-026 Q4)
+        text_backend: The ``TextBackend`` for MeiliSearch corpora (MeiliSearch
+            from config when None); its health is checked only when a
+            MeiliSearch corpus is searched
+        qdrant_client: Qdrant client that reads each corpus's metadata and
+            serves the Qdrant corpora; None, or a failed read, makes every
+            corpus a MeiliSearch corpus cited by absolute path (RDR-026 Q4)
         verbose: Log skipped corpora
 
     Raises:
         UnknownCorpusError: no requested corpus exists
-        BadFilterError: the filter does not parse, or the backend refuses it
-            (MeiliSearch: Qdrant JSON, ``contains``, an unfilterable field)
-        ServiceDownError: the text backend is unreachable
+        ResourceNotFoundError: a Qdrant corpus has lost its text index
+        BadFilterError: the filter does not parse, or a corpus's backend
+            refuses it (MeiliSearch: Qdrant JSON, ``contains``, an
+            unfilterable field; Qdrant: a MeiliSearch expression)
+        ServiceDownError: a searched corpus's backend is unreachable
         ArcaneumError: any other search failure
     """
     parsed = None
@@ -125,32 +137,63 @@ def search_text(
         except ValueError as e:
             raise BadFilterError(f"Invalid filter: {e}") from e
 
-    if text_backend is None:
-        from ..cli.utils import create_meili_client
-        from ..fulltext.backend import MeiliTextBackend
+    metadata = read_corpora_metadata(qdrant_client, corpora)
+    try:
+        backend_names = {corpus: text_backend_of(metadata[corpus]) for corpus in corpora}
+    except ValueError as e:
+        raise ArcaneumError(str(e)) from e
+    corpus_types = {corpus: metadata[corpus].get("collection_type") for corpus in corpora}
 
-        text_backend = MeiliTextBackend(create_meili_client())
+    backends: Dict[str, "TextBackend"] = {}
+    if "meili" in backend_names.values():
+        if text_backend is None:
+            from ..cli.utils import create_meili_client
+            from ..fulltext.backend import MeiliTextBackend
 
-    text_backend.check_filter(parsed)
-    text_backend.health()
+            text_backend = MeiliTextBackend(create_meili_client())
+        backends["meili"] = text_backend
+    if "qdrant" in backend_names.values():
+        from .qdrant_text import QdrantTextBackend
+
+        backends["qdrant"] = QdrantTextBackend(
+            qdrant_client,
+            corpus_types={c: t for c, t in corpus_types.items() if backend_names[c] == "qdrant"},
+        )
+
+    # Every filter refusal precedes every request.
+    for backend in backends.values():
+        backend.check_filter(parsed)
+    for backend in backends.values():
+        backend.health()
 
     fetch_limit = per_corpus_limit(corpora, limit, offset)
-    totals = {"processing_time_ms": 0, "estimated_total_hits": 0}
 
     def _fetch(corpus_name: str) -> list:
-        if not text_backend.exists(corpus_name):
-            raise _MissingCorpus(corpus_name)
-        page = text_backend.search(
-            corpus_name,
-            query,
-            filter=parsed,
-            limit=fetch_limit,
-            offset=0,  # Apply offset after merge
-        )
+        backend = backends[backend_names[corpus_name]]
+        try:
+            if not backend.exists(corpus_name):
+                if backend.name == "qdrant":
+                    # Its metadata was read, so the collection exists.
+                    raise ResourceNotFoundError(
+                        f"Corpus '{corpus_name}' is served by Qdrant but has no text index. "
+                        f"Rebuild it with: arc corpus repair {corpus_name}"
+                    )
+                raise _MissingCorpus(corpus_name)
+            page = backend.search(
+                corpus_name,
+                query,
+                filter=parsed,
+                limit=fetch_limit,
+                offset=0,  # Apply offset after merge
+            )
+        except (ArcaneumError, _MissingCorpus):
+            raise
+        except Exception as e:
+            if is_connection_failure(e):
+                raise service_down(backend.service, e) from e
+            raise
         for hit in page.hits:
             hit["_corpus"] = corpus_name
-        totals["processing_time_ms"] += page.processing_time_ms
-        totals["estimated_total_hits"] += page.estimated_total_hits
         return page.hits
 
     try:
@@ -164,13 +207,12 @@ def search_text(
     except ArcaneumError:
         raise
     except Exception as e:
-        if is_connection_failure(e):
-            raise service_down(text_backend.service, e) from e
         raise ArcaneumError(f"Search failed: {e}") from e
 
-    # MeiliSearch scores are not shown comparable across indexes (RDR-026
-    # Q7), so a multi-corpus search merges positionally, round-robin: it keeps
-    # each corpus's own ranking but does not rank across corpora.
+    # Scores are not comparable across corpora (RDR-026 Q7), and BM25's are
+    # unbounded where MeiliSearch's lie in 0-1 (RDR-027 Q5), so a
+    # multi-corpus search merges positionally, round-robin: it keeps each
+    # corpus's own ranking but does not rank across corpora.
     all_hits = [hit for hits in per_corpus_hits for hit in hits]
     if len(corpora) > 1:
         hits_by_corpus: Dict[str, List[Dict[str, Any]]] = {}
@@ -191,10 +233,7 @@ def search_text(
         limit=limit,
         offset=offset,
         hits=page,
-        source_roots=read_corpora_source_roots(
-            qdrant_client, sorted({hit.get("_corpus") for hit in page if hit.get("_corpus")})
-        ),
-        estimated_total_hits=totals["estimated_total_hits"],
-        processing_time_ms=totals["processing_time_ms"],
+        source_roots={corpus: roots_of(metadata[corpus]) for corpus in corpora},
+        corpus_types=corpus_types,
         missing_corpora=missing_corpora,
     )

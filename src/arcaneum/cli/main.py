@@ -1625,12 +1625,21 @@ def corpus_jobs(output_json):
     help="Embedding models (comma-separated; default inferred from --type)",
 )
 @click.option("--description", default=None, help="Human-readable corpus description")
+@click.option(
+    "--text-backend",
+    type=click.Choice(["meili", "qdrant"]),
+    default="meili",
+    show_default=True,
+    help="Full-text backend: a MeiliSearch index, or a text index in the Qdrant collection",
+)
 @click.option("--json", "output_json", is_flag=True, help="Output JSON format")
-def create_corpus(name, corpus_type, models, description, output_json):
+def create_corpus(name, corpus_type, models, description, text_backend, output_json):
     """Create both collection and index"""
     from arcaneum.cli.corpus import create_corpus_command
 
-    create_corpus_command(name, corpus_type, models, description, output_json)
+    create_corpus_command(
+        name, corpus_type, models, description, output_json, text_backend=text_backend
+    )
 
 
 @corpus.command("update")

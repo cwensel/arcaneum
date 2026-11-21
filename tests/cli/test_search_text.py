@@ -677,7 +677,11 @@ class TestNoResultsHandling:
         output = json.loads(captured.out)
 
         assert output["data"]["hits"] == []
-        assert output["message"] == "Found 0 results"
+        # Zero hits name the next step agents take (RDR-027 Q5).
+        assert output["message"] == (
+            "Found 0 results. For a conceptual match try: "
+            "arc search semantic nonexistentquery12345 --corpus TestIndex"
+        )
 
 
 class TestInteractionLogging:

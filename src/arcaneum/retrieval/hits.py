@@ -174,15 +174,17 @@ def parse_cite(cite: str) -> Cite:
     )
 
 
-def _fetch_source_roots(client, corpus: str) -> List[str]:
-    """The corpus's recorded ``source_roots``; a failed read raises."""
-    from ..indexing.collection_metadata import _retrieve_collection_metadata
-
-    metadata = _retrieve_collection_metadata(client, corpus) or {}
+def roots_of(metadata: Mapping[str, Any]) -> List[str]:
+    """The ``source_roots`` a corpus's metadata records."""
     roots = metadata.get(SOURCE_ROOTS_FIELD)
     if not isinstance(roots, list):
         return []
     return [root for root in roots if isinstance(root, str) and root]
+
+
+def _is_missing_collection(exc: Exception) -> bool:
+    """Whether a metadata read failed because Qdrant holds no such collection."""
+    return getattr(exc, "status_code", None) == 404 or "not found" in str(exc).lower()
 
 
 def read_source_roots(client, corpus: str) -> List[str]:
@@ -194,24 +196,36 @@ def read_source_roots(client, corpus: str) -> List[str]:
     return read_corpora_source_roots(client, [corpus]).get(corpus, [])
 
 
-def read_corpora_source_roots(client, corpora: Iterable[str]) -> Dict[str, List[str]]:
-    """Each corpus's ``source_roots``, as ``read_source_roots`` reads them.
+def read_corpora_metadata(client, corpora: Iterable[str]) -> Dict[str, Dict[str, Any]]:
+    """Each corpus's collection metadata, read once; empty when absent or unreadable.
 
-    The first failed read ends the lookups: the rest of the corpora get no
-    roots, so an unreachable Qdrant costs one timeout, not one per corpus.
+    A corpus Qdrant does not hold (a MeiliSearch-only index) reads as empty.
+    Any other failed read ends the lookups: the rest of the corpora read as
+    empty, so an unreachable Qdrant costs one timeout, not one per corpus.
     """
-    roots: Dict[str, List[str]] = {}
+    from ..indexing.collection_metadata import _retrieve_collection_metadata
+
+    metadata: Dict[str, Dict[str, Any]] = {}
     for corpus in corpora:
         if client is None:
-            roots[corpus] = []
+            metadata[corpus] = {}
             continue
         try:
-            roots[corpus] = _fetch_source_roots(client, corpus)
+            metadata[corpus] = _retrieve_collection_metadata(client, corpus) or {}
         except Exception as e:
-            logger.debug("No source roots for %s: %s", corpus, e)
-            roots[corpus] = []
-            client = None
-    return roots
+            logger.debug("No metadata for %s: %s", corpus, e)
+            metadata[corpus] = {}
+            if not _is_missing_collection(e):
+                client = None
+    return metadata
+
+
+def read_corpora_source_roots(client, corpora: Iterable[str]) -> Dict[str, List[str]]:
+    """Each corpus's ``source_roots``, as ``read_corpora_metadata`` reads them."""
+    return {
+        corpus: roots_of(metadata)
+        for corpus, metadata in read_corpora_metadata(client, corpora).items()
+    }
 
 
 def _sanitize(text: str) -> str:

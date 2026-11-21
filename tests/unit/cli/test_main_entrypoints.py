@@ -234,11 +234,14 @@ def test_corpus_create_models_default_is_inferred():
     """`arc corpus create` leaves model selection to corpus-type defaults."""
     called = {}
 
-    def fake_create_corpus_command(name, corpus_type, models, description, output_json):
+    def fake_create_corpus_command(
+        name, corpus_type, models, description, output_json, text_backend="meili"
+    ):
         called["name"] = name
         called["corpus_type"] = corpus_type
         called["models"] = models
         called["description"] = description
+        called["text_backend"] = text_backend
         raise SystemExit(0)
 
     result = _run(
@@ -252,14 +255,36 @@ def test_corpus_create_models_default_is_inferred():
         "corpus_type": "markdown",
         "models": None,
         "description": None,
+        "text_backend": "meili",
     }
+
+
+def test_corpus_create_text_backend_dispatches():
+    """`arc corpus create --text-backend qdrant` forwards the backend (RDR-027 Q2)."""
+    called = {}
+
+    def fake_create_corpus_command(
+        name, corpus_type, models, description, output_json, text_backend="meili"
+    ):
+        called["text_backend"] = text_backend
+        raise SystemExit(0)
+
+    result = _run(
+        ["corpus", "create", "Docs", "--type", "pdf", "--text-backend", "qdrant"],
+        **{"arcaneum.cli.corpus.create_corpus_command": fake_create_corpus_command},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert called == {"text_backend": "qdrant"}
 
 
 def test_corpus_create_description_dispatches():
     """`arc corpus create --description` forwards metadata to the handler."""
     called = {}
 
-    def fake_create_corpus_command(name, corpus_type, models, description, output_json):
+    def fake_create_corpus_command(
+        name, corpus_type, models, description, output_json, text_backend="meili"
+    ):
         called["description"] = description
         raise SystemExit(0)
 

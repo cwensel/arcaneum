@@ -15,7 +15,7 @@ The service compatibility window for 1.0 is:
 
 | Service | Supported range | Gate |
 | ------- | --------------- | ---- |
-| Qdrant | 1.18.x | `arc doctor`, corpus create/sync/search, backup, and restore pass against `qdrant/qdrant:v1.18.2`, matching the `qdrant-client>=1.18.0` package floor |
+| Qdrant | 1.20.x | `arc doctor`, corpus create/sync/search, backup, and restore pass against `qdrant/qdrant:v1.20.2`, matching the `qdrant-client>=1.20.0` package floor. Qdrant upgrades one minor version at a time, so `arc container upgrade` snapshots every collection and steps older data 1.18.2 -> 1.19.2 -> 1.20.2 in place; `tests/integration/test_qdrant_upgrade.py` is the upgrade test from 1.18.2 |
 | MeiliSearch | 1.54.0 | corpus create/sync/search, parity, backup, and restore pass against `getmeili/meilisearch:v1.54.0`, within the `meilisearch>=0.43.0` SDK compatibility window. MeiliSearch opens only data written by the same exact version, so the range is a single patch release; `arc container upgrade` migrates older data (v1.12+) in place after a backup |
 
 Changing either range before 1.0 requires a release note and an upgrade test

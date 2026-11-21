@@ -30,6 +30,7 @@ from ..indexing.collection_metadata import (
     update_collection_metadata,
     user_point_count,
 )
+from ..indexing.common.sync import MetadataBasedSync
 from ..retrieval import list_corpora
 from ..retrieval.corpora import (
     UNKNOWN_LEGACY,
@@ -383,6 +384,8 @@ def create_corpus_command(
                 model=models,
                 description=description,
             )
+            # Sync deletes, renames and passage windows filter on these.
+            MetadataBasedSync(qdrant).ensure_corpus_payload_indexes(name)
 
             if not output_json:
                 console.print(f"[green]✅ Qdrant collection '{name}' created[/green]")

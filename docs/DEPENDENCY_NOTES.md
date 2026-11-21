@@ -163,7 +163,7 @@ Covered by `tests/unit/embeddings/test_transformers_compat.py`.
 
 All other dependencies use flexible version constraints and should not cause similar issues:
 
-- **qdrant-client:** >=1.18.0
+- **qdrant-client:** >=1.20.0 (BM25 `TextQuery` and text index scoring, RDR-027)
 - **sentence-transformers:** >=5.5.1 (compatible with the transformers <5.0 cap)
 - **torch:** >=2.12.0
 - **fastembed:** >=0.8.0 (uses ONNX, no transformers dependency)

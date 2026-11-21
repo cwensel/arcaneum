@@ -2,7 +2,9 @@ services:
   # Qdrant vector database (RDR-002)
   qdrant:
     # Keep the named volume identifiers below stable across image upgrades.
-    image: qdrant/qdrant:v1.18.2
+    # Qdrant upgrades one minor version at a time. Bump it with
+    # `arc container upgrade`, which snapshots and steps through each minor.
+    image: qdrant/qdrant:${QDRANT_IMAGE_TAG:-v1.20.2}
     container_name: qdrant-arcaneum
     restart: unless-stopped
 

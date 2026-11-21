@@ -576,6 +576,35 @@ def test_corpus_module_exports_expected_commands():
     assert missing == [], f"corpus module missing exported commands: {missing}"
 
 
+def test_corpus_create_indexes_file_path_and_chunk_index(monkeypatch):
+    """A new corpus gets the indexes sync filters on (RDR-027 Q3)."""
+    from unittest.mock import MagicMock
+
+    from arcaneum.cli import corpus
+
+    events = []
+    qdrant = MagicMock()
+    meili = MagicMock()
+    meili.health_check.return_value = True
+    meili.index_exists.return_value = False
+    sync_manager = MagicMock()
+    sync_manager.ensure_corpus_payload_indexes.side_effect = lambda name: events.append(
+        ("indexes", name)
+    )
+    monkeypatch.setattr(corpus, "create_qdrant_client", lambda: qdrant)
+    monkeypatch.setattr(corpus, "create_meili_client", lambda: meili)
+    monkeypatch.setattr(corpus, "build_vectors_config", lambda _models: {})
+    monkeypatch.setattr(corpus, "get_model_dimensions", lambda _model: 768)
+    monkeypatch.setattr(
+        corpus, "set_collection_metadata", lambda **_kwargs: events.append(("metadata",))
+    )
+    monkeypatch.setattr(corpus, "MetadataBasedSync", lambda client: sync_manager)
+
+    corpus.create_corpus_command("Docs", "markdown", "arctic-m", None, output_json=True)
+
+    assert events == [("metadata",), ("indexes", "Docs")]
+
+
 def test_corpus_module_uses_interaction_logger():
     """corpus commands rely on the shared interaction_logger singleton."""
     from arcaneum.cli.corpus import interaction_logger

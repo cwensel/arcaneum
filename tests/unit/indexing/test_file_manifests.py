@@ -711,3 +711,89 @@ def test_alias_file_paths_are_empty_without_ready_manifests():
 
     assert MetadataBasedSync(qdrant).get_alias_file_paths("pdf") == set()
     qdrant.scroll.assert_not_called()
+
+
+def _created_indexes(qdrant):
+    return {
+        call.kwargs["field_name"]: call.kwargs["field_schema"]
+        for call in qdrant.create_payload_index.call_args_list
+    }
+
+
+def test_corpus_payload_indexes_cover_file_path_and_chunk_index():
+    """Sync deletes, renames and passage windows filter on these (RDR-027 Q3)."""
+    qdrant = MagicMock()
+    qdrant.get_collection.return_value = _collection_info()
+
+    MetadataBasedSync(qdrant).ensure_corpus_payload_indexes("code")
+
+    assert _created_indexes(qdrant) == {
+        "file_path": PayloadSchemaType.KEYWORD,
+        "chunk_index": PayloadSchemaType.INTEGER,
+    }
+    for call in qdrant.create_payload_index.call_args_list:
+        assert call.kwargs["collection_name"] == "code"
+        assert call.kwargs["wait"] is True
+
+
+def test_corpus_payload_indexes_skip_fields_already_in_schema():
+    qdrant = MagicMock()
+    qdrant.get_collection.return_value = _collection_info({"file_path": SimpleNamespace()})
+
+    MetadataBasedSync(qdrant).ensure_corpus_payload_indexes("code")
+
+    assert _created_indexes(qdrant) == {"chunk_index": PayloadSchemaType.INTEGER}
+
+
+def test_corpus_payload_indexes_are_a_no_op_once_present():
+    qdrant = MagicMock()
+    qdrant.get_collection.return_value = _collection_info(
+        {"file_path": SimpleNamespace(), "chunk_index": SimpleNamespace()}
+    )
+
+    MetadataBasedSync(qdrant).ensure_corpus_payload_indexes("code")
+
+    qdrant.create_payload_index.assert_not_called()
+
+
+def test_corpus_payload_index_conflict_is_idempotent():
+    qdrant = MagicMock()
+    qdrant.get_collection.return_value = _collection_info()
+    qdrant.create_payload_index.side_effect = RuntimeError("409 index already exists")
+
+    MetadataBasedSync(qdrant).ensure_corpus_payload_indexes("code")
+
+    assert qdrant.create_payload_index.call_count == 2
+
+
+def test_corpus_payload_index_failure_other_than_conflict_propagates():
+    qdrant = MagicMock()
+    qdrant.get_collection.return_value = _collection_info()
+    qdrant.create_payload_index.side_effect = RuntimeError("connection refused")
+
+    with pytest.raises(RuntimeError, match="connection refused"):
+        MetadataBasedSync(qdrant).ensure_corpus_payload_indexes("code")
+
+
+def test_corpus_payload_indexes_are_checked_once_per_instance():
+    qdrant = MagicMock()
+    qdrant.get_collection.return_value = _collection_info()
+    sync = MetadataBasedSync(qdrant)
+
+    sync.ensure_corpus_payload_indexes("code")
+    sync.ensure_corpus_payload_indexes("code")
+
+    qdrant.get_collection.assert_called_once_with("code")
+    assert qdrant.create_payload_index.call_count == 2
+
+
+def test_manifest_snapshot_read_creates_no_corpus_payload_index():
+    """A read path must never index file_path or chunk_index (RDR-027 Q3)."""
+    qdrant = MagicMock()
+    qdrant.retrieve.return_value = [_ready_metadata_point()]
+    qdrant.get_collection.return_value = _collection_info()
+    qdrant.scroll.return_value = ([], None)
+
+    MetadataBasedSync(qdrant).get_file_manifest_snapshot("code")
+
+    assert set(_created_indexes(qdrant)) == {FILE_MANIFEST_PAYLOAD_KEY}

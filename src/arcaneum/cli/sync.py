@@ -2764,6 +2764,9 @@ def _sync_directory_locked(
             output_json,
         )
         manifest_sync_manager = MetadataBasedSync(qdrant)
+        if not dry_run:
+            # The deletes, renames and change checks below filter on these.
+            manifest_sync_manager.ensure_corpus_payload_indexes(corpus)
         _ensure_file_manifests(
             manifest_sync_manager,
             corpus,

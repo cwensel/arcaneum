@@ -2181,7 +2181,7 @@ arc container backup
 # Restore indexed data
 arc container restore BACKUP_DIRECTORY
 
-# Migrate MeiliSearch data to the pinned image version
+# Migrate Qdrant and MeiliSearch data to the pinned image versions
 arc container upgrade
 
 # View logs
@@ -2334,6 +2334,34 @@ Both commands accept `--qdrant-url`; cleanup also accepts
 `--qdrant-timeout` (default 300 seconds). Partial deletion failures report which
 snapshots were deleted and return a nonzero exit code.
 
+**Upgrading Qdrant:**
+
+Qdrant supports upgrading its storage one minor version at a time, so
+`deploy/docker-compose.yml` pins an exact image tag (overridable with
+`QDRANT_IMAGE_TAG`). Qdrant stamps no server version in its storage, so arc
+reads the data's version from the existing `qdrant-arcaneum` container's image.
+While that container exists on an older minor version, `arc container start`
+refuses to start and points at `arc container upgrade`. `arc container stop`
+removes the container, so run the upgrade before stopping after an update.
+
+`arc container upgrade` runs its Qdrant phase first:
+
+1. Starts the data's own version if Qdrant is not already serving it, then
+   records each collection's point count.
+2. Snapshots every collection into a backup under the configured
+   `backup.path`, with a Qdrant-only manifest.
+3. For each minor version in turn (1.18.2 -> 1.19.2 -> 1.20.2, never skipping
+   one): pulls the image, recreates the container, waits for every collection
+   to load, and verifies the server version and point counts.
+
+On failure it stops at that step and prints the recovery commands. A Qdrant
+snapshot restores only on its own or the next minor version, so recovery
+rebuilds Qdrant alone on the data's original version: remove the Qdrant
+container and volume, start that version with `QDRANT_IMAGE_TAG`, run
+`arc container restore <backup> --skip-meilisearch`, then run
+`arc container upgrade` again.
+Data already on the pinned minor version, or no Qdrant container, is a no-op.
+
 **Upgrading MeiliSearch:**
 
 MeiliSearch opens only data written by its exact version, so
@@ -2364,8 +2392,11 @@ prints the recovery commands: remove the MeiliSearch volume, start, then
 `arc container restore <backup>`. That rebuilds the indexes on the new version
 from the backup.
 
-Options: `--meilisearch-url`, `--dry-run`, `--json`. Set `MEILI_IMAGE_TAG` to
-run a different MeiliSearch image than the pinned default.
+Options: `--qdrant-url`, `--qdrant-timeout` (snapshot timeout, default 300
+seconds), `--meilisearch-url`, `--dry-run`, `--json`. JSON output reports the
+MeiliSearch phase at the top level and the Qdrant phase under `qdrant`. Set
+`QDRANT_IMAGE_TAG` or `MEILI_IMAGE_TAG` to run a different image than the
+pinned default.
 
 **Data Location:**
 

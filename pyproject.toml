@@ -35,7 +35,7 @@ keywords = [
 
 dependencies = [
     "click>=8.3.0",
-    "qdrant-client>=1.18.0",
+    "qdrant-client>=1.20.0",
     "fastembed>=0.8.0",
     "pyyaml>=6.0.3",
     "rich>=14.2.0",

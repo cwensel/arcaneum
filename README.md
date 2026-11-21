@@ -153,7 +153,7 @@ arc container start          # Start Qdrant and MeiliSearch
 arc container status         # Check service health
 arc container backup         # Back up Qdrant and MeiliSearch data
 arc container restore DIR    # Restore a backup
-arc container upgrade        # Migrate MeiliSearch data to the pinned version
+arc container upgrade        # Migrate Qdrant and MeiliSearch data to the pinned versions
 arc doctor                   # Verify setup
 
 # Corpus (Recommended - Dual Indexing to Both Systems)
@@ -487,11 +487,13 @@ Restore with `arc container restore <backup-directory>` while the container
 services are running. Restore recreates same-named MeiliSearch indexes from the
 backup.
 
-MeiliSearch opens only data written by its exact version. When an Arcaneum
-update bumps the pinned MeiliSearch image, `arc container start` refuses to
-start until you run `arc container upgrade`. That command backs up every
-MeiliSearch index, upgrades the data in place, and verifies document counts.
-Preview it with `--dry-run`.
+MeiliSearch opens only data written by its exact version, and Qdrant upgrades
+one minor version at a time. When an Arcaneum update bumps a pinned image,
+`arc container start` refuses older MeiliSearch data, or an existing Qdrant
+container on an older minor version, until you run `arc container upgrade`.
+That command snapshots every Qdrant collection and steps it through each minor
+version, backs up every MeiliSearch index and upgrades it in place, and
+verifies point and document counts. Preview it with `--dry-run`.
 
 Run backups when indexing is idle. `arc container backup` checks MeiliSearch for
 active tasks before and after export and aborts if any MeiliSearch task appears

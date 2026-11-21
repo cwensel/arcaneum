@@ -386,6 +386,7 @@ class MetadataBasedSync:
         """
         self.qdrant = qdrant_client
         self._manifest_indexes_ready: set[str] = set()
+        self._corpus_indexes_ready: set[str] = set()
         self._zero_vectors_by_collection: Dict[str, Any] = {}
         self._manifest_snapshots: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self.last_stale_policy_paths: set[str] = set()
@@ -472,19 +473,20 @@ class MetadataBasedSync:
                 paths_by_hash.setdefault(file_hash, []).append(path)
         return paths_by_hash
 
-    def ensure_file_manifest_payload_index(self, collection_name: str) -> None:
-        """Create the keyword index required for efficient manifest scans."""
-        from qdrant_client.models import PayloadSchemaType
-
-        if collection_name in self._manifest_indexes_ready:
-            return
+    def _create_missing_payload_indexes(
+        self, collection_name: str, fields: Mapping[str, Any]
+    ) -> None:
+        """Create each field's payload index unless the collection already has one."""
         info = self.qdrant.get_collection(collection_name)
-        if FILE_MANIFEST_PAYLOAD_KEY not in (getattr(info, "payload_schema", {}) or {}):
+        existing = getattr(info, "payload_schema", {}) or {}
+        for field_name, field_schema in fields.items():
+            if field_name in existing:
+                continue
             try:
                 self.qdrant.create_payload_index(
                     collection_name=collection_name,
-                    field_name=FILE_MANIFEST_PAYLOAD_KEY,
-                    field_schema=PayloadSchemaType.KEYWORD,
+                    field_name=field_name,
+                    field_schema=field_schema,
                     wait=True,
                 )
             except Exception as exc:
@@ -493,7 +495,39 @@ class MetadataBasedSync:
                 message = str(exc).lower()
                 if "already exists" not in message and "409" not in message:
                     raise
+
+    def ensure_file_manifest_payload_index(self, collection_name: str) -> None:
+        """Create the keyword index required for efficient manifest scans."""
+        from qdrant_client.models import PayloadSchemaType
+
+        if collection_name in self._manifest_indexes_ready:
+            return
+        self._create_missing_payload_indexes(
+            collection_name, {FILE_MANIFEST_PAYLOAD_KEY: PayloadSchemaType.KEYWORD}
+        )
         self._manifest_indexes_ready.add(collection_name)
+
+    def ensure_corpus_payload_indexes(self, collection_name: str) -> None:
+        """Index the fields sync deletes, renames and passage windows filter on.
+
+        Every corpus gets a `file_path` keyword index and a `chunk_index`
+        integer index, whatever its text backend (RDR-027 Q3). Only corpus
+        create and the start of sync call this, never a read path: the manifest
+        snapshot runs under verify and repair stamping too, so the indexes stay
+        out of `ensure_file_manifest_payload_index`.
+        """
+        from qdrant_client.models import PayloadSchemaType
+
+        if collection_name in self._corpus_indexes_ready:
+            return
+        self._create_missing_payload_indexes(
+            collection_name,
+            {
+                "file_path": PayloadSchemaType.KEYWORD,
+                "chunk_index": PayloadSchemaType.INTEGER,
+            },
+        )
+        self._corpus_indexes_ready.add(collection_name)
 
     def _zero_vectors(self, collection_name: str) -> Any:
         cached = self._zero_vectors_by_collection.get(collection_name)

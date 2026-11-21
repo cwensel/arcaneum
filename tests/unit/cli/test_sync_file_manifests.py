@@ -1,8 +1,9 @@
 """Focused CLI orchestration tests for file manifests."""
 
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, call
+from unittest.mock import MagicMock, Mock, call, patch
 
 import pytest
 
@@ -64,6 +65,55 @@ def test_manifest_migration_supports_all_corpus_types_but_not_dry_run(monkeypatc
         == 0
     )
     manager.backfill_file_manifests.assert_called_once()
+
+
+def _sync_notes(tmp_path, *, dry_run):
+    source = tmp_path / "note.md"
+    source.write_text("# Note\n\nbody\n")
+    meili = MagicMock()
+    meili.health_check.return_value = True
+    meili.index_exists.return_value = True
+    manifests = MagicMock()
+    manifests.get_unindexed_files.return_value = ([], [])
+    manifests._get_indexed_file_paths_set.return_value = set()
+    targets = {
+        "create_qdrant_client": MagicMock(return_value=MagicMock()),
+        "get_meili_client": MagicMock(return_value=meili),
+        "get_collection_type": MagicMock(return_value="markdown"),
+        "get_collection_metadata": MagicMock(return_value={"model": "arctic-m"}),
+        "_maybe_backfill_legacy_prompt_policy": MagicMock(
+            side_effect=lambda q, c, t, m, metadata, o: (metadata, [])
+        ),
+        "MetadataBasedSync": MagicMock(return_value=manifests),
+        "_ensure_file_manifests": MagicMock(),
+        "interaction_logger": MagicMock(),
+    }
+    with ExitStack() as stack:
+        for name, value in targets.items():
+            stack.enter_context(patch.object(sync_module, name, value))
+        try:
+            sync_module._sync_directory_locked(
+                "Notes", (str(source),), None, "arctic-m", None, False, False,
+                None, None, True, None, False, True, dry_run=dry_run,
+            )  # fmt: skip
+        except SystemExit:
+            pass
+    return manifests
+
+
+def test_sync_ensures_corpus_payload_indexes_before_change_detection(tmp_path):
+    """Every sync indexes file_path and chunk_index (RDR-027 Q3)."""
+    manifests = _sync_notes(tmp_path, dry_run=False)
+
+    manifests.ensure_corpus_payload_indexes.assert_called_once_with("Notes")
+    names = [name for name, _args, _kwargs in manifests.mock_calls]
+    assert names.index("ensure_corpus_payload_indexes") < names.index("get_unindexed_files")
+
+
+def test_dry_run_sync_creates_no_payload_index(tmp_path):
+    manifests = _sync_notes(tmp_path, dry_run=True)
+
+    manifests.ensure_corpus_payload_indexes.assert_not_called()
 
 
 def test_deferred_policy_hint_does_not_duplicate_dry_run_summary(monkeypatch):

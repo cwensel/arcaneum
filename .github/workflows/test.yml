@@ -154,7 +154,7 @@ jobs:
 
     services:
       qdrant:
-        image: qdrant/qdrant:v1.18.2
+        image: qdrant/qdrant:v1.20.2
         ports:
           - 6333:6333
           - 6334:6334
@@ -244,7 +244,7 @@ jobs:
 
     services:
       qdrant:
-        image: qdrant/qdrant:v1.18.2
+        image: qdrant/qdrant:v1.20.2
         ports:
           - 6333:6333
         options: >-

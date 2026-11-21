@@ -298,6 +298,105 @@ def _meili_version_blocker(output_json: bool = False) -> str | None:
     )
 
 
+# Qdrant supports upgrading its storage one minor version at a time, so
+# deploy/docker-compose.yml pins an exact tag and `arc container upgrade` steps
+# the data through each minor in between.
+_QDRANT_IMAGE = "qdrant/qdrant"
+_QDRANT_CONTAINER = "qdrant-arcaneum"
+_QDRANT_STORAGE_VOLUME = "arcaneum_qdrant-arcaneum-storage"
+# The release each minor upgrades through, oldest first; the last is the pin.
+_QDRANT_UPGRADE_STEPS = ("v1.19.2", "v1.20.2")
+# Container shutdown grace for an upgrade step, so Qdrant flushes before the swap.
+_QDRANT_STOP_SECONDS = "60"
+
+# Qdrant reports versions in the same `X.Y.Z` form as MeiliSearch.
+_parse_qdrant_version = _parse_meili_version
+_format_qdrant_version = _format_meili_version
+
+
+def _compose_qdrant_image_tag(output_json: bool = False) -> str | None:
+    """Qdrant image tag compose will run: QDRANT_IMAGE_TAG or the pinned default."""
+    if os.environ.get("QDRANT_IMAGE_TAG"):
+        return os.environ["QDRANT_IMAGE_TAG"]
+    compose_file = get_compose_file(output_json)
+    if not compose_file:
+        return None
+    try:
+        compose = Path(compose_file).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    match = re.search(r"qdrant/qdrant:\$\{QDRANT_IMAGE_TAG:-([^}]+)\}", compose)
+    return match.group(1) if match else None
+
+
+def _qdrant_data_version() -> tuple[int, int, int] | None:
+    """Version of the Qdrant that last served the storage volume, or None if unknown.
+
+    Qdrant stamps no server version in its storage (each collection's
+    version.info holds an internal format version), so this reads the image of
+    the existing compose container, running or stopped. `arc container stop`
+    removes the container, after which the version is unknown.
+    """
+    try:
+        result = subprocess.run(
+            ["docker", "container", "inspect", "--format", "{{.Config.Image}}", _QDRANT_CONTAINER],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    image = str(result.stdout).strip()
+    if not image.startswith(f"{_QDRANT_IMAGE}:"):
+        return None
+    return _parse_qdrant_version(image.rsplit(":", 1)[1])
+
+
+def _qdrant_upgrade_steps(current: tuple[int, int, int], image_tag: str) -> list[str]:
+    """Image tags to run, in order, to bring `current` data to `image_tag`.
+
+    One step per minor after the data's, never skipping one; the last step is
+    the configured tag itself. Raises ValueError for a minor with no known step.
+    """
+    target = _parse_qdrant_version(image_tag)
+    if target is None or target[0] != current[0]:
+        raise ValueError(f"cannot step Qdrant {_format_qdrant_version(current)} to {image_tag}")
+    known = {_parse_qdrant_version(tag)[:2]: tag for tag in _QDRANT_UPGRADE_STEPS}
+    steps = []
+    for minor in range(current[1] + 1, target[1] + 1):
+        if minor == target[1]:
+            steps.append(image_tag)
+        elif (target[0], minor) in known:
+            steps.append(known[(target[0], minor)])
+        else:
+            raise ValueError(f"no known Qdrant release for {target[0]}.{minor}")
+    return steps
+
+
+def _qdrant_version_blocker(output_json: bool = False) -> str | None:
+    """Why compose should not start Qdrant on the existing data, if it should not."""
+    image_tag = _compose_qdrant_image_tag(output_json)
+    target = _parse_qdrant_version(image_tag) if image_tag else None
+    if target is None:
+        return None
+    current = _qdrant_data_version()
+    if current is None or current[:2] == target[:2]:
+        return None
+    if current < target:
+        return (
+            f"Qdrant data was last served by {_format_qdrant_version(current)} but the "
+            f"configured image is {image_tag}, and Qdrant upgrades one minor version at a "
+            "time. Snapshot and step it with: arc container upgrade"
+        )
+    return (
+        f"Qdrant data was last served by {_format_qdrant_version(current)}, newer than the "
+        f"configured image {image_tag}; downgrades are not supported. Set QDRANT_IMAGE_TAG "
+        "to the data's version, or restore a backup into a fresh volume."
+    )
+
+
 def get_container_env():
     """Get environment variables for container startup.
 
@@ -351,7 +450,7 @@ def start_command(output_json=False):
     if not check_docker_available(output_json):
         _exit_on_error()
 
-    blocker = _meili_version_blocker(output_json)
+    blocker = _qdrant_version_blocker(output_json) or _meili_version_blocker(output_json)
     if blocker:
         print_error(blocker, output_json)
         _exit_on_error()
@@ -1446,22 +1545,299 @@ def _meili_upgrade_recovery_message(reason, backup_path: Path) -> str:
     )
 
 
+def _qdrant_server_version(qdrant_url: str) -> tuple[int, int, int] | None:
+    try:
+        response = _request_json("GET", f"{qdrant_url}/", timeout=5)
+    except (requests.RequestException, ValueError):
+        return None
+    return _parse_qdrant_version(response.get("version", ""))
+
+
+def _qdrant_collection_counts(qdrant_url: str) -> dict[str, int]:
+    collections = _request_json("GET", f"{qdrant_url}/collections")["result"]["collections"]
+    counts = {}
+    for name in sorted(collection["name"] for collection in collections):
+        info = _request_json("GET", f"{qdrant_url}/collections/{name}", timeout=120)["result"]
+        counts[name] = info.get("points_count") or 0
+    return counts
+
+
+def _wait_for_qdrant_ready(
+    qdrant_url: str,
+    output_json: bool = False,
+    timeout_seconds: int = 1800,
+) -> bool:
+    """Wait until Qdrant answers and no collection is still loading or optimizing.
+
+    Grey (optimizations pending) counts as ready; red fails at once.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    last_report = time.monotonic()
+    while time.monotonic() < deadline:
+        try:
+            if requests.get(f"{qdrant_url}/healthz", timeout=2).status_code == 200:
+                collections = _request_json("GET", f"{qdrant_url}/collections")["result"]
+                statuses = {
+                    collection["name"]: _request_json(
+                        "GET", f"{qdrant_url}/collections/{collection['name']}", timeout=120
+                    )["result"].get("status")
+                    for collection in collections["collections"]
+                }
+                if "red" in statuses.values():
+                    return False
+                if all(status in ("green", "grey") for status in statuses.values()):
+                    return True
+        except (requests.RequestException, KeyError, ValueError):
+            pass
+        if time.monotonic() - last_report >= 60:
+            print_info("Waiting for Qdrant collections to load...", output_json)
+            last_report = time.monotonic()
+        time.sleep(2)
+    return False
+
+
+def _qdrant_upgrade_recovery_message(
+    reason, step: str, from_tag: str, backup_path: Path, compose_file: str | None
+) -> str:
+    # A snapshot restores only on its own or the next minor, so the rebuild runs
+    # the snapshot's version and then steps again. It recreates Qdrant alone:
+    # `arc container start` would boot the pin and refuse MeiliSearch data that
+    # still awaits its own phase.
+    compose = f"docker compose -f {compose_file or 'deploy/docker-compose.yml'} -p arcaneum"
+    return (
+        f"Qdrant upgrade stopped at {step}: {reason}\n"
+        f"Every collection was snapshotted on {from_tag} to {backup_path} before the "
+        "first step.\n"
+        f"Check 'arc container logs' first. To rebuild Qdrant on {from_tag} from the "
+        "snapshots and step it again:\n"
+        f"  docker stop {_QDRANT_CONTAINER}\n"
+        f"  docker rm -v {_QDRANT_CONTAINER}\n"
+        f"  docker volume rm {_QDRANT_STORAGE_VOLUME}\n"
+        f"  QDRANT_IMAGE_TAG={from_tag} {compose} up -d qdrant\n"
+        f"  arc container restore {backup_path} --skip-meilisearch\n"
+        "  arc container upgrade"
+    )
+
+
+def _upgrade_qdrant(qdrant_url: str, qdrant_timeout: int, dry_run: bool, output_json: bool):
+    """Step Qdrant data to the pinned image, one minor version at a time.
+
+    Snapshots every collection on the data's own version first, then for each
+    minor pulls, recreates the container, waits for every collection, and
+    verifies the server version and per-collection point counts. Returns the
+    plan or result for the command's report.
+    """
+    image_tag = _compose_qdrant_image_tag(output_json)
+    target = _parse_qdrant_version(image_tag) if image_tag else None
+    if target is None:
+        print_error(f"Cannot determine the pinned Qdrant version from {image_tag!r}", output_json)
+        _exit_on_error()
+
+    current = _qdrant_data_version()
+    if current is None or current[:2] == target[:2]:
+        message = (
+            "No Qdrant container to upgrade"
+            if current is None
+            else f"Qdrant data is already on v{target[0]}.{target[1]}.x"
+        )
+        if not output_json:
+            print_success(message)
+        return {"upgraded": False, "to": image_tag}
+    from_tag = _format_qdrant_version(current)
+    if current > target:
+        print_error(
+            f"Qdrant data was last served by {from_tag}, newer than the configured image "
+            f"{image_tag}; downgrades are not supported.",
+            output_json,
+        )
+        _exit_on_error()
+    try:
+        steps = _qdrant_upgrade_steps(current, image_tag)
+    except ValueError as exc:
+        print_error(f"Cannot upgrade Qdrant: {exc}", output_json)
+        _exit_on_error()
+
+    container_env = {**get_container_env(), **get_resource_limit_env()}
+
+    # The snapshots and the baseline counts need the server on the data's version.
+    if _qdrant_server_version(qdrant_url) != current:
+        if dry_run:
+            if not output_json:
+                print_success(
+                    f"Would start Qdrant {from_tag}, snapshot every collection, "
+                    f"and step through {' -> '.join(steps)}"
+                )
+            return {
+                "dry_run": True,
+                "from": from_tag,
+                "to": image_tag,
+                "steps": steps,
+                "collections": None,
+            }
+        print_info(f"Starting Qdrant {from_tag} to snapshot the current data...", output_json)
+        started = run_compose_command(
+            ["up", "-d", "qdrant"],
+            env={**container_env, "QDRANT_IMAGE_TAG": from_tag},
+            capture_output=output_json,
+            output_json=output_json,
+        )
+        if (
+            started is None
+            or not _wait_for_qdrant_ready(qdrant_url, output_json)
+            or _qdrant_server_version(qdrant_url) != current
+        ):
+            print_error(
+                f"Qdrant {from_tag} did not become ready; check: arc container logs", output_json
+            )
+            _exit_on_error()
+
+    try:
+        counts = _qdrant_collection_counts(qdrant_url)
+    except (KeyError, requests.RequestException) as exc:
+        print_error(f"Cannot upgrade Qdrant: {exc}", output_json)
+        _exit_on_error()
+
+    plan = {"from": from_tag, "to": image_tag, "steps": steps, "collections": counts}
+    if dry_run:
+        if not output_json:
+            print_success(
+                f"Would snapshot {len(counts)} collections and step Qdrant "
+                f"{from_tag} -> {' -> '.join(steps)}"
+            )
+        return {**plan, "dry_run": True}
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_path = _resolve_backup_path(None, timestamp, output_json)
+    backup_path.mkdir(parents=True, exist_ok=False)
+    print_info(f"Snapshotting Qdrant collections to {backup_path}", output_json)
+    warnings: list[str] = []
+    try:
+        snapshots = _backup_qdrant(
+            backup_path,
+            qdrant_url,
+            _QDRANT_CONTAINER,
+            qdrant_timeout,
+            output_json=output_json,
+            warnings=warnings,
+        )
+    except (subprocess.CalledProcessError, requests.RequestException) as exc:
+        print_error(f"Qdrant snapshot failed; nothing was changed: {exc}", output_json)
+        _exit_on_error()
+    manifest = {
+        "version": 1,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "qdrant_url": qdrant_url,
+        "meilisearch_url": None,
+        "qdrant_version": from_tag,
+        "protected": ["Qdrant collection snapshots"],
+        "not_protected": [
+            "MeiliSearch indexes (this backup precedes a Qdrant upgrade)",
+            "Local source files referenced by indexed metadata",
+        ],
+        "qdrant": snapshots,
+        "meilisearch": [],
+    }
+    (backup_path / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    for step in steps:
+        step_env = {**container_env, "QDRANT_IMAGE_TAG": step}
+        # Pull before stopping anything, so a registry failure costs no downtime.
+        if (
+            run_compose_command(
+                ["pull", "qdrant"],
+                env=step_env,
+                capture_output=output_json,
+                output_json=output_json,
+            )
+            is None
+        ):
+            print_error(
+                f"Could not pull {_QDRANT_IMAGE}:{step}; Qdrant is unchanged on "
+                f"{_format_qdrant_version(current)}.",
+                output_json,
+            )
+            _exit_on_error()
+        print_info(f"Upgrading Qdrant {_format_qdrant_version(current)} -> {step}", output_json)
+        try:
+            if (
+                run_compose_command(
+                    ["up", "-d", "--timeout", _QDRANT_STOP_SECONDS, "qdrant"],
+                    env=step_env,
+                    capture_output=output_json,
+                    output_json=output_json,
+                )
+                is None
+            ):
+                raise RuntimeError(f"docker compose could not start {step}")
+            if not _wait_for_qdrant_ready(qdrant_url, output_json):
+                raise RuntimeError(f"Qdrant {step} did not load every collection")
+            server_version = _qdrant_server_version(qdrant_url)
+            if server_version != _parse_qdrant_version(step):
+                raise RuntimeError(f"server reports {server_version}, expected {step}")
+            after = _qdrant_collection_counts(qdrant_url)
+            if after != counts:
+                changed = ", ".join(
+                    f"{name} {counts.get(name)} -> {after.get(name)}"
+                    for name in sorted(set(counts) | set(after))
+                    if counts.get(name) != after.get(name)
+                )
+                raise RuntimeError(f"point counts changed: {changed}")
+        except (KeyError, RuntimeError, requests.RequestException) as exc:
+            print_error(
+                _qdrant_upgrade_recovery_message(
+                    exc, step, from_tag, backup_path, get_compose_file(output_json)
+                ),
+                output_json,
+            )
+            _exit_on_error()
+        current = server_version
+
+    if not output_json:
+        print_success(
+            f"Qdrant upgraded {from_tag} -> {image_tag} through {' -> '.join(steps)} "
+            f"({len(counts)} collections, point counts verified)"
+        )
+        print_info(f"Qdrant snapshots kept at {backup_path}; delete them once searches look right")
+    return {**plan, "upgraded": True, "backup": str(backup_path), "warnings": warnings}
+
+
 @container_group.command("upgrade")
+@click.option("--qdrant-url", default="http://localhost:6333", help="Qdrant URL")
+@click.option(
+    "--qdrant-timeout",
+    default=300,
+    show_default=True,
+    help="Qdrant snapshot timeout in seconds",
+)
 @click.option("--meilisearch-url", default="http://localhost:7700", help="MeiliSearch URL")
 @click.option(
     "--dry-run", is_flag=True, help="Show the upgrade plan without backing up or restarting"
 )
 @click.option("--json", "output_json", is_flag=True, help="Output JSON format")
-def upgrade_command(meilisearch_url, dry_run, output_json):
-    """Migrate MeiliSearch data to the pinned image version.
+def upgrade_command(
+    meilisearch_url,
+    dry_run,
+    output_json,
+    qdrant_url="http://localhost:6333",
+    qdrant_timeout=300,
+):
+    """Migrate Qdrant and MeiliSearch data to the pinned image versions.
 
-    Exports every index to a JSONL backup, restarts MeiliSearch on the pinned
-    image with --upgrade-db, and verifies per-index document counts. If the
-    upgrade fails, 'arc container restore' rebuilds the indexes from the backup.
+    Qdrant: snapshots every collection, then steps through each minor version
+    in place, verifying the server version and per-collection point counts.
+    MeiliSearch: exports every index to a JSONL backup, restarts on the pinned
+    image with --upgrade-db, and verifies per-index document counts. On failure
+    'arc container restore' rebuilds from the backup it took.
     """
     if not check_docker_available(output_json):
         _exit_on_error()
 
+    qdrant = _upgrade_qdrant(qdrant_url, qdrant_timeout, dry_run, output_json)
+    _upgrade_meilisearch(meilisearch_url, dry_run, output_json, qdrant)
+
+
+def _upgrade_meilisearch(meilisearch_url, dry_run, output_json, qdrant):
+    """Migrate MeiliSearch data to the pinned image; `qdrant` joins the report."""
     image_tag = _compose_meili_image_tag(output_json)
     target = _parse_meili_version(image_tag) if image_tag else None
     if target is None:
@@ -1477,7 +1853,9 @@ def upgrade_command(meilisearch_url, dry_run, output_json):
             if current is None
             else (f"MeiliSearch data is already {image_tag}")
         )
-        print_success(message, output_json, data={"upgraded": False, "to": image_tag})
+        print_success(
+            message, output_json, data={"upgraded": False, "to": image_tag, "qdrant": qdrant}
+        )
         return
     from_tag = _format_meili_version(current)
     if current > target:
@@ -1508,7 +1886,13 @@ def upgrade_command(meilisearch_url, dry_run, output_json):
                 f"Would start MeiliSearch {from_tag}, back up every index, "
                 f"and upgrade to {image_tag}",
                 output_json,
-                data={"dry_run": True, "from": from_tag, "to": image_tag, "indexes": None},
+                data={
+                    "dry_run": True,
+                    "from": from_tag,
+                    "to": image_tag,
+                    "indexes": None,
+                    "qdrant": qdrant,
+                },
             )
             return
         print_info(f"Starting MeiliSearch {from_tag} to export the current data...", output_json)
@@ -1537,7 +1921,7 @@ def upgrade_command(meilisearch_url, dry_run, output_json):
         print_success(
             f"Would back up {len(counts)} indexes and upgrade {from_tag} -> {image_tag}",
             output_json,
-            data={**plan, "dry_run": True},
+            data={**plan, "dry_run": True, "qdrant": qdrant},
         )
         return
 
@@ -1648,7 +2032,7 @@ def upgrade_command(meilisearch_url, dry_run, output_json):
         f"MeiliSearch upgraded {from_tag} -> {image_tag} "
         f"({len(counts)} indexes, document counts verified)",
         output_json,
-        data={**plan, "upgraded": True, "backup": str(backup_path)},
+        data={**plan, "upgraded": True, "backup": str(backup_path), "qdrant": qdrant},
     )
     print_info("Next: check each corpus with 'arc corpus verify <corpus>'", output_json)
     print_info(f"Backup kept at {backup_path}; delete it once searches look right", output_json)

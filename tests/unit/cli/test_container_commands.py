@@ -358,6 +358,7 @@ class TestContainerUpgrade:
                     get_container_env=MagicMock(return_value={"MEILISEARCH_API_KEY": "k"}),
                     get_resource_limit_env=MagicMock(return_value={}),
                     _resolve_backup_path=MagicMock(return_value=tmp_path / "backup"),
+                    _upgrade_qdrant=MagicMock(return_value={"upgraded": False}),
                 ):
                     upgrade_command.callback(
                         meilisearch_url="http://localhost:7700",
@@ -487,6 +488,362 @@ class TestContainerUpgrade:
         err = capsys.readouterr().err
         assert "DevRef" in err
         assert "arc container restore" in err
+
+
+class TestQdrantVersionPin:
+    """Qdrant upgrades one minor version at a time (RDR-027 Q12)."""
+
+    def test_compose_pins_qdrant_1_20(self, monkeypatch):
+        from arcaneum.cli.docker import _compose_qdrant_image_tag, _parse_qdrant_version
+
+        monkeypatch.delenv("QDRANT_IMAGE_TAG", raising=False)
+        with patch("arcaneum.cli.docker.get_compose_file", return_value=str(COMPOSE_FILE)):
+            tag = _compose_qdrant_image_tag()
+
+        assert _parse_qdrant_version(tag) >= (1, 20, 0)  # BM25 TextQuery
+
+    def test_qdrant_image_tag_env_overrides_compose_default(self, monkeypatch):
+        from arcaneum.cli.docker import _compose_qdrant_image_tag
+
+        monkeypatch.setenv("QDRANT_IMAGE_TAG", "v1.19.2")
+
+        assert _compose_qdrant_image_tag() == "v1.19.2"
+
+    def test_ci_qdrant_image_matches_compose(self, monkeypatch):
+        from arcaneum.cli.docker import _compose_qdrant_image_tag
+
+        monkeypatch.delenv("QDRANT_IMAGE_TAG", raising=False)
+        with patch("arcaneum.cli.docker.get_compose_file", return_value=str(COMPOSE_FILE)):
+            tag = _compose_qdrant_image_tag()
+
+        ci_images = set(re.findall(r"image: qdrant/qdrant:(\S+)", CI_WORKFLOW.read_text()))
+        assert ci_images == {tag}
+
+    def test_upgrade_steps_end_on_the_compose_pin(self, monkeypatch):
+        from arcaneum.cli.docker import _QDRANT_UPGRADE_STEPS, _compose_qdrant_image_tag
+
+        monkeypatch.delenv("QDRANT_IMAGE_TAG", raising=False)
+        with patch("arcaneum.cli.docker.get_compose_file", return_value=str(COMPOSE_FILE)):
+            assert _QDRANT_UPGRADE_STEPS[-1] == _compose_qdrant_image_tag()
+
+    def test_steps_visit_every_minor_from_the_data(self):
+        from arcaneum.cli.docker import _qdrant_upgrade_steps
+
+        assert _qdrant_upgrade_steps((1, 18, 2), "v1.20.2") == ["v1.19.2", "v1.20.2"]
+        assert _qdrant_upgrade_steps((1, 19, 0), "v1.20.2") == ["v1.20.2"]
+
+    def test_steps_end_on_the_configured_patch(self):
+        from arcaneum.cli.docker import _qdrant_upgrade_steps
+
+        assert _qdrant_upgrade_steps((1, 18, 2), "v1.20.3") == ["v1.19.2", "v1.20.3"]
+
+    def test_steps_refuse_a_minor_with_no_known_release(self):
+        from arcaneum.cli.docker import _qdrant_upgrade_steps
+
+        with pytest.raises(ValueError, match="1.17"):
+            _qdrant_upgrade_steps((1, 16, 0), "v1.20.2")
+
+    def test_data_version_is_the_existing_container_image(self):
+        """Qdrant stamps no server version in its storage, so the container says."""
+        from arcaneum.cli.docker import _qdrant_data_version
+
+        result = MagicMock(returncode=0, stdout="qdrant/qdrant:v1.18.2\n")
+        with patch("subprocess.run", return_value=result) as mock_run:
+            assert _qdrant_data_version() == (1, 18, 2)
+
+        cmd = mock_run.call_args.args[0]
+        assert cmd[:3] == ["docker", "container", "inspect"]
+        assert cmd[-1] == "qdrant-arcaneum"
+
+    def test_data_version_unknown_without_container(self):
+        from arcaneum.cli.docker import _qdrant_data_version
+
+        with patch("subprocess.run", return_value=MagicMock(returncode=1, stdout="")):
+            assert _qdrant_data_version() is None
+
+    def test_data_version_unknown_for_untagged_image(self):
+        from arcaneum.cli.docker import _qdrant_data_version
+
+        result = MagicMock(returncode=0, stdout="qdrant/qdrant:latest\n")
+        with patch("subprocess.run", return_value=result):
+            assert _qdrant_data_version() is None
+
+
+class TestContainerStartQdrantGuard:
+    """'arc container start' must not skip a Qdrant minor version."""
+
+    @staticmethod
+    def _start(data_version, image_tag="v1.20.2"):
+        from arcaneum.cli.docker import start_command
+
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run", return_value=MagicMock(returncode=0)):
+                with patch.multiple(
+                    "arcaneum.cli.docker",
+                    run_compose_command=MagicMock(),
+                    _meili_version_blocker=MagicMock(return_value=None),
+                    _compose_qdrant_image_tag=MagicMock(return_value=image_tag),
+                    _qdrant_data_version=MagicMock(return_value=data_version),
+                    get_container_env=MagicMock(return_value={"MEILISEARCH_API_KEY": "t"}),
+                    check_qdrant_health=MagicMock(return_value=True),
+                    check_meilisearch_health=MagicMock(return_value=True),
+                ):
+                    from arcaneum.cli import docker
+
+                    with patch("time.sleep"):
+                        start_command.callback(output_json=False)
+                    return docker.run_compose_command
+
+    def test_start_refuses_qdrant_data_two_minors_back(self, capsys):
+        with pytest.raises(SystemExit) as exc_info:
+            self._start((1, 18, 2))
+
+        assert exc_info.value.code == 1
+        err = capsys.readouterr().err
+        assert "v1.18.2" in err
+        assert "arc container upgrade" in err
+
+    def test_start_refuses_qdrant_data_one_minor_back(self, capsys):
+        """Qdrant would open it, but only the upgrade snapshots first."""
+        with pytest.raises(SystemExit):
+            self._start((1, 19, 2))
+
+        assert "arc container upgrade" in capsys.readouterr().err
+
+    def test_start_refuses_newer_qdrant_data(self, capsys):
+        with pytest.raises(SystemExit):
+            self._start((1, 21, 0))
+
+        assert "downgrade" in capsys.readouterr().err.lower()
+
+    def test_start_proceeds_on_same_minor(self):
+        mock_compose = self._start((1, 20, 0))
+
+        assert mock_compose.call_args.args[0] == ["up", "-d"]
+
+    def test_start_proceeds_without_a_container(self):
+        mock_compose = self._start(None)
+
+        assert mock_compose.call_args.args[0] == ["up", "-d"]
+
+
+class TestContainerQdrantUpgrade:
+    """'arc container upgrade' steps Qdrant through each minor version."""
+
+    COUNTS = {"Claude": 655954, "DevRef": 103203}
+    SNAPSHOTS = [
+        {"collection": name, "snapshot": f"{name}-1.snapshot", "file": f"qdrant/{name}-1.snapshot"}
+        for name in ("Claude", "DevRef")
+    ]
+
+    @staticmethod
+    def _upgrade(
+        tmp_path,
+        *,
+        data_version=(1, 18, 2),
+        server_versions=((1, 18, 2), (1, 19, 2), (1, 20, 2)),
+        counts=None,
+        ready=True,
+        dry_run=False,
+        output_json=False,
+        order=None,
+    ):
+        from arcaneum.cli.docker import upgrade_command
+
+        cls = TestContainerQdrantUpgrade
+        counts = list(counts or [cls.COUNTS] * 3)
+        order = [] if order is None else order
+        meili = MagicMock()
+
+        def compose(args, **kwargs):
+            order.append(("compose", list(args), dict(kwargs.get("env") or {})))
+            return MagicMock(returncode=0)
+
+        def backup(path, url, container, timeout, output_json=False, warnings=None):
+            order.append(("snapshot", path, container))
+            return cls.SNAPSHOTS
+
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run", return_value=MagicMock(returncode=0)):
+                with patch.multiple(
+                    "arcaneum.cli.docker",
+                    _compose_qdrant_image_tag=MagicMock(return_value="v1.20.2"),
+                    _qdrant_data_version=MagicMock(return_value=data_version),
+                    _qdrant_server_version=MagicMock(side_effect=list(server_versions)),
+                    _qdrant_collection_counts=MagicMock(side_effect=counts),
+                    _wait_for_qdrant_ready=MagicMock(return_value=ready),
+                    _backup_qdrant=MagicMock(side_effect=backup),
+                    run_compose_command=MagicMock(side_effect=compose),
+                    get_container_env=MagicMock(return_value={"MEILISEARCH_API_KEY": "k"}),
+                    get_resource_limit_env=MagicMock(return_value={}),
+                    _resolve_backup_path=MagicMock(return_value=tmp_path / "backup"),
+                    _upgrade_meilisearch=meili,
+                ):
+                    upgrade_command.callback(
+                        meilisearch_url="http://localhost:7700",
+                        dry_run=dry_run,
+                        output_json=output_json,
+                        qdrant_url="http://localhost:6333",
+                        qdrant_timeout=300,
+                    )
+        return order, meili
+
+    @staticmethod
+    def _steps(order):
+        return [
+            step[0] if step[0] == "snapshot" else (tuple(step[1]), step[2].get("QDRANT_IMAGE_TAG"))
+            for step in order
+        ]
+
+    def test_snapshots_then_steps_each_minor_in_order(self, tmp_path):
+        order, _ = self._upgrade(tmp_path)
+
+        assert self._steps(order) == [
+            "snapshot",
+            (("pull", "qdrant"), "v1.19.2"),
+            (("up", "-d", "--timeout", "60", "qdrant"), "v1.19.2"),
+            (("pull", "qdrant"), "v1.20.2"),
+            (("up", "-d", "--timeout", "60", "qdrant"), "v1.20.2"),
+        ]
+        assert order[0][2] == "qdrant-arcaneum"
+
+    def test_never_jumps_a_minor(self, tmp_path):
+        order, _ = self._upgrade(tmp_path)
+
+        tags = [step[2]["QDRANT_IMAGE_TAG"] for step in order if step[0] == "compose"]
+        assert "v1.20.2" not in tags[: tags.index("v1.19.2") + 1]
+
+    def test_one_minor_back_is_a_single_step(self, tmp_path):
+        order, _ = self._upgrade(
+            tmp_path,
+            data_version=(1, 19, 2),
+            server_versions=((1, 19, 2), (1, 20, 2)),
+            counts=[self.COUNTS] * 2,
+        )
+
+        assert self._steps(order) == [
+            "snapshot",
+            (("pull", "qdrant"), "v1.20.2"),
+            (("up", "-d", "--timeout", "60", "qdrant"), "v1.20.2"),
+        ]
+
+    def test_writes_restorable_qdrant_only_manifest(self, tmp_path):
+        self._upgrade(tmp_path)
+
+        manifest = json.loads((tmp_path / "backup" / "manifest.json").read_text())
+        assert manifest["qdrant"] == self.SNAPSHOTS
+        assert manifest["meilisearch"] == []
+        assert manifest["qdrant_version"] == "v1.18.2"
+
+    def test_reports_the_upgrade_to_the_meilisearch_phase(self, tmp_path):
+        _, meili = self._upgrade(tmp_path)
+
+        qdrant = meili.call_args.args[3]
+        assert qdrant["upgraded"] is True
+        assert qdrant["from"] == "v1.18.2"
+        assert qdrant["to"] == "v1.20.2"
+        assert qdrant["steps"] == ["v1.19.2", "v1.20.2"]
+        assert qdrant["collections"] == self.COUNTS
+        assert qdrant["backup"] == str(tmp_path / "backup")
+
+    def test_noop_when_data_is_on_the_pinned_minor(self, tmp_path):
+        order, meili = self._upgrade(tmp_path, data_version=(1, 20, 2))
+
+        assert order == []
+        assert meili.call_args.args[3]["upgraded"] is False
+
+    def test_noop_without_a_container(self, tmp_path):
+        order, meili = self._upgrade(tmp_path, data_version=None)
+
+        assert order == []
+        assert meili.call_args.args[3]["upgraded"] is False
+
+    def test_refuses_downgrade(self, tmp_path, capsys):
+        order = []
+        with pytest.raises(SystemExit):
+            self._upgrade(tmp_path, data_version=(1, 21, 0), order=order)
+
+        assert order == []
+        assert "downgrade" in capsys.readouterr().err.lower()
+
+    def test_dry_run_changes_nothing(self, tmp_path):
+        order, meili = self._upgrade(tmp_path, dry_run=True)
+
+        assert order == []
+        plan = meili.call_args.args[3]
+        assert plan["dry_run"] is True
+        assert plan["steps"] == ["v1.19.2", "v1.20.2"]
+        assert plan["collections"] == self.COUNTS
+
+    def test_starts_the_data_version_when_qdrant_is_not_running(self, tmp_path):
+        order, _ = self._upgrade(
+            tmp_path, server_versions=(None, (1, 18, 2), (1, 19, 2), (1, 20, 2))
+        )
+
+        first = order[0]
+        assert first[1] == ["up", "-d", "qdrant"]
+        assert first[2]["QDRANT_IMAGE_TAG"] == "v1.18.2"
+        assert order[1][0] == "snapshot"
+
+    def test_count_change_stops_with_recovery_from_the_snapshots(self, tmp_path, capsys):
+        after = dict(self.COUNTS, DevRef=100)
+
+        order = []
+        with pytest.raises(SystemExit):
+            self._upgrade(tmp_path, counts=[self.COUNTS, after], order=order)
+
+        # Stopped after the first step; the second is never pulled.
+        assert self._steps(order)[-1] == (("up", "-d", "--timeout", "60", "qdrant"), "v1.19.2")
+        err = capsys.readouterr().err
+        assert "DevRef" in err
+        assert "v1.19.2" in err
+        assert "docker volume rm arcaneum_qdrant-arcaneum-storage" in err
+        assert f"arc container restore {tmp_path / 'backup'} --skip-meilisearch" in err
+        # A snapshot restores only on its own or the next minor, so recovery
+        # rebuilds Qdrant alone on the data's version: `arc container start`
+        # would boot the pin and refuse MeiliSearch data still awaiting its phase.
+        assert "arc container start" not in err
+        assert "arc container stop" not in err
+        assert "QDRANT_IMAGE_TAG=v1.18.2 docker compose" in err
+        assert "up -d qdrant" in err
+        assert err.rstrip().endswith("arc container upgrade")
+
+    def test_wrong_server_version_after_a_step_is_a_failure(self, tmp_path, capsys):
+        with pytest.raises(SystemExit):
+            self._upgrade(tmp_path, server_versions=((1, 18, 2), (1, 18, 2)))
+
+        assert "arc container restore" in capsys.readouterr().err
+
+    def test_unready_collections_are_a_failure(self, tmp_path, capsys):
+        with pytest.raises(SystemExit):
+            self._upgrade(tmp_path, ready=False)
+
+        assert "arc container restore" in capsys.readouterr().err
+
+    def test_json_is_one_document_with_both_phases(self, tmp_path, capsys):
+        from arcaneum.cli.docker import upgrade_command
+
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            with patch("subprocess.run", return_value=MagicMock(returncode=0)):
+                with patch.multiple(
+                    "arcaneum.cli.docker",
+                    _compose_qdrant_image_tag=MagicMock(return_value="v1.20.2"),
+                    _qdrant_data_version=MagicMock(return_value=(1, 20, 2)),
+                    _compose_meili_image_tag=MagicMock(return_value="v1.54.0"),
+                    _meili_data_version=MagicMock(return_value=(1, 54, 0)),
+                ):
+                    upgrade_command.callback(
+                        meilisearch_url="http://localhost:7700",
+                        dry_run=False,
+                        output_json=True,
+                        qdrant_url="http://localhost:6333",
+                        qdrant_timeout=300,
+                    )
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["data"]["upgraded"] is False
+        assert payload["data"]["qdrant"]["upgraded"] is False
+        assert payload["data"]["qdrant"]["to"] == "v1.20.2"
 
 
 class TestContainerStop:

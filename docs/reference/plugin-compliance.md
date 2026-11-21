@@ -10,23 +10,31 @@ This document verifies Arcaneum's compliance with Claude Code plugin marketplace
 
 ### Required Directory Structure ✅
 
-```
+```text
 arcaneum/
-├── .claude-plugin/          ✅ At root level
-│   ├── plugin.json          ✅ Required manifest present
-│   └── marketplace.json     ✅ Marketplace catalog present
-├── commands/                ✅ At root level (not nested in .claude-plugin/)
-│   └── *.md (10 files)      ✅ All slash commands present
-├── .claude-plugin/skills/   ✅ Skill directories (<name>/SKILL.md)
-│   └── arc-*/ (5 skills)    ✅ Model-invocable skills present
-├── src/arcaneum/            ✅ Python implementation
+├── .claude-plugin/
+│   └── marketplace.json     ✅ Marketplace catalog; plugins[0].source = "./plugin"
+├── plugin/                  ✅ Plugin root: the only directory installed
+│   ├── .claude-plugin/
+│   │   └── plugin.json      ✅ Required manifest present
+│   ├── commands/            ✅ At plugin root (not nested in .claude-plugin/)
+│   │   └── *.md (10 files)  ✅ All slash commands present
+│   ├── skills/              ✅ Skill directories (<name>/SKILL.md)
+│   │   └── arc-*/ (5 skills) ✅ Model-invocable skills present
+│   ├── README.md            ✅ Present
+│   └── settings.example.json
+├── src/arcaneum/            ✅ Python implementation (not part of the plugin)
 ├── docs/                    ✅ Documentation
 ├── README.md                ✅ Present
 └── LICENSE                  ✅ MIT license present
 ```
 
 **Compliance Notes:**
-- ✅ `commands/` directory at plugin root (per best practices)
+
+- ✅ Marketplace `source` is `./plugin`: Claude Code copies the source directory
+  into its plugin cache, gitignored content included, so the repository root
+  (`.venv/`, worktrees, `src/`, `tests/`) is never the source
+- ✅ `commands/` and `skills/` directories at plugin root (per best practices)
 - ✅ `.claude-plugin/` contains only metadata files
 - ✅ No component directories nested inside `.claude-plugin/`
 
@@ -46,9 +54,10 @@ arcaneum/
 - ✅ `keywords`: 15 relevant keywords for discoverability
 
 **Components:**
+
 - ✅ 10 commands auto-discovered from `commands/` (default location)
-- ✅ 5 skills referenced via `"skills": "./.claude-plugin/skills"`
-- ✅ All custom paths use `./` prefix
+- ✅ 5 skills auto-discovered from `skills/` (default location)
+- ✅ No custom component paths declared
 
 **Validation Result:** ✅ Fully compliant
 
@@ -60,9 +69,10 @@ arcaneum/
 - ✅ `plugins`: Array with 1 plugin entry
 
 **Plugin Entry:**
+
 - ✅ `name`: "arc"
 - ✅ `displayName`: "Arcaneum"
-- ✅ `source`: "./" (relative path, current directory)
+- ✅ `source`: "./plugin" (relative path to the plugin directory)
 - ✅ `description`: Clear and concise
 - ✅ `version`: Matches plugin.json ("0.6.0")
 
@@ -150,7 +160,7 @@ Following reference implementation practices (RDR-006):
 
 1. ✅ **Semantic Versioning**: Using MAJOR.MINOR.PATCH format (currently 0.6.0)
 2. ✅ **Relative Paths**: All custom component paths use `./` prefix
-3. ✅ **Component Location**: Commands at root, skills under `.claude-plugin/skills`
+3. ✅ **Component Location**: Commands and skills at the plugin root, `plugin/`
 4. ✅ **Scoped Permissions**: Commands and skills declare `Bash(arc:*)`
 5. ✅ **Manifest Completeness**: All required and recommended fields present
 
@@ -210,9 +220,9 @@ Following reference implementation practices (RDR-006):
 
 | Category | Requirement | Status | Notes |
 |----------|------------|--------|-------|
-| **Structure** | Plugin manifest present | ✅ | `.claude-plugin/plugin.json` |
+| **Structure** | Plugin manifest present | ✅ | `plugin/.claude-plugin/plugin.json` |
 | **Structure** | Marketplace manifest present | ✅ | `.claude-plugin/marketplace.json` |
-| **Structure** | Commands at root level | ✅ | `commands/` directory |
+| **Structure** | Commands at plugin root | ✅ | `plugin/commands/` directory |
 | **Manifest** | Required fields (name, version, description) | ✅ | All present |
 | **Manifest** | Semantic versioning | ✅ | 0.6.0 format |
 | **Manifest** | Relative paths with ./ | ✅ | All custom paths |
@@ -262,7 +272,7 @@ Following reference implementation practices (RDR-006):
 1. **Version Bumping:**
    - Use `./scripts/bump-version.sh <version>`, which bumps the `version`
      string in `pyproject.toml`, `src/arcaneum/__init__.py`,
-     `.claude-plugin/plugin.json`, and `.claude-plugin/marketplace.json`, and
+     `plugin/.claude-plugin/plugin.json`, and `.claude-plugin/marketplace.json`, and
      rewrites the release-asset download URLs in `README.md`
    - Follow semantic versioning (breaking.feature.fix)
 

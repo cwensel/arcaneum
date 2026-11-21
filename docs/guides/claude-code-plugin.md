@@ -40,27 +40,27 @@ The Arcaneum plugin includes a PermissionRequest hook that automatically approve
 Our plugin structure meets Claude Code best practices:
 
 ```text
-arcaneum/                           # Plugin root
-├── .claude-plugin/                 # Plugin metadata (required)
-│   ├── plugin.json                 # Plugin manifest ✓
-│   ├── marketplace.json            # Marketplace catalog ✓
-│   └── hooks/                      # Permission hooks ✓
-│       └── arc-permissions.sh      # Auto-approve arc commands
-├── commands/                       # Slash commands at root ✓
-│   ├── collection.md
-│   ├── config.md
-│   ├── container.md
-│   ├── corpus.md
-│   ├── doctor.md
-│   ├── index.md
-│   ├── models.md
-│   ├── search.md
-│   └── store.md
-├── src/arcaneum/                   # Python implementation
-│   ├── cli/                        # CLI commands
-│   ├── indexing/                   # Indexing pipelines
-│   ├── search/                     # Search logic
-│   └── ...
+arcaneum/                           # Repository and marketplace root
+├── .claude-plugin/
+│   └── marketplace.json            # Marketplace catalog; plugins[0].source = "./plugin"
+├── plugin/                         # Plugin root: the only directory installed
+│   ├── .claude-plugin/
+│   │   └── plugin.json             # Plugin manifest ✓
+│   ├── commands/                   # Slash commands, discovered by default ✓
+│   │   ├── collection.md
+│   │   ├── config.md
+│   │   ├── container.md
+│   │   ├── corpus.md
+│   │   ├── doctor.md
+│   │   ├── index.md
+│   │   ├── indexes.md
+│   │   ├── models.md
+│   │   ├── search.md
+│   │   └── store.md
+│   ├── skills/                     # Skills (<name>/SKILL.md), discovered by default ✓
+│   ├── README.md
+│   └── settings.example.json
+├── src/arcaneum/                   # Python implementation (not part of the plugin)
 ├── docs/                           # Documentation
 ├── README.md
 └── LICENSE
@@ -68,11 +68,12 @@ arcaneum/                           # Plugin root
 
 **Key Compliance Points:**
 
-- ✅ `commands/` at root level (not nested in `.claude-plugin/`)
-- ✅ All paths in `plugin.json` use relative `./` prefix
+- ✅ Marketplace `source` is `./plugin`, not the repository root: Claude Code copies the
+  source directory into its plugin cache, gitignored content included
+- ✅ `commands/` and `skills/` at the plugin root (not nested in `.claude-plugin/`)
+- ✅ `plugin.json` declares no component paths; defaults discover commands and skills
 - ✅ `plugin.json` contains required fields (name, version, description)
 - ✅ `marketplace.json` contains owner and plugins array
-- ✅ PermissionRequest hook auto-approves `arc` commands
 - ✅ Commands run `arc` directly (requires pip install)
 
 ## Local Testing Workflow
@@ -203,22 +204,22 @@ ln -s /Users/chris.wensel/sandbox/arcaneum ~/.claude/plugins/marketplaces/arcane
 
 Before each test session, verify:
 
-### Plugin Manifest (`.claude-plugin/plugin.json`)
+### Plugin Manifest (`plugin/.claude-plugin/plugin.json`)
 
 - [ ] Valid JSON syntax (no trailing commas, proper quotes)
 - [ ] Required fields present: `name`, `version`, `description`
 - [ ] Any custom component paths use `./` prefix
-- [ ] All 10 commands auto-discovered from `commands/`; 5 skills under `.claude-plugin/skills`
+- [ ] All 10 commands auto-discovered from `plugin/commands/`; 5 skills from `plugin/skills/`
 - [ ] Version follows semantic versioning (e.g., `0.6.0`)
 
 **Validation Command:**
 
 ```bash
 # Validate JSON syntax
-python -m json.tool .claude-plugin/plugin.json > /dev/null && echo "✓ Valid JSON"
+python -m json.tool plugin/.claude-plugin/plugin.json > /dev/null && echo "✓ Valid JSON"
 
 # Check required fields
-python -c "import json; d=json.load(open('.claude-plugin/plugin.json')); assert all(k in d for k in ['name','version','description']); print('✓ Required fields present')"
+python -c "import json; d=json.load(open('plugin/.claude-plugin/plugin.json')); assert all(k in d for k in ['name','version','description']); print('✓ Required fields present')"
 ```
 
 ### Marketplace Manifest (`.claude-plugin/marketplace.json`)
@@ -226,7 +227,7 @@ python -c "import json; d=json.load(open('.claude-plugin/plugin.json')); assert 
 - [ ] Valid JSON syntax
 - [ ] `owner` object with `name` field
 - [ ] `plugins` array with at least one entry
-- [ ] Plugin `source` set to `"./"` (current directory)
+- [ ] Plugin `source` set to `"./plugin"` (the plugin directory, never `"./"`)
 
 **Validation Command:**
 
@@ -236,7 +237,7 @@ python -m json.tool .claude-plugin/marketplace.json > /dev/null && echo "✓ Val
 
 ### Slash Commands
 
-- [ ] All 9 files exist in `commands/` directory
+- [ ] All 10 files exist in `plugin/commands/` directory
 - [ ] Each has YAML frontmatter with `description` and `argument-hint`
 - [ ] Each runs `arc` directly (relies on pip install placing it in PATH)
 - [ ] Each uses `$ARGUMENTS` for parameter passing
@@ -246,7 +247,7 @@ python -m json.tool .claude-plugin/marketplace.json > /dev/null && echo "✓ Val
 
 ```bash
 # Check all commands have frontmatter
-for f in commands/*.md; do
+for f in plugin/commands/*.md; do
   if ! head -3 "$f" | grep -q "^description:"; then
     echo "❌ Missing frontmatter in $f"
   fi
@@ -254,7 +255,7 @@ done
 echo "✓ All commands have frontmatter"
 
 # Check all run arc directly
-if [ $(grep -l "^arc " commands/*.md | wc -l) -eq $(ls commands/*.md | wc -l) ]; then
+if [ $(grep -l "^arc " plugin/commands/*.md | wc -l) -eq $(ls plugin/commands/*.md | wc -l) ]; then
   echo "✓ All commands run arc directly"
 fi
 ```
@@ -400,7 +401,7 @@ python -m arcaneum.cli.main --version && echo "✓ Version command works"
 
 **Debug Steps:**
 
-1. Check JSON syntax: `python -m json.tool .claude-plugin/plugin.json`
+1. Check JSON syntax: `python -m json.tool plugin/.claude-plugin/plugin.json`
 2. Verify marketplace path is correct
 3. Check Claude Code logs (if available)
 4. Try removing and re-adding marketplace
@@ -420,14 +421,14 @@ python -m arcaneum.cli.main --version && echo "✓ Version command works"
 
 **Debug Steps:**
 
-1. Verify `commands/` directory exists at plugin root
+1. Verify `plugin/commands/` directory exists at the plugin root
 2. Check all .md files have proper frontmatter
 3. Verify plugin is installed: `/plugin` and check enabled plugins
 4. Try reinstalling: `/plugin uninstall arc` then `/plugin install arc@arcaneum-marketplace`
 
 **Common Causes:**
 
-- `commands/` in wrong location (must be at root)
+- `commands/` in wrong location (must be at the plugin root, `plugin/`)
 - Missing frontmatter in .md files
 - Plugin not actually installed (just marketplace added)
 
@@ -540,14 +541,14 @@ echo "Validating Arcaneum plugin structure..."
 
 # Check JSON files
 echo "✓ Validating JSON syntax..."
-python -m json.tool .claude-plugin/plugin.json > /dev/null
+python -m json.tool plugin/.claude-plugin/plugin.json > /dev/null
 python -m json.tool .claude-plugin/marketplace.json > /dev/null
 
 # Check required fields
 echo "✓ Checking required fields..."
 python -c "
 import json
-p = json.load(open('.claude-plugin/plugin.json'))
+p = json.load(open('plugin/.claude-plugin/plugin.json'))
 assert 'name' in p and 'version' in p and 'description' in p
 m = json.load(open('.claude-plugin/marketplace.json'))
 assert 'owner' in m and 'plugins' in m
@@ -555,11 +556,11 @@ assert 'owner' in m and 'plugins' in m
 
 # Check commands directory
 echo "✓ Verifying commands directory..."
-test -d commands || (echo "❌ commands/ directory missing" && exit 1)
+test -d plugin/commands || (echo "❌ plugin/commands/ directory missing" && exit 1)
 
 # Check all commands have frontmatter
 echo "✓ Checking command frontmatter..."
-for f in commands/*.md; do
+for f in plugin/commands/*.md; do
     head -3 "$f" | grep -q "^description:" || (echo "❌ Missing frontmatter in $f" && exit 1)
 done
 
@@ -569,8 +570,8 @@ test -f .claude-plugin/hooks/arc-permissions.sh || (echo "❌ Permission hook mi
 
 # Check arc commands run directly
 echo "✓ Verifying arc commands run directly..."
-count=$(grep -l "^arc " commands/*.md | wc -l | tr -d ' ')
-total=$(ls commands/*.md | wc -l | tr -d ' ')
+count=$(grep -l "^arc " plugin/commands/*.md | wc -l | tr -d ' ')
+total=$(ls plugin/commands/*.md | wc -l | tr -d ' ')
 test "$count" -eq "$total" || (echo "❌ Not all commands run arc directly" && exit 1)
 
 # Test CLI loads
@@ -794,7 +795,7 @@ jobs:
 
       - name: Validate JSON manifests
         run: |
-          python -m json.tool .claude-plugin/plugin.json
+          python -m json.tool plugin/.claude-plugin/plugin.json
           python -m json.tool .claude-plugin/marketplace.json
 
       - name: Validate CLI

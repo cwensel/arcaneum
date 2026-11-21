@@ -10,7 +10,6 @@
   "repository": "https://github.com/cwensel/arcaneum",
   "license": "MIT",
   "homepage": "https://github.com/cwensel/arcaneum",
-  "skills": "./.claude-plugin/skills",
   "keywords": [
     "semantic-search",
     "full-text-search",

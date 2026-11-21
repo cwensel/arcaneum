@@ -1865,7 +1865,7 @@ The `arc` CLI is the entrypoint for all Claude Code plugins and slash commands:
 /arc:search text "exact phrase" --corpus my-docs
 ```
 
-See individual slash command files in `/commands/` directory for detailed usage.
+See individual slash command files in the `plugin/commands/` directory for detailed usage.
 
 ## Full-Text Search (MeiliSearch)
 

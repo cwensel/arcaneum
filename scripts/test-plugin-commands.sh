@@ -90,7 +90,7 @@ echo ""
 echo "5. Testing version consistency..."
 
 # Check version matches across files
-PLUGIN_VERSION=$(python -c "import json; print(json.load(open('.claude-plugin/plugin.json'))['version'])")
+PLUGIN_VERSION=$(python -c "import json; print(json.load(open('plugin/.claude-plugin/plugin.json'))['version'])")
 MARKETPLACE_VERSION=$(python -c "import json; print(json.load(open('.claude-plugin/marketplace.json'))['plugins'][0]['version'])")
 CLI_VERSION=$(python -c "from arcaneum import __version__; print(__version__)")
 

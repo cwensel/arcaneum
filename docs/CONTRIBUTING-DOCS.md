@@ -70,7 +70,7 @@ bin/arc --help
 chmod +x bin/arc
 ```
 
-### Slash Commands (commands/*.md)
+### Slash Commands (plugin/commands/*.md)
 
 Always use simple `arc` command format:
 
@@ -202,7 +202,7 @@ Located in:
 
 Located in:
 
-- `commands/*.md` - Slash command definitions
+- `plugin/commands/*.md` - Slash command definitions
 
 **Purpose:** Enable Claude Code slash commands.
 
@@ -219,7 +219,7 @@ Located in:
 1. Create RDR (docs/rdr/) for complex features
 2. Implement feature
 3. Add to CLI reference (docs/guides/cli-reference.md)
-4. Add slash command (commands/)
+4. Add slash command (plugin/commands/)
 5. Update quickstart if it's a common workflow
 
 **Bug fix:**
@@ -231,7 +231,7 @@ Located in:
 **New CLI command added:**
 
 1. Add to CLI reference (docs/guides/cli-reference.md)
-2. Create slash command (commands/)
+2. Create slash command (plugin/commands/)
 3. Update README.md if it's a major feature
 
 ## Common Pitfalls
@@ -263,7 +263,7 @@ Before committing documentation changes:
 grep -r "QUICKSTART\|OFFLINE-MODE\|TEST-COMMANDS" docs/
 
 # 2. Check for old command references
-grep -r "arc docker\|python -m arcaneum.cli.main" docs/ commands/
+grep -r "arc docker\|python -m arcaneum.cli.main" docs/ plugin/commands/
 
 # 3. Verify files exist
 ls -la docs/guides/quickstart.md

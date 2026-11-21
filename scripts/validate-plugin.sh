@@ -9,14 +9,14 @@ echo ""
 
 # Check JSON files
 echo "✓ Validating JSON syntax..."
-python -m json.tool .claude-plugin/plugin.json > /dev/null
+python -m json.tool plugin/.claude-plugin/plugin.json > /dev/null
 python -m json.tool .claude-plugin/marketplace.json > /dev/null
 
 # Check required fields in plugin.json
 echo "✓ Checking plugin.json required fields..."
 python -c "
 import json
-p = json.load(open('.claude-plugin/plugin.json'))
+p = json.load(open('plugin/.claude-plugin/plugin.json'))
 required = ['name', 'version', 'description']
 for field in required:
     assert field in p, f'Missing required field: {field}'
@@ -33,23 +33,27 @@ m = json.load(open('.claude-plugin/marketplace.json'))
 assert 'owner' in m, 'Missing owner field'
 assert 'plugins' in m, 'Missing plugins array'
 assert len(m['plugins']) > 0, 'No plugins defined'
+# The source directory is copied whole into the plugin cache, gitignored
+# content included, so it must be the plugin directory, not the repo root.
+assert m['plugins'][0]['source'] == './plugin', 'plugins[0].source must be ./plugin'
 print('  - owner:', m['owner']['name'])
 print('  - plugins:', len(m['plugins']))
+print('  - source:', m['plugins'][0]['source'])
 "
 
 # Check commands directory
 echo "✓ Verifying commands directory..."
-if [ ! -d commands ]; then
-    echo "❌ commands/ directory missing at root"
+if [ ! -d plugin/commands ]; then
+    echo "❌ plugin/commands/ directory missing at the plugin root"
     exit 1
 fi
 
-CMD_COUNT=$(ls commands/*.md 2>/dev/null | wc -l | tr -d ' ')
+CMD_COUNT=$(ls plugin/commands/*.md 2>/dev/null | wc -l | tr -d ' ')
 echo "  - Found $CMD_COUNT command files"
 
 # Check all commands have frontmatter
 echo "✓ Checking command frontmatter..."
-for f in commands/*.md; do
+for f in plugin/commands/*.md; do
     if ! head -3 "$f" | grep -q "^description:"; then
         echo "❌ Missing 'description:' in frontmatter: $f"
         exit 1
@@ -64,8 +68,8 @@ echo "  - All commands have complete frontmatter"
 # Check command execution. Commands may invoke the installed arc CLI directly or
 # use CLAUDE_PLUGIN_ROOT when they need a bundled executable.
 echo "✓ Verifying command execution..."
-total=$(ls commands/*.md | wc -l | tr -d ' ')
-for f in commands/*.md; do
+total=$(ls plugin/commands/*.md | wc -l | tr -d ' ')
+for f in plugin/commands/*.md; do
     if grep -q "CLAUDE_PLUGIN_ROOT" "$f"; then
         continue
     fi
@@ -82,7 +86,7 @@ echo "  - All $total commands declare a supported executable invocation"
 
 # Check $ARGUMENTS usage
 echo "✓ Verifying \$ARGUMENTS usage..."
-args_count=$(grep -l '\$ARGUMENTS' commands/*.md | wc -l | tr -d ' ')
+args_count=$(grep -l '\$ARGUMENTS' plugin/commands/*.md | wc -l | tr -d ' ')
 if [ "$args_count" -ne "$total" ]; then
     echo "⚠️  Warning: Not all commands use \$ARGUMENTS ($args_count/$total)"
     echo "  - Some commands may use positional args instead"
@@ -92,7 +96,7 @@ fi
 echo "✓ Checking relative paths in plugin.json..."
 python -c "
 import json
-p = json.load(open('.claude-plugin/plugin.json'))
+p = json.load(open('plugin/.claude-plugin/plugin.json'))
 if 'commands' in p:
     for cmd in p['commands']:
         if not cmd.startswith('./'):
@@ -115,7 +119,7 @@ echo "  - CLI version: $VERSION"
 echo "✓ Checking version consistency..."
 python -c "
 import json
-p = json.load(open('.claude-plugin/plugin.json'))
+p = json.load(open('plugin/.claude-plugin/plugin.json'))
 m = json.load(open('.claude-plugin/marketplace.json'))
 plugin_version = p['version']
 marketplace_plugin_version = m['plugins'][0]['version']

@@ -129,7 +129,7 @@ Version is tracked in four files. Use the bump script to update all of them:
 ```
 
 This updates: `pyproject.toml`, `src/arcaneum/__init__.py`,
-`.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, and `README.md`.
+`plugin/.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, and `README.md`.
 
 **Release workflow** (requires developer confirmation at each step):
 

@@ -54,8 +54,8 @@ jobs:
             "$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
           check "src/arcaneum/__init__.py" \
             "$(python -c "import re; print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', open('src/arcaneum/__init__.py').read()).group(1))")"
-          check ".claude-plugin/plugin.json" \
-            "$(python -c "import json; print(json.load(open('.claude-plugin/plugin.json'))['version'])")"
+          check "plugin/.claude-plugin/plugin.json" \
+            "$(python -c "import json; print(json.load(open('plugin/.claude-plugin/plugin.json'))['version'])")"
           check ".claude-plugin/marketplace.json (plugins[0].version)" \
             "$(python -c "import json; print(json.load(open('.claude-plugin/marketplace.json'))['plugins'][0]['version'])")"
 

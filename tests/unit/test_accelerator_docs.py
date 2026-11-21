@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[2]
 USER_GUIDES = (
     ROOT / "README.md",
-    ROOT / "commands/index.md",
+    ROOT / "plugin/commands/index.md",
     ROOT / "docs/guides/accelerators.md",
     ROOT / "docs/guides/cli-reference.md",
     ROOT / "docs/guides/pdf-indexing.md",

@@ -29,10 +29,10 @@ sed -i.bak "s/^version = \".*\"/version = \"$NEW_VERSION\"/" "$PROJECT_ROOT/pypr
 rm -f "$PROJECT_ROOT/pyproject.toml.bak"
 echo "  ✓ pyproject.toml"
 
-# 2. Update .claude-plugin/plugin.json
-sed -i.bak "s/\"version\": \".*\"/\"version\": \"$NEW_VERSION\"/" "$PROJECT_ROOT/.claude-plugin/plugin.json"
-rm -f "$PROJECT_ROOT/.claude-plugin/plugin.json.bak"
-echo "  ✓ .claude-plugin/plugin.json"
+# 2. Update plugin/.claude-plugin/plugin.json
+sed -i.bak "s/\"version\": \".*\"/\"version\": \"$NEW_VERSION\"/" "$PROJECT_ROOT/plugin/.claude-plugin/plugin.json"
+rm -f "$PROJECT_ROOT/plugin/.claude-plugin/plugin.json.bak"
+echo "  ✓ plugin/.claude-plugin/plugin.json"
 
 # 3. Update .claude-plugin/marketplace.json
 sed -i.bak "s/\"version\": \".*\"/\"version\": \"$NEW_VERSION\"/" "$PROJECT_ROOT/.claude-plugin/marketplace.json"

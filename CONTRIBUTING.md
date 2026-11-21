@@ -172,7 +172,7 @@ tradeoff.
 **For new CLI commands:**
 
 1. Add to `docs/guides/cli-reference.md`
-2. Create slash command in `commands/`
+2. Create slash command in `plugin/commands/`
 3. Update README.md if it's a major feature
 4. Add examples to relevant guides
 
@@ -205,7 +205,7 @@ Before submitting documentation changes:
 grep -r "QUICKSTART\|OFFLINE-MODE" docs/
 
 # Check for old commands
-grep -r "arc docker\|python -m arcaneum.cli.main" docs/ commands/
+grep -r "arc docker\|python -m arcaneum.cli.main" docs/ plugin/commands/
 
 # Verify links work
 # Click through all links in your changes

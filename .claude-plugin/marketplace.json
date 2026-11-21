@@ -9,7 +9,7 @@
     {
       "name": "arc",
       "displayName": "Arcaneum",
-      "source": "./",
+      "source": "./plugin",
       "description": "Semantic (vector) and full-text (keyword) search across indexed corpora. Dual-indexes PDFs, markdown, and code into Qdrant + MeiliSearch.",
       "version": "0.12.0",
       "category": "search",

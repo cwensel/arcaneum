@@ -194,23 +194,23 @@ main() {
     test_header "Plugin Manifest Validation"
 
     # Check plugin.json exists
-    if [ -f ".claude-plugin/plugin.json" ]; then
+    if [ -f "plugin/.claude-plugin/plugin.json" ]; then
         pass "plugin.json exists"
 
         # Validate JSON syntax
-        if python -m json.tool ".claude-plugin/plugin.json" > /dev/null 2>&1; then
+        if python -m json.tool "plugin/.claude-plugin/plugin.json" > /dev/null 2>&1; then
             pass "plugin.json is valid JSON"
         else
             fail "plugin.json has invalid JSON syntax"
         fi
 
         # Check commands array
-        if grep -q '"commands"' ".claude-plugin/plugin.json"; then
+        if grep -q '"commands"' "plugin/.claude-plugin/plugin.json"; then
             pass "plugin.json has commands array"
 
             # Verify all command files exist
-            for cmd_file in $(python -c "import json; f=open('.claude-plugin/plugin.json'); data=json.load(f); print('\n'.join(data['commands']))" 2>/dev/null); do
-                cmd_path="${cmd_file#./}"  # Remove ./ prefix
+            for cmd_file in $(python -c "import json; f=open('plugin/.claude-plugin/plugin.json'); data=json.load(f); print('\n'.join(data['commands']))" 2>/dev/null); do
+                cmd_path="plugin/${cmd_file#./}"  # Remove ./ prefix
                 if [ -f "$cmd_path" ]; then
                     pass "Command file exists: $cmd_path"
                 else
@@ -227,7 +227,7 @@ main() {
     # Test 7: Command file format
     test_header "Command File Format"
 
-    for cmd_file in commands/*.md; do
+    for cmd_file in plugin/commands/*.md; do
         if [ -f "$cmd_file" ]; then
             # Check for YAML frontmatter
             if head -n 1 "$cmd_file" | grep -q '^---$'; then

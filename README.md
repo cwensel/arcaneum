@@ -604,7 +604,7 @@ pytest tests/integration tests/indexing tests/cli -v
 
 - **[RDR Process](docs/rdr/README.md)** - Recommendation Data Records workflow for complex features
 - **[Individual RDRs](docs/rdr/)** - Technical specifications and design decisions for each feature
-- **[Slash Commands](commands/)** - Claude Code plugin command implementations
+- **[Slash Commands](plugin/commands/)** - Claude Code plugin command implementations
 
 ## Contributing
 

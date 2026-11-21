@@ -1,6 +1,6 @@
 #!/bin/bash
 # Validate Arcaneum plugin structure for Claude Code compliance
-# Based on: docs/plugin-marketplace-testing.md
+# Based on: docs/guides/claude-code-plugin.md
 
 set -e
 
@@ -135,6 +135,6 @@ echo "  /plugin marketplace add $(pwd)"
 echo "  /plugin install arc@arcaneum-marketplace"
 echo ""
 echo "To test commands:"
-echo "  /arc:list-collections"
-echo "  /arc:list-models --json"
+echo "  /arc:collection list"
+echo "  /arc:models list --json"
 echo "  /help  # See all available commands"

@@ -115,7 +115,7 @@ All errors use the `[ERROR]` prefix:
 
 ### Collection Management
 
-#### `create-collection --json`
+#### `collection create --json`
 
 ```json
 {
@@ -139,7 +139,7 @@ All errors use the `[ERROR]` prefix:
 }
 ```
 
-#### `list-collections --json`
+#### `collection list --json`
 
 ```json
 {
@@ -173,7 +173,7 @@ All errors use the `[ERROR]` prefix:
 }
 ```
 
-#### `collection-info <name> --json`
+#### `collection info <name> --json`
 
 ```json
 {
@@ -199,7 +199,7 @@ All errors use the `[ERROR]` prefix:
 }
 ```
 
-#### `delete-collection <name> --json --confirm`
+#### `collection delete <name> --json --confirm`
 
 ```json
 {
@@ -214,7 +214,7 @@ All errors use the `[ERROR]` prefix:
 
 ### Model Management
 
-#### `list-models --json`
+#### `models list --json`
 
 ```json
 {
@@ -296,7 +296,7 @@ All errors use the `[ERROR]` prefix:
 
 ### Indexing Commands
 
-#### `index-pdfs --json`
+#### `index pdf --json`
 
 ```json
 {
@@ -314,7 +314,7 @@ All errors use the `[ERROR]` prefix:
 }
 ```
 
-#### `index-source --json`
+#### `index code --json`
 
 ```json
 {

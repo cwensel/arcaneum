@@ -61,8 +61,8 @@ arc corpus create code --type code
 
 | Type   | Content                     | Commands       |
 | ------ | --------------------------- | -------------- |
-| `pdf`  | PDF documents, scanned docs | `index-pdfs`   |
-| `code` | Source code (15+ languages) | `index-source` |
+| `pdf`  | PDF documents, scanned docs | `index pdf`    |
+| `code` | Source code (15+ languages) | `index code`   |
 
 ### Type Enforcement
 

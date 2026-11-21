@@ -1,6 +1,6 @@
 # Claude Code Best Practices: Compliance Report
 
-This document verifies Arcaneum's compliance with Claude Code plugin marketplace best practices as documented at https://docs.claude.com/en/docs/claude-code/.
+This document verifies Arcaneum's compliance with Claude Code plugin marketplace best practices as documented at <https://docs.claude.com/en/docs/claude-code/>.
 
 **Last Updated:** 2026-05-29
 **Plugin Version:** 0.6.0
@@ -41,11 +41,13 @@ arcaneum/
 ### Plugin Manifest (plugin.json) ✅
 
 **Required Fields:**
+
 - ✅ `name`: "arc" (kebab-case format; used for namespacing components)
 - ✅ `version`: "0.6.0" (semantic versioning)
 - ✅ `description`: Comprehensive description provided
 
 **Optional Fields (Present):**
+
 - ✅ `displayName`: "Arcaneum" (friendly name in the `/plugin` picker)
 - ✅ `author`: Name and URL provided
 - ✅ `repository`: GitHub URL
@@ -64,6 +66,7 @@ arcaneum/
 ### Marketplace Manifest (marketplace.json) ✅
 
 **Required Fields:**
+
 - ✅ `name`: "arcaneum-marketplace"
 - ✅ `owner`: Object with `name` and `url`
 - ✅ `plugins`: Array with 1 plugin entry
@@ -85,7 +88,7 @@ arcaneum/
 All 10 commands have proper YAML frontmatter (`description` + `argument-hint`):
 
 | Command | description | argument-hint | Status |
-|---------|------------|---------------|---------|
+| --------- | ------------ | --------------- | --------- |
 | collection.md | ✅ | ✅ | ✅ |
 | config.md | ✅ | ✅ | ✅ |
 | container.md | ✅ | ✅ | ✅ |
@@ -112,6 +115,7 @@ Each command delegates to the `arc` CLI via `$ARGUMENTS`:
 ### Command Documentation ✅
 
 Each command includes:
+
 - ✅ Clear description of functionality
 - ✅ Complete argument list with defaults
 - ✅ Multiple usage examples
@@ -138,16 +142,19 @@ Following reference implementation practices (RDR-006):
 Following reference implementation practices (RDR-006):
 
 **JSON Mode:**
+
 - ✅ Standard format: `{status, message, data, errors}`
 - ✅ Implemented in: `src/arcaneum/cli/output.py`
 - ✅ Used by: collections, models, search commands
 
 **Progress Messages:**
+
 - ✅ `[INFO]` prefix for progress updates
 - ✅ `[INFO] Processing X/Y (Z%)` format
 - ✅ `[INFO] Complete: X items, Y sub-items` format
 
 **Error Messages:**
+
 - ✅ `[ERROR]` prefix for all errors
 - ✅ Descriptive messages with suggested fixes
 - ✅ Consistent formatting across all commands
@@ -209,6 +216,7 @@ Following reference implementation practices (RDR-006):
 **Status:** Ready for manual testing in Claude Code
 
 **Recommended Test Flow:**
+
 1. Add local marketplace: `/plugin marketplace add $(pwd)`
 2. Install plugin: `/plugin install arc@arcaneum-marketplace`
 3. Test the 10 slash commands and 5 skills
@@ -219,7 +227,7 @@ Following reference implementation practices (RDR-006):
 ## Compliance Summary
 
 | Category | Requirement | Status | Notes |
-|----------|------------|--------|-------|
+| ---------- | ------------ | -------- | ------- |
 | **Structure** | Plugin manifest present | ✅ | `plugin/.claude-plugin/plugin.json` |
 | **Structure** | Marketplace manifest present | ✅ | `.claude-plugin/marketplace.json` |
 | **Structure** | Commands at plugin root | ✅ | `plugin/commands/` directory |
@@ -239,7 +247,7 @@ Following reference implementation practices (RDR-006):
 | **Testing** | Command tests | ✅ | All commands verified |
 | **Docs** | README present | ✅ | Installation guide |
 | **Docs** | LICENSE present | ✅ | MIT license |
-| **Docs** | Testing guide | ✅ | This document + plugin-marketplace-testing.md |
+| **Docs** | Testing guide | ✅ | This document + docs/guides/claude-code-plugin.md |
 
 **Overall Compliance:** ✅ **19/19 requirements met (100%)**
 
@@ -257,7 +265,8 @@ Following reference implementation practices (RDR-006):
 
 3. **Test from GitHub:**
    - After pushing, test installation:
-   ```
+
+   ```text
    /plugin marketplace add cwensel/arcaneum
    /plugin install arc@arcaneum-marketplace
    ```
@@ -277,6 +286,7 @@ Following reference implementation practices (RDR-006):
    - Follow semantic versioning (breaking.feature.fix)
 
 2. **Testing Before Each Release:**
+
    ```bash
    ./scripts/validate-plugin.sh
    ./scripts/test-plugin-commands.sh
@@ -298,13 +308,16 @@ Following reference implementation practices (RDR-006):
 
 ## Conclusion
 
-The Arcaneum plugin marketplace implementation **fully complies** with Claude Code best practices and is ready for local testing and eventual GitHub publication.
+The Arcaneum plugin marketplace implementation **fully complies** with Claude Code best practices and is ready
+for local testing and eventual GitHub publication.
 
-All automated validations pass, and the structure follows both official Claude Code guidelines and best practices learned from the reference plugin analysis (RDR-006).
+All automated validations pass, and the structure follows both official Claude Code guidelines and best practices
+learned from the reference plugin analysis (RDR-006).
 
 **Next Steps:**
+
 1. Run `./scripts/validate-plugin.sh` to verify compliance
-2. Test in local Claude Code instance per `docs/plugin-marketplace-testing.md`
+2. Test in local Claude Code instance per `docs/guides/claude-code-plugin.md`
 3. Iterate on any issues found
 4. Update repository URL before GitHub release
 5. Publish and monitor user feedback

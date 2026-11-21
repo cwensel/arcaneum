@@ -517,7 +517,7 @@ def index_pdfs_command(
             result = {"success": True, "collection": collection, "model": model, "stats": stats}
             print(json.dumps(result, indent=2))
         else:
-            # Minimal output by default (matches index-source style)
+            # Minimal output by default (matches index code style)
             if not verbose:
                 console.print(f"\n✓ Indexed {stats['files']} PDF(s): {stats['chunks']} chunks")
                 if stats["errors"] > 0:

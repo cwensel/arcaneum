@@ -43,7 +43,7 @@ class DualIndexer:
     def __init__(
         self,
         qdrant_client: QdrantClient,
-        meili_client: FullTextClient,
+        meili_client: Optional[FullTextClient],
         collection_name: str,
         index_name: str,
         batch_size: int = DEFAULT_BATCH_SIZE,
@@ -54,14 +54,16 @@ class DualIndexer:
 
         Args:
             qdrant_client: Initialized Qdrant client
-            meili_client: Initialized MeiliSearch client
+            meili_client: Initialized MeiliSearch client; unused, and may be
+                None, for a ``qdrant`` corpus
             collection_name: Qdrant collection name
             index_name: MeiliSearch index name
             batch_size: Batch size for Qdrant and MeiliSearch uploads (default 300)
             corpus_type: The corpus's type, whose stop words decide which
                 chunks yield no token
             text_backend: The corpus's text backend (RDR-027 Q2); a ``qdrant``
-                corpus's zero-token chunks carry ``text_tokens: False`` (Q8)
+                corpus's text is written only in its Qdrant points (Q7), and
+                its zero-token chunks carry ``text_tokens: False`` (Q8)
         """
         self.qdrant = qdrant_client
         self.meili = meili_client
@@ -79,7 +81,8 @@ class DualIndexer:
             wait: If True, wait for indexing to complete (default True)
 
         Returns:
-            Tuple of (qdrant_count, meili_count) indexed
+            Tuple of (qdrant_count, meili_count) indexed; meili_count is 0
+            for a ``qdrant`` corpus
 
         Raises:
             ValueError: If any document is missing vectors
@@ -116,6 +119,10 @@ class DualIndexer:
             max_count=self.batch_size,
         )
         logger.debug(f"Indexed {qdrant_count} points to Qdrant")
+
+        if self.text_backend == "qdrant":
+            # The points just written carry the corpus's text (RDR-027 Q7).
+            return qdrant_count, 0
 
         # Convert to MeiliSearch format and upload in batches
         meili_docs = [to_meilisearch_doc(doc) for doc in documents]

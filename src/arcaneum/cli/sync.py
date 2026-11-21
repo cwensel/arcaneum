@@ -396,6 +396,16 @@ def _meili_has_documents_for_path(meili: FullTextClient, corpus: str, file_path:
     return MeiliTextBackend(meili).has_file(corpus, file_path)
 
 
+def _delete_text_documents(meili: Optional[FullTextClient], corpus: str, paths: List[str]) -> None:
+    """Delete the files' documents from a meili corpus's text backend.
+
+    A qdrant corpus (``meili`` None) keeps its text in the chunk points the
+    caller deletes from Qdrant, so there is nothing more to delete (RDR-027 Q7).
+    """
+    if meili is not None:
+        MeiliTextBackend(meili).delete_files(corpus, paths)
+
+
 def _rollback_pdf_canonical_promotion(
     qdrant,
     meili,
@@ -481,8 +491,13 @@ def _promote_pdf_canonical(
         if (
             sync_manager.has_chunks_for_file_path(corpus, old_path)
             or not sync_manager.has_chunks_for_file_path(corpus, new_path)
-            or _meili_has_documents_for_path(meili, corpus, old_path)
-            or not _meili_has_documents_for_path(meili, corpus, new_path)
+            or (
+                meili is not None
+                and (
+                    _meili_has_documents_for_path(meili, corpus, old_path)
+                    or not _meili_has_documents_for_path(meili, corpus, new_path)
+                )
+            )
         ):
             raise RuntimeError(
                 f"Canonical PDF promotion read-back verification failed: {old_path} -> {new_path}"
@@ -624,7 +639,7 @@ def _remove_indexed_paths(
     corpus_type: str,
     paths: List[str],
 ) -> int:
-    """Drop `paths` from Qdrant, MeiliSearch, and the manifest store.
+    """Drop `paths` from Qdrant, a meili corpus's MeiliSearch, and the manifest store.
 
     Shared by --parity stale cleanup and by --changed-since, which learns
     about deletions from git rather than by scanning for missing files.
@@ -642,7 +657,7 @@ def _remove_indexed_paths(
         if not paths:
             return removed
 
-    meili.delete_documents_by_file_paths(corpus, paths)
+    _delete_text_documents(meili, corpus, paths)
     for path in paths:
         qdrant.delete(
             collection_name=corpus,
@@ -1926,22 +1941,24 @@ def _mark_quality_floor(qdrant, corpus: str, file_path: str) -> None:
 def _handle_renames_meili(
     renames: List[Tuple[str, str]],
     qdrant,
-    meili: FullTextClient,
+    meili: Optional[FullTextClient],
     corpus: str,
 ) -> Tuple[int, List[Tuple[str, str]]]:
     """Update file_path and filename in MeiliSearch documents for renames.
 
     Must run BEFORE Qdrant handle_renames() since it uses the old file_path
     to find point IDs in Qdrant, then updates the corresponding MeiliSearch docs.
+    A qdrant corpus (``meili`` None) writes nothing here: Qdrant's
+    handle_renames() moves its text with its chunks (RDR-027 Q7).
 
     Args:
         renames: List of (old_path, new_path) tuples
         qdrant: Qdrant client
-        meili: FullTextClient instance
+        meili: FullTextClient instance, or None for a qdrant corpus
         corpus: Corpus/index name
 
     Returns:
-        Tuple of (number of MeiliSearch documents updated, confirmed renames)
+        Tuple of (number of chunks moved, confirmed renames)
     """
     from qdrant_client.models import FieldCondition, Filter, MatchValue
 
@@ -1999,6 +2016,8 @@ def _handle_renames_meili(
         return 0, alias_renames
 
     chunk_count = sum(len(ids) for ids in ids_by_rename.values())
+    if meili is None:
+        return chunk_count, list(ids_by_rename.keys()) + alias_renames
     try:
         MeiliTextBackend(meili).rename(corpus, ids_by_rename)
     except Exception as e:
@@ -2686,9 +2705,8 @@ def _sync_directory_locked(
 
         # Initialize clients
         qdrant = create_qdrant_client(timeout=qdrant_timeout)
-        meili = get_meili_client()
 
-        # Verify corpus exists in both systems
+        # Verify the corpus's collection exists
         try:
             qdrant.get_collection(corpus)
         except Exception:
@@ -2697,21 +2715,29 @@ def _sync_directory_locked(
                 f"Create it first with: arc corpus create {corpus} --type <type>"
             )
 
-        if not meili.health_check():
-            raise ResourceNotFoundError(
-                "MeiliSearch server not available. "
-                "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
-            )
-
-        if not meili.index_exists(corpus):
-            raise ResourceNotFoundError(
-                f"MeiliSearch index '{corpus}' not found. "
-                f"Create it first with: arc corpus create {corpus} --type <type>"
-            )
-
         # Get corpus type and configured models from collection metadata
         corpus_type = get_collection_type(qdrant, corpus)
         metadata = get_collection_metadata(qdrant, corpus)
+
+        # Writes go only to the corpus's text backend (RDR-027 Q7). A qdrant
+        # corpus's text lives in its chunk points, which the Qdrant writes
+        # below already replace, move and delete, so it has no MeiliSearch
+        # client: `meili` is None and every MeiliSearch write is skipped.
+        text_backend = text_backend_of(metadata)
+        meili: Optional[FullTextClient] = None
+        if text_backend == "meili":
+            meili = get_meili_client()
+            if not meili.health_check():
+                raise ResourceNotFoundError(
+                    "MeiliSearch server not available. "
+                    "Start with: docker compose -f deploy/docker-compose.yml up -d meilisearch"
+                )
+
+            if not meili.index_exists(corpus):
+                raise ResourceNotFoundError(
+                    f"MeiliSearch index '{corpus}' not found. "
+                    f"Create it first with: arc corpus create {corpus} --type <type>"
+                )
 
         if not corpus_type:
             corpus_type = "pdf"  # Default
@@ -3300,22 +3326,28 @@ def _sync_directory_locked(
 
             # Get file paths from both systems
             sync_manager = MetadataBasedSync(qdrant)
-            meili_file_paths = meili.get_all_file_paths(corpus)
             qdrant_file_paths = sync_manager._get_indexed_file_paths_set(corpus)
+            if meili is None:
+                # One store: every indexed path is in it, and there is
+                # nothing to compare or backfill (Q8).
+                meili_file_paths = set()
+                in_both_systems = set(qdrant_file_paths)
+            else:
+                meili_file_paths = meili.get_all_file_paths(corpus)
 
-            # Calculate set operations; backfill only what the stored chunks
-            # show is really missing from one system
-            in_both_systems = qdrant_file_paths & meili_file_paths
-            meili_backfill_paths, qdrant_backfill_paths = _plan_parity_backfill(
-                qdrant,
-                sync_manager,
-                corpus,
-                corpus_type,
-                qdrant_file_paths,
-                meili_file_paths,
-                dry_run=dry_run,
-                output_json=output_json,
-            )
+                # Calculate set operations; backfill only what the stored chunks
+                # show is really missing from one system
+                in_both_systems = qdrant_file_paths & meili_file_paths
+                meili_backfill_paths, qdrant_backfill_paths = _plan_parity_backfill(
+                    qdrant,
+                    sync_manager,
+                    corpus,
+                    corpus_type,
+                    qdrant_file_paths,
+                    meili_file_paths,
+                    dry_run=dry_run,
+                    output_json=output_json,
+                )
             if not output_json and meili_backfill_paths:
                 print_info(
                     f"Found {len(meili_backfill_paths)} files in Qdrant missing from MeiliSearch"
@@ -3823,7 +3855,7 @@ def _sync_directory_locked(
                 collection_name=corpus,
                 index_name=corpus,
                 corpus_type=corpus_type,
-                text_backend=text_backend_of(metadata),
+                text_backend=text_backend,
             )
 
             # A file already indexed at its path was edited since: its old chunks
@@ -3962,9 +3994,7 @@ def _sync_directory_locked(
                                             or file_path_str in previously_indexed_paths
                                         ):
                                             dual_indexer.delete_by_file_path(file_path_str)
-                                            meili.delete_documents_by_file_paths(
-                                                corpus, [file_path_str]
-                                            )
+                                            _delete_text_documents(meili, corpus, [file_path_str])
                                             _delete_file_manifests(
                                                 manifest_sync_manager,
                                                 corpus,
@@ -4025,7 +4055,7 @@ def _sync_directory_locked(
                                         f"[dim]  Replacing existing chunks for {file_path.name}...[/dim]"
                                     )
                                 dual_indexer.delete_by_file_path(replace_path)
-                                meili.delete_documents_by_file_paths(corpus, [replace_path])
+                                _delete_text_documents(meili, corpus, [replace_path])
                                 _delete_file_manifests(
                                     manifest_sync_manager,
                                     corpus,

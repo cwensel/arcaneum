@@ -1,7 +1,9 @@
 """Corpus listing for the retrieval core (RDR-026 Q10).
 
 ``list_corpora`` pairs Qdrant collections with MeiliSearch indexes and reports
-each corpus's type, sync status, item counts, models and description. It is
+each corpus's type, sync status, item counts, models and description. A corpus
+whose text backend is qdrant has no MeiliSearch side: its status is its text
+coverage (RDR-027 Q8), and any MeiliSearch index of its name is ignored. It is
 read-only: counts come from persisted metadata (stamped by full directory sync
 and by repair) or are computed on demand from bounded Qdrant facets, and are
 never written back.
@@ -481,9 +483,19 @@ def _qdrant_collections(
         # bounded. Neither persists what it counts (RDR-026 Q10).
         count = _get_qdrant_list_item_count if details else _get_bounded_qdrant_list_item_count
         item_counts = count(qdrant, col.name, collection_type, metadata)
+        text_backend = text_backend_of(metadata)
+        coverage = None
+        if text_backend == "qdrant":
+            # A Qdrant corpus's text lives here: its coverage is its parity (RDR-027 Q8).
+            from .qdrant_text import QdrantTextBackend
+
+            coverage = QdrantTextBackend(qdrant, {col.name: collection_type}).coverage(
+                col.name, files=False
+            )
         collections[col.name] = {
             "type": collection_type,
-            "text_backend": text_backend_of(metadata),
+            "text_backend": text_backend,
+            "coverage": coverage,
             "model": metadata.get("model"),
             "description": metadata.get("description"),
             "models": models,
@@ -582,10 +594,16 @@ def list_corpora(
     for name in sorted(set(qdrant_collections) | set(meili_indexes)):
         q_info = qdrant_collections.get(name)
         m_info = meili_indexes.get(name)
+        coverage = q_info.get("coverage") if q_info else None
+        if coverage is not None:
+            # A MeiliSearch index kept beside a Qdrant corpus is stale and unused.
+            m_info = None
 
         q_chunks = q_info.get("chunks", 0) if q_info else 0
         m_chunks = m_info.get("chunks", 0) if m_info else 0
-        if q_info and m_info:
+        if coverage is not None:
+            status = coverage.status
+        elif q_info and m_info:
             status = "synced" if q_chunks == m_chunks else "chunk_mismatch"
         elif q_info:
             status = "qdrant_only"
@@ -593,27 +611,31 @@ def list_corpora(
             status = "meili_only"
 
         q_info = q_info or {}
-        corpora.append(
-            {
-                "name": name,
-                "type": q_info.get("type"),
-                # A corpus Qdrant does not hold is a MeiliSearch index (RDR-027 Q2).
-                "text_backend": q_info.get("text_backend", DEFAULT_TEXT_BACKEND),
-                "model": q_info.get("model"),
-                "description": q_info.get("description"),
-                "models": q_info.get("models") or _unknown_models(),
-                "model_summary": q_info.get("model_summary", UNKNOWN_LEGACY),
-                "status": status,
-                "qdrant_chunks": q_chunks,
-                "meili_chunks": m_chunks,
-                "last_sync": q_info.get("last_sync"),
-                "last_sync_status": q_info.get("last_sync_status", "unknown"),
-                "item_count": q_info.get("item_count"),
-                "item_unit": q_info.get("item_unit", UNKNOWN_LEGACY),
-                "file_count": q_info.get("file_count"),
-                "file_unit": q_info.get("file_unit"),
-                "item_count_status": q_info.get("item_count_status", "unavailable"),
-            }
-        )
+        entry = {
+            "name": name,
+            "type": q_info.get("type"),
+            # A corpus Qdrant does not hold is a MeiliSearch index (RDR-027 Q2).
+            "text_backend": q_info.get("text_backend", DEFAULT_TEXT_BACKEND),
+            "model": q_info.get("model"),
+            "description": q_info.get("description"),
+            "models": q_info.get("models") or _unknown_models(),
+            "model_summary": q_info.get("model_summary", UNKNOWN_LEGACY),
+            "status": status,
+            "qdrant_chunks": q_chunks,
+            "meili_chunks": m_chunks,
+            "text_chunks": m_chunks,
+            "last_sync": q_info.get("last_sync"),
+            "last_sync_status": q_info.get("last_sync_status", "unknown"),
+            "item_count": q_info.get("item_count"),
+            "item_unit": q_info.get("item_unit", UNKNOWN_LEGACY),
+            "file_count": q_info.get("file_count"),
+            "file_unit": q_info.get("file_unit"),
+            "item_count_status": q_info.get("item_count_status", "unavailable"),
+        }
+        if coverage is not None:
+            del entry["meili_chunks"]
+            entry["text_chunks"] = coverage.indexed or 0
+            entry["zero_token_chunks"] = coverage.zero_token_chunks
+        corpora.append(entry)
 
     return CorpusListing(corpora=corpora, service_errors=service_errors)

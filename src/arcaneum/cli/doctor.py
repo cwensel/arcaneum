@@ -2,6 +2,7 @@
 
 import importlib.util
 import os
+import re
 import sys
 from typing import Dict, Tuple
 
@@ -76,6 +77,57 @@ def check_qdrant_connection(verbose: bool = False) -> Tuple[bool, str]:
             return False, f"Qdrant connection failed: {str(e)}"
         else:
             return False, "Qdrant connection failed (check server is running)"
+
+
+# The first Qdrant whose text index serves a corpus's text search (RDR-027 Q3, Q12).
+QDRANT_TEXT_MIN_VERSION = (1, 20)
+
+
+def _version_tuple(version: str) -> Tuple[int, ...]:
+    return tuple(int(part) for part in re.findall(r"\d+", version or "")[:3])
+
+
+def check_text_backends() -> Tuple[bool | None, str]:
+    """Count corpora per text backend; fail below Qdrant 1.20 when any corpus is on qdrant.
+
+    MeiliSearch stays a required check until 0.14.0 (RDR-027 Q10). An
+    unreachable Qdrant is the connection check's failure, so this one is
+    then only informational.
+    """
+    from arcaneum.indexing.collection_metadata import (
+        TEXT_BACKENDS,
+        get_collection_metadata,
+        text_backend_of,
+    )
+
+    try:
+        client = create_qdrant_client()
+        names = [c.name for c in client.get_collections().collections]
+    except Exception:
+        return None, "Not checked (Qdrant unreachable)"
+
+    counts = dict.fromkeys(TEXT_BACKENDS, 0)
+    for name in names:
+        try:
+            counts[text_backend_of(get_collection_metadata(client, name))] += 1
+        except Exception:
+            counts["meili"] += 1  # an unreadable metadata point reads as the default
+    summary = ", ".join(f"{count} {backend}" for backend, count in counts.items())
+    if not counts["qdrant"]:
+        return True, f"Corpora per text backend: {summary}"
+
+    minimum = ".".join(str(part) for part in QDRANT_TEXT_MIN_VERSION)
+    try:
+        version = str(client.info().version)
+    except Exception as e:
+        return False, f"Corpora per text backend: {summary}; Qdrant version unreadable: {e}"
+    if _version_tuple(version)[:2] < QDRANT_TEXT_MIN_VERSION:
+        return (
+            False,
+            f"Corpora per text backend: {summary}; Qdrant {version} is below {minimum}, "
+            "which qdrant corpora need (upgrade with: arc container upgrade)",
+        )
+    return True, f"Corpora per text backend: {summary} (Qdrant {version})"
 
 
 def check_meilisearch_connection(verbose: bool = False) -> Tuple[bool, str]:
@@ -193,6 +245,7 @@ def doctor_command(verbose: bool = False, output_json: bool = False):
         "pytesseract": check_dependency("pytesseract"),
         "Qdrant Connection": check_qdrant_connection(verbose),
         "MeiliSearch Connection": check_meilisearch_connection(verbose),
+        "Text Backends": check_text_backends(),
         "Embedding Models": check_embedding_models(verbose),
         "Temp Directory": check_temp_dir_writable(),
         "Environment": check_environment_vars(verbose),

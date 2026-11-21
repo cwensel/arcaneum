@@ -2,7 +2,9 @@
 
 For each corpus, runs the same checks as `arc corpus verify` (persisted
 content verification and Qdrant/MeiliSearch parity) plus orphan
-classification, then names the command that fixes each finding. Nothing is
+classification, then names the command that fixes each finding. A corpus
+whose text backend is qdrant is checked for text coverage instead of parity
+(RDR-027 Q8), and any MeiliSearch index of its name is ignored. Nothing is
 written. Commands that migrate policy or could delete documents for files
 on an unmounted volume are listed as optional, never as required.
 """
@@ -40,17 +42,20 @@ def diagnose_corpus(
     verification,
     parity: Optional[Dict[str, Any]],
     orphans: Optional[Dict[str, List[str]]],
+    coverage=None,
 ) -> Dict[str, Any]:
     """Turn check results into findings and the commands that fix them.
 
     Args:
         name: Corpus name
-        presence: "both", "qdrant_only", or "meili_only"
+        presence: "both", "qdrant_only", "meili_only", or "qdrant_text" (a
+            corpus whose text backend is qdrant)
         verification: CollectionVerificationResult, or None when not run
         parity: Result of corpus._compare_parity_items, an
             {"status": "unknown", "reason": ...} dict, or None when not run
         orphans: Result of sync._classify_meili_orphans for MeiliSearch-only
             files missing from disk, or None
+        coverage: A Qdrant text corpus's ``Coverage``, or None when not run
 
     Each finding has a severity: "error" (a check failed), "action" (needs a
     fix), "optional" (a deliberate choice, e.g. policy migration), or "info".
@@ -139,6 +144,38 @@ def diagnose_corpus(
                 count=breakdown["recovery_exhausted_files"],
             )
 
+    if coverage is not None:
+        if coverage.status == "text_index_missing":
+            add(
+                "text_index_missing",
+                "action",
+                "The Qdrant text index is missing, so `arc search text` fails on this corpus; "
+                "recreate it",
+                command=repair,
+            )
+        elif coverage.status == "coverage_gap":
+            add(
+                "text_coverage_gap",
+                "action",
+                f"The text index holds {coverage.indexed} of {coverage.searchable_chunks} "
+                "searchable chunks",
+                count=abs(coverage.searchable_chunks - coverage.indexed),
+                command=repair,
+            )
+        if coverage.zero_token_chunks:
+            # A chunking finding (arcaneum#128): the chunks match no query on
+            # either backend, and only a reindex drops them.
+            add(
+                "zero_token_chunks",
+                "info",
+                f"{coverage.zero_token_chunks} chunks yield no token, so text search never "
+                "matches them; a chunking finding, not a coverage gap",
+                count=coverage.zero_token_chunks,
+                chunks=[
+                    {"file_path": path, "chunk_index": index} for path, index in coverage.flagged
+                ],
+            )
+
     if parity is not None:
         if parity["status"] == "unknown":
             add("parity_unknown", "error", parity["reason"])
@@ -224,18 +261,37 @@ def _open_clients():
     return qdrant, meili
 
 
+def _text_backend(qdrant, name: str) -> str:
+    """A collection's text backend; an unreadable metadata point counts as meili."""
+    from ..indexing.collection_metadata import (
+        DEFAULT_TEXT_BACKEND,
+        get_collection_metadata,
+        text_backend_of,
+    )
+
+    try:
+        return text_backend_of(get_collection_metadata(qdrant, name))
+    except Exception:
+        return DEFAULT_TEXT_BACKEND
+
+
 def _discover_corpora(qdrant, meili) -> Dict[str, str]:
-    """Map every corpus name to "both", "qdrant_only", or "meili_only"."""
+    """Map every corpus name to "both", "qdrant_only", "meili_only", or "qdrant_text".
+
+    A corpus whose text backend is qdrant is "qdrant_text" whether or not a
+    MeiliSearch index of its name remains.
+    """
     qdrant_names = {c.name for c in qdrant.get_collections().collections}
     meili_names = {idx["uid"] for idx in meili.list_indexes()}
-    return {
-        name: (
-            "both"
-            if name in qdrant_names and name in meili_names
-            else ("qdrant_only" if name in qdrant_names else "meili_only")
-        )
-        for name in sorted(qdrant_names | meili_names)
-    }
+
+    def presence(name):
+        if name in qdrant_names and _text_backend(qdrant, name) == "qdrant":
+            return "qdrant_text"
+        if name in qdrant_names and name in meili_names:
+            return "both"
+        return "qdrant_only" if name in qdrant_names else "meili_only"
+
+    return {name: presence(name) for name in sorted(qdrant_names | meili_names)}
 
 
 def _check_corpus(qdrant, meili, name: str, presence: str) -> Dict[str, Any]:
@@ -248,12 +304,23 @@ def _check_corpus(qdrant, meili, name: str, presence: str) -> Dict[str, Any]:
     verification = None
     parity = None
     orphans = None
+    coverage = None
 
     if presence != "meili_only":
         try:
             verification = CollectionVerifier(qdrant).verify_collection(name)
         except Exception as e:
             verification = _FailedVerification(f"Verification failed: {e}")
+
+    if presence == "qdrant_text":
+        from ..retrieval.qdrant_text import QdrantTextBackend
+
+        try:
+            corpus_type = getattr(verification, "collection_type", None)
+            text_index = QdrantTextBackend(qdrant, {name: corpus_type} if corpus_type else None)
+            coverage = text_index.coverage(name, files=False)
+        except Exception as e:
+            parity = {"status": "unknown", "reason": f"Coverage check failed: {e}"}
 
     if presence == "both":
         try:
@@ -286,7 +353,7 @@ def _check_corpus(qdrant, meili, name: str, presence: str) -> Dict[str, Any]:
         except Exception as e:
             parity = {"status": "unknown", "reason": f"Parity scan failed: {e}"}
 
-    return diagnose_corpus(name, presence, verification, parity, orphans)
+    return diagnose_corpus(name, presence, verification, parity, orphans, coverage=coverage)
 
 
 class _FailedVerification:

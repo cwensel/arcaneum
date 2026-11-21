@@ -107,8 +107,14 @@ def _format_list_item_count(corpus):
 
 
 def _format_chunk_summary(corpus):
-    """Format corpus-list chunk counts in one column."""
+    """Format corpus-list chunk counts in one column.
+
+    A Qdrant text corpus shows its text index's chunks (T) beside its points.
+    """
     q_chunks = corpus["qdrant_chunks"]
+    if "meili_chunks" not in corpus:
+        t_chunks = corpus["text_chunks"]
+        return str(q_chunks) if q_chunks == t_chunks else f"Q: {q_chunks} / T: {t_chunks}"
     m_chunks = corpus["meili_chunks"]
     if q_chunks == m_chunks:
         return str(q_chunks)
@@ -176,6 +182,10 @@ def list_corpora_command(details: bool, output_json: bool):
                     status_str = "[yellow]chunk_mismatch[/yellow]"
                 elif status == "qdrant_only":
                     status_str = "[yellow]qdrant_only[/yellow]"
+                elif status == "coverage_gap":
+                    status_str = "[yellow]coverage_gap[/yellow]"
+                elif status == "text_index_missing":
+                    status_str = "[red]text_index_missing[/red]"
                 else:
                     status_str = "[yellow]meili_only[/yellow]"
 
@@ -630,6 +640,27 @@ def _get_meili_item_count(client, index_name: str, collection_type: str) -> int:
     return len(projects)
 
 
+def _print_text_index_coverage(name: str, coverage) -> None:
+    """The human-readable text coverage of a Qdrant text corpus (RDR-027 Q8)."""
+    console.print("\n[bold]Qdrant Text Index:[/bold]")
+    if coverage is None:
+        console.print("  [yellow]Not readable[/yellow]")
+        return
+    if coverage.indexed is None:
+        console.print("  [red]Missing: arc search text fails on this corpus[/red]")
+    else:
+        console.print(
+            f"  Chunks: {coverage.indexed:,} of {coverage.searchable_chunks:,} searchable"
+        )
+    if coverage.zero_token_chunks:
+        console.print(
+            f"  Zero-token chunks: {coverage.zero_token_chunks:,} "
+            "[dim](yield no token; a chunking finding, not a gap)[/dim]"
+        )
+    if not coverage.complete:
+        console.print(f"  [dim]Fix with: arc corpus repair {name} (preview with --dry-run)[/dim]")
+
+
 def corpus_info_command(name: str, output_json: bool):
     """Show combined information about a corpus (Qdrant + MeiliSearch).
 
@@ -692,29 +723,41 @@ def corpus_info_command(name: str, output_json: bool):
         except Exception as e:
             errors.append(f"Qdrant: {e}")
 
-        # Gather MeiliSearch index info
-        meili = create_meili_client()
-        try:
-            if not meili.health_check():
-                errors.append("MeiliSearch: Server not available")
-            elif not meili.index_exists(name):
-                errors.append(f"MeiliSearch: Index '{name}' not found")
-            else:
-                stats = meili.get_index_stats(name)
+        # A corpus Qdrant does not hold is a MeiliSearch index (RDR-027 Q2).
+        text_backend = qdrant_info["text_backend"] if qdrant_info else DEFAULT_TEXT_BACKEND
+        coverage = None
+        if text_backend == "qdrant":
+            # Its text lives in Qdrant: coverage replaces parity, and
+            # MeiliSearch is never read (RDR-027 Q8).
+            try:
+                text_index = QdrantTextBackend(qdrant_client, {name: qdrant_info["type"]})
+                coverage = text_index.coverage(name, files=False)
+            except Exception as e:
+                errors.append(f"Qdrant text index: {e}")
+        else:
+            # Gather MeiliSearch index info
+            meili = create_meili_client()
+            try:
+                if not meili.health_check():
+                    errors.append("MeiliSearch: Server not available")
+                elif not meili.index_exists(name):
+                    errors.append(f"MeiliSearch: Index '{name}' not found")
+                else:
+                    stats = meili.get_index_stats(name)
 
-                # Get unique item count
-                item_count = _get_meili_item_count(meili, name, collection_type)
-                chunk_count = stats.get("numberOfDocuments", 0)
+                    # Get unique item count
+                    item_count = _get_meili_item_count(meili, name, collection_type)
+                    chunk_count = stats.get("numberOfDocuments", 0)
 
-                meili_info = {
-                    "name": name,
-                    "item_count": item_count,
-                    "chunk_count": chunk_count,
-                    "is_indexing": stats.get("isIndexing", False),
-                }
-        except Exception as e:
-            if "not available" not in str(e).lower():
-                errors.append(f"MeiliSearch: {e}")
+                    meili_info = {
+                        "name": name,
+                        "item_count": item_count,
+                        "chunk_count": chunk_count,
+                        "is_indexing": stats.get("isIndexing", False),
+                    }
+            except Exception as e:
+                if "not available" not in str(e).lower():
+                    errors.append(f"MeiliSearch: {e}")
 
         # If neither system has the corpus, it's an error
         if qdrant_info is None and meili_info is None:
@@ -725,7 +768,10 @@ def corpus_info_command(name: str, output_json: bool):
 
         # Compute parity status based on item counts
         parity = {"status": "unknown"}
-        if qdrant_info and meili_info:
+        if text_backend == "qdrant":
+            if coverage is not None:
+                parity = {"status": coverage.status, "qdrant_items": qdrant_info["item_count"]}
+        elif qdrant_info and meili_info:
             qdrant_items = qdrant_info["item_count"]
             meili_items = meili_info["item_count"]
             diff = abs(qdrant_items - meili_items)
@@ -751,8 +797,10 @@ def corpus_info_command(name: str, output_json: bool):
         # Determine item label based on type
         collection_type = qdrant_info.get("type") if qdrant_info else "unknown"
         item_label = _item_unit_for_corpus_type(collection_type)
-        # A corpus Qdrant does not hold is a MeiliSearch index (RDR-027 Q2).
-        text_backend = qdrant_info["text_backend"] if qdrant_info else DEFAULT_TEXT_BACKEND
+        if coverage is not None:
+            text_chunks = coverage.indexed or 0
+        else:
+            text_chunks = meili_info["chunk_count"] if meili_info else None
 
         # Output
         if output_json:
@@ -761,12 +809,15 @@ def corpus_info_command(name: str, output_json: bool):
                 "type": collection_type,
                 "description": (qdrant_info.get("description") if qdrant_info else None),
                 "text_backend": text_backend,
+                "text_chunks": text_chunks,
                 "item_label": item_label,
                 "parity": parity,
                 "qdrant": qdrant_info,
                 "meilisearch": meili_info,
                 "errors": errors if errors else None,
             }
+            if text_backend == "qdrant":
+                data["coverage"] = coverage.to_data() if coverage is not None else None
             print_json("success", f"Corpus '{name}' information", data=data)
         else:
             # Header
@@ -793,6 +844,13 @@ def corpus_info_command(name: str, output_json: bool):
                 console.print(
                     f"Status: [yellow]MeiliSearch only[/yellow] ({parity['meili_items']:,} {item_label})"
                 )
+            elif parity["status"] == "coverage_gap":
+                console.print(
+                    f"Status: [yellow]coverage gap[/yellow] (the text index holds "
+                    f"{coverage.indexed:,} of {coverage.searchable_chunks:,} searchable chunks)"
+                )
+            elif parity["status"] == "text_index_missing":
+                console.print("Status: [red]text index missing[/red]")
 
             # Qdrant section
             if qdrant_info:
@@ -809,8 +867,10 @@ def corpus_info_command(name: str, output_json: bool):
             else:
                 console.print("\n[yellow]Qdrant Collection: not found[/yellow]")
 
-            # MeiliSearch section
-            if meili_info:
+            # Text section: the Qdrant text index, or the MeiliSearch index
+            if text_backend == "qdrant":
+                _print_text_index_coverage(name, coverage)
+            elif meili_info:
                 console.print("\n[bold]MeiliSearch Index:[/bold]")
                 console.print(f"  {item_label.capitalize()}: {meili_info['item_count']:,}")
                 console.print(f"  Chunks: {meili_info['chunk_count']:,}")
@@ -841,6 +901,9 @@ def corpus_info_command(name: str, output_json: bool):
 
 
 PARITY_ITEM_STATUSES = ("synced", "mismatch", "qdrant_only", "meili_only")
+# A Qdrant text corpus's items share its coverage status (RDR-027 Q8).
+COVERAGE_ITEM_STATUSES = ("synced", "coverage_gap", "text_index_missing", "unknown")
+_ITEM_STATUS_COLOR = {"synced": "green", "mismatch": "red", "text_index_missing": "red"}
 
 
 def _scan_qdrant_parity_items(qdrant, name: str, collection_type: str | None) -> dict:
@@ -977,12 +1040,9 @@ def _classify_parity_item(qdrant_chunks: int, meili_chunks: int) -> str:
     return "meili_only"
 
 
-def _summarize_parity_items(items: list[dict]) -> dict:
+def _summarize_parity_items(items: list[dict], statuses=PARITY_ITEM_STATUSES) -> dict:
     """Count items per parity status."""
-    return {
-        status: sum(1 for item in items if item["status"] == status)
-        for status in PARITY_ITEM_STATUSES
-    }
+    return {status: sum(1 for item in items if item["status"] == status) for status in statuses}
 
 
 def _compare_parity_items(qdrant_items: dict, meili_items: dict) -> dict:
@@ -1032,6 +1092,9 @@ def corpus_items_command(name: str, output_json: bool):
     qdrant_items = {}
     meili_items = {}
     collection_type = None
+    text_backend = DEFAULT_TEXT_BACKEND
+    coverage = None
+    zero_token_items = {}
     errors = []
 
     try:
@@ -1040,22 +1103,31 @@ def corpus_items_command(name: str, output_json: bool):
             qdrant = create_qdrant_client()
             metadata = get_collection_metadata(qdrant, name)
             collection_type = metadata.get("collection_type")
+            text_backend = text_backend_of(metadata)
             qdrant_items = _scan_qdrant_parity_items(qdrant, name, collection_type)
+            if text_backend == "qdrant":
+                # Coverage replaces parity; MeiliSearch is never read (RDR-027 Q8).
+                text_index = QdrantTextBackend(qdrant, {name: collection_type})
+                coverage = text_index.coverage(name, files=False)
+                zero_token_items = text_index.zero_token_counts(
+                    name, "git_project_identifier" if collection_type == "code" else "file_path"
+                )
         except Exception as e:
             errors.append(f"Qdrant: {e}")
 
         # Gather MeiliSearch index items
-        try:
-            meili = create_meili_client()
-            if not meili.health_check():
-                errors.append("MeiliSearch: Server not available")
-            elif not meili.index_exists(name):
-                errors.append(f"MeiliSearch: Index '{name}' not found")
-            else:
-                meili_items = _scan_meili_parity_items(meili, name, collection_type)
-        except Exception as e:
-            if "not available" not in str(e).lower():
-                errors.append(f"MeiliSearch: {e}")
+        if text_backend != "qdrant":
+            try:
+                meili = create_meili_client()
+                if not meili.health_check():
+                    errors.append("MeiliSearch: Server not available")
+                elif not meili.index_exists(name):
+                    errors.append(f"MeiliSearch: Index '{name}' not found")
+                else:
+                    meili_items = _scan_meili_parity_items(meili, name, collection_type)
+            except Exception as e:
+                if "not available" not in str(e).lower():
+                    errors.append(f"MeiliSearch: {e}")
 
         # If neither system has the corpus, check if it's a data issue or missing corpus
         if not qdrant_items and not meili_items:
@@ -1069,7 +1141,7 @@ def corpus_items_command(name: str, output_json: bool):
             except Exception:
                 pass
 
-            if not corpus_exists:
+            if not corpus_exists and text_backend != "qdrant":
                 try:
                     meili = create_meili_client()
                     if meili.index_exists(name):
@@ -1103,15 +1175,25 @@ def corpus_items_command(name: str, output_json: bool):
             q_chunks = q_item.get("qdrant_chunks", 0)
             m_chunks = m_item.get("meili_chunks", 0)
 
-            status = _classify_parity_item(q_chunks, m_chunks)
-
-            # Merge metadata from both sources
-            merged = {
-                "id": item_id,
-                "qdrant_chunks": q_chunks,
-                "meili_chunks": m_chunks,
-                "status": status,
-            }
+            if text_backend == "qdrant":
+                # The text index is not countable per item: an item shares
+                # its corpus's coverage status.
+                zero_token = zero_token_items.get(item_id, 0)
+                merged = {
+                    "id": item_id,
+                    "qdrant_chunks": q_chunks,
+                    "searchable_chunks": q_chunks - zero_token,
+                    "zero_token_chunks": zero_token,
+                    "status": coverage.status if coverage is not None else "unknown",
+                }
+            else:
+                # Merge metadata from both sources
+                merged = {
+                    "id": item_id,
+                    "qdrant_chunks": q_chunks,
+                    "meili_chunks": m_chunks,
+                    "status": _classify_parity_item(q_chunks, m_chunks),
+                }
 
             # Add type-specific fields (prefer Qdrant, fall back to MeiliSearch)
             if collection_type == "code":
@@ -1133,22 +1215,22 @@ def corpus_items_command(name: str, output_json: bool):
             merged_items.sort(key=lambda x: x.get("filename") or x["id"])
 
         # Calculate summary stats
-        summary = _summarize_parity_items(merged_items)
-        synced_count = summary["synced"]
-        mismatch_count = summary["mismatch"]
-        qdrant_only_count = summary["qdrant_only"]
-        meili_only_count = summary["meili_only"]
+        statuses = COVERAGE_ITEM_STATUSES if text_backend == "qdrant" else PARITY_ITEM_STATUSES
+        summary = _summarize_parity_items(merged_items, statuses)
 
         # Output
         if output_json:
             data = {
                 "corpus": name,
                 "type": collection_type,
+                "text_backend": text_backend,
                 "item_count": len(merged_items),
                 "summary": summary,
                 "items": merged_items,
                 "errors": errors if errors else None,
             }
+            if text_backend == "qdrant":
+                data["coverage"] = coverage.to_data() if coverage is not None else None
             print_json("success", f"Found {len(merged_items)} items in corpus '{name}'", data)
         else:
             # Header
@@ -1160,17 +1242,21 @@ def corpus_items_command(name: str, output_json: bool):
             console.print(f"Items: {len(merged_items)}")
 
             # Summary
-            summary_parts = []
-            if synced_count > 0:
-                summary_parts.append(f"[green]{synced_count} synced[/green]")
-            if mismatch_count > 0:
-                summary_parts.append(f"[red]{mismatch_count} mismatch[/red]")
-            if qdrant_only_count > 0:
-                summary_parts.append(f"[yellow]{qdrant_only_count} qdrant_only[/yellow]")
-            if meili_only_count > 0:
-                summary_parts.append(f"[yellow]{meili_only_count} meili_only[/yellow]")
+            summary_parts = [
+                f"[{_ITEM_STATUS_COLOR.get(status, 'yellow')}]{count} {status}"
+                f"[/{_ITEM_STATUS_COLOR.get(status, 'yellow')}]"
+                for status, count in summary.items()
+                if count > 0
+            ]
             if summary_parts:
-                console.print(f"Parity: {', '.join(summary_parts)}\n")
+                label = "Coverage" if text_backend == "qdrant" else "Parity"
+                console.print(f"{label}: {', '.join(summary_parts)}\n")
+            # The second count column: MeiliSearch's chunks, or a Qdrant text
+            # corpus's searchable chunks.
+            if text_backend == "qdrant":
+                second_column, second_key = "S", "searchable_chunks"
+            else:
+                second_column, second_key = "M", "meili_chunks"
 
             if not merged_items:
                 print_info("No items found")
@@ -1181,7 +1267,7 @@ def corpus_items_command(name: str, output_json: bool):
                     table.add_column("Branch", style="green")
                     table.add_column("Commit", style="dim")
                     table.add_column("Q", style="yellow", justify="right")
-                    table.add_column("M", style="yellow", justify="right")
+                    table.add_column(second_column, style="yellow", justify="right")
                     table.add_column("Status", style="magenta")
 
                     for item in merged_items:
@@ -1199,7 +1285,7 @@ def corpus_items_command(name: str, output_json: bool):
                             item.get("git_branch") or "-",
                             item["git_commit_hash"][:12] if item.get("git_commit_hash") else "-",
                             str(item["qdrant_chunks"]),
-                            str(item["meili_chunks"]),
+                            str(item[second_key]),
                             status_str,
                         )
                     console.print(table)
@@ -1208,7 +1294,7 @@ def corpus_items_command(name: str, output_json: bool):
                     table.add_column("File", style="cyan", no_wrap=False)
                     table.add_column("Size", style="dim")
                     table.add_column("Q", style="yellow", justify="right")
-                    table.add_column("M", style="yellow", justify="right")
+                    table.add_column(second_column, style="yellow", justify="right")
                     table.add_column("Status", style="magenta")
 
                     for item in merged_items:
@@ -1238,7 +1324,7 @@ def corpus_items_command(name: str, output_json: bool):
                             display_name,
                             size_str,
                             str(item["qdrant_chunks"]),
-                            str(item["meili_chunks"]),
+                            str(item[second_key]),
                             status_str,
                         )
                     console.print(table)
@@ -1290,6 +1376,8 @@ def corpus_verify_command(
 
     qdrant_result = None
     meili_result = None
+    text_backend = DEFAULT_TEXT_BACKEND
+    coverage = None
     errors = []
 
     try:
@@ -1303,63 +1391,75 @@ def corpus_verify_command(
             qdrant_result = verifier.verify_collection(
                 name, project_filter=project, verbose=verbose, deep=deep
             )
+            text_backend = text_backend_of(get_collection_metadata(qdrant, name))
         except Exception as e:
             errors.append(f"Qdrant: {e}")
 
-        # Step 2: Verify MeiliSearch index
-        if not output_json:
-            console.print(f"[dim]Verifying MeiliSearch index '{name}'...[/dim]")
+        if text_backend == "qdrant":
+            # Step 2: the text index's coverage replaces MeiliSearch and
+            # parity, and MeiliSearch is never read (RDR-027 Q8).
+            if not output_json:
+                console.print(f"[dim]Checking the text index of '{name}'...[/dim]")
+            try:
+                text_index = QdrantTextBackend(qdrant, {name: qdrant_result.collection_type})
+                coverage = text_index.coverage(name, files=False)
+            except Exception as e:
+                errors.append(f"Qdrant text index: {e}")
+        else:
+            # Step 2: Verify MeiliSearch index
+            if not output_json:
+                console.print(f"[dim]Verifying MeiliSearch index '{name}'...[/dim]")
 
-        try:
-            meili = create_meili_client()
+            try:
+                meili = create_meili_client()
 
-            if not meili.health_check():
-                errors.append("MeiliSearch: Server not available")
-            elif not meili.index_exists(name):
-                errors.append(f"MeiliSearch: Index '{name}' not found")
-            else:
-                # Perform health checks on MeiliSearch
-                stats = meili.get_index_stats(name)
-                settings = meili.get_index_settings(name)
+                if not meili.health_check():
+                    errors.append("MeiliSearch: Server not available")
+                elif not meili.index_exists(name):
+                    errors.append(f"MeiliSearch: Index '{name}' not found")
+                else:
+                    # Perform health checks on MeiliSearch
+                    stats = meili.get_index_stats(name)
+                    settings = meili.get_index_settings(name)
 
-                meili_issues = []
-                meili_warnings = []
+                    meili_issues = []
+                    meili_warnings = []
 
-                doc_count = stats.get("numberOfDocuments", 0)
-                is_indexing = stats.get("isIndexing", False)
+                    doc_count = stats.get("numberOfDocuments", 0)
+                    is_indexing = stats.get("isIndexing", False)
 
-                if is_indexing:
-                    meili_warnings.append("Index is currently processing documents")
+                    if is_indexing:
+                        meili_warnings.append("Index is currently processing documents")
 
-                # Check searchable/filterable attributes
-                searchable = settings.get("searchableAttributes", [])
-                if not searchable or searchable == ["*"]:
-                    meili_warnings.append("Searchable attributes not explicitly defined")
+                    # Check searchable/filterable attributes
+                    searchable = settings.get("searchableAttributes", [])
+                    if not searchable or searchable == ["*"]:
+                        meili_warnings.append("Searchable attributes not explicitly defined")
 
-                filterable = settings.get("filterableAttributes", [])
-                if not filterable:
-                    meili_warnings.append("No filterable attributes defined")
+                    filterable = settings.get("filterableAttributes", [])
+                    if not filterable:
+                        meili_warnings.append("No filterable attributes defined")
 
-                # Try sample retrieval
-                sample_accessible = False
-                try:
-                    sample_results = meili.search(name, "", limit=1)
-                    if sample_results.get("hits"):
-                        sample_accessible = True
-                except Exception as e:
-                    meili_issues.append(f"Failed to retrieve sample document: {e}")
+                    # Try sample retrieval
+                    sample_accessible = False
+                    try:
+                        sample_results = meili.search(name, "", limit=1)
+                        if sample_results.get("hits"):
+                            sample_accessible = True
+                    except Exception as e:
+                        meili_issues.append(f"Failed to retrieve sample document: {e}")
 
-                meili_result = {
-                    "is_healthy": len(meili_issues) == 0,
-                    "document_count": doc_count,
-                    "is_indexing": is_indexing,
-                    "sample_accessible": sample_accessible,
-                    "issues": meili_issues,
-                    "warnings": meili_warnings,
-                }
-        except Exception as e:
-            if "not available" not in str(e).lower():
-                errors.append(f"MeiliSearch: {e}")
+                    meili_result = {
+                        "is_healthy": len(meili_issues) == 0,
+                        "document_count": doc_count,
+                        "is_indexing": is_indexing,
+                        "sample_accessible": sample_accessible,
+                        "issues": meili_issues,
+                        "warnings": meili_warnings,
+                    }
+            except Exception as e:
+                if "not available" not in str(e).lower():
+                    errors.append(f"MeiliSearch: {e}")
 
         # If neither system has the corpus, it's an error
         if qdrant_result is None and meili_result is None:
@@ -1373,7 +1473,15 @@ def corpus_verify_command(
         parity_status = "unknown"
         parity = None
 
-        if qdrant_result and meili_result:
+        if text_backend == "qdrant":
+            # Unhealthy on a coverage gap or a missing index; zero-token
+            # chunks are a chunking finding, not a gap.
+            overall_healthy = qdrant_result.is_healthy
+            if coverage is not None:
+                parity = coverage.to_data()
+                parity_status = coverage.status
+                overall_healthy = overall_healthy and coverage.complete
+        elif qdrant_result and meili_result:
             qdrant_healthy = qdrant_result.is_healthy
             meili_healthy = meili_result["is_healthy"]
             overall_healthy = qdrant_healthy and meili_healthy
@@ -1432,8 +1540,14 @@ def corpus_verify_command(
 
         # Output results
         if output_json:
+            if coverage is not None:
+                text_chunks = coverage.indexed or 0
+            else:
+                text_chunks = meili_result["document_count"] if meili_result else None
             data = {
                 "corpus": name,
+                "text_backend": text_backend,
+                "text_chunks": text_chunks,
                 "overall_healthy": overall_healthy,
                 "parity_status": parity_status,
                 "parity": parity,
@@ -1553,57 +1667,12 @@ def corpus_verify_command(
             else:
                 console.print("  [yellow]Not found or not accessible[/yellow]")
 
-            # MeiliSearch section
-            console.print("\n[bold]MeiliSearch Index:[/bold]")
-            if meili_result:
-                if meili_result["is_healthy"]:
-                    console.print("  [green]Status: Healthy[/green]")
-                else:
-                    console.print("  [yellow]Status: Issues detected[/yellow]")
-                    for issue in meili_result["issues"]:
-                        console.print(f"    [red]• {issue}[/red]")
-
-                console.print(f"  Documents: {meili_result['document_count']:,}")
-                if meili_result["is_indexing"]:
-                    console.print("  [yellow]Currently indexing...[/yellow]")
-                if meili_result["sample_accessible"]:
-                    console.print("  [green]Sample retrieval: OK[/green]")
-
-                if meili_result["warnings"]:
-                    console.print("  Warnings:")
-                    for warning in meili_result["warnings"]:
-                        console.print(f"    [dim]• {warning}[/dim]")
+            # Text section: a Qdrant text corpus's coverage stands in for the
+            # MeiliSearch and parity sections.
+            if text_backend == "qdrant":
+                _print_verify_coverage(name, coverage, verbose)
             else:
-                console.print("  [yellow]Not found or not accessible[/yellow]")
-
-            # Parity section
-            console.print("\n[bold]Parity:[/bold]")
-            if parity is None:
-                console.print(f"  [yellow]Status: {parity_status}[/yellow]")
-            elif parity_status == "unknown":
-                console.print(f"  [yellow]Status: unknown ({parity['reason']})[/yellow]")
-            else:
-                summary_str = ", ".join(
-                    f"{count} {status}" for status, count in parity["summary"].items() if count
-                )
-                color = "green" if parity_status == "synced" else "red"
-                console.print(f"  [{color}]Status: {parity_status}[/{color}]")
-                console.print(f"  Items: {summary_str or '0'}")
-                shown = parity["items"] if verbose else parity["items"][:5]
-                for item in shown:
-                    console.print(
-                        f"  [dim]• {item['id']}: {item['status']} "
-                        f"(qdrant {item['qdrant_chunks']}, meili {item['meili_chunks']})[/dim]"
-                    )
-                if len(parity["items"]) > len(shown):
-                    console.print(
-                        f"  [dim]... and {len(parity['items']) - len(shown)} more "
-                        f"(see: arc corpus items {name})[/dim]"
-                    )
-                if parity_status == "mismatch":
-                    console.print(
-                        f"  [dim]Fix with: arc corpus repair {name} (preview with --dry-run)[/dim]"
-                    )
+                _print_verify_meili_and_parity(name, meili_result, parity, parity_status, verbose)
 
             # Errors
             if errors:
@@ -1631,3 +1700,82 @@ def corpus_verify_command(
         interaction_logger.finish(error=str(e))
         print_error(f"Failed to verify corpus: {e}", output_json)
         sys.exit(1)
+
+
+def _print_verify_coverage(name: str, coverage, verbose: bool) -> None:
+    """Verify's text coverage section for a Qdrant text corpus (RDR-027 Q8)."""
+    console.print("\n[bold]Text Coverage:[/bold]")
+    if coverage is None:
+        console.print("  [yellow]Status: unknown[/yellow]")
+        return
+    color = "green" if coverage.complete else "red"
+    console.print(f"  [{color}]Status: {coverage.status}[/{color}]")
+    if coverage.indexed is not None:
+        console.print(
+            f"  Text index: {coverage.indexed:,} of {coverage.searchable_chunks:,} searchable chunks"
+        )
+    if coverage.zero_token_chunks:
+        console.print(
+            f"  Zero-token chunks: {coverage.zero_token_chunks:,} "
+            "(yield no token; a chunking finding, not a gap)"
+        )
+        shown = coverage.flagged if verbose else coverage.flagged[:5]
+        for path, index in shown:
+            console.print(f"  [dim]• {path} chunk {index}[/dim]")
+    if not coverage.complete:
+        console.print(f"  [dim]Fix with: arc corpus repair {name} (preview with --dry-run)[/dim]")
+
+
+def _print_verify_meili_and_parity(name, meili_result, parity, parity_status, verbose) -> None:
+    """Verify's MeiliSearch and parity sections for a MeiliSearch corpus."""
+    # MeiliSearch section
+    console.print("\n[bold]MeiliSearch Index:[/bold]")
+    if meili_result:
+        if meili_result["is_healthy"]:
+            console.print("  [green]Status: Healthy[/green]")
+        else:
+            console.print("  [yellow]Status: Issues detected[/yellow]")
+            for issue in meili_result["issues"]:
+                console.print(f"    [red]• {issue}[/red]")
+
+        console.print(f"  Documents: {meili_result['document_count']:,}")
+        if meili_result["is_indexing"]:
+            console.print("  [yellow]Currently indexing...[/yellow]")
+        if meili_result["sample_accessible"]:
+            console.print("  [green]Sample retrieval: OK[/green]")
+
+        if meili_result["warnings"]:
+            console.print("  Warnings:")
+            for warning in meili_result["warnings"]:
+                console.print(f"    [dim]• {warning}[/dim]")
+    else:
+        console.print("  [yellow]Not found or not accessible[/yellow]")
+
+    # Parity section
+    console.print("\n[bold]Parity:[/bold]")
+    if parity is None:
+        console.print(f"  [yellow]Status: {parity_status}[/yellow]")
+    elif parity_status == "unknown":
+        console.print(f"  [yellow]Status: unknown ({parity['reason']})[/yellow]")
+    else:
+        summary_str = ", ".join(
+            f"{count} {status}" for status, count in parity["summary"].items() if count
+        )
+        color = "green" if parity_status == "synced" else "red"
+        console.print(f"  [{color}]Status: {parity_status}[/{color}]")
+        console.print(f"  Items: {summary_str or '0'}")
+        shown = parity["items"] if verbose else parity["items"][:5]
+        for item in shown:
+            console.print(
+                f"  [dim]• {item['id']}: {item['status']} "
+                f"(qdrant {item['qdrant_chunks']}, meili {item['meili_chunks']})[/dim]"
+            )
+        if len(parity["items"]) > len(shown):
+            console.print(
+                f"  [dim]... and {len(parity['items']) - len(shown)} more "
+                f"(see: arc corpus items {name})[/dim]"
+            )
+        if parity_status == "mismatch":
+            console.print(
+                f"  [dim]Fix with: arc corpus repair {name} (preview with --dry-run)[/dim]"
+            )

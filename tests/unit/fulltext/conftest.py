@@ -171,7 +171,9 @@ class LocalQdrant:
     Local mode builds no payload index and reports none, and runs a text query
     only over a text index with the default tokenization. This records each
     requested index and reports it in ``get_collection``'s ``payload_schema``,
-    as the server does, and hands local mode a default-tokenized, scored text
+    as the server does; a text index's ``points`` counts the points whose
+    ``text`` yields a token under the requested stop words, as the server's
+    does (RDR-027 spike C3). It hands local mode a default-tokenized, scored text
     index in place of a requested text index, so text queries run. Local mode
     therefore ignores the stop words and ASCII folding of RDR-027 Q3; the
     requested parameters stay in ``requested`` for tests to inspect.
@@ -239,11 +241,31 @@ class LocalQdrant:
                 continue
             if isinstance(params, models.TextIndexParams):
                 schema[field_name] = models.PayloadIndexInfo(
-                    data_type=models.PayloadSchemaType.TEXT, params=params, points=0
+                    data_type=models.PayloadSchemaType.TEXT,
+                    params=params,
+                    points=self._tokenful_points(collection_name, field_name, params),
                 )
             else:
                 schema[field_name] = models.PayloadIndexInfo(data_type=params, points=0)
         return info.model_copy(update={"payload_schema": schema})
+
+    def _tokenful_points(self, collection_name, field_name, params) -> int:
+        from arcaneum.retrieval.qdrant_text import token_spans
+
+        stops = set((params.stopwords.custom or []) if params.stopwords else [])
+        count, offset = 0, None
+        while True:
+            points, offset = self._client.scroll(
+                collection_name, limit=1000, offset=offset, with_payload=[field_name]
+            )
+            for point in points:
+                text = (point.payload or {}).get(field_name)
+                if isinstance(text, str) and any(
+                    token not in stops for _start, _end, token in token_spans(text)
+                ):
+                    count += 1
+            if offset is None:
+                return count
 
     def query_points(self, collection_name, **kwargs):
         self.query_calls.append(kwargs)

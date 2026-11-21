@@ -45,15 +45,52 @@ class TextPage:
 
 @dataclass
 class Coverage:
-    """What a corpus's text store holds.
+    """What a corpus's text store holds (RDR-027 Q8).
 
     ``chunks`` counts the stored chunks, ``searchable_chunks`` those a query
-    can match, and ``files`` the chunks per ``file_path`` for parity.
+    can match (every chunk but those flagged as yielding no token), and
+    ``indexed`` the chunks the text index holds, None when the index is
+    missing. Coverage is complete when ``indexed`` equals
+    ``searchable_chunks``. ``files`` and ``searchable_files`` count both per
+    ``file_path`` when asked for; ``flagged`` is a bounded sample of the
+    zero-token chunks as ``(file_path, chunk_index)``.
     """
 
     chunks: int
     searchable_chunks: int
     files: Dict[str, int] = field(default_factory=dict)
+    indexed: Optional[int] = None
+    searchable_files: Dict[str, int] = field(default_factory=dict)
+    flagged: List[Tuple[Optional[str], Optional[int]]] = field(default_factory=list)
+
+    @property
+    def zero_token_chunks(self) -> int:
+        """Chunks whose text yields no token: a chunking finding, never a gap."""
+        return self.chunks - self.searchable_chunks
+
+    @property
+    def status(self) -> str:
+        """``synced``, ``coverage_gap`` or ``text_index_missing``."""
+        if self.indexed is None:
+            return "text_index_missing"
+        return "synced" if self.indexed == self.searchable_chunks else "coverage_gap"
+
+    @property
+    def complete(self) -> bool:
+        return self.status == "synced"
+
+    def to_data(self) -> Dict[str, Any]:
+        """The backend-neutral JSON the status commands emit."""
+        return {
+            "status": self.status,
+            "chunks": self.chunks,
+            "searchable_chunks": self.searchable_chunks,
+            "text_chunks": self.indexed or 0,
+            "zero_token_chunks": self.zero_token_chunks,
+            "zero_token_sample": [
+                {"file_path": path, "chunk_index": index} for path, index in self.flagged
+            ],
+        }
 
 
 @runtime_checkable
@@ -117,8 +154,8 @@ class TextBackend(Protocol):
     def drop(self, corpus: str) -> None:
         """Remove the corpus; a missing corpus is not an error."""
 
-    def coverage(self, corpus: str) -> Coverage:
-        """The corpus's chunk counts, in total and per file."""
+    def coverage(self, corpus: str, *, files: bool = True) -> Coverage:
+        """The corpus's chunk counts, in total and, with ``files``, per file."""
 
     def corpora(self) -> Dict[str, int]:
         """Every corpus the store holds, with its chunk count."""

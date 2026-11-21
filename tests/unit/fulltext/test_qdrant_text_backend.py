@@ -324,3 +324,73 @@ class TestTokenize:
     def test_stop_words_follow_the_corpus_type(self):
         assert tokenize("the and or to", "pdf") == []
         assert tokenize("the and or to", "code") == ["the", "and", "or", "to"]
+
+
+class TestCoverage:
+    """Q8: coverage is complete when the index holds every chunk not flagged as zero-token."""
+
+    Z0 = "00000000-0000-0000-0000-0000000000c0"
+
+    def _add_flagged(self, client, flag=True):
+        from qdrant_client.http import models
+
+        payload = {"text": "### ** ``", "file_path": "/docs/a.pdf", "chunk_index": 2}
+        if flag:
+            payload["text_tokens"] = False
+        client.upsert(
+            "Docs",
+            points=[models.PointStruct(id=self.Z0, vector={"stub": [1.0, 0.0]}, payload=payload)],
+        )
+
+    def test_a_flagged_chunk_is_not_a_gap(self, backend, client):
+        self._add_flagged(client)
+
+        for files in (True, False):
+            coverage = backend.coverage("Docs", files=files)
+            assert (coverage.chunks, coverage.searchable_chunks, coverage.indexed) == (4, 3, 3)
+            assert coverage.zero_token_chunks == 1
+            assert coverage.flagged == [("/docs/a.pdf", 2)]
+            assert coverage.status == "synced"
+        coverage = backend.coverage("Docs")
+        assert coverage.files == {"/docs/a.pdf": 3, "/docs/b.pdf": 1}
+        assert coverage.searchable_files == {"/docs/a.pdf": 2, "/docs/b.pdf": 1}
+
+    def test_an_unflagged_zero_token_chunk_is_a_gap(self, backend, client):
+        self._add_flagged(client, flag=False)
+
+        coverage = backend.coverage("Docs", files=False)
+        assert (coverage.searchable_chunks, coverage.indexed) == (4, 3)
+        assert coverage.status == "coverage_gap"
+
+    def test_a_dropped_index_is_missing(self, backend, client):
+        client.delete_payload_index("Docs", "text")
+
+        coverage = backend.coverage("Docs", files=False)
+        assert coverage.indexed is None
+        assert coverage.status == "text_index_missing"
+        assert coverage.chunks == 3
+
+    def test_the_flagged_sample_is_bounded(self, backend, client, monkeypatch):
+        from arcaneum.retrieval import qdrant_text
+
+        monkeypatch.setattr(qdrant_text, "FLAGGED_SAMPLE_LIMIT", 1)
+        self._add_flagged(client)
+        self.Z0, saved = "00000000-0000-0000-0000-0000000000c1", self.Z0
+        try:
+            self._add_flagged(client)
+        finally:
+            self.Z0 = saved
+
+        for files in (True, False):
+            coverage = backend.coverage("Docs", files=files)
+            assert coverage.zero_token_chunks == 2
+            assert len(coverage.flagged) == 1
+
+    def test_coverage_creates_no_index(self, backend, client):
+        client.delete_payload_index("Docs", "text")
+        client.index_calls.clear()
+
+        backend.coverage("Docs")
+        backend.coverage("Docs", files=False)
+
+        assert client.index_calls == []

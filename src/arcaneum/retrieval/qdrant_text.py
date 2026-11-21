@@ -9,9 +9,10 @@ by a BM25 ``TextQuery``; when no chunk holds every term, the words' filter is
 dropped and BM25 ranks any term, the phrases still required (Q4). Hits carry
 the MeiliSearch document's fields (Q5), so both backends emit one hit.
 
-Reads never write: only ``ensure`` creates the index, and corpus create calls
-it. ``tokenize`` applies Q3's rules in Python, for highlighting and for the
-zero-token flag of Q8.
+Reads never write: only ``ensure`` creates the index, and corpus create and
+the parity pass that repair runs call it. ``coverage`` reports Q8's text
+coverage, which stands in for a Qdrant corpus's parity. ``tokenize`` applies
+Q3's rules in Python, for highlighting and for the zero-token flag of Q8.
 
 qdrant_client is imported where it is used (RDR-026 Q11).
 """
@@ -51,6 +52,7 @@ _WORD = re.compile(r"[^\W_]+")  # Qdrant's word tokenizer: runs of letters and d
 _PHRASE = re.compile(r'"([^"]*)"')
 _ADD_BATCH_SIZE = 100
 _SCROLL_PAGE_SIZE = 1000
+FLAGGED_SAMPLE_LIMIT = 100  # zero-token chunks a coverage report names
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +134,26 @@ def _has_text_index(info: Any) -> bool:
     entry = (getattr(info, "payload_schema", None) or {}).get(TEXT_FIELD)
     data_type = getattr(entry, "data_type", None)
     return getattr(data_type, "value", data_type) == "text"
+
+
+def _text_index_points(info: Any) -> Optional[int]:
+    """The points the text index holds, or None when the collection has none (Q8)."""
+    if not _has_text_index(info):
+        return None
+    return int(getattr(info.payload_schema[TEXT_FIELD], "points", 0) or 0)
+
+
+def _tokenless_filter():
+    from qdrant_client.http import models
+
+    return models.Filter(
+        must=[models.FieldCondition(key=TEXT_TOKENS_FIELD, match=models.MatchValue(value=False))]
+    )
+
+
+def _chunk_ref(point: Any) -> Tuple[Optional[str], Optional[int]]:
+    payload = point.payload or {}
+    return payload.get("file_path"), payload.get("chunk_index")
 
 
 def _point_id(chunk_id: Any) -> Optional[Any]:
@@ -359,25 +381,74 @@ class QdrantTextBackend:
                 collection_name=corpus, field_name=TEXT_FIELD, wait=True
             )
 
-    def coverage(self, corpus: str) -> Coverage:
-        """Chunk points, those not flagged as yielding no token (Q8), and chunks per file."""
-        from qdrant_client.http import models
+    def coverage(self, corpus: str, *, files: bool = True) -> Coverage:
+        """Q8's counts: chunk points, those not flagged ``text_tokens: false``, and the index's points.
 
-        files: Counter = Counter()
-        for point in self._scroll(corpus, _chunk_filter(), with_payload=["file_path"]):
-            files[(point.payload or {}).get("file_path")] += 1
-        tokenless = models.Filter(
-            must=[
-                models.FieldCondition(
-                    key=TEXT_TOKENS_FIELD, match=models.MatchValue(value=False)
-                )
-            ]
+        The index's points come from the collection's payload schema; a
+        collection with no text index reports ``indexed`` as None. With
+        ``files``, every chunk point is scrolled for the per-file counts;
+        without, two exact counts and one bounded scroll of flagged chunks
+        suffice, so a listing stays cheap.
+        """
+        info = self.client.get_collection(corpus)
+        indexed = _text_index_points(info)
+        if not files:
+            chunks = self._count(corpus, _chunk_filter())
+            flagged_count = self._count(corpus, _chunk_filter(_tokenless_filter()))
+            sample, _next = self.client.scroll(
+                collection_name=corpus,
+                scroll_filter=_chunk_filter(_tokenless_filter()),
+                limit=FLAGGED_SAMPLE_LIMIT,
+                with_payload=["file_path", "chunk_index"],
+                with_vectors=False,
+            )
+            return Coverage(
+                chunks=chunks,
+                searchable_chunks=chunks - flagged_count,
+                indexed=indexed,
+                flagged=[_chunk_ref(p) for p in sample[:FLAGGED_SAMPLE_LIMIT]],
+            )
+
+        per_file: Counter = Counter()
+        flagged_per_file: Counter = Counter()
+        flagged: List[Tuple[Optional[str], Optional[int]]] = []
+        payload = ["file_path", "chunk_index", TEXT_TOKENS_FIELD]
+        for point in self._scroll(corpus, _chunk_filter(), with_payload=payload):
+            path = (point.payload or {}).get("file_path")
+            per_file[path] += 1
+            if (point.payload or {}).get(TEXT_TOKENS_FIELD) is False:
+                flagged_per_file[path] += 1
+                if len(flagged) < FLAGGED_SAMPLE_LIMIT:
+                    flagged.append(_chunk_ref(point))
+        chunks = sum(per_file.values())
+        return Coverage(
+            chunks=chunks,
+            searchable_chunks=chunks - sum(flagged_per_file.values()),
+            files=dict(per_file),
+            indexed=indexed,
+            searchable_files={path: n - flagged_per_file[path] for path, n in per_file.items()},
+            flagged=flagged,
         )
-        flagged = self.client.count(
-            collection_name=corpus, count_filter=_chunk_filter(tokenless), exact=True
-        ).count
-        chunks = sum(files.values())
-        return Coverage(chunks=chunks, searchable_chunks=chunks - flagged, files=dict(files))
+
+    def zero_token_counts(self, corpus: str, key: str = "file_path") -> Dict[Any, int]:
+        """Flagged chunks per value of ``key`` (``file_path``, or a code corpus's project)."""
+        counts: Counter = Counter()
+        for point in self._scroll(corpus, _chunk_filter(_tokenless_filter()), with_payload=[key]):
+            counts[(point.payload or {}).get(key)] += 1
+        return dict(counts)
+
+    def wait_green(self, corpus: str, timeout: float = 60.0, interval: float = 0.5) -> bool:
+        """Wait until the collection is green, as after an index build; False on timeout."""
+        import time
+
+        deadline = time.monotonic() + timeout
+        while True:
+            status = getattr(self.client.get_collection(corpus), "status", None)
+            if str(getattr(status, "value", status)).lower() == "green":
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(interval)
 
     def corpora(self) -> Dict[str, int]:
         """Each collection with the text index, with its chunk count."""
@@ -435,6 +506,11 @@ class QdrantTextBackend:
                 for p in points
             ]
         )
+
+    def _count(self, corpus: str, count_filter) -> int:
+        return self.client.count(
+            collection_name=corpus, count_filter=count_filter, exact=True
+        ).count
 
     def _scroll(self, corpus: str, scroll_filter, with_payload) -> Iterator[Any]:
         offset = None

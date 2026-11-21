@@ -6111,9 +6111,13 @@ def _discover_corpora_for_parity() -> List[Dict[str, Any]]:
 
     Returns a list of corpus info dicts with keys:
         - name: Corpus name
-        - status: 'synced', 'qdrant_only', 'meili_only', or 'chunk_mismatch'
+        - status: 'synced', 'qdrant_only', 'meili_only', or 'chunk_mismatch';
+          for a Qdrant text corpus, 'synced', 'coverage_gap' or
+          'text_index_missing' (RDR-027 Q8)
+        - text_backend: 'meili' or 'qdrant'
         - qdrant_chunks: Number of chunks in Qdrant
-        - meili_chunks: Number of chunks in MeiliSearch
+        - meili_chunks: Number of chunks in MeiliSearch (MeiliSearch corpora only)
+        - text_chunks: Chunks the corpus's text index holds
         - to_meili: Number of files to backfill to MeiliSearch
         - to_qdrant: Number of files to backfill to Qdrant
     """
@@ -6127,10 +6131,20 @@ def _discover_corpora_for_parity() -> List[Dict[str, Any]]:
             metadata = get_collection_metadata(qdrant, col.name)
             col_info = qdrant.get_collection(col.name)
             chunk_count = user_point_count(qdrant, col.name, col_info)
+            text_backend = text_backend_of(metadata)
+            coverage = None
+            if text_backend == "qdrant":
+                from ..retrieval.qdrant_text import QdrantTextBackend
+
+                coverage = QdrantTextBackend(
+                    qdrant, {col.name: metadata.get("collection_type")}
+                ).coverage(col.name, files=False)
             qdrant_collections[col.name] = {
                 "type": metadata.get("collection_type"),
                 "model": metadata.get("model"),
                 "chunks": chunk_count,
+                "text_backend": text_backend,
+                "coverage": coverage,
             }
     except Exception as e:
         logger.warning(f"Could not connect to Qdrant: {e}")
@@ -6160,6 +6174,23 @@ def _discover_corpora_for_parity() -> List[Dict[str, Any]]:
     for name in sorted(all_names):
         q_info = qdrant_collections.get(name)
         m_info = meili_indexes.get(name)
+
+        coverage = q_info.get("coverage") if q_info else None
+        if coverage is not None:
+            # A Qdrant text corpus: its status is its coverage, and a
+            # MeiliSearch index of its name is stale and ignored (RDR-027 Q8).
+            corpora.append(
+                {
+                    "name": name,
+                    "status": coverage.status,
+                    "text_backend": "qdrant",
+                    "qdrant_chunks": q_info.get("chunks", 0),
+                    "text_chunks": coverage.indexed or 0,
+                    "to_meili": 0,
+                    "to_qdrant": 0,
+                }
+            )
+            continue
 
         # Determine parity status
         if q_info and m_info:
@@ -6194,8 +6225,10 @@ def _discover_corpora_for_parity() -> List[Dict[str, Any]]:
             {
                 "name": name,
                 "status": status,
+                "text_backend": q_info.get("text_backend", "meili") if q_info else "meili",
                 "qdrant_chunks": q_chunks,
                 "meili_chunks": m_chunks,
+                "text_chunks": m_chunks,
                 "to_meili": to_meili,
                 "to_qdrant": to_qdrant,
             }
@@ -6246,7 +6279,13 @@ def _parity_all_corpora(
         # - can_process: chunk_mismatch (both sides exist, just need sync)
         # - incomplete: qdrant_only or meili_only (need manual creation first)
         # - synced: already in parity
-        can_process = [c for c in corpora if c["status"] == "chunk_mismatch"]
+        # A Qdrant text corpus with a missing index or a gap is processed
+        # too: its pass ensures the index and recounts coverage.
+        can_process = [
+            c
+            for c in corpora
+            if c["status"] in ("chunk_mismatch", "text_index_missing", "coverage_gap")
+        ]
         incomplete = [c for c in corpora if c["status"] in ("qdrant_only", "meili_only")]
 
         # Handle --create-missing: create MeiliSearch indexes for qdrant_only corpora
@@ -6310,6 +6349,8 @@ def _parity_all_corpora(
                     status_str = "[dim yellow]qdrant_only (skipped)[/dim yellow]"
                 elif status == "meili_only":
                     status_str = "[dim yellow]meili_only (skipped)[/dim yellow]"
+                elif status in ("text_index_missing", "coverage_gap"):
+                    status_str = f"[yellow]{status}[/yellow]"
                 else:
                     status_str = "[yellow]chunk_mismatch[/yellow]"
 
@@ -6457,6 +6498,76 @@ def _parity_all_corpora(
         sys.exit(1)
 
 
+def _qdrant_text_parity(qdrant, corpus: str, metadata, dry_run: bool, output_json: bool) -> bool:
+    """Parity for a corpus whose text backend is qdrant: ensure its text index, report coverage.
+
+    Makes no MeiliSearch read or write; a MeiliSearch index kept beside the
+    corpus is stale and unused until ``--finalize`` (RDR-027 Q8, Failure
+    Modes). Unless ``dry_run``, the text index is ensured, so repair
+    recreates a missing one, and the collection is awaited to green before
+    coverage is counted.
+
+    Returns:
+        Whether the index was created
+    """
+    from ..retrieval.qdrant_text import QdrantTextBackend
+
+    corpus_type = metadata.get("collection_type") or get_collection_type(qdrant, corpus)
+    text_index = QdrantTextBackend(qdrant, {corpus: corpus_type})
+    before = text_index.coverage(corpus, files=False)
+    missing = before.indexed is None
+    green = None
+    if dry_run:
+        coverage = before
+    else:
+        text_index.ensure(corpus, corpus_type)
+        green = text_index.wait_green(corpus)
+        coverage = text_index.coverage(corpus, files=False)
+    index_created = missing and not dry_run
+
+    if coverage.complete:
+        message = f"Text coverage complete for corpus '{corpus}'"
+    else:
+        message = f"Text coverage incomplete for corpus '{corpus}': {coverage.status}"
+    if output_json:
+        print_json(
+            "success" if coverage.complete else "warning",
+            "Dry run complete" if dry_run else message,
+            data={
+                "corpus": corpus,
+                "text_backend": "qdrant",
+                "dry_run": dry_run,
+                "index_created": index_created,
+                "would_create_index": missing and dry_run,
+                "green": green,
+                "text_chunks": coverage.indexed or 0,
+                "coverage": coverage.to_data(),
+            },
+        )
+        return index_created
+
+    if dry_run:
+        console.print("\n[bold yellow]DRY RUN - No changes will be made[/bold yellow]")
+        if missing:
+            console.print(f"\nWould create the text index for '{corpus}'")
+    color = "green" if coverage.complete else "yellow"
+    console.print(f"\n[{color}]{message}[/{color}]")
+    if index_created:
+        console.print("   [blue]Text index created[/blue]")
+    if green is False:
+        console.print("   [yellow]The collection is not green yet; counts may still grow[/yellow]")
+    if coverage.indexed is not None:
+        console.print(
+            f"   Text index: {coverage.indexed} of {coverage.searchable_chunks} searchable chunks"
+        )
+    if coverage.zero_token_chunks:
+        console.print(
+            f"   Zero-token chunks: {coverage.zero_token_chunks} "
+            "(yield no token; a chunking finding, not a gap)"
+        )
+    return index_created
+
+
 def _parity_single_corpus(
     corpus: str,
     dry_run: bool,
@@ -6505,7 +6616,6 @@ def _parity_single_corpus(
 
         # Initialize clients with extended timeout for batch operations
         qdrant = create_qdrant_client(timeout=qdrant_timeout)
-        meili = get_meili_client()
 
         # Verify corpus exists in both systems
         try:
@@ -6515,6 +6625,17 @@ def _parity_single_corpus(
                 f"Qdrant collection '{corpus}' not found. "
                 f"Create it first with: arc corpus create {corpus} --type <type>"
             )
+
+        # A Qdrant text corpus has no MeiliSearch side: its parity is its
+        # text coverage (RDR-027 Q8).
+        corpus_metadata = get_collection_metadata(qdrant, corpus)
+        if text_backend_of(corpus_metadata) == "qdrant":
+            covered = _qdrant_text_parity(qdrant, corpus, corpus_metadata, dry_run, output_json)
+            if not all_corpora_mode:
+                interaction_logger.finish(result_count=int(covered))
+            return
+
+        meili = get_meili_client()
 
         if not meili.health_check():
             raise ResourceNotFoundError(

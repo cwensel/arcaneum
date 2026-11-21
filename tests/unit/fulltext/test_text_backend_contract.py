@@ -132,8 +132,20 @@ def test_rename_moves_chunks_to_the_new_path(corpus):
 def test_coverage_counts_chunks_and_files(corpus):
     coverage = corpus.coverage(CORPUS)
     assert coverage == Coverage(
-        chunks=3, searchable_chunks=3, files={"/docs/a.pdf": 2, "/docs/b.pdf": 1}
+        chunks=3,
+        searchable_chunks=3,
+        files={"/docs/a.pdf": 2, "/docs/b.pdf": 1},
+        indexed=3,
+        searchable_files={"/docs/a.pdf": 2, "/docs/b.pdf": 1},
     )
+    assert coverage.status == "synced"
+
+
+def test_coverage_without_files_counts_only_the_corpus(corpus):
+    coverage = corpus.coverage(CORPUS, files=False)
+    assert (coverage.chunks, coverage.searchable_chunks, coverage.indexed) == (3, 3, 3)
+    assert coverage.files == {}
+    assert coverage.status == "synced"
 
 
 def test_corpora_counts_each_corpus(corpus):

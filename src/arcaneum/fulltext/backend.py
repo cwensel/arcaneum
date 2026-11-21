@@ -174,12 +174,16 @@ class MeiliTextBackend:
         if self.client.index_exists(corpus):
             self.client.delete_index(corpus)
 
-    def coverage(self, corpus: str) -> Coverage:
+    def coverage(self, corpus: str, *, files: bool = True) -> Coverage:
+        """Every document is searchable and indexed: MeiliSearch has no separate text index."""
         chunks = self.client.get_index_stats(corpus).get("numberOfDocuments", 0)
+        per_file = self.client.get_chunk_counts_by_file(corpus) if files else {}
         return Coverage(
             chunks=chunks,
             searchable_chunks=chunks,
-            files=self.client.get_chunk_counts_by_file(corpus),
+            files=per_file,
+            indexed=chunks,
+            searchable_files=dict(per_file),
         )
 
     def corpora(self) -> Dict[str, int]:

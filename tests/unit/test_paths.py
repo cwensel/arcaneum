@@ -104,6 +104,9 @@ def test_get_meilisearch_api_key_generates_and_caches(isolate_env):
     import importlib
 
     importlib.reload(p)
+    # A fresh home is a new user, whose MeiliSearch is off: enable it (arcaneum#183).
+    config_dir = p.get_config_dir()
+    (config_dir / "config.yaml").write_text("meilisearch:\n  enabled: true\n")
     key1 = p.get_meilisearch_api_key()
     key2 = p.get_meilisearch_api_key()
     assert key1 == key2

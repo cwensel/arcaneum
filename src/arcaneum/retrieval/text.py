@@ -7,7 +7,7 @@ MeiliSearch, or Qdrant's text index over the chunk points.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from ..cli.errors import (
@@ -36,6 +36,18 @@ class _MissingCorpus(Exception):
     exception to inspect: ``fetch_from_corpora``'s ``is_missing`` predicate
     matches on this type.
     """
+
+
+def _collection_exists(qdrant_client, corpus: str) -> bool:
+    """Whether Qdrant holds ``corpus``'s collection; a failed check is Qdrant's error."""
+    if qdrant_client is None:
+        return False
+    try:
+        return bool(qdrant_client.collection_exists(corpus))
+    except Exception as e:
+        if is_connection_failure(e):
+            raise service_down("Qdrant", e) from e
+        raise ArcaneumError(f"Search failed: {e}") from e
 
 
 @dataclass
@@ -147,6 +159,7 @@ def search_text(
     text_backend: Optional["TextBackend"] = None,
     qdrant_client=None,
     verbose: bool = False,
+    meilisearch_enabled: Optional[bool] = None,
 ) -> TextSearchResult:
     """Search each corpus on its text backend and merge hits round-robin across corpora.
 
@@ -172,6 +185,10 @@ def search_text(
             corpus a MeiliSearch corpus cited by absolute path (RDR-026 Q4),
             and a failed read is named in ``service_errors``
         verbose: Log skipped corpora
+        meilisearch_enabled: False builds no MeiliSearch backend: a corpus
+            Qdrant holds on meili is refused naming the setting, one it does
+            not hold is missing, and a failed metadata read is Qdrant's
+            error (``meilisearch.enabled`` from config when None; arcaneum#183)
 
     Raises:
         UnknownCorpusError: no requested corpus exists
@@ -202,8 +219,29 @@ def search_text(
         raise ArcaneumError(str(e)) from e
     corpus_types = {corpus: metadata[corpus].get("collection_type") for corpus in corpora}
 
+    meili_corpora = [corpus for corpus in corpora if backend_names[corpus] == "meili"]
+    if meili_corpora and meilisearch_enabled is not True:
+        from ..config import meili_corpora_conflict, resolve_meili_settings
+
+        settings = resolve_meili_settings()
+        if meilisearch_enabled is None:
+            meilisearch_enabled = settings.enabled
+        if not meilisearch_enabled:
+            if read.error is not None:
+                raise ServiceDownError(f"Qdrant is unreachable: {read.error}")
+            # Held by Qdrant: a legacy collection has no metadata point but exists.
+            held = [
+                corpus
+                for corpus in meili_corpora
+                if metadata[corpus] or _collection_exists(qdrant_client, corpus)
+            ]
+            if held:
+                raise ArcaneumError(
+                    meili_corpora_conflict(replace(settings, enabled=False), held)
+                )
+
     backends: Dict[str, "TextBackend"] = {}
-    if "meili" in backend_names.values():
+    if meili_corpora and meilisearch_enabled is not False:
         if text_backend is None:
             from ..cli.utils import create_meili_client
             from ..fulltext.backend import MeiliTextBackend
@@ -226,6 +264,8 @@ def search_text(
     fetch_limit = per_corpus_limit(corpora, limit, offset)
 
     def _fetch(corpus_name: str) -> list:
+        if backend_names[corpus_name] not in backends:
+            raise _MissingCorpus(corpus_name)  # MeiliSearch's, which is disabled
         backend = backends[backend_names[corpus_name]]
         try:
             if not backend.exists(corpus_name):

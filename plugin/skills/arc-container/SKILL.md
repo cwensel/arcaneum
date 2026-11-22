@@ -37,11 +37,29 @@ arc container reset --confirm         # Reset both services
 arc container reset --service qdrant --confirm  # Reset only Qdrant
 ```
 
+## Optional MeiliSearch
+
+MeiliSearch is optional. `meilisearch.enabled` in `~/.config/arcaneum/config.yaml`
+decides whether `arc container start`, `restart`, `status`, `upgrade` and `backup`
+include it. When the key is absent, a stored MeiliSearch key (or
+`MEILISEARCH_API_KEY`) means an existing user and keeps it on; a new user gets
+Qdrant only. The first `arc container start` records the choice in the config.
+
+```yaml
+meilisearch:
+  enabled: false   # true to run MeiliSearch again
+```
+
+While it is `false`, `arc container start` refuses to finish if any corpus still
+uses MeiliSearch for text search, naming each corpus and its
+`arc corpus migrate-text <corpus> --to qdrant` command.
+
 ## Service URLs
 
 After starting:
-- **Qdrant**: http://localhost:6333 (REST API), http://localhost:6334 (gRPC)
-- **MeiliSearch**: http://localhost:7700
+
+- **Qdrant**: <http://localhost:6333> (REST API), <http://localhost:6334> (gRPC)
+- **MeiliSearch** (when enabled): <http://localhost:7700>
 
 ## Troubleshooting
 

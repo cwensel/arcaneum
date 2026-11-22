@@ -134,26 +134,39 @@ def list_corpora_command(details: bool, output_json: bool):
     """
     from rich.table import Table
 
+    from ..config import meili_corpora_conflict, resolve_meili_settings
+
     interaction_logger.start("corpus", "list")
 
     try:
+        settings = resolve_meili_settings()
         listing = list_corpora(
             details=details,
             qdrant_factory=create_qdrant_client,
             text_factory=lambda: MeiliTextBackend(create_meili_client()),
+            meilisearch_enabled=settings.enabled,
         )
     except Exception as e:
         interaction_logger.finish(error=str(e))
         raise
 
     corpora = listing.corpora
+    # MeiliSearch disabled while a corpus still searches text on it (arcaneum#183).
+    conflict = meili_corpora_conflict(
+        settings, [c["name"] for c in corpora if c["text_backend"] == "meili"]
+    )
     if not output_json:
         for service_error in listing.service_errors:
             print_error(f"Could not connect to {service_error}")
+        if conflict:
+            print_error(conflict)
 
     # Output
     if output_json:
-        print_json("success", f"Found {len(corpora)} corpora", listing.to_data())
+        data = listing.to_data()
+        if conflict:
+            data["warnings"] = [conflict]
+        print_json("success", f"Found {len(corpora)} corpora", data)
     else:
         if not corpora:
             print_info("No corpora found")
@@ -344,7 +357,7 @@ def create_corpus_command(
     models: str | None,
     description: str | None,
     output_json: bool,
-    text_backend: str = DEFAULT_TEXT_BACKEND,
+    text_backend: str | None = None,
 ):
     """Create the Qdrant collection and the corpus's text index.
 
@@ -360,10 +373,19 @@ def create_corpus_command(
         output_json: If True, output JSON format
         text_backend: ``meili`` (a MeiliSearch index) or ``qdrant`` (a text
             index on the collection's ``text`` payload; MeiliSearch is never
-            contacted), recorded in the collection metadata (RDR-027 Q2)
+            contacted), recorded in the collection metadata (RDR-027 Q2).
+            None takes ``corpus.default_text_backend`` (inferred when absent:
+            ``meili`` for an existing MeiliSearch user, else ``qdrant``);
+            ``meili`` is refused while ``meilisearch.enabled`` is false
+            (arcaneum#183)
     """
+    from ..config import resolve_meili_settings
+
     if not models:
         models = default_models_for_type(corpus_type)
+    settings = resolve_meili_settings()
+    if text_backend is None:
+        text_backend = settings.default_text_backend
 
     # Start interaction logging (RDR-018)
     interaction_logger.start(
@@ -381,6 +403,11 @@ def create_corpus_command(
             validate_text_backend(text_backend)
         except ValueError as e:
             raise InvalidArgumentError(str(e))
+        if text_backend == "meili" and not settings.enabled:
+            raise InvalidArgumentError(
+                f"Cannot create '{name}' on MeiliSearch: {settings.disabled_reason()}, "
+                "or create it with --text-backend qdrant"
+            )
         if not output_json:
             print_info(f"Creating corpus '{name}'")
             print_info(f"Type: {corpus_type}, Models: {models}, Text backend: {text_backend}")

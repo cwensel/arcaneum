@@ -372,6 +372,7 @@ def get_passage(
     max_chars: int = 0,
     qdrant_client=None,
     text_backend=None,
+    meilisearch_enabled: Optional[bool] = None,
 ) -> PassageResult:
     """The chunk ``chunk_id`` of ``corpus`` with up to ``before``/``after`` neighbours.
 
@@ -384,6 +385,9 @@ def get_passage(
         qdrant_client: Qdrant client (created from config when None)
         text_backend: The corpus's ``TextBackend`` (MeiliSearch from config
             when None)
+        meilisearch_enabled: False never looks in MeiliSearch, so a chunk
+            Qdrant lacks is not found (``meilisearch.enabled`` from config
+            when None; arcaneum#183)
 
     Raises:
         InvalidArgumentError: a bound is out of range, or the id is empty
@@ -416,7 +420,11 @@ def get_passage(
         down["Qdrant"] = e
         qdrant_client = None
 
-    if seed is None:
+    if seed is None and meilisearch_enabled is None:
+        from ..config import resolve_meili_settings
+
+        meilisearch_enabled = resolve_meili_settings().enabled
+    if seed is None and meilisearch_enabled:
         source = MEILISEARCH
         try:
             if text_backend is None:

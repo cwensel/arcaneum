@@ -138,8 +138,24 @@ def get_compose_file(output_json: bool = False):
     return None
 
 
+# The compose profile MeiliSearch sits behind (deploy/docker-compose.yml).
+_MEILI_PROFILE = "meilisearch"
+
+
+def _meili_settings(migrate: bool = False):
+    """``meilisearch.enabled`` and the default text backend, from the user's config."""
+    from arcaneum.config import resolve_meili_settings
+
+    return resolve_meili_settings(resolve_config_path(migrate=migrate))
+
+
 def run_compose_command(
-    args, check=True, capture_output=False, env=None, output_json: bool = False
+    args,
+    check=True,
+    capture_output=False,
+    env=None,
+    output_json: bool = False,
+    meilisearch: bool | None = None,
 ):
     """Run a docker compose command.
 
@@ -148,6 +164,9 @@ def run_compose_command(
         check: Whether to raise on non-zero exit code
         capture_output: Whether to capture stdout/stderr
         env: Optional environment variables to add (merged with current env)
+        meilisearch: Whether MeiliSearch's compose profile is active (from
+            ``meilisearch.enabled`` when None). ``down`` always passes it, so a
+            MeiliSearch container left from before it was disabled is removed.
     """
     compose_file = get_compose_file(output_json)
     if not compose_file:
@@ -161,6 +180,13 @@ def run_compose_command(
     run_env = os.environ.copy()
     if env:
         run_env.update(env)
+    if meilisearch is None and args[:1] != ["down"]:
+        meilisearch = _meili_settings().enabled
+    if args[:1] == ["down"] or meilisearch:
+        profiles = [p for p in run_env.get("COMPOSE_PROFILES", "").split(",") if p]
+        if _MEILI_PROFILE not in profiles:
+            profiles.append(_MEILI_PROFILE)
+        run_env["COMPOSE_PROFILES"] = ",".join(profiles)
 
     try:
         result = subprocess.run(
@@ -400,7 +426,8 @@ def _qdrant_version_blocker(output_json: bool = False) -> str | None:
 def get_container_env():
     """Get environment variables for container startup.
 
-    Returns dict with MEILISEARCH_API_KEY set to auto-generated key.
+    Returns dict with MEILISEARCH_API_KEY set to auto-generated key, or ""
+    while MeiliSearch is disabled and no key exists (compose still reads it).
     """
     from arcaneum.paths import get_meilisearch_api_key
 
@@ -446,16 +473,33 @@ def check_meilisearch_health():
 @container_group.command("start")
 @click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def start_command(output_json=False):
-    """Start container services"""
+    """Start container services
+
+    MeiliSearch starts only while meilisearch.enabled is true in config.yaml.
+    Absent, the setting is inferred (a stored MeiliSearch key means an
+    existing user, who keeps it) and recorded, so the choice never flips.
+    """
     if not check_docker_available(output_json):
         _exit_on_error()
 
-    blocker = _qdrant_version_blocker(output_json) or _meili_version_blocker(output_json)
+    from arcaneum.config import meili_corpora_conflict, persist_meili_settings
+
+    try:
+        settings = _meili_settings(migrate=True)
+        for note in persist_meili_settings(settings):
+            print_info(note, output_json)
+    except (OSError, ValueError) as exc:
+        print_error(f"Cannot read the MeiliSearch setting: {exc}", output_json)
+        _exit_on_error()
+
+    blocker = _qdrant_version_blocker(output_json) or (
+        _meili_version_blocker(output_json) if settings.enabled else None
+    )
     if blocker:
         print_error(blocker, output_json)
         _exit_on_error()
 
-    # Get container environment (auto-generates MeiliSearch key if needed)
+    # Get container environment (auto-generates MeiliSearch key if enabled)
     container_env = {**get_container_env(), **get_resource_limit_env()}
 
     print_info("Starting container services...", output_json)
@@ -464,6 +508,7 @@ def start_command(output_json=False):
         env=container_env,
         capture_output=output_json,
         output_json=output_json,
+        meilisearch=settings.enabled,
     )
 
     if result is None:
@@ -473,7 +518,18 @@ def start_command(output_json=False):
     time.sleep(3)
 
     qdrant_healthy = check_qdrant_health()
-    meili_healthy = check_meilisearch_health()
+    meili_healthy = check_meilisearch_health() if settings.enabled else None
+
+    if not settings.enabled and qdrant_healthy:
+        # Refuse the setting while a corpus still searches text on MeiliSearch.
+        try:
+            conflict = meili_corpora_conflict(settings, _corpora_on_meili())
+        except Exception as exc:
+            conflict = None
+            print_warning(f"Could not read each corpus's text backend: {exc}", output_json)
+        if conflict:
+            print_error(conflict, output_json)
+            _exit_on_error()
 
     if output_json:
         print_json(
@@ -486,10 +542,14 @@ def start_command(output_json=False):
                         "rest_api": "http://localhost:6333",
                         "dashboard": "http://localhost:6333/dashboard",
                     },
-                    "meilisearch": {
-                        "healthy": meili_healthy,
-                        "http_api": "http://localhost:7700",
-                    },
+                    "meilisearch": (
+                        {
+                            "healthy": meili_healthy,
+                            "http_api": "http://localhost:7700",
+                        }
+                        if settings.enabled
+                        else {"enabled": False}
+                    ),
                 },
                 "data_directory": str(get_data_dir()),
             },
@@ -504,15 +564,24 @@ def start_command(output_json=False):
     else:
         print_warning("Qdrant may not be ready yet. Check logs with: arc container logs")
 
-    # Check MeiliSearch
-    if meili_healthy:
-        print_success("MeiliSearch started successfully")
-        print("  HTTP API: http://localhost:7700")
-    else:
-        print_warning("MeiliSearch may not be ready yet. Check logs with: arc container logs")
+    # Check MeiliSearch, when it is in use
+    if settings.enabled:
+        if meili_healthy:
+            print_success("MeiliSearch started successfully")
+            print("  HTTP API: http://localhost:7700")
+        else:
+            print_warning("MeiliSearch may not be ready yet. Check logs with: arc container logs")
 
     print()
     print_info(f"Data directory: {get_data_dir()}")
+
+
+def _corpora_on_meili() -> list[str]:
+    """The corpora whose text search MeiliSearch serves, from their Qdrant metadata."""
+    from arcaneum.cli.utils import create_qdrant_client
+    from arcaneum.retrieval.corpora import meili_corpora
+
+    return meili_corpora(create_qdrant_client())
 
 
 @container_group.command("stop")
@@ -538,8 +607,14 @@ def restart_command(output_json=False):
     if not check_docker_available(output_json):
         _exit_on_error()
 
+    meili_enabled = _meili_settings().enabled
     print_info("Restarting container services...", output_json)
-    result = run_compose_command(["restart"], capture_output=output_json, output_json=output_json)
+    result = run_compose_command(
+        ["restart"],
+        capture_output=output_json,
+        output_json=output_json,
+        meilisearch=meili_enabled,
+    )
 
     if result is None:
         _exit_on_error()
@@ -547,7 +622,7 @@ def restart_command(output_json=False):
     time.sleep(2)
 
     qdrant_healthy = check_qdrant_health()
-    meili_healthy = check_meilisearch_health()
+    meili_healthy = check_meilisearch_health() if meili_enabled else None
 
     if output_json:
         print_json(
@@ -556,7 +631,9 @@ def restart_command(output_json=False):
             {
                 "services": {
                     "qdrant": {"healthy": qdrant_healthy},
-                    "meilisearch": {"healthy": meili_healthy},
+                    "meilisearch": (
+                        {"healthy": meili_healthy} if meili_enabled else {"enabled": False}
+                    ),
                 }
             },
         )
@@ -580,17 +657,20 @@ def status_command(output_json=False):
     # Compose project exists but its containers are not currently running. Pass
     # the same interpolation environment used by ``start`` to avoid Compose
     # warning that MEILISEARCH_API_KEY is unset while reading the project.
+    meili_enabled = _meili_settings().enabled
     ps_result = run_compose_command(
         ["ps", "--all"],
         capture_output=output_json,
         env=get_container_env(),
         output_json=output_json,
+        meilisearch=meili_enabled,
     )
     if ps_result is None:
         _exit_on_error()
 
     qdrant_healthy = check_qdrant_health()
-    meili_healthy = check_meilisearch_health()
+    meili_healthy = check_meilisearch_health() if meili_enabled else None
+    meili_status = {"healthy": meili_healthy} if meili_enabled else {"enabled": False}
 
     if not output_json:
         print()
@@ -599,10 +679,11 @@ def status_command(output_json=False):
         else:
             print_error("Qdrant: Unhealthy or not running")
 
-        if meili_healthy:
-            print_success("MeiliSearch: Healthy")
-        else:
-            print_error("MeiliSearch: Unhealthy or not running")
+        if meili_enabled:
+            if meili_healthy:
+                print_success("MeiliSearch: Healthy")
+            else:
+                print_error("MeiliSearch: Unhealthy or not running")
 
     # Show Docker volume information
     if not output_json:
@@ -670,7 +751,7 @@ def status_command(output_json=False):
                     },
                     "services": {
                         "qdrant": {"healthy": qdrant_healthy},
-                        "meilisearch": {"healthy": meili_healthy},
+                        "meilisearch": meili_status,
                     },
                     "volumes": volume_results,
                 },
@@ -686,7 +767,7 @@ def status_command(output_json=False):
                     },
                     "services": {
                         "qdrant": {"healthy": qdrant_healthy},
-                        "meilisearch": {"healthy": meili_healthy},
+                        "meilisearch": meili_status,
                     },
                     "volumes": [],
                     "warnings": [f"Could not retrieve volume information: {e}"],
@@ -1286,7 +1367,11 @@ def _restore_meilisearch(
     show_default=True,
     help="Qdrant operation timeout in seconds",
 )
-@click.option("--skip-meilisearch", is_flag=True, help="Only back up Qdrant snapshots")
+@click.option(
+    "--skip-meilisearch",
+    is_flag=True,
+    help="Only back up Qdrant snapshots (implied while meilisearch.enabled is false)",
+)
 @click.option("--dry-run", is_flag=True, help="Preview the backup using read-only service queries")
 @click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def backup_command(
@@ -1299,9 +1384,19 @@ def backup_command(
     output_json,
     dry_run=False,
 ):
-    """Back up Qdrant snapshots and MeiliSearch indexes."""
+    """Back up Qdrant snapshots and MeiliSearch indexes.
+
+    MeiliSearch is skipped, as with --skip-meilisearch, while
+    meilisearch.enabled is false.
+    """
     if not check_docker_available(output_json):
         _exit_on_error()
+
+    if not skip_meilisearch:
+        settings = _meili_settings()
+        if not settings.enabled:
+            skip_meilisearch = True
+            print_info(f"{settings.disabled_reason()}: backing up Qdrant only", output_json)
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup_path = _resolve_backup_path(output, timestamp, output_json, dry_run=dry_run)
@@ -1407,7 +1502,11 @@ def backup_command(
     show_default=True,
     help="MeiliSearch task timeout in seconds",
 )
-@click.option("--skip-meilisearch", is_flag=True, help="Only restore Qdrant snapshots")
+@click.option(
+    "--skip-meilisearch",
+    is_flag=True,
+    help="Only restore Qdrant snapshots (implied while meilisearch.enabled is false)",
+)
 @click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def restore_command(
     backup_directory,
@@ -1419,7 +1518,11 @@ def restore_command(
     skip_meilisearch,
     output_json,
 ):
-    """Restore Qdrant snapshots and MeiliSearch indexes from a backup."""
+    """Restore Qdrant snapshots and MeiliSearch indexes from a backup.
+
+    While meilisearch.enabled is false, MeiliSearch indexes in the backup are
+    skipped and named in a warning.
+    """
     if not check_docker_available(output_json):
         _exit_on_error()
 
@@ -1431,6 +1534,19 @@ def restore_command(
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     warnings: list[str] = []
+    if not skip_meilisearch:
+        settings = _meili_settings()
+        if not settings.enabled:
+            skip_meilisearch = True
+            skipped = [entry.get("index", "?") for entry in manifest.get("meilisearch", [])]
+            if skipped:
+                _record_warning(
+                    f"Skipped {len(skipped)} MeiliSearch "
+                    f"index{'es' if len(skipped) != 1 else ''} ({', '.join(skipped)}): "
+                    f"{settings.disabled_reason()}",
+                    output_json,
+                    warnings,
+                )
     _restore_qdrant(
         backup_path,
         qdrant_url,
@@ -1827,12 +1943,21 @@ def upgrade_command(
     in place, verifying the server version and per-collection point counts.
     MeiliSearch: exports every index to a JSONL backup, restarts on the pinned
     image with --upgrade-db, and verifies per-index document counts. On failure
-    'arc container restore' rebuilds from the backup it took.
+    'arc container restore' rebuilds from the backup it took. Skipped while
+    meilisearch.enabled is false.
     """
     if not check_docker_available(output_json):
         _exit_on_error()
 
     qdrant = _upgrade_qdrant(qdrant_url, qdrant_timeout, dry_run, output_json)
+    settings = _meili_settings()
+    if not settings.enabled:
+        print_success(
+            f"{settings.disabled_reason()}: nothing to upgrade there",
+            output_json,
+            data={"qdrant": qdrant, "meilisearch": {"enabled": False}},
+        )
+        return
     _upgrade_meilisearch(meilisearch_url, dry_run, output_json, qdrant)
 
 

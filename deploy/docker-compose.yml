@@ -35,8 +35,12 @@ services:
           memory: 2G
           cpus: '1.0'
 
-  # MeiliSearch full-text search (RDR-008)
+  # MeiliSearch full-text search (RDR-008), optional (arcaneum#183). The
+  # profile keeps it out of `docker compose up` unless named: `arc container`
+  # commands pass it only while meilisearch.enabled is true in
+  # ~/.config/arcaneum/config.yaml, and always on `down`.
   meilisearch:
+    profiles: [meilisearch]
     # Exact patch pin: MeiliSearch refuses data written by any other version.
     # Bump it with `arc container upgrade`, which backs up and migrates the data.
     image: getmeili/meilisearch:${MEILI_IMAGE_TAG:-v1.54.0}

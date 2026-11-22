@@ -347,6 +347,24 @@ def isolated_state_dir(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def existing_meilisearch_user(tmp_path_factory, monkeypatch):
+    """Point XDG_CONFIG_HOME at a per-test home holding a MeiliSearch key.
+
+    Whether MeiliSearch is enabled, and which text backend new corpora get, is
+    inferred from the user's home when config.yaml does not say (arcaneum#183):
+    a stored key reads as an existing MeiliSearch user. Without this, the suite
+    would follow the developer's real home, and a CI runner (no key) would
+    read as a new, MeiliSearch-free user. Tests that set XDG_CONFIG_HOME
+    themselves still override this.
+    """
+    config_home = tmp_path_factory.mktemp("xdg-config")
+    key_file = config_home / "arcaneum" / "meilisearch.key"
+    key_file.parent.mkdir()
+    key_file.write_text("test-meilisearch-key-0123456789\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+
+
+@pytest.fixture(autouse=True)
 def no_remote_embedding(monkeypatch):
     """Keep document embedding local unless a test configures remote workers.
 

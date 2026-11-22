@@ -306,8 +306,9 @@ arc index text markdown <path> --index <name> # Index Markdown to MeiliSearch
 A "corpus" is a paired Qdrant collection and MeiliSearch index with the same name.
 
 ```bash
-arc corpus create <name> --type <type> --models <model>  # Create both
+arc corpus create <name> --type <type> --models <model>  # Create the corpus
 arc corpus create <name> --type <type> --text-backend qdrant  # Text search from the collection, no MeiliSearch
+arc corpus create <name> --type <type> --text-backend meili   # Text search from a MeiliSearch index
 arc corpus update <name> --description <text>            # Update metadata
 arc corpus update <name> --clear-description             # Remove the corpus description
 arc corpus delete <name>                                 # Delete both
@@ -321,6 +322,10 @@ arc corpus doctor [<name>...]                            # Check all corpora, li
 arc corpus parity <name>                                 # Restore parity between indexes
 arc corpus hook install <name>                           # Auto-sync a git repo's branch
 ```
+
+Without `--text-backend`, `corpus create` uses `corpus.default_text_backend`
+from `~/.config/arcaneum/config.yaml` (see [Optional MeiliSearch](#optional-meilisearch)).
+`--text-backend meili` is refused while `meilisearch.enabled` is `false`.
 
 **Note:** If you already have a collection and index with the same name, you can
 use `corpus sync` directly - no need to run `corpus create` first.
@@ -827,6 +832,9 @@ arc corpus migrate-text MyCorpus --finalize              # Delete the retained M
 - `--dry-run`: Run the checks, the reconcile and the coverage count; write nothing
 - `--verbose`: Show per-file refill details
 - `--json`: Output JSON format
+
+`--to meili` and `--finalize` need MeiliSearch, so both are refused while
+`meilisearch.enabled` is `false`.
 
 **How it works:**
 
@@ -1892,9 +1900,9 @@ not already exist.
 endpoints for one process (empty disables the pool), and `ARC_EMBED_AUTHKEY`
 sets their shared key. See [Remote Embedding Workers](#remote-embedding-workers).
 
-Note: `MEILISEARCH_API_KEY` is auto-generated on first `arc container start` and stored
-in `~/.config/arcaneum/meilisearch.key`. You only need to set it manually if you want
-to use a custom key or share the same key across machines.
+Note: while MeiliSearch is enabled, `MEILISEARCH_API_KEY` is auto-generated on first
+`arc container start` and stored in `~/.config/arcaneum/meilisearch.key`. You only need
+to set it manually if you want to use a custom key or share the same key across machines.
 
 ## For Claude Code Agents
 
@@ -2194,7 +2202,8 @@ MeiliSearch syntax, as in the last example:
 
 ### Configuration
 
-MeiliSearch API key is auto-generated on first `arc container start` and stored in:
+While MeiliSearch is enabled, its API key is auto-generated on first
+`arc container start` and stored in:
 
 ```text
 ~/.config/arcaneum/meilisearch.key
@@ -2272,6 +2281,49 @@ arc container restore ./arcaneum-backup
 arc container reset --confirm
 ```
 
+### Optional MeiliSearch
+
+MeiliSearch is optional. A corpus on the `qdrant` text backend serves full-text
+search from its Qdrant collection, so MeiliSearch is needed only by corpora on
+`meili` and by the MeiliSearch-only `arc indexes` and `arc index text` commands.
+Two settings in `~/.config/arcaneum/config.yaml` control it:
+
+```yaml
+meilisearch:
+  enabled: false            # include MeiliSearch in containers, backups and health checks
+corpus:
+  default_text_backend: qdrant   # what `arc corpus create` uses without --text-backend
+```
+
+When a setting is absent, it is inferred. A stored MeiliSearch key
+(`~/.config/arcaneum/meilisearch.key`, written by any earlier
+`arc container start`) or a `MEILISEARCH_API_KEY` environment variable marks
+an existing user: `enabled: true` and `default_text_backend: meili`. Without
+either, a new user gets `enabled: false` and `default_text_backend: qdrant`,
+and no key is generated. `arc container start` records the inferred values in
+`config.yaml`, appending them and keeping the rest of the file, so the choice
+does not change later.
+
+With `enabled: false`:
+
+- `arc container start`, `restart`, `status` and `upgrade` leave
+  MeiliSearch out (its compose service sits behind the `meilisearch` profile);
+  `stop` and `reset` still stop a MeiliSearch container left running.
+- `arc container backup` skips MeiliSearch and `restore` names the
+  MeiliSearch indexes it skipped.
+- `arc corpus list`, `arc doctor` and `arc search text` neither contact
+  MeiliSearch nor report it as down.
+- `arc corpus create --text-backend meili` and
+  `arc corpus migrate-text --to meili` or `--finalize` are refused.
+
+The setting is refused while any corpus is still on `meili`:
+`arc container start`, `arc corpus list` and `arc doctor` name each such corpus
+and its `arc corpus migrate-text <corpus> --to qdrant` command. To turn
+MeiliSearch off for good, set `enabled: true`, migrate each corpus to `qdrant`,
+run `arc corpus migrate-text <corpus> --finalize` for each, then set
+`enabled: false` and run `arc container stop` and `arc container start`. To
+turn it back on, set `enabled: true` and run `arc container start`.
+
 **Backup & Restore Options:**
 
 Both `arc container backup` and `arc container restore` accept:
@@ -2282,7 +2334,9 @@ Both `arc container backup` and `arc container restore` accept:
 - `--qdrant-timeout`: Qdrant operation timeout in seconds
 - `--skip-meilisearch`: Operate on Qdrant snapshots only, leaving MeiliSearch
   untouched. Use when only the vector data matters, or when MeiliSearch is
-  unavailable and would otherwise abort the run.
+  unavailable and would otherwise abort the run. Implied while
+  `meilisearch.enabled` is `false`; restore then names the MeiliSearch indexes
+  it skipped.
 - `--json`: Output JSON format
 
 `arc container backup` additionally accepts:

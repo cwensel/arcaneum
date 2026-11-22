@@ -12,6 +12,13 @@ A corpus maintains both a Qdrant collection (semantic search) and a MeiliSearch 
 The `corpus` commands manage Qdrant and MeiliSearch together. Single-system commands
 (`arc index`, `arc collection`, `arc indexes`) are for advanced workflows that need one system without the other.
 
+MeiliSearch is optional: a corpus on the `qdrant` text backend serves full-text
+search from its Qdrant collection. Without `--text-backend`, `arc corpus create`
+uses `corpus.default_text_backend` from `~/.config/arcaneum/config.yaml`
+(`qdrant` for a new user, `meili` for one who already ran MeiliSearch). While
+`meilisearch.enabled` is `false`, `--text-backend meili`,
+`arc corpus migrate-text --to meili` and `--finalize` are refused.
+
 ```bash
 # Create corpus (creates both collection and index)
 arc corpus create MyCorpus --type pdf

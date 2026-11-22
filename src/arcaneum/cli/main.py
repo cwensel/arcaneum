@@ -1628,9 +1628,12 @@ def corpus_jobs(output_json):
 @click.option(
     "--text-backend",
     type=click.Choice(["meili", "qdrant"]),
-    default="meili",
-    show_default=True,
-    help="Full-text backend: a MeiliSearch index, or a text index in the Qdrant collection",
+    default=None,
+    help=(
+        "Full-text backend: a MeiliSearch index, or a text index in the Qdrant collection "
+        "[default: corpus.default_text_backend in config.yaml; qdrant unless MeiliSearch "
+        "was already in use]"
+    ),
 )
 @click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def create_corpus(name, corpus_type, models, description, text_backend, output_json):

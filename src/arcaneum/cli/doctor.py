@@ -90,10 +90,11 @@ def _version_tuple(version: str) -> Tuple[int, ...]:
 def check_text_backends() -> Tuple[bool | None, str]:
     """Count corpora per text backend; fail below Qdrant 1.20 when any corpus is on qdrant.
 
-    MeiliSearch stays a required check until 0.14.0 (RDR-027 Q10). An
-    unreachable Qdrant is the connection check's failure, so this one is
-    then only informational.
+    Also fails while ``meilisearch.enabled`` is false and a corpus is still on
+    meili, naming each and its migration (arcaneum#183). An unreachable Qdrant
+    is the connection check's failure, so this one is then only informational.
     """
+    from arcaneum.config import meili_corpora_conflict, resolve_meili_settings
     from arcaneum.indexing.collection_metadata import (
         TEXT_BACKENDS,
         get_collection_metadata,
@@ -107,12 +108,22 @@ def check_text_backends() -> Tuple[bool | None, str]:
         return None, "Not checked (Qdrant unreachable)"
 
     counts = dict.fromkeys(TEXT_BACKENDS, 0)
+    on_meili = []
     for name in names:
         try:
-            counts[text_backend_of(get_collection_metadata(client, name))] += 1
+            backend = text_backend_of(get_collection_metadata(client, name))
         except Exception:
-            counts["meili"] += 1  # an unreadable metadata point reads as the default
+            backend = "meili"  # an unreadable metadata point reads as the default
+        counts[backend] += 1
+        if backend == "meili":
+            on_meili.append(name)
     summary = ", ".join(f"{count} {backend}" for backend, count in counts.items())
+    try:
+        conflict = meili_corpora_conflict(resolve_meili_settings(), sorted(on_meili))
+    except ValueError as e:
+        return False, f"Corpora per text backend: {summary}; {e}"
+    if conflict:
+        return False, f"Corpora per text backend: {summary}; {conflict}"
     if not counts["qdrant"]:
         return True, f"Corpora per text backend: {summary}"
 
@@ -130,8 +141,21 @@ def check_text_backends() -> Tuple[bool | None, str]:
     return True, f"Corpora per text backend: {summary} (Qdrant {version})"
 
 
-def check_meilisearch_connection(verbose: bool = False) -> Tuple[bool, str]:
-    """Check MeiliSearch server connectivity."""
+def check_meilisearch_connection(verbose: bool = False) -> Tuple[bool | None, str]:
+    """Check MeiliSearch server connectivity, unless MeiliSearch is disabled.
+
+    Disabled (``meilisearch.enabled``, inferred false for a new user), it is
+    not contacted and no key is generated: the check is optional (arcaneum#183).
+    """
+    from arcaneum.config import resolve_meili_settings
+
+    try:
+        settings = resolve_meili_settings()
+    except ValueError as e:
+        return False, str(e)
+    if not settings.enabled:
+        return None, f"Disabled (meilisearch.enabled: false in {settings.config_path})"
+
     try:
         from arcaneum.fulltext.client import FullTextClient
     except ImportError:

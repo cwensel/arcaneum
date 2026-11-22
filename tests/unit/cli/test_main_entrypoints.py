@@ -255,7 +255,7 @@ def test_corpus_create_models_default_is_inferred():
         "corpus_type": "markdown",
         "models": None,
         "description": None,
-        "text_backend": "meili",
+        "text_backend": None,
     }
 
 

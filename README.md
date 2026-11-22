@@ -132,7 +132,7 @@ pipx install "https://github.com/cwensel/arcaneum/releases/download/v0.12.0/arca
 arc doctor
 arc container start
 
-# 4. Create a corpus and sync content (indexes to both Qdrant and MeiliSearch)
+# 4. Create a corpus and sync content (semantic and full-text indexes)
 arc corpus create Frameworks --type code
 arc corpus sync Frameworks ~/libs/fastapi ~/libs/sqlalchemy
 
@@ -143,13 +143,19 @@ arc search text '"async def"' --corpus Frameworks
 
 **First time?** Run `arc doctor` to check prerequisites and get setup guidance.
 
+**MeiliSearch is optional.** A new install runs Qdrant only, and new corpora
+serve full-text search from Qdrant. An install that already ran MeiliSearch
+keeps it. To turn it on or off, set `meilisearch.enabled` in
+`~/.config/arcaneum/config.yaml` and run `arc container start`; see
+[Optional MeiliSearch](docs/guides/cli-reference.md#optional-meilisearch).
+
 👉 **[Full Quick Start Guide](docs/guides/quickstart.md)** - Detailed walkthrough with troubleshooting
 
 ## Quick Reference
 
 ```bash
 # Service Management
-arc container start          # Start Qdrant and MeiliSearch
+arc container start          # Start Qdrant (and MeiliSearch, if enabled)
 arc container status         # Check service health
 arc container backup         # Back up Qdrant and MeiliSearch data
 arc container restore DIR    # Restore a backup
@@ -338,7 +344,7 @@ information with rich metadata. Content is automatically persisted for durabilit
 ### Manage Services
 
 ```bash
-arc container start    # Start Qdrant and MeiliSearch
+arc container start    # Start Qdrant (and MeiliSearch, if enabled)
 arc container status   # Check health
 arc container backup    # Create a timestamped backup
 arc container logs     # View logs

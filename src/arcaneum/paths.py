@@ -93,11 +93,17 @@ def get_meilisearch_api_key() -> str:
     """Get or generate the MeiliSearch API key.
 
     The key is stored in ~/.config/arcaneum/meilisearch.key and is
-    auto-generated on first access. This ensures MeiliSearch runs in
-    production mode (secure) without manual configuration.
+    auto-generated on first access while MeiliSearch is enabled. This ensures
+    MeiliSearch runs in production mode (secure) without manual configuration.
+
+    A key is generated only while MeiliSearch is enabled
+    (``arcaneum.config.resolve_meili_settings``): a stored key is what marks
+    an existing MeiliSearch user, so generating one for a new user would turn
+    MeiliSearch on for good (arcaneum#183).
 
     Returns:
-        The MeiliSearch API key (32 characters, URL-safe base64)
+        The MeiliSearch API key (32 characters, URL-safe base64), or "" when
+        MeiliSearch is disabled and no key exists
     """
     import secrets
     import base64
@@ -114,6 +120,11 @@ def get_meilisearch_api_key() -> str:
         key = key_file.read_text().strip()
         if len(key) >= 16:
             return key
+
+    from arcaneum.config import resolve_meili_settings
+
+    if not resolve_meili_settings().enabled:
+        return ""
 
     # Generate a new secure key (32 bytes = 43 chars base64, URL-safe)
     key = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode("ascii").rstrip("=")

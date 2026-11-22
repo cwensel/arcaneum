@@ -600,9 +600,14 @@ def migrate_text_command(
     verbose: bool,
     output_json: bool,
 ) -> None:
-    """``arc corpus migrate-text``, under the corpus write lock unless ``--dry-run``."""
+    """``arc corpus migrate-text``, under the corpus write lock unless ``--dry-run``.
+
+    ``--to meili`` and ``--finalize`` need MeiliSearch, so they are refused,
+    before any client is made, while ``meilisearch.enabled`` is false.
+    """
     from rich.console import Console
 
+    from ..config import resolve_meili_settings
     from .corpus_lock import acquire_corpus_lock
     from .output import print_json
     from .utils import create_meili_client, create_qdrant_client
@@ -612,6 +617,24 @@ def migrate_text_command(
     def say(message: str) -> None:
         if not output_json:
             console.print(f"[dim]{message}[/dim]")
+
+    def fail(e: MigrationError) -> None:
+        if output_json:
+            print_json("error", str(e), data=e.report, errors=[e.to_error()])
+        else:
+            print(f"[ERROR] {e}", file=sys.stderr)
+        sys.exit(e.exit_code)
+
+    if do_finalize or to == "meili":
+        settings = resolve_meili_settings()
+        if not settings.enabled:
+            step = "--finalize" if do_finalize else "--to meili"
+            fail(
+                MigrationError(
+                    f"migrate-text {step} needs MeiliSearch: {settings.disabled_reason()}",
+                    {"corpus": corpus},
+                )
+            )
 
     qdrant = create_qdrant_client()
     meili_client = create_meili_client()
@@ -633,11 +656,7 @@ def migrate_text_command(
                     say=say,
                 )
     except MigrationError as e:
-        if output_json:
-            print_json("error", str(e), data=e.report, errors=[e.to_error()])
-        else:
-            print(f"[ERROR] {e}", file=sys.stderr)
-        sys.exit(e.exit_code)
+        fail(e)
 
     message = _summary(report)
     if output_json:

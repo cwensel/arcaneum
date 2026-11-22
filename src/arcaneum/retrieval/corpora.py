@@ -534,6 +534,25 @@ def _default_text_backend():
     return MeiliTextBackend(create_meili_client())
 
 
+def meili_corpora(qdrant) -> List[str]:
+    """The corpora whose text MeiliSearch serves, as their Qdrant metadata records it.
+
+    A collection with no ``text_backend``, or unreadable metadata, reads as
+    MeiliSearch's (``text_backend_of``'s legacy default).
+    """
+    return sorted(
+        col.name
+        for col in qdrant.get_collections().collections
+        if text_backend_of(get_collection_metadata(qdrant, col.name)) == "meili"
+    )
+
+
+def _meilisearch_enabled() -> bool:
+    from ..config import resolve_meili_settings
+
+    return resolve_meili_settings().enabled
+
+
 def list_corpora(
     *,
     details: bool = False,
@@ -541,6 +560,7 @@ def list_corpora(
     text_backend=None,
     qdrant_factory=None,
     text_factory=None,
+    meilisearch_enabled: bool | None = None,
 ) -> CorpusListing:
     """List every corpus with its parity status, writing nothing.
 
@@ -550,6 +570,9 @@ def list_corpora(
         text_backend: The ``TextBackend`` (built by ``text_factory`` when None)
         qdrant_factory: Builds the Qdrant client (from config when None)
         text_factory: Builds the text backend (MeiliSearch from config when None)
+        meilisearch_enabled: False lists Qdrant alone, building no text
+            backend and naming no MeiliSearch error (``meilisearch.enabled``
+            from config when None; arcaneum#183)
 
     A client or backend is built inside its service's error handling, so one
     service failing to construct does not hide the other's corpora.
@@ -560,8 +583,11 @@ def list_corpora(
         names the failure in ``service_errors``.
 
     Raises:
-        ServiceDownError: neither Qdrant nor MeiliSearch is reachable
+        ServiceDownError: neither Qdrant nor MeiliSearch is reachable, or
+            Qdrant is not while MeiliSearch is disabled
     """
+    if meilisearch_enabled is None:
+        meilisearch_enabled = _meilisearch_enabled()
     service_errors: List[str] = []
 
     qdrant_collections: Dict[str, Dict[str, Any]] = {}
@@ -575,12 +601,20 @@ def list_corpora(
 
     meili_indexes: Dict[str, Dict[str, Any]] = {}
     try:
-        if text_backend is None:
-            text_backend = (text_factory or _default_text_backend)()
-        meili_indexes = _text_indexes(text_backend)
+        if meilisearch_enabled:
+            if text_backend is None:
+                text_backend = (text_factory or _default_text_backend)()
+            meili_indexes = _text_indexes(text_backend)
     except Exception as e:
         logger.debug("listing MeiliSearch indexes failed", exc_info=True)
         service_errors.append(_service_error("MeiliSearch", e))
+
+    if not meilisearch_enabled and service_errors and not qdrant_collections:
+        from ..cli.errors import ServiceDownError
+
+        raise ServiceDownError(
+            "Qdrant is unreachable: " + service_errors[0].partition(": ")[2]
+        )
 
     # Qdrant answered if it yielded any collection before failing.
     if len(service_errors) == 2 and not qdrant_collections:

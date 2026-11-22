@@ -127,8 +127,14 @@ SEARCH_TEXT_TOOL: dict[str, Any] = {
             "filter": {
                 "type": "string",
                 "description": (
-                    "Metadata filter: key=value, key:op:value, a JSON object such as "
-                    '{"language": "python"}, or a MeiliSearch expression.'
+                    "Metadata filter. Terms joined by ',' or AND, all of which must match: "
+                    "key=value, key op value with op one of >, >=, <, <= (a number), or "
+                    "key:op:value; quote a value holding a comma or AND, e.g. "
+                    "'filename=\"a, b.pdf\" AND page_number >= 39'. Or flat JSON such as "
+                    '{"language": "python"}. Also a MeiliSearch expression (OR, NOT, !=, '
+                    "IN, TO, EXISTS, IS NULL/EMPTY, a parenthesized group) on MeiliSearch "
+                    "corpora, or a Qdrant filter object (must, should, must_not) on Qdrant "
+                    "corpora."
                 ),
             },
             "max_content_chars": {
@@ -163,7 +169,10 @@ SEARCH_SEMANTIC_TOOL: dict[str, Any] = {
             "filter": {
                 "type": "string",
                 "description": (
-                    "Metadata filter: key=value, key:op:value, a JSON object such as "
+                    "Metadata filter. Terms joined by ',' or AND, all of which must match: "
+                    "key=value, key op value with op one of >, >=, <, <= (a number), or "
+                    "key:op:value; quote a value holding a comma or AND, e.g. "
+                    "'filename=\"a, b.pdf\" AND page_number >= 39'. Or flat JSON such as "
                     '{"language": "python"}, or a Qdrant filter object (must, should, '
                     "must_not)."
                 ),

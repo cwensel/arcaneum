@@ -228,6 +228,26 @@ def test_search_text_schema_advertises_its_bounds(server):
     assert properties["corpora"]["minItems"] == 1
 
 
+@pytest.mark.parametrize("tool", ["SEARCH_TEXT_TOOL", "SEARCH_SEMANTIC_TOOL"])
+def test_filter_description_names_the_neutral_forms(tool):
+    # The neutral forms parse_filter takes in both modes (RDR-027 Q6).
+    import arcaneum.mcp_server as mcp_server
+
+    description = getattr(mcp_server, tool)["input_schema"]["properties"]["filter"]["description"]
+    for form in ("key=value", "key:op:value", ">=", "<=", "AND", "quote"):
+        assert form in description, f"{tool} filter description omits {form!r}"
+
+
+def test_filter_descriptions_name_each_backends_native_syntax():
+    from arcaneum.mcp_server import SEARCH_SEMANTIC_TOOL, SEARCH_TEXT_TOOL
+
+    text = SEARCH_TEXT_TOOL["input_schema"]["properties"]["filter"]["description"]
+    semantic = SEARCH_SEMANTIC_TOOL["input_schema"]["properties"]["filter"]["description"]
+    assert "MeiliSearch corpora" in text
+    assert "Qdrant corpora" in text
+    assert "must_not" in semantic
+
+
 def test_stdout_carries_only_json_rpc_when_a_dependency_prints(server):
     proc = server("noisy")
     proc.initialize()

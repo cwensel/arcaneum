@@ -87,24 +87,30 @@ may not have been indexed yet.
 
 ## Filters
 
-`--filter` takes the same syntax in both modes:
+`--filter` takes the same syntax in both modes. Terms are joined by `,` or an upper-case `AND`,
+and all must match. Each term is one of:
 
-- `key=value`, with terms joined by `,` (all must match): `--filter "filename=db(31).pdf,page_number:gte:80"`
+- `key op value`, where op is `=`, `>`, `>=`, `<` or `<=` (the comparisons take a number):
+  `--filter 'filename="a, b.pdf" AND page_number >= 39'`
 - `key:op:value`, where op is `match`, `in`, `gte`, `gt`, `lte`, `lt` or `contains`.
   Separate `in` values with `|`: `--filter "language:in:python|java"`
-- JSON `{"field": value}`, where a list means `in`: `--filter '{"filename": "db(31).pdf"}'`
 
-Use the JSON form when a value contains `,`, `"`, `<`, `>`, `!=` or an upper-case `AND`, `OR`, `NOT`,
-`TO`, `IN` or `EXISTS`. `contains` works in semantic only.
+Or pass flat JSON `{"field": value}`, where a list means `in`: `--filter '{"filename": "db(31).pdf"}'`
+
+Quote a value, single or double, when it holds a `,` or a keyword such as `AND`. Quotes are needed
+only there: `--filter "filename=db(31).pdf,page_number:gte:80"` and `author=O'Brien` work as written.
+`contains` works in semantic search and on Qdrant text corpora, not on MeiliSearch corpora.
 
 A field the corpus can't filter on fails with `bad-filter` and lists the fields it can filter on.
 For PDF corpora these are `filename`, `file_path` and `page_number`, among others. For markdown corpora
 they are `filename`, `file_path`, `section` and `tags`. In code corpora, semantic search names
 `language`, `project` and `branch` as `programming_language`, `git_project_name` and `git_branch`.
 
-Advanced: each backend's native syntax also works, but only in its own mode. Text search takes a
-MeiliSearch expression (`"page_number > 80 AND filename = \"db(31).pdf\""`). Semantic search takes
-Qdrant JSON with a top-level `must`, `should` or `must_not`.
+Advanced: each backend's native syntax also works, but only where that backend serves the search.
+A MeiliSearch expression, meaning one with `OR`, `NOT`, `!=`, `IN`, `TO`, `EXISTS`, `IS NULL`,
+`IS EMPTY` or a parenthesized group, works in text search on MeiliSearch corpora only:
+`--filter 'filename = "a.pdf" OR filename = "b.pdf"'`. Qdrant JSON with a top-level `must`,
+`should` or `must_not` works in semantic search and in text search on Qdrant corpora.
 
 ## Results and cites
 

@@ -45,7 +45,7 @@ arc search text '"def authenticate"' --corpus CorpusName
 - --corpus: Corpus/collection to search (can specify multiple times)
 - --limit: Number of results to return (default: 10)
 - --offset: Number of results to skip for pagination (default: 0)
-- --filter: Metadata filter (key=value or JSON)
+- --filter: Metadata filter (key=value, key op value, key:op:value or JSON; see the arc-search skill)
 - --json: Output in JSON format
 - --verbose: Show detailed information
 

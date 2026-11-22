@@ -178,24 +178,31 @@ same thing in `arc search semantic` and `arc search text`:
 | Form | Example | Meaning |
 | --- | --- | --- |
 | `key=value` | `filename=db(31).pdf` | Exact match; whitespace around `=` is trimmed |
+| `key op value` | `page_number >= 39` | `>`, `>=`, `<` or `<=` against a number |
 | `key:op:value` | `page_number:gte:80` | `match`, `in`, `gte`, `gt`, `lte`, `lt` or `contains` |
 | `in` values | `language:in:python\|java` | Any of the `\|`-separated values |
 | JSON | `{"filename": "db(31).pdf"}` | Exact match; a list value means `in` |
 
-Join terms with `,`; every term must match. Range values must be numbers.
-For text search every value is quoted, so `(`, spaces and quotes in a value
-survive. `contains` works in semantic search only, because MeiliSearch's
+Join terms with `,` or an upper-case `AND`; every term must match. Range values
+must be numbers. Quote a value, single or double, when it holds a `,` or an
+upper-case keyword such as `AND` or `OR`; inside quotes `\"`, `\'` and `\\`
+escape. A quote opens a value only where one starts, so `author=O'Brien` needs
+none. For a MeiliSearch corpus every value is sent quoted, so `(`, spaces and
+quotes in a value survive. `contains` works in semantic search and in text
+search on Qdrant corpora, not on MeiliSearch corpora, because MeiliSearch's
 `CONTAINS` is experimental.
 
 ```bash
 arc search text "transaction" --corpus DevRef --filter "filename=db(31).pdf,page_number:gte:80"
+arc search text "transaction" --corpus DevRef --filter 'filename="a, b.pdf" AND page_number >= 39'
 arc search semantic "transaction isolation" --corpus DevRef --filter '{"filename": "db(31).pdf"}'
 ```
 
-A string that contains an upper-case `AND`, `OR`, `NOT`, `TO`, `IN`, `EXISTS`,
-`IS NULL` or `IS EMPTY`, an operator `!=`, `>` or `<`, or a double quote is read as a
-native MeiliSearch expression. Use the JSON form for a value that contains one
-of these, or a `,`.
+A string that uses MeiliSearch syntax the forms above lack, outside quoted
+values, is read as a native MeiliSearch expression: an upper-case `OR`, `NOT`,
+`TO`, `IN`, `EXISTS`, `IS NULL` or `IS EMPTY`, the operator `!=`, or a
+parenthesized group where a term begins (`(a=1 OR b=2)`, `a=1 AND (b=2 OR c=3)`).
+A `(` inside a value, as in `db(31).pdf`, stays part of the value.
 
 A filter fails with `bad-filter` (exit code 2) when a term does not parse, when
 it names a field the corpus cannot filter on (the error lists the fields it
@@ -205,16 +212,19 @@ them against the same list for the corpus type, under the Qdrant payload names:
 in code corpora `language`, `project` and `branch` are `programming_language`,
 `git_project_name` and `git_branch`.
 
-**Advanced: native syntax.** Each backend's own syntax passes through to its own
-mode only. Text search takes MeiliSearch expressions, which add `OR`, `NOT` and
-comparisons:
+**Advanced: native syntax.** Each backend's own syntax passes through only where
+that backend serves the search. Text search on a MeiliSearch corpus takes
+MeiliSearch expressions, which add `OR`, `NOT`, `!=`, `IN`, `TO`, `EXISTS`,
+`IS NULL`, `IS EMPTY` and grouping; semantic search and text search on a Qdrant
+corpus refuse them with `bad-filter`:
 
 ```bash
-arc search text "query" --corpus DevRef --filter 'filename = "db(31).pdf" AND page_number > 80'
+arc search text "query" --corpus DevRef --filter 'filename = "a.pdf" OR filename != "b.pdf"'
 ```
 
-Semantic search takes Qdrant filter JSON with a top-level `must`, `should` or
-`must_not`, unchecked against the field list:
+Semantic search and text search on a Qdrant corpus take Qdrant filter JSON with a
+top-level `must`, `should` or `must_not`, unchecked against the field list; text
+search on a MeiliSearch corpus refuses it:
 
 ```bash
 arc search semantic "query" --corpus DevRef \
@@ -2164,18 +2174,22 @@ arc search text "query" --corpus source-code --json
 arc search text "query" --corpus source-code --verbose
 ```
 
-**Filter Syntax:** see [Search Filters](#search-filters). Text search also
-accepts native MeiliSearch syntax, as in the last two examples:
+**Filter Syntax:** see [Search Filters](#search-filters). The first three use
+the neutral forms; on a MeiliSearch corpus text search also accepts native
+MeiliSearch syntax, as in the last example:
 
 ```bash
-# Single filter (neutral form; the value is quoted for MeiliSearch)
+# Single filter (the value is quoted for MeiliSearch)
 --filter "language = python"
 
-# Multiple conditions (native)
+# Multiple conditions
 --filter "language = python AND project = myapp"
 
-# Numeric comparison (native; the neutral form is page_number:gt:10)
+# Numeric comparison (also page_number:gt:10)
 --filter "page_number > 10"
+
+# Either value (native MeiliSearch; MeiliSearch corpora only)
+--filter "language = python OR language = rust"
 ```
 
 ### Configuration

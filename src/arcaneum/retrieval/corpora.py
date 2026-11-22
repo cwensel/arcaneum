@@ -489,8 +489,9 @@ def _qdrant_collections(
             # A Qdrant corpus's text lives here: its coverage is its parity (RDR-027 Q8).
             from .qdrant_text import QdrantTextBackend
 
+            # The listing reuses its chunk count: the exact one scans the collection.
             coverage = QdrantTextBackend(qdrant, {col.name: collection_type}).coverage(
-                col.name, files=False
+                col.name, files=False, chunks=chunk_count
             )
         collections[col.name] = {
             "type": collection_type,

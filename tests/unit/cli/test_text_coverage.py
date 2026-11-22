@@ -333,6 +333,72 @@ def test_list_keeps_the_corpus_name_contract(services):
     assert CORPUS in [c["name"] for c in doc["data"]["corpora"]]
 
 
+
+# -- the listing's chunk count (arcaneum#184) ----------------------------------
+
+
+def _spy_bare_chunk_counts(qdrant, monkeypatch):
+    """Record every count whose filter is the bare chunk filter: a full scan on a server."""
+    from arcaneum.retrieval.qdrant_text import _chunk_filter
+
+    calls = []
+    real = qdrant._client.count
+
+    def count(collection_name, count_filter=None, **kwargs):
+        if count_filter == _chunk_filter():
+            calls.append(collection_name)
+        return real(collection_name, count_filter=count_filter, **kwargs)
+
+    monkeypatch.setattr(qdrant, "count", count, raising=False)
+    return calls
+
+
+@pytest.mark.parametrize("args", [("corpus", "list"), ("corpus", "info", CORPUS)])
+def test_display_paths_reuse_the_chunk_count(services, monkeypatch, args):
+    qdrant, state = services
+    state["meili"] = RefusingMeili()
+    bare = _spy_bare_chunk_counts(qdrant, monkeypatch)
+
+    result, doc = _json(*args)
+
+    assert result.exit_code == 0, result.output
+    assert bare == []
+    if args[1] == "list":
+        entry = {c["name"]: c for c in doc["data"]["corpora"]}[CORPUS]
+        counts = (entry["qdrant_chunks"], entry["text_chunks"], entry["zero_token_chunks"])
+    else:
+        entry = doc["data"]["coverage"]
+        counts = (entry["chunks"], entry["text_chunks"], entry["zero_token_chunks"])
+    assert entry["status"] == "synced"
+    assert counts == (3, 2, 1)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [("corpus", "verify", CORPUS), ("corpus", "doctor", CORPUS)],
+)
+def test_correctness_paths_keep_the_exact_count(services, monkeypatch, args):
+    qdrant, _state = services
+    bare = _spy_bare_chunk_counts(qdrant, monkeypatch)
+
+    result, _doc = _json(*args)
+
+    assert result.exit_code == 0, result.output
+
+    assert CORPUS in bare
+
+
+def test_parity_discovery_keeps_the_exact_count(services, monkeypatch):
+    from arcaneum.cli import sync
+
+    qdrant, _state = services
+    bare = _spy_bare_chunk_counts(qdrant, monkeypatch)
+
+    sync._discover_corpora_for_parity()
+
+    assert CORPUS in bare
+
+
 # -- arc doctor ----------------------------------------------------------------
 
 

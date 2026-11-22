@@ -758,7 +758,10 @@ def corpus_info_command(name: str, output_json: bool):
             # MeiliSearch is never read (RDR-027 Q8).
             try:
                 text_index = QdrantTextBackend(qdrant_client, {name: qdrant_info["type"]})
-                coverage = text_index.coverage(name, files=False)
+                # A display path: reuse the chunk count, not a full-scan exact count.
+                coverage = text_index.coverage(
+                    name, files=False, chunks=qdrant_info["chunk_count"]
+                )
             except Exception as e:
                 errors.append(f"Qdrant text index: {e}")
         else:

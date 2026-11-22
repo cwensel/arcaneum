@@ -386,7 +386,9 @@ class QdrantTextBackend:
                 collection_name=corpus, field_name=TEXT_FIELD, wait=True
             )
 
-    def coverage(self, corpus: str, *, files: bool = True) -> Coverage:
+    def coverage(
+        self, corpus: str, *, files: bool = True, chunks: Optional[int] = None
+    ) -> Coverage:
         """Q8's counts: chunk points, those not flagged ``text_tokens: false``, and the index's points.
 
         The index's points come from the collection's payload schema; a
@@ -394,11 +396,18 @@ class QdrantTextBackend:
         ``files``, every chunk point is scrolled for the per-file counts;
         without, two exact counts and one bounded scroll of flagged chunks
         suffice, so a listing stays cheap.
+
+        ``chunks``, honoured only without ``files``, is the caller's
+        ``user_point_count`` for the collection: it replaces the exact chunk
+        count, a full scan of the collection on a server. It matches that
+        count only while the collection is idle, so a display path passes it
+        and a path whose decision rests on ``status`` omits it (arcaneum#184).
         """
         info = self.client.get_collection(corpus)
         indexed = _text_index_points(info)
         if not files:
-            chunks = self._count(corpus, _chunk_filter())
+            if chunks is None:
+                chunks = self._count(corpus, _chunk_filter())
             flagged_count = self._count(corpus, _chunk_filter(_tokenless_filter()))
             sample, _next = self.client.scroll(
                 collection_name=corpus,

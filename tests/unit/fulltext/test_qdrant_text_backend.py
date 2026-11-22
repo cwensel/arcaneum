@@ -468,6 +468,28 @@ class TestCoverage:
             assert coverage.zero_token_chunks == 2
             assert len(coverage.flagged) == 1
 
+    def test_a_given_chunk_count_replaces_the_exact_count(self, backend, client, monkeypatch):
+        from arcaneum.retrieval.qdrant_text import _chunk_filter
+
+        self._add_flagged(client)
+        filters = []
+        real = client._client.count
+
+        def count(collection_name, count_filter=None, **kwargs):
+            filters.append(count_filter)
+            return real(collection_name, count_filter=count_filter, **kwargs)
+
+        monkeypatch.setattr(client, "count", count, raising=False)
+
+        coverage = backend.coverage("Docs", files=False, chunks=4)
+        assert (coverage.chunks, coverage.searchable_chunks, coverage.indexed) == (4, 3, 3)
+        assert coverage.flagged == [("/docs/a.pdf", 2)]
+        assert _chunk_filter() not in filters
+
+        filters.clear()
+        assert backend.coverage("Docs", files=False).chunks == 4
+        assert _chunk_filter() in filters
+
     def test_coverage_creates_no_index(self, backend, client):
         client.delete_payload_index("Docs", "text")
         client.index_calls.clear()

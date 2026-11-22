@@ -6138,6 +6138,7 @@ def _discover_corpora_for_parity() -> List[Dict[str, Any]]:
             if text_backend == "qdrant":
                 from ..retrieval.qdrant_text import QdrantTextBackend
 
+                # The exact count stays: status gates which corpora parity processes.
                 coverage = QdrantTextBackend(
                     qdrant, {col.name: metadata.get("collection_type")}
                 ).coverage(col.name, files=False)

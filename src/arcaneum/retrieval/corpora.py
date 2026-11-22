@@ -535,8 +535,8 @@ def _default_text_backend():
     return MeiliTextBackend(create_meili_client())
 
 
-def meili_corpora(qdrant) -> List[str]:
-    """The corpora whose text MeiliSearch serves, as their Qdrant metadata records it.
+def corpora_on(qdrant, backend: str) -> List[str]:
+    """The corpora whose text ``backend`` serves, as their Qdrant metadata records it.
 
     A collection with no ``text_backend``, or unreadable metadata, reads as
     MeiliSearch's (``text_backend_of``'s legacy default).
@@ -544,8 +544,13 @@ def meili_corpora(qdrant) -> List[str]:
     return sorted(
         col.name
         for col in qdrant.get_collections().collections
-        if text_backend_of(get_collection_metadata(qdrant, col.name)) == "meili"
+        if text_backend_of(get_collection_metadata(qdrant, col.name)) == backend
     )
+
+
+def meili_corpora(qdrant) -> List[str]:
+    """The corpora whose text MeiliSearch serves (``corpora_on``'s ``meili``)."""
+    return corpora_on(qdrant, "meili")
 
 
 def _meilisearch_enabled() -> bool:

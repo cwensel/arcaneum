@@ -6,7 +6,8 @@ allowed-tools: Bash(arc:*), Read
 
 # Corpus Management (Dual-Index)
 
-A corpus maintains both a Qdrant collection (semantic search) and a MeiliSearch index (full-text search) in sync.
+A corpus is a Qdrant collection serving semantic search and full-text search; a `meili` corpus
+also keeps a MeiliSearch index in sync for its full-text search.
 
 **For adding or updating content, always prefer `arc corpus sync` over `arc index`, `arc collection`, or `arc indexes`.**
 The `corpus` commands manage Qdrant and MeiliSearch together. Single-system commands
@@ -17,10 +18,12 @@ search from its Qdrant collection. Without `--text-backend`, `arc corpus create`
 uses `corpus.default_text_backend` from `~/.config/arcaneum/config.yaml`
 (`qdrant` for a new user, `meili` for one who already ran MeiliSearch). While
 `meilisearch.enabled` is `false`, `--text-backend meili`,
-`arc corpus migrate-text --to meili` and `--finalize` are refused.
+`arc corpus migrate-text --to meili` and `--finalize` are refused. To move an
+existing install to Qdrant only, `arc corpus migrate-text --all --to qdrant`
+migrates every corpus on `meili`; docs/guides/qdrant-only-text.md has every step.
 
 ```bash
-# Create corpus (creates both collection and index)
+# Create corpus (a Qdrant collection; a meili corpus also gets a MeiliSearch index)
 arc corpus create MyCorpus --type pdf
 arc corpus create MyCorpus --type code
 arc corpus create MyCorpus --type markdown
@@ -133,15 +136,20 @@ column-order fix, whose two-column pages are indexed as interleaved lines.
 
 ## Parity Behavior
 
-The `--parity` flag on `arc corpus sync` and the standalone `arc corpus parity`
-command both ensure both systems hold the same content, but operate differently:
+On a `meili` corpus, the `--parity` flag on `arc corpus sync` and the standalone
+`arc corpus parity` command both ensure both systems hold the same content, but
+operate differently. A `qdrant` corpus has no second store: sync `--parity`
+plans no backfill (its `meili_*` counts are 0) and applies renames and removals
+through Qdrant, and `arc corpus parity` only ensures the text index and reports
+its coverage.
 
 - `arc corpus sync --parity <path>`: Runs during a sync. In addition to indexing
   new/changed files in `<path>`, it detects renamed/moved files by content hash
   and **removes indexed entries for files that no longer exist on disk** (scoped
   to the directories being synced). Identical PDFs share one canonical
   searchable chunk set; alias rename/removal preserves it, and canonical removal
-  promotes the lexicographically first live alias after dual-index read-back.
+  promotes the lexicographically first live alias after read-back (both
+  indexes on a `meili` corpus, Qdrant alone on a `qdrant` corpus).
 - `arc corpus parity`: Standalone cross-system repair with no directory scan.
   Backfills missing entries between Qdrant and MeiliSearch; `--verify` also
   fixes per-file chunk-count mismatches. It does not remove missing-from-disk

@@ -21,15 +21,18 @@ The system supports PDF documents and source code with git-aware, AST-based chun
 **Currently Available:**
 
 - Semantic search with Qdrant (vector embeddings)
-- Full-text search with MeiliSearch (exact phrase matching)
-- Dual indexing workflow for comprehensive search
+- Full-text search with Qdrant's BM25 text index (exact phrase matching), or
+  optionally MeiliSearch
+- One corpus workflow for both kinds of search
 
 ## Features
 
 ### Search Capabilities
 
 - **Semantic Search (Qdrant)**: Find conceptually similar content using vector embeddings
-- **Full-Text Search (MeiliSearch)**: Exact phrase matching, keyword search, and typo-tolerant queries
+- **Full-Text Search (Qdrant)**: Exact phrase matching and ranked keyword search from a BM25
+  text index in the corpus's Qdrant collection. MeiliSearch is optional, for installs that
+  already run it or want its typo-tolerant queries
 
 ### Indexing
 
@@ -147,7 +150,9 @@ arc search text '"async def"' --corpus Frameworks
 serve full-text search from Qdrant. An install that already ran MeiliSearch
 keeps it. To turn it on or off, set `meilisearch.enabled` in
 `~/.config/arcaneum/config.yaml` and run `arc container start`; see
-[Optional MeiliSearch](docs/guides/cli-reference.md#optional-meilisearch).
+[Optional MeiliSearch](docs/guides/cli-reference.md#optional-meilisearch). To move
+an existing install to Qdrant only, follow
+[Moving to Qdrant-only text search](docs/guides/qdrant-only-text.md).
 
 👉 **[Full Quick Start Guide](docs/guides/quickstart.md)** - Detailed walkthrough with troubleshooting
 
@@ -162,7 +167,7 @@ arc container restore DIR    # Restore a backup
 arc container upgrade        # Migrate Qdrant and MeiliSearch data to the pinned versions
 arc doctor                   # Verify setup
 
-# Corpus (Recommended - Dual Indexing to Both Systems)
+# Corpus (Recommended - Semantic and Full-Text Search)
 arc corpus create NAME --type TYPE              # pdf, code, or markdown
 arc corpus list                                 # List all corpora
 arc corpus sync NAME PATH [PATH...]             # Sync one or more directories
@@ -183,7 +188,8 @@ arc corpus hook install NAME                    # Auto-sync a git repo's default
 arc corpus hook status                          # Show hooks installed in this repo
 arc corpus hook uninstall NAME                  # Remove this corpus's hook
 arc corpus update NAME --description "..."      # Update corpus metadata
-arc corpus delete NAME                          # Delete both collection and index
+arc corpus migrate-text --all --to qdrant       # Move every MeiliSearch corpus to Qdrant
+arc corpus delete NAME                          # Delete the corpus
 
 # Search (Works with corpus, collection, or index)
 arc search semantic "query" --corpus NAME              # Conceptual similarity
@@ -200,7 +206,7 @@ arc collection items NAME
 arc index pdf PATH --collection NAME
 arc index code PATH --collection NAME
 
-# Indexes (MeiliSearch Only - Full-Text Search)
+# Indexes (MeiliSearch Only - Full-Text Search; needs meilisearch.enabled: true)
 arc indexes create NAME --type TYPE      # When you only need full-text search
 arc indexes list
 arc index text pdf PATH --index NAME
@@ -227,7 +233,7 @@ occurrence, or the authoritative state of local files that may not be indexed ye
 # Create a corpus for framework source code
 arc corpus create Frameworks --type code
 
-# Sync framework directories (indexes to both Qdrant and MeiliSearch)
+# Sync framework directories (semantic and full-text search)
 arc corpus sync Frameworks ~/libs/fastapi ~/libs/sqlalchemy
 
 # List what's indexed
@@ -309,7 +315,7 @@ arc collection create MyCollection --type code
 arc index code ~/project --collection MyCollection
 arc search semantic "query" --corpus MyCollection
 
-# Full-text search only (MeiliSearch index)
+# Full-text search only (MeiliSearch index; needs meilisearch.enabled: true)
 arc indexes create MyIndex --type pdf
 arc index text pdf ~/docs --index MyIndex
 arc search text "query" --corpus MyIndex
@@ -531,7 +537,7 @@ All commands use the `arc:` namespace prefix:
 
 | Command | Description |
 | ------- | ----------- |
-| `/arc:corpus` | **Recommended** - Manage dual-index corpora (Qdrant + MeiliSearch) |
+| `/arc:corpus` | **Recommended** - Manage corpora (semantic and full-text search) |
 | `/arc:search` | Semantic or full-text search |
 | `/arc:index` | Index PDF, code, or markdown content |
 | `/arc:store` | Store agent-generated content for memory |

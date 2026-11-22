@@ -592,6 +592,59 @@ def finalize(qdrant, meili_client, corpus: str, *, dry_run: bool = False) -> Dic
 # ---------------------------------------------------------------------------
 
 
+def _refuse_without_meili(to: Optional[str], do_finalize: bool, data: Dict[str, Any]) -> None:
+    """``--to meili`` and ``--finalize`` need MeiliSearch: refused while it is disabled."""
+    from ..config import resolve_meili_settings
+
+    if do_finalize or to == "meili":
+        settings = resolve_meili_settings()
+        if not settings.enabled:
+            step = "--finalize" if do_finalize else "--to meili"
+            raise MigrationError(
+                f"migrate-text {step} needs MeiliSearch: {settings.disabled_reason()}", data
+            )
+
+
+def _run(
+    qdrant,
+    meili_client,
+    corpus: str,
+    to: Optional[str],
+    do_finalize: bool,
+    dry_run: bool,
+    verbose: bool,
+    output_json: bool,
+    say: Say,
+) -> Dict[str, Any]:
+    """One corpus's step, under its write lock unless ``--dry-run``."""
+    from .corpus_lock import acquire_corpus_lock
+
+    lock = contextlib.nullcontext() if dry_run else acquire_corpus_lock(corpus, quiet=output_json)
+    with lock:
+        if do_finalize:
+            return finalize(qdrant, meili_client, corpus, dry_run=dry_run)
+        if to == "qdrant":
+            return migrate_to_qdrant(qdrant, meili_client, corpus, dry_run=dry_run, say=say)
+        return migrate_to_meili(
+            qdrant,
+            meili_client,
+            corpus,
+            dry_run=dry_run,
+            verbose=verbose,
+            quiet=output_json,
+            say=say,
+        )
+
+
+def _print_details(console, report: Dict[str, Any], indent: str = "  ") -> None:
+    for key in ("reconcile", "coverage", "gate", "refill"):
+        if report.get(key):
+            details = ", ".join(
+                f"{k}={v}" for k, v in report[key].items() if not isinstance(v, (list, dict))
+            )
+            console.print(f"{indent}{key}: {details}")
+
+
 def migrate_text_command(
     corpus: str,
     to: Optional[str],
@@ -607,8 +660,6 @@ def migrate_text_command(
     """
     from rich.console import Console
 
-    from ..config import resolve_meili_settings
-    from .corpus_lock import acquire_corpus_lock
     from .output import print_json
     from .utils import create_meili_client, create_qdrant_client
 
@@ -625,36 +676,13 @@ def migrate_text_command(
             print(f"[ERROR] {e}", file=sys.stderr)
         sys.exit(e.exit_code)
 
-    if do_finalize or to == "meili":
-        settings = resolve_meili_settings()
-        if not settings.enabled:
-            step = "--finalize" if do_finalize else "--to meili"
-            fail(
-                MigrationError(
-                    f"migrate-text {step} needs MeiliSearch: {settings.disabled_reason()}",
-                    {"corpus": corpus},
-                )
-            )
-
-    qdrant = create_qdrant_client()
-    meili_client = create_meili_client()
-    lock = contextlib.nullcontext() if dry_run else acquire_corpus_lock(corpus, quiet=output_json)
     try:
-        with lock:
-            if do_finalize:
-                report = finalize(qdrant, meili_client, corpus, dry_run=dry_run)
-            elif to == "qdrant":
-                report = migrate_to_qdrant(qdrant, meili_client, corpus, dry_run=dry_run, say=say)
-            else:
-                report = migrate_to_meili(
-                    qdrant,
-                    meili_client,
-                    corpus,
-                    dry_run=dry_run,
-                    verbose=verbose,
-                    quiet=output_json,
-                    say=say,
-                )
+        _refuse_without_meili(to, do_finalize, {"corpus": corpus})
+        qdrant = create_qdrant_client()
+        meili_client = create_meili_client()
+        report = _run(
+            qdrant, meili_client, corpus, to, do_finalize, dry_run, verbose, output_json, say
+        )
     except MigrationError as e:
         fail(e)
 
@@ -663,12 +691,101 @@ def migrate_text_command(
         print_json("success", message, data=report)
         return
     console.print(f"[green]{message}[/green]")
-    for key in ("reconcile", "coverage", "gate", "refill"):
-        if report.get(key):
-            details = ", ".join(
-                f"{k}={v}" for k, v in report[key].items() if not isinstance(v, (list, dict))
+    _print_details(console, report)
+
+
+def migrate_text_all_command(
+    to: Optional[str],
+    do_finalize: bool,
+    dry_run: bool,
+    verbose: bool,
+    output_json: bool,
+) -> None:
+    """``arc corpus migrate-text --all``: every corpus not already on the target.
+
+    ``--to qdrant`` takes the corpora on meili, ``--finalize`` those on
+    qdrant, one at a time, each under its own lock (none on ``--dry-run``).
+    A corpus that stops is recorded and skipped; the rest go on. The exit is
+    0 when every corpus succeeds (or there is none), else the first
+    failure's exit code.
+    """
+    from rich.console import Console
+
+    from ..retrieval import corpora
+    from .errors import CorpusLockUnavailable
+    from .output import print_json
+    from .utils import create_meili_client, create_qdrant_client
+
+    console = Console(stderr=output_json)
+    step = "--finalize" if do_finalize else f"--to {to}"
+
+    try:
+        _refuse_without_meili(to, do_finalize, {"results": []})
+    except MigrationError as e:
+        if output_json:
+            print_json("error", str(e), data=e.report, errors=[e.to_error()])
+        else:
+            print(f"[ERROR] {e}", file=sys.stderr)
+        sys.exit(e.exit_code)
+
+    qdrant = create_qdrant_client()
+    meili_client = create_meili_client()
+    source = "qdrant" if do_finalize else "meili"
+    candidates = corpora.corpora_on(qdrant, source)
+
+    results: List[Dict[str, Any]] = []
+    exit_code = 0
+    for corpus in candidates:
+        if not output_json:
+            console.print(f"[bold]{corpus}[/bold]")
+
+        def say(message: str) -> None:
+            if not output_json:
+                console.print(f"  [dim]{message}[/dim]")
+
+        try:
+            report = _run(
+                qdrant, meili_client, corpus, to, do_finalize, dry_run, verbose, output_json, say
             )
-            console.print(f"  {key}: {details}")
+        except (MigrationError, CorpusLockUnavailable) as e:
+            exit_code = exit_code or e.exit_code
+            results.append(
+                {
+                    "corpus": corpus,
+                    "ok": False,
+                    "error": str(e),
+                    "code": e.code,
+                    "report": getattr(e, "report", {}),
+                }
+            )
+            if not output_json:
+                console.print(f"  [red][ERROR] {e}[/red]")
+            continue
+        results.append({"corpus": corpus, "ok": True, "report": report})
+        if not output_json:
+            console.print(f"  [green]{_summary(report)}[/green]")
+            _print_details(console, report, indent="    ")
+
+    failed = [r["corpus"] for r in results if not r["ok"]]
+    if not candidates:
+        message = f"No corpus is on {source}; nothing to run migrate-text {step} on"
+    elif failed:
+        message = (
+            f"migrate-text {step}: {len(failed)} of {len(candidates)} corpora stopped "
+            f"({', '.join(failed)}); fix each and rerun"
+        )
+    else:
+        verb = "Dry run passed for" if dry_run else "Completed for"
+        message = f"migrate-text {step}: {verb} all {len(candidates)} corpora"
+
+    data = {"step": step, "dry_run": dry_run, "results": results}
+    if output_json:
+        errors = [{"code": r["code"], "message": r["error"]} for r in results if not r["ok"]]
+        print_json("error" if failed else "success", message, data=data, errors=errors or None)
+    else:
+        console.print(f"[red]{message}[/red]" if failed else f"[green]{message}[/green]")
+    if exit_code:
+        sys.exit(exit_code)
 
 
 def _summary(report: Dict[str, Any]) -> str:

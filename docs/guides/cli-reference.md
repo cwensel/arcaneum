@@ -1,6 +1,6 @@
 # Arc CLI Reference
 
-The `arc` command-line tool provides all operations for semantic and full-text search with Qdrant and MeiliSearch.
+The `arc` command-line tool provides all operations for semantic and full-text search with Qdrant, and optionally MeiliSearch.
 
 The CLI can describe its complete, installed command tree without consulting
 this document:
@@ -33,29 +33,34 @@ arc <command> [options]
 
 ### Which Commands to Use
 
-**For general use, always prefer `arc corpus` commands.** They manage a paired
-Qdrant collection and MeiliSearch index together, which is the intended
-workflow for almost all cases.
+**For general use, always prefer `arc corpus` commands.** They manage a
+corpus's Qdrant collection, and the MeiliSearch index of a `meili` corpus,
+together, which is the intended workflow for almost all cases.
 
 - **Use Corpus** (`arc corpus ...`): Both semantic (conceptual) and full-text
   (exact phrase) search. Recommended for all new work.
 - **Use Collection** (`arc collection ...` / `arc index ...`): Qdrant-only,
   semantic search only. Advanced — use only if you explicitly don't want
-  MeiliSearch.
+  full-text search.
 - **Use Indexes** (`arc indexes ...`): MeiliSearch-only, full-text search only.
   Advanced — use only if you explicitly don't want Qdrant.
 
 ### Corpus Management (Recommended)
 
-A "corpus" is a paired Qdrant collection and MeiliSearch index with the same name,
-providing both semantic and full-text search capabilities.
+A "corpus" is a Qdrant collection that serves both semantic and full-text
+search. Its full-text search comes from a text index in that collection (the
+`qdrant` text backend, the default for a new install), or from a MeiliSearch
+index of the same name when the corpus's `text_backend` is `meili`. See
+[Optional MeiliSearch](#optional-meilisearch), and
+[Moving to Qdrant-only text search](qdrant-only-text.md) to move a `meili`
+corpus.
 
 ```bash
-arc corpus create <name> --type <type>        # Create both collection and index
+arc corpus create <name> --type <type>        # Create the corpus
 arc corpus list                               # List corpora with cached item counts and descriptions
 arc corpus list --details                     # Add model, last sync, chunk counts, and exact item counts
 arc corpus update <name>                      # Update description metadata
-arc corpus sync <name> <path> [<path>...]     # Index to both systems
+arc corpus sync <name> <path> [<path>...]     # Index files into the corpus
 arc corpus repair <name>                      # Repair verifier-selected unhealthy files
 arc corpus migrate-text <name> --to qdrant|meili  # Move text search between backends
 arc corpus items <name>                       # List items with parity status
@@ -63,7 +68,7 @@ arc corpus verify <name>                      # Verify corpus health
 arc corpus doctor [<name>...]                 # Check all corpora; list fix commands
 arc corpus jobs                               # List running syncs/drains and queued hook work
 arc corpus parity <name>                      # Check/restore parity
-arc corpus delete <name>                      # Delete both collection and index
+arc corpus delete <name>                      # Delete the collection and any MeiliSearch index
 ```
 
 ### Search Commands
@@ -303,7 +308,9 @@ arc index text markdown <path> --index <name> # Index Markdown to MeiliSearch
 
 ### Corpus Commands (Detailed)
 
-A "corpus" is a paired Qdrant collection and MeiliSearch index with the same name.
+A "corpus" is a Qdrant collection whose full-text search is served by its text
+index (`qdrant`, the default) or by a MeiliSearch index of the same name
+(`meili`); see [Corpus Management](#corpus-management-recommended).
 
 ```bash
 arc corpus create <name> --type <type> --models <model>  # Create the corpus
@@ -311,13 +318,13 @@ arc corpus create <name> --type <type> --text-backend qdrant  # Text search from
 arc corpus create <name> --type <type> --text-backend meili   # Text search from a MeiliSearch index
 arc corpus update <name> --description <text>            # Update metadata
 arc corpus update <name> --clear-description             # Remove the corpus description
-arc corpus delete <name>                                 # Delete both
-arc corpus sync <name> <path> [<path>...]                # Index to both (multiple paths supported)
+arc corpus delete <name>                                 # Delete the collection and any MeiliSearch index
+arc corpus sync <name> <path> [<path>...]                # Index files (multiple paths supported)
 arc corpus repair <name>                                 # Repair verifier-selected unhealthy files
 arc corpus migrate-text <name> --to qdrant|meili     # Move text search between backends
 arc corpus info <name>                                   # Show corpus details
 arc corpus items <name>                                  # List indexed items with parity status
-arc corpus verify <name>                                 # Verify corpus health across both systems
+arc corpus verify <name>                                 # Verify corpus health
 arc corpus doctor [<name>...]                            # Check all corpora, list commands to fix them
 arc corpus parity <name>                                 # Restore parity between indexes
 arc corpus hook install <name>                           # Auto-sync a git repo's branch
@@ -389,13 +396,18 @@ arc corpus sync MyCorpus /path/to/repo --git-version       # Keep multiple versi
 
 **Options:**
 
-- `--parity`: Check cross-system parity between Qdrant and MeiliSearch, detect
-  renamed/moved files by content hash, and **remove indexed entries for files
-  that no longer exist on disk** (scoped to the directories being synced).
+- `--parity`: Detect renamed/moved files by content hash and **remove indexed
+  entries for files that no longer exist on disk** (scoped to the directories
+  being synced). On a `meili` corpus it also checks cross-system parity
+  between Qdrant and MeiliSearch and backfills what one side lacks. On a
+  `qdrant` corpus there is no second store: Qdrant's paths are every indexed
+  path, no backfill is planned (the summary's `meili_*` counts are 0), and
+  renames and removals apply through Qdrant alone.
   For PDF corpora, byte-identical paths are tracked as aliases of one
   deterministic canonical document. Removing or renaming an alias preserves
   the shared chunks; removing the canonical path promotes the
-  lexicographically first live alias after Qdrant and MeiliSearch read-back.
+  lexicographically first live alias after read-back (Qdrant's, plus
+  MeiliSearch's on a `meili` corpus).
   Slower — scrolls the full index. For standalone cross-system repair without
   indexing a directory, use [`arc corpus parity`](#corpus-parity) instead.
 - `--dry-run`: Show what would be synced, renamed, or removed without making
@@ -520,7 +532,7 @@ leaves them in the spool while the repo has another branch checked out, and
 keeps a batch for retry if the branch changed while it was indexing. The worker holds a per-corpus lock and
 drains until the spool is empty, so a burst of commits pays one embedding-model
 cold start instead of one per commit. Deleted and renamed-away paths are removed
-from both Qdrant and MeiliSearch.
+from Qdrant, and from MeiliSearch for a `meili` corpus.
 
 Every drain, whether the hook or the `--service` watcher starts it, runs with
 `--background`, so indexing stays below compilers and tests on the same
@@ -822,11 +834,17 @@ arc corpus migrate-text MyCorpus --to qdrant --dry-run   # Checks, reconcile and
 arc corpus migrate-text MyCorpus --to qdrant             # Move text search to Qdrant
 arc corpus migrate-text MyCorpus --to meili              # Switch back and refill MeiliSearch
 arc corpus migrate-text MyCorpus --finalize              # Delete the retained MeiliSearch index
+arc corpus migrate-text --all --to qdrant --dry-run      # Check every corpus on meili
+arc corpus migrate-text --all --to qdrant                # Move every corpus on meili to Qdrant
+arc corpus migrate-text --all --finalize                 # Finalize every corpus on qdrant
 ```
 
 **Options:**
 
 - `--to qdrant|meili`: The text backend to move the corpus to
+- `--all`: Instead of one corpus, every corpus not already on the target:
+  those on `meili` for `--to qdrant`, those on `qdrant` for `--finalize`.
+  `--all --to meili` is refused; roll back one corpus at a time
 - `--finalize`: Delete the MeiliSearch index a qdrant corpus retains; refused
   unless the corpus is on qdrant
 - `--dry-run`: Run the checks, the reconcile and the coverage count; write nothing
@@ -846,10 +864,20 @@ text, then switches the corpus. An interrupted run leaves the corpus on `meili`;
 rerun it. MeiliSearch's index is kept until `--finalize`. `--to meili` switches
 back and refills MeiliSearch from Qdrant.
 
+`--all` runs the corpora one at a time, each under its own lock (none on
+`--dry-run`). A corpus that stops is reported and skipped and the rest go on;
+the summary names each failure and the exit is non-zero if any failed. Under
+`--json`, `data.results` holds one entry per corpus: `corpus`, `ok`, its
+`report`, and `error` when it stopped. See
+[Moving to Qdrant-only text search](qdrant-only-text.md) for the full path.
+
 ### Corpus Parity
 
 Check and restore parity between Qdrant and MeiliSearch indexes without scanning
 a directory. This is useful when one index gets out of sync with the other.
+A `qdrant` corpus has no MeiliSearch side: its parity ensures the text index
+(not on `--dry-run`) and reports its coverage, with no MeiliSearch read or
+write.
 
 ```bash
 # Check parity status (dry-run, no changes)
@@ -972,7 +1000,8 @@ with `arc corpus create`.
 
 ### Corpus Items
 
-List all indexed items in a corpus with parity status between Qdrant and MeiliSearch:
+List all indexed items in a corpus with their status: parity between Qdrant and
+MeiliSearch for a `meili` corpus, text index coverage for a `qdrant` corpus:
 
 ```bash
 # Human-readable table output
@@ -986,7 +1015,8 @@ arc corpus items MyCorpus --json
 
 - **Type-aware output**: Different displays for code vs PDF/markdown corpora
 - **Parity status**: Shows sync status for each item (synced, mismatch, qdrant_only, meili_only)
-- **Chunk counts**: Shows chunks in each system (Q and M columns)
+- **Chunk counts**: Shows chunks in each system (Q and M columns); a `qdrant`
+  corpus shows Qdrant chunks and searchable chunks (Q and S columns)
 - **Deduplication**: Groups chunks by file/repository
 
 **Code Corpus Output:**
@@ -1010,9 +1040,13 @@ arc corpus items MyCorpus --json
 - `qdrant_only`: Item exists only in Qdrant
 - `meili_only`: Item exists only in MeiliSearch
 
+A `qdrant` corpus reports `synced`, `coverage_gap`, `text_index_missing`, or
+`unknown` instead.
+
 ### Corpus Verify
 
-Verify corpus health across both Qdrant and MeiliSearch systems:
+Verify corpus health: the Qdrant collection, plus the MeiliSearch index of a
+`meili` corpus or the text index coverage of a `qdrant` corpus:
 
 ```bash
 # Basic health check
@@ -1034,8 +1068,11 @@ arc corpus verify MyCorpus --deep --strict --json
 **Features:**
 
 - **Qdrant health check**: Verifies chunk completeness for all indexed items
-- **MeiliSearch health check**: Verifies index accessibility and document retrieval
-- **Parity status**: Reports whether both systems have the corpus
+- **MeiliSearch health check** (`meili` corpus): Verifies index accessibility
+  and document retrieval
+- **Text index coverage** (`qdrant` corpus): Replaces the MeiliSearch check and
+  parity; MeiliSearch is never read
+- **Parity status** (`meili` corpus): Reports whether both systems have the corpus
 - **Detailed diagnostics**: Shows warnings for configuration issues
 - **PDF quality by default**: Reports garbled/dropout files, dropped or
   sub-floor chunks, duplicate sources, stale policies, stale extractions,
@@ -1222,7 +1259,7 @@ the next drain reclaims them), and `deferred` (waiting for a pinned branch).
 
 ### Corpus Delete
 
-Delete both the Qdrant collection and MeiliSearch index for a corpus:
+Delete a corpus's Qdrant collection and any MeiliSearch index of the same name:
 
 ```bash
 # With confirmation prompt
@@ -1239,7 +1276,7 @@ arc corpus delete MyCorpus --confirm --json
 
 - Checks if either Qdrant collection or MeiliSearch index exists
 - Prompts for confirmation before deleting (unless `--confirm` is passed)
-- Deletes both systems; if one fails, continues with the other
+- Deletes each that exists; if one fails, continues with the other
 - Reports partial deletion if only one system was deleted
 - Takes the corpus write lock before deleting (but not across the confirmation
   prompt, so it never blocks a running sync on a human). `--no-wait` fails
@@ -1625,15 +1662,16 @@ arc index text pdf ./text-pdfs --index pdf-docs --no-ocr
 arc index text pdf ./pdfs --index pdf-docs --json
 ```
 
-### Dual Indexing Workflow (Recommended: Corpus)
+### Corpus Workflow (Recommended)
 
-For comprehensive search, use corpus commands to index to both Qdrant and MeiliSearch:
+For comprehensive search, use corpus commands, which serve semantic and
+full-text search from one corpus:
 
 ```bash
-# Create corpus (creates both collection and index)
+# Create corpus
 arc corpus create pdf-docs --type pdf
 
-# Sync to both systems
+# Sync the files
 arc corpus sync pdf-docs /path/to/pdfs
 
 # Semantic search (conceptual matches)
@@ -1645,7 +1683,8 @@ arc search text '"neural network"' --corpus pdf-docs
 
 ### Dual Indexing (Manual - Advanced)
 
-Alternatively, manage Qdrant and MeiliSearch separately:
+Alternatively, manage Qdrant and MeiliSearch separately (needs
+`meilisearch.enabled: true`):
 
 ```bash
 # Create both collection and index (mirrored commands)
@@ -1740,7 +1779,7 @@ arc collection create MyCode --type code --model jina-code-0.5b
 # 1. Start services
 arc container start
 
-# 2. Create corpus (indexes to both Qdrant and MeiliSearch)
+# 2. Create corpus (semantic and full-text search)
 arc corpus create my-docs --type pdf
 
 # 3. Sync documents
@@ -2219,7 +2258,8 @@ export MEILISEARCH_API_KEY=your-custom-key
 
 ### Container Commands
 
-Manage Qdrant and MeiliSearch container services:
+Manage the Qdrant container service, and MeiliSearch's while
+`meilisearch.enabled` is true:
 
 ```bash
 # Start services
@@ -2237,7 +2277,7 @@ arc container backup
 # Restore indexed data
 arc container restore BACKUP_DIRECTORY
 
-# Migrate Qdrant and MeiliSearch data to the pinned image versions
+# Migrate Qdrant (and MeiliSearch, when enabled) data to the pinned image versions
 arc container upgrade
 
 # View logs
@@ -2271,7 +2311,7 @@ arc container logs --follow
 # Restart if having issues
 arc container restart
 
-# Back up Qdrant snapshots and MeiliSearch indexes
+# Back up Qdrant snapshots (and MeiliSearch indexes, when enabled)
 arc container backup -o ./arcaneum-backup
 
 # Restore from a backup directory
@@ -2319,10 +2359,11 @@ With `enabled: false`:
 The setting is refused while any corpus is still on `meili`:
 `arc container start`, `arc corpus list` and `arc doctor` name each such corpus
 and its `arc corpus migrate-text <corpus> --to qdrant` command. To turn
-MeiliSearch off for good, set `enabled: true`, migrate each corpus to `qdrant`,
-run `arc corpus migrate-text <corpus> --finalize` for each, then set
-`enabled: false` and run `arc container stop` and `arc container start`. To
-turn it back on, set `enabled: true` and run `arc container start`.
+MeiliSearch off for good, follow
+[Moving to Qdrant-only text search](qdrant-only-text.md): it migrates every
+corpus with `arc corpus migrate-text --all --to qdrant`, verifies search,
+finalizes, and removes MeiliSearch's container and volumes. To turn it back
+on, set `enabled: true` and run `arc container start`.
 
 **Backup & Restore Options:**
 
@@ -2501,7 +2542,7 @@ pinned default.
 
 **Data Location:**
 
-- Qdrant and MeiliSearch use Docker named volumes for persistence
+- Qdrant (and MeiliSearch, when enabled) use Docker named volumes for persistence
 - Survives container restarts
 - Without `--output`, `arc container backup` creates a UTC timestamped directory
   under `backup.path` from `~/.config/arcaneum/config.yaml`, or under the XDG data

@@ -8,7 +8,7 @@ Before you begin, ensure you have:
 
 - **Python 3.12+** - Check with `python --version`
 - **Git** - For cloning the repository
-- **Docker** - For running Qdrant and MeiliSearch
+- **Docker** - For running Qdrant
   - [Install Docker Desktop](https://docs.docker.com/get-docker/) (Mac/Windows)
   - Or Docker Engine (Linux)
 
@@ -71,7 +71,7 @@ Let's index some code and perform your first search.
 
 ### 1. Start Services
 
-Start the search services (Qdrant for semantic search, MeiliSearch for full-text):
+Start Qdrant, which serves both semantic and full-text search:
 
 ```bash
 arc container start
@@ -84,17 +84,22 @@ You should see:
 Qdrant started successfully
   REST API: http://localhost:6333
   Dashboard: http://localhost:6333/dashboard
-MeiliSearch started successfully
-  HTTP API: http://localhost:7700
 
 [INFO] Data directory: /Users/you/.local/share/arcaneum
 ```
 
-Note: MeiliSearch API key is auto-generated and stored in `~/.config/arcaneum/meilisearch.key`.
+The first start records `meilisearch.enabled: false` and
+`corpus.default_text_backend: qdrant` in `~/.config/arcaneum/config.yaml`.
+
+**Using MeiliSearch:** MeiliSearch is optional and off for a new install. To
+run it, see [Optional MeiliSearch](cli-reference.md#optional-meilisearch). An
+install that already ran MeiliSearch keeps it; to move to Qdrant only, follow
+[Moving to Qdrant-only text search](qdrant-only-text.md).
 
 ### 2. Create a Corpus
 
-Create a corpus for code (indexes to both Qdrant and MeiliSearch):
+Create a corpus for code. Its Qdrant collection holds the vectors for semantic
+search and a text index for full-text search:
 
 ```bash
 arc corpus create MyCode --type code
@@ -102,23 +107,14 @@ arc corpus create MyCode --type code
 
 ### 3. Sync Your Code
 
-Sync a directory of source code (indexes to both search systems):
+Sync a directory of source code:
 
 ```bash
 arc corpus sync MyCode ~/my-project
 ```
 
-Example output:
-
-```text
-Source Code Indexing Configuration
-  Corpus: MyCode (type: code)
-  Embedding: jinaai/jina-embeddings-v2-base-code
-  Vector: jina-code
-
-Git discovery completed: 1 repos, 3 branches
-Indexed 247 files → 1,532 chunks (Qdrant + MeiliSearch)
-```
+The run ends with `Sync complete for corpus 'MyCode'` and the number of files
+and chunks it indexed.
 
 ### 4. Search
 
@@ -139,7 +135,7 @@ You'll see code chunks ranked by relevance!
 ### Indexing PDFs (Recommended: Corpus)
 
 ```bash
-# Create corpus for PDFs (indexes to both Qdrant and MeiliSearch)
+# Create corpus for PDFs (semantic and full-text search)
 arc corpus create MyDocs --type pdf
 
 # Sync PDFs (with OCR for scanned documents)
@@ -201,7 +197,7 @@ arc corpus sync Notes ~/notes --order newest
 ### Checking Status
 
 ```bash
-# List all corpora (shows both Qdrant and MeiliSearch status)
+# List all corpora (type, text backend, and status)
 arc corpus list
 
 # List what's indexed with parity status
@@ -228,7 +224,7 @@ arc collection create MyCode --type code
 arc index code ~/project --collection MyCode
 arc search semantic "query" --corpus MyCode
 
-# Full-text search only (MeiliSearch)
+# Full-text search only (a MeiliSearch index; needs meilisearch.enabled: true)
 arc indexes create MyDocs --type pdf
 arc index text pdf ~/docs --index MyDocs
 arc search text "query" --corpus MyDocs
@@ -255,18 +251,20 @@ Arcaneum stores data in XDG-compliant locations:
 ```text
 ~/.cache/arcaneum/models/        # Embedding models (~1-2GB per model)
 ~/.local/share/arcaneum/         # Local databases and indexed content
-~/.config/arcaneum/              # Configuration files (e.g., MeiliSearch key)
+~/.config/arcaneum/              # Configuration files (config.yaml)
 ```
 
 **Vector Database (Docker):**
 
-Qdrant and MeiliSearch use Docker named volumes for data persistence:
+Qdrant uses Docker named volumes for data persistence:
 
 ```text
 qdrant-arcaneum-storage    # Qdrant vector database storage
 qdrant-arcaneum-snapshots  # Qdrant backup snapshots
-meilisearch-arcaneum-data  # MeiliSearch full-text index
 ```
+
+With MeiliSearch enabled, it adds `meilisearch-arcaneum-data`,
+`meilisearch-arcaneum-dumps` and `meilisearch-arcaneum-snapshots`.
 
 **Benefits:**
 
@@ -297,10 +295,11 @@ to override the configured root and name a backup directory explicitly:
 arc container backup --output ./arcaneum-backup
 ```
 
-The backup directory contains Qdrant collection snapshots and MeiliSearch index
-settings plus JSONL document exports, including Arcaneum corpus metadata stored
-in those systems. It does not include source files, cached embedding models,
-Docker images, or local configuration secrets.
+The backup directory contains Qdrant collection snapshots, including Arcaneum
+corpus metadata stored there. With MeiliSearch enabled, it also holds each
+MeiliSearch index's settings and a JSONL document export. It does not include
+source files, cached embedding models, Docker images, or local configuration
+secrets.
 
 Restore a backup with services running:
 
@@ -308,10 +307,10 @@ Restore a backup with services running:
 arc container restore ~/.local/share/arcaneum/backups/20260528T120000Z
 ```
 
-Restore recreates same-named MeiliSearch indexes from the backup.
-Run backups when indexing is idle; the command checks MeiliSearch for active
-tasks before and after export and aborts if any MeiliSearch task appears during
-the backup window.
+Run backups when indexing is idle. With MeiliSearch enabled, restore also
+recreates same-named MeiliSearch indexes from the backup, and backup checks
+MeiliSearch for active tasks before and after export, aborting if any task
+appears during the backup window.
 
 ## Troubleshooting
 
@@ -507,6 +506,8 @@ See the [CLI Reference](cli-reference.md) for complete performance tuning docume
 
 - **[CLI Reference](cli-reference.md)** - Complete command documentation
 - **[PDF Indexing Guide](pdf-indexing.md)** - Advanced PDF indexing with OCR
+- **[Moving to Qdrant-only text search](qdrant-only-text.md)** - Upgrade path
+  for an install that runs MeiliSearch
 - **[README](../../README.md)** - Project overview and plugin documentation
 
 ### Advanced Features
@@ -534,17 +535,17 @@ arc container status         # Check status
 arc container backup         # Back up indexed data
 arc container restore DIR    # Restore indexed data
 
-# Corpus (Recommended - Dual Indexing)
+# Corpus (Recommended)
 arc corpus create NAME --type TYPE       # pdf, code, or markdown
 arc corpus list                          # List all corpora
-arc corpus sync NAME PATH [PATH...]      # Sync directories to both systems
+arc corpus sync NAME PATH [PATH...]      # Sync one or more directories
 arc corpus items NAME                    # List items with parity status
 arc corpus verify NAME                   # Check corpus health
 arc corpus delete NAME --confirm
 
 # Searching
 arc search semantic "query" --corpus NAME    # Semantic search (Qdrant)
-arc search text "query" --corpus NAME        # Full-text search (MeiliSearch)
+arc search text "query" --corpus NAME        # Full-text search (Qdrant text index)
 
 # Collections (Qdrant Only - Advanced)
 arc collection create NAME --type TYPE
@@ -553,7 +554,7 @@ arc collection items NAME
 arc index code PATH --collection NAME
 arc index pdf PATH --collection NAME
 
-# Indexes (MeiliSearch Only - Advanced)
+# Indexes (MeiliSearch Only - Advanced; needs meilisearch.enabled: true)
 arc indexes create NAME --type TYPE
 arc indexes list
 arc index text pdf PATH --index NAME

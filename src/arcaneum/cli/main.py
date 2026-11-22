@@ -2722,7 +2722,13 @@ def corpus_repair(
 
 
 @corpus.command("migrate-text")
-@click.argument("corpus")
+@click.argument("corpus", required=False)
+@click.option(
+    "--all",
+    "all_corpora",
+    is_flag=True,
+    help="Every corpus not already on the target, one at a time (--to qdrant or --finalize)",
+)
 @click.option(
     "--to",
     "to",
@@ -2743,7 +2749,7 @@ def corpus_repair(
 )
 @click.option("--verbose", "-v", is_flag=True, help="Show per-file refill details")
 @click.option("--json", "output_json", is_flag=True, help="Output JSON format")
-def corpus_migrate_text(corpus, to, do_finalize, dry_run, verbose, output_json):
+def corpus_migrate_text(corpus, all_corpora, to, do_finalize, dry_run, verbose, output_json):
     """Move a corpus's text search between MeiliSearch and Qdrant, keeping every vector.
 
     --to qdrant needs Qdrant 1.20 and the corpus on meili with MeiliSearch in
@@ -2756,6 +2762,10 @@ def corpus_migrate_text(corpus, to, do_finalize, dry_run, verbose, output_json):
 
     --to meili switches back and refills MeiliSearch from Qdrant.
 
+    --all runs --to qdrant on every corpus on meili, or --finalize on every
+    corpus on qdrant, one at a time. A corpus that stops is reported and
+    skipped; the rest go on, and the exit is non-zero if any stopped.
+
     Examples:
 
     \b
@@ -2763,12 +2773,24 @@ def corpus_migrate_text(corpus, to, do_finalize, dry_run, verbose, output_json):
         arc corpus migrate-text DevRef --to qdrant
         arc corpus migrate-text DevRef --to meili
         arc corpus migrate-text DevRef --finalize
+        arc corpus migrate-text --all --to qdrant --dry-run
+        arc corpus migrate-text --all --finalize
     """
     if bool(to) == bool(do_finalize):
         raise click.UsageError("Pass exactly one of --to qdrant|meili or --finalize")
+    if bool(corpus) == bool(all_corpora):
+        raise click.UsageError("Pass exactly one of CORPUS or --all")
+    if all_corpora and to == "meili":
+        raise click.UsageError(
+            "--all moves corpora to qdrant only; roll back each corpus with: "
+            "arc corpus migrate-text <corpus> --to meili"
+        )
 
     from arcaneum.cli import migrate_text
 
+    if all_corpora:
+        migrate_text.migrate_text_all_command(to, do_finalize, dry_run, verbose, output_json)
+        return
     migrate_text.migrate_text_command(corpus, to, do_finalize, dry_run, verbose, output_json)
 
 

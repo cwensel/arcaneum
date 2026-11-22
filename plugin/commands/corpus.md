@@ -1,29 +1,33 @@
 ---
 description: Manage dual-index corpora (recommended)
-argument-hint: <create|list|update|delete|sync|repair|hook|jobs|info|items|parity|verify|doctor> <name> [paths...] [options]
+argument-hint: <create|list|update|delete|sync|repair|migrate-text|hook|jobs|info|items|parity|verify|doctor> <name> [paths...] [options]
 ---
 
-**Recommended for most users.** Manage corpora that combine both vector search (Qdrant) and
-full-text search (MeiliSearch) for the same content.
+**Recommended for most users.** Manage corpora that combine vector search and full-text
+search for the same content. Full-text search comes from a text index in the corpus's Qdrant
+collection (the `qdrant` text backend, the default for a new install) or, on an install that
+runs MeiliSearch, from a MeiliSearch index of the same name (`meili`).
 
 **IMPORTANT:** You must specify a subcommand.
 
 **Subcommands:**
 
-- `create`: Create both Qdrant collection and MeiliSearch index
+- `create`: Create the Qdrant collection (and a MeiliSearch index for a `meili` corpus)
 - `list`: List all corpora with parity status
 - `update`: Update corpus metadata without reindexing
-- `delete`: Delete both Qdrant collection and MeiliSearch index
+- `delete`: Delete the Qdrant collection and any MeiliSearch index of the corpus
 - `sync`: Index directory to both systems simultaneously
 - `repair`: Selectively repair verifier-selected unhealthy files and PDF duplicates,
   then restore parity
+- `migrate-text`: Move a corpus's text search between MeiliSearch and Qdrant; `--all --to qdrant`
+  moves every corpus on MeiliSearch (see docs/guides/qdrant-only-text.md)
 - `hook`: Install a git hook that auto-syncs a repo on every commit
 - `jobs`: List running syncs, repairs, and hook drains, plus queued hook work
   (read-only; takes no locks)
 - `info`: Show corpus details (both systems)
 - `items`: List indexed items with parity status
 - `parity`: Check and restore parity between systems
-- `verify`: Verify corpus health across both Qdrant and MeiliSearch
+- `verify`: Verify corpus health (and Qdrant/MeiliSearch parity for a `meili` corpus)
 - `doctor`: Check all corpora (or the named ones) read-only and list the commands
   that fix each problem
 

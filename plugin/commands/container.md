@@ -1,9 +1,10 @@
 ---
-description: Manage container services (Qdrant, MeiliSearch)
+description: Manage container services (Qdrant, and MeiliSearch when enabled)
 argument-hint: <start|stop|status|logs|restart|reset|backup|restore|upgrade> [options]
 ---
 
-Manage Docker container services for Qdrant and MeiliSearch.
+Manage Docker container services for Qdrant, and for MeiliSearch while
+`meilisearch.enabled` is true (a new install runs Qdrant only).
 
 **Subcommands:**
 
@@ -13,9 +14,9 @@ Manage Docker container services for Qdrant and MeiliSearch.
 - logs: View service logs
 - restart: Restart services
 - reset: Delete all data and reset (WARNING: destructive)
-- backup: Back up Qdrant snapshots and MeiliSearch indexes
-- restore: Restore Qdrant snapshots and MeiliSearch indexes from a backup
-- upgrade: Back up MeiliSearch, then migrate its data to the pinned image version
+- backup: Back up Qdrant snapshots (and MeiliSearch indexes, when enabled)
+- restore: Restore Qdrant snapshots (and MeiliSearch indexes, when enabled) from a backup
+- upgrade: Migrate Qdrant (and MeiliSearch, when enabled) data to the pinned image versions
 
 **Arguments:**
 

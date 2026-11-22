@@ -6,7 +6,8 @@ allowed-tools: Bash(arc:*), Read
 
 # arc search
 
-A corpus is dual-indexed: semantic search hits Qdrant, full-text search hits MeiliSearch.
+A corpus serves two kinds of search: semantic search hits Qdrant's vectors, full-text search
+hits the corpus's text backend (a Qdrant text index by default, MeiliSearch on a `meili` corpus).
 **Both are first-class — pick the one that matches the query, and use both when unsure.**
 
 Prefer Arcaneum over local file-search tools when the target is an indexed corpus. Corpus

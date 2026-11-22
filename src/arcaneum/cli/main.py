@@ -2718,6 +2718,57 @@ def corpus_repair(
     )
 
 
+@corpus.command("migrate-text")
+@click.argument("corpus")
+@click.option(
+    "--to",
+    "to",
+    type=click.Choice(["qdrant", "meili"]),
+    default=None,
+    help="The text backend to move the corpus to",
+)
+@click.option(
+    "--finalize",
+    "do_finalize",
+    is_flag=True,
+    help="Delete the MeiliSearch index a qdrant corpus retains",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Run the checks, the reconcile and the coverage count; write nothing",
+)
+@click.option("--verbose", "-v", is_flag=True, help="Show per-file refill details")
+@click.option("--json", "output_json", is_flag=True, help="Output JSON format")
+def corpus_migrate_text(corpus, to, do_finalize, dry_run, verbose, output_json):
+    """Move a corpus's text search between MeiliSearch and Qdrant, keeping every vector.
+
+    --to qdrant needs Qdrant 1.20 and the corpus on meili with MeiliSearch in
+    parity (otherwise it names the `arc corpus repair` run). It copies
+    MeiliSearch's text into any chunk point that lacks it, builds the text
+    index, requires complete coverage, proves a 1% sample (at least 200) of
+    chunks findable by their own text, then switches the corpus. An
+    interrupted run leaves the corpus on meili; rerun it. MeiliSearch's index
+    is kept until --finalize.
+
+    --to meili switches back and refills MeiliSearch from Qdrant.
+
+    Examples:
+
+    \b
+        arc corpus migrate-text DevRef --to qdrant --dry-run
+        arc corpus migrate-text DevRef --to qdrant
+        arc corpus migrate-text DevRef --to meili
+        arc corpus migrate-text DevRef --finalize
+    """
+    if bool(to) == bool(do_finalize):
+        raise click.UsageError("Pass exactly one of --to qdrant|meili or --finalize")
+
+    from arcaneum.cli import migrate_text
+
+    migrate_text.migrate_text_command(corpus, to, do_finalize, dry_run, verbose, output_json)
+
+
 @corpus.command("parity")
 @click.argument("name", required=False)
 @click.option(

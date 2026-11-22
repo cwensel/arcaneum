@@ -57,6 +57,7 @@ arc corpus list --details                     # Add model, last sync, chunk coun
 arc corpus update <name>                      # Update description metadata
 arc corpus sync <name> <path> [<path>...]     # Index to both systems
 arc corpus repair <name>                      # Repair verifier-selected unhealthy files
+arc corpus migrate-text <name> --to qdrant|meili  # Move text search between backends
 arc corpus items <name>                       # List items with parity status
 arc corpus verify <name>                      # Verify corpus health
 arc corpus doctor [<name>...]                 # Check all corpora; list fix commands
@@ -302,6 +303,7 @@ arc corpus update <name> --clear-description             # Remove the corpus des
 arc corpus delete <name>                                 # Delete both
 arc corpus sync <name> <path> [<path>...]                # Index to both (multiple paths supported)
 arc corpus repair <name>                                 # Repair verifier-selected unhealthy files
+arc corpus migrate-text <name> --to qdrant|meili     # Move text search between backends
 arc corpus info <name>                                   # Show corpus details
 arc corpus items <name>                                  # List indexed items with parity status
 arc corpus verify <name>                                 # Verify corpus health across both systems
@@ -795,6 +797,36 @@ jq -r '[.ts, .phase, .rss, .sys_used_pct] | @tsv' \
 
 Mid-run, you can also send `kill -USR1 <pid>` to dump full memory state plus
 thread stacks to stderr (useful when a single encode call has hung).
+
+### Corpus Migrate-Text
+
+Move a corpus's text search between MeiliSearch and Qdrant, keeping every vector:
+
+```bash
+arc corpus migrate-text MyCorpus --to qdrant --dry-run   # Checks, reconcile and coverage count; writes nothing
+arc corpus migrate-text MyCorpus --to qdrant             # Move text search to Qdrant
+arc corpus migrate-text MyCorpus --to meili              # Switch back and refill MeiliSearch
+arc corpus migrate-text MyCorpus --finalize              # Delete the retained MeiliSearch index
+```
+
+**Options:**
+
+- `--to qdrant|meili`: The text backend to move the corpus to
+- `--finalize`: Delete the MeiliSearch index a qdrant corpus retains; refused
+  unless the corpus is on qdrant
+- `--dry-run`: Run the checks, the reconcile and the coverage count; write nothing
+- `--verbose`: Show per-file refill details
+- `--json`: Output JSON format
+
+**How it works:**
+
+`--to qdrant` needs Qdrant 1.20, the corpus on `meili` and MeiliSearch in
+parity (otherwise it names the `arc corpus repair` run). It copies MeiliSearch's
+text into chunk points that lack it, builds the text index, requires complete
+coverage, proves a 1% sample (at least 200) of chunks findable by their own
+text, then switches the corpus. An interrupted run leaves the corpus on `meili`;
+rerun it. MeiliSearch's index is kept until `--finalize`. `--to meili` switches
+back and refills MeiliSearch from Qdrant.
 
 ### Corpus Parity
 

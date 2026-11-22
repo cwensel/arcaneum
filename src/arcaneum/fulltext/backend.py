@@ -245,6 +245,13 @@ class MeiliTextBackend:
         else:
             self.client.client.wait_for_task(task.task_uid, timeout_in_ms=timeout_ms)
 
+    def clear(self, corpus: str, timeout_ms: int = 300000) -> None:
+        """Delete every document of the index, keeping the index and its settings."""
+        task = self.client.get_index(corpus).delete_all_documents()
+        status, error = self.wait_for_task(task.task_uid, timeout_ms)
+        if status != "succeeded":
+            raise RuntimeError(f"Clearing MeiliSearch index '{corpus}' {status}: {error}")
+
     def enqueue_documents(self, corpus: str, documents: Sequence[Mapping[str, Any]]) -> int:
         """Queue an upload without waiting; returns its task uid."""
         return self.client.get_index(corpus).add_documents(list(documents)).task_uid

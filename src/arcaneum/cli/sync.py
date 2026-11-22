@@ -234,7 +234,11 @@ from ..indexing.git_metadata_sync import GitMetadataSync
 from ..indexing.qdrant_batching import upsert_in_batches
 from ..indexing.git_operations import GitProjectDiscovery, apply_git_metadata
 from ..retrieval.hits import SOURCE_ROOTS_FIELD
-from ..schema.document import DualIndexDocument, persisted_metadata_fields
+from ..schema.document import (
+    DualIndexDocument,
+    persisted_metadata_fields,
+    qdrant_payload_to_meilisearch_doc,
+)
 from ..utils.formatting import format_size
 from .corpus_defaults import DEFAULT_MODELS_BY_CORPUS_TYPE
 
@@ -5182,49 +5186,17 @@ def _fetch_chunks_for_files_bulk(
                 if file_path and file_path in file_paths_needed:
                     files_found.add(file_path)
 
+                    # The same projection a Qdrant text hit takes, so the
+                    # document carries to_meilisearch_doc's fields under its
+                    # names (project, branch, language), not the payload's.
                     meili_doc = {
-                        "id": str(point.id),
                         **persisted_metadata_fields(),
-                        "content": payload.get("text", ""),
-                        "file_path": file_path,
-                        "filename": payload.get("filename", ""),
-                        "file_extension": payload.get("file_extension", ""),
-                        "chunk_index": payload.get("chunk_index", 0),
+                        "content": "",
+                        "filename": "",
+                        "file_extension": "",
+                        "chunk_index": 0,
+                        **qdrant_payload_to_meilisearch_doc(point.id, payload),
                     }
-
-                    # Add optional fields
-                    if payload.get("page_number"):
-                        meili_doc["page_number"] = payload["page_number"]
-                    if payload.get("programming_language"):
-                        meili_doc["language"] = payload["programming_language"]
-                    if payload.get("document_type"):
-                        meili_doc["document_type"] = payload["document_type"]
-                    if payload.get("quality_manifest"):
-                        meili_doc["quality_manifest"] = payload["quality_manifest"]
-                    for key in ("section_type", "section_title"):
-                        if payload.get(key) is not None:
-                            meili_doc[key] = payload[key]
-                    for key in (
-                        "ocr_confidence",
-                        "ocr_language",
-                        "ocr_pages_processed",
-                        "ocr_pages_failed",
-                        "ocr_low_confidence_word_count",
-                        "ocr_merge_strategy",
-                        "ocr_triggered_by",
-                    ):
-                        if payload.get(key) is not None:
-                            meili_doc[key] = payload[key]
-
-                    # Add git metadata fields for code corpora
-                    if payload.get("git_project_identifier"):
-                        meili_doc["git_project_identifier"] = payload["git_project_identifier"]
-                    if payload.get("git_project_name"):
-                        meili_doc["git_project_name"] = payload["git_project_name"]
-                    if payload.get("git_branch"):
-                        meili_doc["git_branch"] = payload["git_branch"]
-                    if payload.get("git_commit_hash"):
-                        meili_doc["git_commit_hash"] = payload["git_commit_hash"]
 
                     chunks_by_file[file_path].append(meili_doc)
 

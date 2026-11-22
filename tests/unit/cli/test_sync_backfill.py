@@ -630,3 +630,65 @@ def test_backfill_meili_to_qdrant_removes_a_partial_upload(monkeypatch, tmp_path
     qdrant.delete.assert_called_once()
     deleted = qdrant.delete.call_args.kwargs["points_selector"].points
     assert deleted == [p.id for p in sent]
+
+
+def test_fetch_chunks_for_files_bulk_writes_meilisearch_field_names():
+    """A backfilled code chunk carries the fields to_meilisearch_doc writes.
+
+    The hand mapping wrote git_project_name and git_branch, where MeiliSearch
+    filters on project and branch, so a project= filter missed every
+    backfilled document (RDR-027 Q9's --to meili refill).
+    """
+    from arcaneum.fulltext.indexes import SOURCE_CODE_SETTINGS
+    from arcaneum.search.filters import parse_filter, to_meilisearch_filter
+
+    qdrant = MagicMock()
+    qdrant.scroll.return_value = (
+        [
+            SimpleNamespace(
+                id="code-point",
+                payload={
+                    "text": "def run(): pass",
+                    "file_path": "/repo/run.py",
+                    "filename": "run.py",
+                    "file_extension": ".py",
+                    "chunk_index": 0,
+                    "programming_language": "python",
+                    "line_number": 12,
+                    "git_project_name": "arcaneum",
+                    "git_branch": "main",
+                    "git_project_identifier": "arcaneum#main",
+                    "git_version_identifier": "arcaneum#main@abcdef1",
+                    "git_commit_hash": "abcdef1",
+                    "function_names": ["run"],
+                    "embedding_model": "jina-code",
+                },
+            )
+        ],
+        None,
+    )
+
+    chunks_by_file, error = _fetch_chunks_for_files_bulk(
+        qdrant,
+        "code-corpus",
+        {"/repo/run.py"},
+        verbose=False,
+        output_json=True,
+        console=MagicMock(),
+    )
+
+    assert error is None
+    doc = chunks_by_file["/repo/run.py"][0]
+    assert doc["project"] == "arcaneum"
+    assert doc["branch"] == "main"
+    assert doc["language"] == "python"
+    assert doc["line_number"] == 12
+    assert doc["git_version_identifier"] == "arcaneum#main@abcdef1"
+    assert doc["function_names"] == ["run"]
+    assert doc["schema_version"] == 1 and doc["app_version"]
+    for qdrant_only in ("git_project_name", "git_branch", "git_commit_hash", "embedding_model"):
+        assert qdrant_only not in doc
+    # The filter a project= search sends names a field MeiliSearch filters on.
+    native = to_meilisearch_filter(parse_filter("project=arcaneum"))
+    assert native.split()[0] == "project"
+    assert "project" in SOURCE_CODE_SETTINGS["filterableAttributes"]

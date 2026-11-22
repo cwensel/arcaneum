@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import socket
 import threading
 import time
@@ -29,6 +30,7 @@ from arcaneum.embeddings.remote.pool import (
 )
 from arcaneum.embeddings.remote.server import EmbeddingServer, ServerSettings
 from arcaneum.embeddings.remote.wake import Waker
+from arcaneum.embeddings.worker_protocol import MessageType, make_message
 
 MODEL = "arctic-m"
 
@@ -501,13 +503,45 @@ def test_endpoint_mid_deploy_is_not_connected_at_first_use(cluster):
     assert cluster.hosts[0].encodes == []
 
 
-class SleepingHost:
-    """Connector whose host times out until a magic packet wakes it."""
+class SlowChannel:
+    """A channel whose first reply (the handshake's) arrives ``delay`` seconds late."""
 
-    def __init__(self, *, wakes: bool = True) -> None:
+    def __init__(self, channel, delay: float) -> None:
+        self.channel = channel
+        self.delay = delay
+
+    def send(self, message) -> None:
+        self.channel.send(message)
+
+    def receive(self, timeout=None):
+        if self.delay:
+            time.sleep(self.delay)
+            self.delay = 0.0
+        return self.channel.receive(timeout=timeout)
+
+    def close(self) -> None:
+        self.channel.close()
+
+
+class SleepingHost:
+    """Connector whose host fails with ``asleep`` until a magic packet wakes it."""
+
+    def __init__(
+        self,
+        *,
+        wakes: bool = True,
+        awake: bool = False,
+        asleep=lambda: TimeoutError("timed out"),
+        handshake_delay: float = 0.0,
+    ) -> None:
         self.wakes = wakes
         self.awake = threading.Event()
+        if awake:
+            self.awake.set()
+        self.asleep = asleep
+        self.handshake_delay = handshake_delay
         self.packets: list[str] = []
+        self.channels: list = []
 
     def send(self, wake) -> str:
         self.packets.append(wake.mac)
@@ -517,17 +551,28 @@ class SleepingHost:
 
     def connect(self, host, port, authkey, timeout):
         if not self.awake.is_set():
-            raise TimeoutError("timed out")
-        return connect(host, port, authkey, timeout)
+            raise self.asleep()
+        channel = connect(host, port, authkey, timeout)
+        if self.handshake_delay:
+            channel = SlowChannel(channel, self.handshake_delay)
+        self.channels.append(channel)
+        return channel
+
+    def sleep(self) -> None:
+        """The host suspends: open connections go dead and new ones time out."""
+        self.awake.clear()
+        for channel in self.channels:
+            channel.close()
 
 
-def sleeping_pool(cluster, port, host, *, unavailable, timeout=30.0, notify=None):
+def sleeping_pool(cluster, port, host, *, unavailable, timeout=30.0, notify=None, **overrides):
     return cluster.pool(
         [port],
         unavailable=unavailable,
         notify=notify,
         endpoint={"wake": WakeConfig(mac="10:dd:b1:c9:7d:22", timeout=timeout)},
         pool_options={"connector": host.connect, "waker": Waker(send=host.send)},
+        **overrides,
     )
 
 
@@ -603,6 +648,149 @@ def test_an_endpoint_without_wake_settings_is_not_woken(cluster):
         pool.embed(["a"], MODEL)
 
     assert host.packets == []
+
+
+@pytest.mark.parametrize("unavailable", ["local", "fail"])
+def test_a_woken_worker_is_waited_for_through_a_slow_handshake(cluster, unavailable):
+    server = cluster.server()
+    host = SleepingHost(handshake_delay=0.5)
+    pool = sleeping_pool(cluster, port_of(server), host, unavailable=unavailable)
+
+    result = pool.embed(["a", "b"], MODEL)
+
+    np.testing.assert_array_equal(result, expected(["a", "b"]))
+    assert host.packets == ["10:dd:b1:c9:7d:22"]
+
+
+@pytest.mark.parametrize("unavailable", ["local", "fail"])
+def test_a_worker_that_sleeps_mid_run_is_woken_and_used(cluster, unavailable):
+    server = cluster.server()
+    host = SleepingHost(awake=True)
+    pool = sleeping_pool(cluster, port_of(server), host, unavailable=unavailable)
+    pool.embed(["a"], MODEL)
+    host.sleep()
+
+    result = pool.embed(["b", "c"], MODEL)
+
+    np.testing.assert_array_equal(result, expected(["b", "c"]))
+    assert host.packets == ["10:dd:b1:c9:7d:22"]
+
+
+def test_an_endpoint_without_wake_settings_that_dies_mid_run_falls_back_at_once(cluster):
+    server = cluster.server()
+    host = SleepingHost(awake=True)
+    pool = cluster.pool(
+        [port_of(server)],
+        unavailable="local",
+        pool_options={"connector": host.connect, "waker": Waker(send=host.send)},
+    )
+    pool.embed(["a"], MODEL)
+    host.sleep()
+    started = time.monotonic()
+
+    with pytest.raises(RemoteEmbeddingFallback):
+        pool.embed(["b"], MODEL)
+
+    assert time.monotonic() - started < 0.5
+    assert host.packets == []
+
+
+@pytest.mark.parametrize("unavailable", ["local", "fail"])
+def test_a_stalled_load_on_a_wake_endpoint_follows_the_policy(cluster, unavailable):
+    server = cluster.server()
+    cluster.hosts[0].load_gate = threading.Event()
+    host = SleepingHost(awake=True)
+    pool = sleeping_pool(
+        cluster, port_of(server), host, unavailable=unavailable, loading=0.3
+    )
+    raised = {}
+
+    def run():
+        try:
+            pool.embed(["a"], MODEL)
+        except (RemoteEmbeddingFallback, RemoteEmbeddingUnavailable) as exc:
+            raised["exc"] = exc
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(timeout=5)
+
+    assert not worker.is_alive(), "embed kept reprobing a worker that answers heartbeats"
+    assert "loading deadline" in str(raised["exc"])
+    assert host.packets == []
+
+
+class ErrorChannel(SlowChannel):
+    """A channel whose worker answers every encode with a non-backend error."""
+
+    def receive(self, timeout=None):
+        reply = super().receive(timeout=timeout)
+        if reply is not None and reply["type"] == MessageType.ENCODED:
+            return make_message(
+                MessageType.ERROR, reply["request_id"], code="internal", message="boom"
+            )
+        return reply
+
+
+def test_a_worker_error_on_a_wake_endpoint_follows_the_policy_without_waiting(cluster):
+    server = cluster.server()
+    host = SleepingHost(awake=True)
+
+    def erroring(*args):
+        return ErrorChannel(host.connect(*args), 0.0)
+
+    pool = sleeping_pool(cluster, port_of(server), host, unavailable="local")
+    pool.connector = erroring
+    started = time.monotonic()
+
+    with pytest.raises(RemoteEmbeddingFallback, match="boom"):
+        pool.embed(["a"], MODEL)
+
+    assert time.monotonic() - started < 0.5
+    assert host.packets == []
+
+
+def test_a_woken_worker_with_mismatched_code_follows_the_policy(cluster):
+    def mismatched(model):
+        return {**local_identity(model), "code_fingerprint": "0" * 64}
+
+    server = cluster.server(identity=mismatched)
+    host = SleepingHost()
+    pool = sleeping_pool(cluster, port_of(server), host, unavailable="local")
+    started = time.monotonic()
+
+    with pytest.raises(RemoteEmbeddingFallback, match="version mismatch"):
+        pool.embed(["a"], MODEL)
+
+    assert time.monotonic() - started < 5.0
+    assert host.packets == ["10:dd:b1:c9:7d:22"]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        lambda: ConnectionError("authentication failed (digest received was wrong)"),
+        lambda: socket.gaierror(socket.EAI_NONAME, "nodename nor servname provided"),
+    ],
+    ids=["authentication", "name-resolution"],
+)
+def test_a_failure_that_proves_nothing_about_sleep_is_not_woken(cluster, failure):
+    host = SleepingHost(wakes=False, asleep=failure)
+    pool = sleeping_pool(cluster, free_port(), host, unavailable="local", timeout=0.3)
+
+    with pytest.raises(RemoteEmbeddingFallback):
+        pool.embed(["a"], MODEL)
+
+    assert host.packets == []
+
+
+def test_an_unreachable_host_is_woken(cluster):
+    server = cluster.server()
+    host = SleepingHost(asleep=lambda: OSError(errno.EHOSTUNREACH, "No route to host"))
+    pool = sleeping_pool(cluster, port_of(server), host, unavailable="local")
+
+    np.testing.assert_array_equal(pool.embed(["a"], MODEL), expected(["a"]))
+    assert host.packets == ["10:dd:b1:c9:7d:22"]
 
 
 def test_bind_tailscale_endpoint_resolving_outside_the_tailnet_is_named(cluster):

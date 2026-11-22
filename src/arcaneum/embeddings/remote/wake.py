@@ -6,13 +6,16 @@ workstation off the worker's ``network`` sends it from ``relay``, an SSH host on
 LAN, by running a short Python script there. Wake-on-LAN wakes a suspended host, not
 one that was shut down.
 
-The pool wakes a worker whose connection times out (a refused connection means the
-host is awake), resends every ``RESEND_INTERVAL`` while it stays down, and waits up
-to the endpoint's ``wake.timeout`` before following ``remote_embedding.unavailable``.
+The pool wakes a worker whose connection fails as a sleeping host's does
+(``sleep_shaped``: a timeout or no route to it; a refused connection or a failed
+authentication means the host is awake), resends every ``RESEND_INTERVAL`` while it
+stays down, and waits up to the endpoint's ``wake.timeout`` before following
+``remote_embedding.unavailable``.
 """
 
 from __future__ import annotations
 
+import errno
 import ipaddress
 import logging
 import socket
@@ -41,6 +44,24 @@ Target = tuple[str, int]
 
 class WakeError(Exception):
     """A wake packet could not be sent."""
+
+
+# A suspended host on the LAN stops answering ARP, so the connect times out or finds
+# no route to it.
+SLEEP_ERRNOS = frozenset({errno.EHOSTUNREACH, errno.EHOSTDOWN, errno.ENETUNREACH})
+
+
+def sleep_shaped(exc: BaseException) -> bool:
+    """Whether a connection failure is one a sleeping host causes.
+
+    A refused connection or a failed authentication comes from an awake host, and a
+    name that does not resolve says nothing about the host, so none of them wakes it.
+    """
+    if isinstance(exc, TimeoutError):
+        return True
+    if isinstance(exc, (ConnectionRefusedError, socket.gaierror)):
+        return False
+    return isinstance(exc, OSError) and exc.errno in SLEEP_ERRNOS
 
 
 def magic_packet(mac: str) -> bytes:

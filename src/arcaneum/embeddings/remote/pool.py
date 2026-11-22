@@ -6,8 +6,10 @@ larger than each endpoint's encode batch size, spread across the endpoints that
 hold the model or have no work, and reassembled in order. An endpoint that errors,
 disconnects, stops answering heartbeats or exceeds a deadline is marked down, its
 sub-batch is retried elsewhere, and it is probed in the background until it rejoins.
-An endpoint with ``wake`` settings whose connection times out is woken with a
-Wake-on-LAN packet, and the pool waits for it before following ``unavailable``.
+An endpoint with ``wake`` settings whose connection fails as a sleeping host's does
+is woken with a Wake-on-LAN packet, and the pool waits for it, through its
+handshake, before following ``unavailable``; one that goes silent mid-run is probed
+at once, so a host that fell asleep is woken before the policy applies.
 An endpoint a background ``arc models deploy`` is updating (``deploys``, or
 another run's deploy holding its lock, ``deploy_lock_held``) is not connected
 until that deploy exits: its vector parity check runs after the new worker
@@ -43,7 +45,7 @@ from arcaneum.embeddings.remote.errors import (
 )
 from arcaneum.embeddings.remote.identity import identity_mismatches, local_identity
 from arcaneum.embeddings.remote.server import TAILSCALE_NETWORK, default_encode_batch_size
-from arcaneum.embeddings.remote.wake import Waker
+from arcaneum.embeddings.remote.wake import Waker, sleep_shaped
 from arcaneum.embeddings.worker_protocol import (
     ConnectionChannel,
     MessageType,
@@ -60,7 +62,15 @@ __all__ = ["RemoteEmbeddingFallback", "RemoteEmbeddingUnavailable", "RemoteEmbed
 
 
 class EndpointFailure(Exception):
-    """One endpoint could not complete a request; the pool retries elsewhere."""
+    """One endpoint could not complete a request; the pool retries elsewhere.
+
+    ``silent`` means the endpoint stopped answering (a disconnect, a missed heartbeat
+    or deadline) rather than answering with an error, as a host that fell asleep does.
+    """
+
+    def __init__(self, message: str, *, silent: bool = False) -> None:
+        super().__init__(message)
+        self.silent = silent
 
 
 class BatchFailure(Exception):
@@ -182,6 +192,9 @@ class _Link:
         self.reason: Optional[str] = None
         self.batch_size = default_encode_batch_size(model)
         self.next_probe = 0.0
+        # A wake endpoint that went silent: the pool waits for the probe this sets
+        # off before following ``unavailable``, since its host may have fallen asleep.
+        self.recheck = False
         self._probing = False
         self._lock = threading.Lock()
 
@@ -200,6 +213,12 @@ class _Link:
 
     def connect(self) -> bool:
         """Connect and handshake; return whether the link is usable."""
+        try:
+            return self._connect()
+        finally:
+            self.recheck = False
+
+    def _connect(self) -> bool:
         config = self.pool.config
         self.close()
         if self.pool.closed:
@@ -213,12 +232,13 @@ class _Link:
             )
         except Exception as exc:
             reason = _unreachable_reason(self.endpoint, exc)
-            # A refused connection comes from an awake host with no worker listening.
-            if self.endpoint.wake is not None and not isinstance(exc, ConnectionRefusedError):
+            # A refused connection or a failed authentication comes from an awake host.
+            if self.endpoint.wake is not None and sleep_shaped(exc):
                 reason = f"{reason}; {self.pool.waker.wake(self.endpoint)}"
             self._mark("down", reason)
             return False
-        self.pool.waker.awake(self.endpoint)
+        # A woken host stays awaited until its handshake settles the link: a failed
+        # handshake keeps the wait, an answer (usable or excluded) ends it.
         local = local_identity(self.model)
         try:
             request_id = uuid.uuid4().hex
@@ -236,10 +256,12 @@ class _Link:
         mismatches = identity_mismatches(local, payload)
         if mismatches:
             channel.close()
+            self.pool.waker.awake(self.endpoint)
             self._mark("excluded", describe_mismatch(local, payload, mismatches))
             return False
         if not payload.get("serves"):
             channel.close()
+            self.pool.waker.awake(self.endpoint)
             self._mark("excluded", f"does not serve {self.model}")
             return False
         self.batch_size = max(1, int(payload.get("encode_batch_size") or self.batch_size))
@@ -248,16 +270,21 @@ class _Link:
             self.batch_size = min(self.batch_size, configured)
         self.channel = channel
         self.state, self.reason = "up", None
+        self.pool.waker.awake(self.endpoint)
         return True
 
     def _mark(self, state: str, reason: str) -> None:
         self.state, self.reason = state, reason
         self.next_probe = self.pool.clock() + self.pool.config.probe_interval
 
-    def fail(self, reason: str) -> None:
+    def fail(self, reason: str, *, silent: bool = False) -> None:
         logger.warning("Remote embedding endpoint %s (%s): %s", self.name, self.model, reason)
         self.close()
         self._mark("down", reason)
+        if silent and self.endpoint.wake is not None:
+            # Its host may have fallen asleep: probe now, and wait for that probe.
+            self.next_probe = self.pool.clock()
+            self.recheck = True
 
     def close(self) -> None:
         if self.channel is not None:
@@ -272,6 +299,7 @@ class _Link:
         self.close()
         self.state = "down" if self.state == "untried" else self.state
         self.reason = reason
+        self.recheck = False
         return True
 
     def probe_if_due(self) -> None:
@@ -307,17 +335,19 @@ class _Link:
             while True:
                 remaining = deadline - self.pool.clock()
                 if remaining <= 0:
-                    raise EndpointFailure("stopped answering heartbeats")
+                    raise EndpointFailure("stopped answering heartbeats", silent=True)
                 reply = channel.receive(timeout=remaining)
                 if reply is not None and reply["request_id"] == request_id:
                     return reply["payload"]
-        except (EOFError, OSError, WorkerProtocolError) as exc:
+        except (EOFError, OSError) as exc:
+            raise EndpointFailure(f"disconnected ({exc})", silent=True) from exc
+        except WorkerProtocolError as exc:
             raise EndpointFailure(f"disconnected ({exc})") from exc
 
     def _channel(self) -> ConnectionChannel:
         channel = self.channel
         if channel is None or self.pool.closed:
-            raise EndpointFailure("not connected")
+            raise EndpointFailure("not connected", silent=True)
         return channel
 
     def encode(self, texts: list[str]) -> np.ndarray:
@@ -346,10 +376,19 @@ class _Link:
                     channel.send(make_message(MessageType.HEARTBEAT, heartbeat_id))
                     heartbeat_sent = last_heartbeat = now
                 if heartbeat_id is not None and now - heartbeat_sent > deadlines.heartbeat_timeout:
-                    raise EndpointFailure("stopped answering heartbeats")
+                    raise EndpointFailure("stopped answering heartbeats", silent=True)
                 allowance = allowances[state]
                 if now - state_since > allowance:
-                    raise EndpointFailure(f"exceeded its {state} deadline ({allowance:.1f}s)")
+                    # Silent only if its heartbeat went unanswered too: a worker still
+                    # answering them is awake (a stalled load), so reprobing it at once
+                    # would retry it without end.
+                    unanswered = (
+                        heartbeat_id is not None
+                        and now - heartbeat_sent >= deadlines.heartbeat_interval
+                    )
+                    raise EndpointFailure(
+                        f"exceeded its {state} deadline ({allowance:.1f}s)", silent=unanswered
+                    )
                 wait = min(
                     deadlines.heartbeat_interval,
                     max(0.0, state_since + allowance - now),
@@ -365,7 +404,9 @@ class _Link:
                 elif reply["request_id"] == request_id:
                     return self._result(reply, len(texts))
         except (EOFError, OSError) as exc:
-            raise EndpointFailure(f"disconnected ({exc or type(exc).__name__})") from exc
+            raise EndpointFailure(
+                f"disconnected ({exc or type(exc).__name__})", silent=True
+            ) from exc
         except WorkerProtocolError as exc:
             raise EndpointFailure(f"protocol error ({exc})") from exc
 
@@ -504,9 +545,12 @@ class RemoteEmbeddingPool:
         details = "; ".join(self._describe(link) for link in links) or (
             "no endpoint is configured to serve it"
         )
-        waking = sorted({link.name for link in links if self.waker.waking(link.endpoint)})
+        waking = sorted(
+            {link.name for link in links if link.recheck or self.waker.waking(link.endpoint)}
+        )
         if waking:
-            # A woken worker is on its way: wait for it whatever the policy.
+            # A woken worker is on its way, or one that went silent may be asleep and
+            # is being probed: wait for it whatever the policy.
             self._notify(
                 f"Waking {', '.join(waking)} for {model}; waiting for it to answer ({details})."
             )
@@ -564,7 +608,7 @@ class RemoteEmbeddingPool:
             try:
                 return link.health()
             except EndpointFailure as exc:
-                link.fail(str(exc))
+                link.fail(str(exc), silent=exc.silent)
                 return None
 
         with ThreadPoolExecutor(max_workers=max(1, len(usable))) as executor:
@@ -613,7 +657,7 @@ class RemoteEmbeddingPool:
                     if validate is not None and not validate(rows, len(batch)):
                         raise BatchFailure("returned invalid embeddings")
                 except EndpointFailure as exc:
-                    link.fail(str(exc))
+                    link.fail(str(exc), silent=exc.silent)
                     work.put(batch)
                     return
                 except BatchFailure as exc:

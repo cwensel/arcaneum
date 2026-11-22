@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import socket
 import subprocess
 import sys
@@ -23,6 +24,7 @@ from arcaneum.embeddings.remote.wake import (
     on_network,
     send_magic_packet,
     send_wake,
+    sleep_shaped,
     wake_endpoints,
     wake_targets,
 )
@@ -271,6 +273,26 @@ def test_host_state_reports_an_unanswering_host_as_silent():
 
 def endpoint(host="dev-0", mac=MAC, timeout=120.0):
     return EndpointConfig(host=host, wake=WakeConfig(mac=mac, timeout=timeout))
+
+
+@pytest.mark.parametrize(
+    ("failure", "shaped"),
+    [
+        (TimeoutError("timed out"), True),
+        (socket.timeout("timed out"), True),
+        (OSError(errno.EHOSTUNREACH, "No route to host"), True),
+        (OSError(errno.EHOSTDOWN, "Host is down"), True),
+        (OSError(errno.ENETUNREACH, "Network is unreachable"), True),
+        (ConnectionRefusedError(errno.ECONNREFUSED, "Connection refused"), False),
+        (socket.gaierror(socket.EAI_NONAME, "nodename nor servname provided"), False),
+        (ConnectionError("authentication failed (digest received was wrong)"), False),
+        (OSError(errno.EACCES, "Permission denied"), False),
+        (ValueError("bad"), False),
+    ],
+    ids=lambda value: type(value).__name__ if isinstance(value, BaseException) else None,
+)
+def test_only_failures_a_sleeping_host_causes_are_sleep_shaped(failure, shaped):
+    assert sleep_shaped(failure) is shaped
 
 
 def test_waker_sends_once_per_resend_interval_and_waits_out_the_timeout():

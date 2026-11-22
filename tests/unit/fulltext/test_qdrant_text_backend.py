@@ -16,6 +16,7 @@ from arcaneum.indexing.collection_metadata import (
     METADATA_PAYLOAD_KEY,
     METADATA_POINT_ID,
 )
+from arcaneum.retrieval.ascii_folding import fold_to_ascii
 from arcaneum.retrieval.qdrant_text import QdrantTextBackend, text_index_params, tokenize
 from arcaneum.schema.document import DualIndexDocument
 from arcaneum.search.filters import parse_filter
@@ -324,6 +325,64 @@ class TestTokenize:
     def test_stop_words_follow_the_corpus_type(self):
         assert tokenize("the and or to", "pdf") == []
         assert tokenize("the and or to", "code") == ["the", "and", "or", "to"]
+
+    # Each case is what a Qdrant 1.20.2 text index (word tokenizer, lowercase,
+    # ascii_folding) held for the word, probed against a scratch collection on
+    # 2026-11-21 (arcaneum#181): Qdrant folds through Lucene's table, then
+    # lowercases, and keeps every character the table lacks.
+    @pytest.mark.parametrize(
+        "word, token",
+        [
+            ("Café", "cafe"),
+            ("ÉCOLE", "ecole"),
+            ("ﬁnance", "finance"),
+            ("ﬄ", "ffl"),
+            ("ＡＢｃ", "abc"),
+            ("x²", "x2"),
+            ("Straße", "strasse"),
+            ("Øre", "ore"),
+            ("Æon", "aeon"),
+            ("Łódź", "lodz"),
+            ("Þing", "thing"),
+            ("ıstanbul", "istanbul"),
+            ("Đak", "dak"),
+            ("ħa", "ha"),
+            ("ðe", "de"),
+            ("ſun", "sun"),
+            ("ĳs", "ijs"),
+            ("œuvre", "oeuvre"),
+            ("ᴀbc", "abc"),
+            ("ʀx", "rx"),
+            ("ǅem", "dzem"),
+            # Kept: no entry in the fold table, so only lowercase applies.
+            ("𝑦𝑠", "𝑦𝑠"),  # MATHEMATICAL ITALIC SMALL Y, S
+            ("𝐂", "𝐂"),  # MATHEMATICAL BOLD CAPITAL C: no lowercase mapping
+            ("Ωμέγα", "ωμέγα"),
+            ("ά", "ά"),
+            ("Ёлка", "ёлка"),
+            ("Ⅳ", "ⅳ"),
+            ("µm", "µm"),
+            # Order witnesses: folding first leaves these to lowercase alone.
+            ("Å", "å"),  # ANGSTROM SIGN
+            ("K", "k"),  # KELVIN SIGN
+        ],
+    )
+    def test_words_fold_as_the_qdrant_index_does(self, word, token):
+        assert tokenize(f"technology {word} min", "code") == ["technology", token, "min"]
+
+
+class TestAsciiFolding:
+    def test_the_table_matches_qdrants_own_examples(self):
+        # ascii_folding.rs::tests::basic_examples, Qdrant v1.20.2
+        assert fold_to_ascii("ação café jalapeño Über") == "acao cafe jalapeno Uber"
+        assert fold_to_ascii("Æsop and Œuvre") == "AEsop and OEuvre"
+        assert fold_to_ascii("straße") == "strasse"
+        assert fold_to_ascii("Łódź") == "Lodz"
+        assert fold_to_ascii("“quote” — test １②⒊") == '"quote" - test 123.'
+        assert fold_to_ascii("日本語のテキストです。") == "日本語のテキストです。"
+
+    def test_circled_letters_fold(self):
+        assert fold_to_ascii("Ⓐ") == "A"
 
 
 class TestCoverage:

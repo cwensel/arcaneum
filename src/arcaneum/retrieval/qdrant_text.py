@@ -20,7 +20,6 @@ qdrant_client is imported where it is used (RDR-026 Q11).
 from __future__ import annotations
 
 import re
-import unicodedata
 import uuid
 from collections import Counter
 from pathlib import Path
@@ -40,6 +39,7 @@ from ..search.filters import (
     qdrant_text_filterable_fields,
     to_qdrant_text_filter,
 )
+from .ascii_folding import fold_to_ascii
 from .text_backend import Coverage, TextPage
 
 TEXT_FIELD = "text"
@@ -73,9 +73,8 @@ def stop_words(corpus_type: Optional[str]) -> List[str]:
 
 
 def _normalize(word: str) -> str:
-    """Lowercase and fold accents to ASCII, keeping letters with no ASCII form."""
-    decomposed = unicodedata.normalize("NFKD", word.lower())
-    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    """Fold to ASCII through Qdrant's table, then lowercase, as the index does."""
+    return fold_to_ascii(word).lower()
 
 
 def token_spans(text: str) -> Iterator[Tuple[int, int, str]]:

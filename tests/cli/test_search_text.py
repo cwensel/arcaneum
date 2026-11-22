@@ -347,11 +347,12 @@ class TestPDFSearchWithPageFilter:
 
                 assert exc_info.value.code == 0
 
-        # Verify filter was passed correctly
+        # The neutral filter is re-rendered with quoted values;
+        # MeiliSearch still compares page_number > "5" numerically.
         mock_client.search.assert_called_once_with(
             "PDFs",
             "neural network",
-            filter="page_number > 5",
+            filter='page_number > "5"',
             limit=10,
             offset=0,
             attributes_to_highlight=["content"],
@@ -805,7 +806,27 @@ class TestComplexFilterExpressions:
 
         mock_client.search.assert_called_once()
         call_args = mock_client.search.call_args
-        assert call_args[1]["filter"] == "language = python AND git_branch = main"
+        assert call_args[1]["filter"] == 'language = "python" AND git_branch = "main"'
+
+    def test_native_or_filter_passes_through_verbatim(self, mock_client):
+        """Test a native-only filter (OR) reaches MeiliSearch unchanged."""
+        filter_arg = "language = python OR language = rust"
+        with patch("arcaneum.cli.fulltext.create_meili_client", return_value=mock_client):
+            with patch("arcaneum.cli.fulltext.interaction_logger"):
+                with pytest.raises(SystemExit):
+                    search_text_command(
+                        query="test",
+                        corpora=["TestIndex"],
+                        filter_arg=filter_arg,
+                        limit=10,
+                        offset=0,
+                        output_json=True,
+                        verbose=False,
+                    )
+
+        mock_client.search.assert_called_once()
+        call_args = mock_client.search.call_args
+        assert call_args[1]["filter"] == filter_arg
 
 
 class TestHighlightingFormatting:

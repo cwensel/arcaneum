@@ -10,12 +10,18 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from ..cli.errors import ArcaneumError, BadFilterError, ResourceNotFoundError
+from ..cli.errors import (
+    ArcaneumError,
+    BadFilterError,
+    ResourceNotFoundError,
+    ServiceDownError,
+    UnknownCorpusError,
+)
 from ..cli.search_merge import fetch_from_corpora, per_corpus_limit
 from ..indexing.collection_metadata import text_backend_of
 from ..search.filters import parse_filter
 from .failures import is_connection_failure, service_down
-from .hits import build_hit, read_corpora_metadata, roots_of, search_data
+from .hits import build_hit, read_corpora_metadata_or_failure, roots_of, search_data
 
 if TYPE_CHECKING:
     from .text_backend import TextBackend
@@ -45,6 +51,10 @@ class TextSearchResult:
     source_roots: Dict[str, List[str]] = field(default_factory=dict)
     # Each corpus's type, for highlighting with its stop words (RDR-027 Q5).
     corpus_types: Dict[str, Optional[str]] = field(default_factory=dict)
+    # ``Qdrant: <error>`` when the metadata read failed, in ``list_corpora``'s
+    # ``service_errors`` shape: the corpora it left unread were searched on
+    # MeiliSearch, whose index is stale for one migrated to Qdrant.
+    service_errors: List[str] = field(default_factory=list)
 
     @property
     def display_index(self) -> str:
@@ -77,8 +87,12 @@ class TextSearchResult:
     def to_data(
         self, verbose: bool = False, max_content_chars: int | None = None
     ) -> Dict[str, Any]:
-        """The JSON ``data`` the CLI and the MCP server emit (RDR-026 Q2)."""
-        return search_data(
+        """The JSON ``data`` the CLI and the MCP server emit (RDR-026 Q2).
+
+        ``service_errors`` appears only when the metadata read failed, so a
+        healthy text search keeps semantic search's keys.
+        """
+        data = search_data(
             query=self.query,
             corpora=self.corpora,
             missing_corpora=self.missing_corpora,
@@ -86,6 +100,9 @@ class TextSearchResult:
             offset=self.offset,
             hits=self.to_hits(verbose=verbose, max_content_chars=max_content_chars),
         )
+        if self.service_errors:
+            data["service_errors"] = list(self.service_errors)
+        return data
 
 
 def _check_filter(
@@ -136,7 +153,9 @@ def search_text(
     Each corpus's metadata is read once, before any search, for its
     ``text_backend`` and its ``source_roots``. A corpus whose metadata records
     no backend, or cannot be read (Qdrant down, or a MeiliSearch-only index),
-    is a MeiliSearch corpus.
+    is a MeiliSearch corpus. A failed read (not a missing collection) is
+    named in the result's ``service_errors``: a corpus migrated to Qdrant but
+    not finalized still has a MeiliSearch index, now stale (arcaneum#178).
 
     Args:
         query: Search query (quotes for exact phrases)
@@ -150,7 +169,8 @@ def search_text(
             MeiliSearch corpus is searched
         qdrant_client: Qdrant client that reads each corpus's metadata and
             serves the Qdrant corpora; None, or a failed read, makes every
-            corpus a MeiliSearch corpus cited by absolute path (RDR-026 Q4)
+            corpus a MeiliSearch corpus cited by absolute path (RDR-026 Q4),
+            and a failed read is named in ``service_errors``
         verbose: Log skipped corpora
 
     Raises:
@@ -161,7 +181,9 @@ def search_text(
             unfilterable field; Qdrant: a MeiliSearch expression, a field
             the corpus type's chunks lack), naming the corpora it would not
             run on when the set spans both backends
-        ServiceDownError: a searched corpus's backend is unreachable
+        ServiceDownError: a searched corpus's backend is unreachable, or
+            the metadata read failed and MeiliSearch lacks a corpus it left
+            unread (it may be a Qdrant corpus)
         ArcaneumError: any other search failure
     """
     parsed = None
@@ -171,7 +193,9 @@ def search_text(
         except ValueError as e:
             raise BadFilterError(f"Invalid filter: {e}") from e
 
-    metadata = read_corpora_metadata(qdrant_client, corpora)
+    read = read_corpora_metadata_or_failure(qdrant_client, corpora)
+    metadata = read.metadata
+    service_errors = [f"Qdrant: {read.error}"] if read.error is not None else []
     try:
         backend_names = {corpus: text_backend_of(metadata[corpus]) for corpus in corpora}
     except ValueError as e:
@@ -237,6 +261,15 @@ def search_text(
             logger,
             verbose,
         )
+    except UnknownCorpusError as e:
+        if not read.unread:
+            raise
+        # Absent from MeiliSearch may mean served by Qdrant: report the real cause.
+        raise ServiceDownError(
+            f"Qdrant is unreachable: {read.error}. MeiliSearch has no index for "
+            f"{', '.join(read.unread)}, whose text backend could not be read; "
+            "retry once Qdrant answers."
+        ) from e
     except ArcaneumError:
         raise
     except Exception as e:
@@ -269,4 +302,5 @@ def search_text(
         source_roots={corpus: roots_of(metadata[corpus]) for corpus in corpora},
         corpus_types=corpus_types,
         missing_corpora=missing_corpora,
+        service_errors=service_errors,
     )

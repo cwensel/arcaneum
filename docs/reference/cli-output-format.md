@@ -378,6 +378,11 @@ Both search modes emit the same `data` and the same hit (RDR-026 Q2):
   `_formatted` and `_rankingScore` never appear.
 - `missing_corpora` lists requested corpora that do not exist, when at least
   one other does.
+- `service_errors` appears on a text search only when Qdrant could not be read
+  for each corpus's metadata, as `["Qdrant: <error>"]`. The corpora it left
+  unread were searched on MeiliSearch, whose index is stale for a corpus
+  migrated to Qdrant but not yet finalized. Text output prints it as a
+  `[WARNING]` line on stderr.
 
 #### Cites
 
@@ -482,7 +487,9 @@ The search and listing commands report these codes (RDR-026):
 | `error` | 1 | Any other failure |
 
 A multi-corpus search with some corpora missing still succeeds and lists them
-in `data.missing_corpora`.
+in `data.missing_corpora`. When Qdrant cannot be read and MeiliSearch has no
+index for a corpus, text search reports `service-down` naming Qdrant, since
+that corpus may be served by Qdrant.
 
 ### Common Error Messages
 

@@ -934,6 +934,72 @@ class TestJSONModeFailureEnvelope:
         assert json.loads(captured.out)["errors"][0]["code"] == "service-down"
 
 
+class TestQdrantMetadataUnreadable:
+    """Qdrant down: MeiliSearch still answers, and the output says so (arcaneum#178)."""
+
+    @pytest.fixture
+    def run_main(self, monkeypatch, capsys):
+        from arcaneum.cli import fulltext
+        from arcaneum.cli.main import main
+
+        client = MagicMock()
+        client.health_check.return_value = True
+        client.index_exists.return_value = True
+        client.search.return_value = {
+            "hits": [{"id": "d1", "content": "lorem", "file_path": "/src/a.py"}],
+            "estimatedTotalHits": 1,
+            "processingTimeMs": 1,
+        }
+        qdrant = MagicMock()
+        qdrant.retrieve.side_effect = ConnectionError("refused")
+        monkeypatch.setattr("arcaneum.cli.main.configure_ssl_from_env", lambda: None)
+        monkeypatch.setattr(fulltext, "create_meili_client", lambda: client)
+        monkeypatch.setattr(fulltext, "create_qdrant_client", lambda **kwargs: qdrant)
+        monkeypatch.setattr(fulltext, "interaction_logger", MagicMock())
+
+        def run(*args):
+            monkeypatch.setattr("sys.argv", ["arc", "search", "text", "q", "--corpus", "DevRef", *args])
+            try:
+                exit_code = main()
+            except SystemExit as e:  # the command exits 0 itself on success
+                exit_code = e.code
+            return exit_code, capsys.readouterr()
+
+        return client, run
+
+    def test_text_mode_warns_on_stderr_and_prints_hits(self, run_main):
+        _client, run = run_main
+
+        exit_code, captured = run()
+
+        assert exit_code == 0
+        assert "DevRef:/src/a.py" in captured.out
+        assert "[WARNING]" in captured.err
+        assert "Qdrant" in captured.err
+        assert "stale" in captured.err
+
+    def test_json_carries_service_errors(self, run_main):
+        _client, run = run_main
+
+        exit_code, captured = run("--json")
+
+        assert exit_code == 0
+        data = json.loads(captured.out)["data"]
+        assert data["service_errors"] == ["Qdrant: refused"]
+        assert [hit["cite"] for hit in data["hits"]] == ["DevRef:/src/a.py"]
+
+    def test_corpus_absent_from_meilisearch_is_service_down(self, run_main):
+        client, run = run_main
+        client.index_exists.return_value = False
+
+        exit_code, captured = run("--json")
+
+        assert exit_code == 1
+        error = json.loads(captured.out)["errors"][0]
+        assert error["code"] == "service-down"
+        assert "Qdrant" in error["message"]
+
+
 def test_source_roots_client_gets_a_short_timeout(monkeypatch):
     """Roots are optional for text search, so a slow Qdrant must not hold it up."""
     from arcaneum.cli import fulltext

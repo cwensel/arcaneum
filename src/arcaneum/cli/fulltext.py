@@ -14,7 +14,14 @@ from rich.table import Table
 from ..fulltext.backend import MeiliTextBackend
 from ..fulltext.client import FullTextClient
 from ..fulltext.indexes import get_index_settings
-from .output import format_json_response, print_json, print_error, print_info, print_success
+from .output import (
+    format_json_response,
+    print_error,
+    print_info,
+    print_json,
+    print_success,
+    print_warning,
+)
 from .interaction_logger import interaction_logger
 from .errors import InvalidArgumentError, ResourceNotFoundError
 from .utils import create_meili_client, create_qdrant_client
@@ -151,6 +158,13 @@ def search_text_command(
         ctx["result_count"] = len(result.hits)
 
     hits = result.hits
+    if not (output_json or output_format == "json"):
+        # JSON carries these as data.service_errors.
+        for service_error in result.service_errors:
+            print_warning(
+                f"Could not read corpus metadata ({service_error}); results come from "
+                "MeiliSearch and may be stale for a corpus migrated to Qdrant"
+            )
     if verbose:
         logger.info(f"Search completed in {(time.time() - start_time) * 1000:.1f}ms")
         if result.missing_corpora:

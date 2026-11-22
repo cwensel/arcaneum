@@ -196,17 +196,36 @@ def read_source_roots(client, corpus: str) -> List[str]:
     return read_corpora_source_roots(client, [corpus]).get(corpus, [])
 
 
-def read_corpora_metadata(client, corpora: Iterable[str]) -> Dict[str, Dict[str, Any]]:
-    """Each corpus's collection metadata, read once; empty when absent or unreadable.
+@dataclass
+class CorporaMetadata:
+    """``read_corpora_metadata``'s result, with the corpora a failed read left unread.
 
-    A corpus Qdrant does not hold (a MeiliSearch-only index) reads as empty.
-    Any other failed read ends the lookups: the rest of the corpora read as
-    empty, so an unreachable Qdrant costs one timeout, not one per corpus.
+    ``unread`` is empty, and ``error`` None, unless a read failed for a reason
+    other than a missing collection: then ``error`` is that failure and
+    ``unread`` names the corpus it hit and every corpus after it.
+    """
+
+    metadata: Dict[str, Dict[str, Any]]
+    unread: List[str]
+    error: Optional[Exception] = None
+
+
+def read_corpora_metadata_or_failure(client, corpora: Iterable[str]) -> CorporaMetadata:
+    """Each corpus's collection metadata, as ``read_corpora_metadata`` reads it, and its failure.
+
+    No client, or a collection Qdrant does not hold, is an absent read, not a
+    failed one: only an unreachable or failing Qdrant leaves corpora unread.
     """
     from ..indexing.collection_metadata import _retrieve_collection_metadata
 
     metadata: Dict[str, Dict[str, Any]] = {}
+    unread: List[str] = []
+    error: Optional[Exception] = None
     for corpus in corpora:
+        if error is not None:
+            metadata[corpus] = {}
+            unread.append(corpus)
+            continue
         if client is None:
             metadata[corpus] = {}
             continue
@@ -216,8 +235,19 @@ def read_corpora_metadata(client, corpora: Iterable[str]) -> Dict[str, Dict[str,
             logger.debug("No metadata for %s: %s", corpus, e)
             metadata[corpus] = {}
             if not _is_missing_collection(e):
-                client = None
-    return metadata
+                error = e
+                unread.append(corpus)
+    return CorporaMetadata(metadata=metadata, unread=unread, error=error)
+
+
+def read_corpora_metadata(client, corpora: Iterable[str]) -> Dict[str, Dict[str, Any]]:
+    """Each corpus's collection metadata, read once; empty when absent or unreadable.
+
+    A corpus Qdrant does not hold (a MeiliSearch-only index) reads as empty.
+    Any other failed read ends the lookups: the rest of the corpora read as
+    empty, so an unreachable Qdrant costs one timeout, not one per corpus.
+    """
+    return read_corpora_metadata_or_failure(client, corpora).metadata
 
 
 def read_corpora_source_roots(client, corpora: Iterable[str]) -> Dict[str, List[str]]:

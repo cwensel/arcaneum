@@ -152,7 +152,9 @@ def _cli_list_data(scenario="fake"):
     return json.loads(result.stdout)["data"]
 
 
-def _cli_text_data(query, corpora, *, limit, max_content_chars, offset=0, filter=None):
+def _cli_text_data(
+    query, corpora, *, limit, max_content_chars, offset=0, filter=None, scenario="fake"
+):
     args = ["search", "text", query, "--json", "--limit", str(limit), "--offset", str(offset)]
     args += ["--max-content-chars", str(max_content_chars)]
     for name in corpora:
@@ -160,7 +162,7 @@ def _cli_text_data(query, corpora, *, limit, max_content_chars, offset=0, filter
     if filter is not None:
         args += ["--filter", filter]
     result = subprocess.run(
-        [sys.executable, str(HARNESS), "fake", *args],
+        [sys.executable, str(HARNESS), scenario, *args],
         capture_output=True,
         text=True,
         env=_env(),
@@ -517,6 +519,21 @@ def test_search_text_meilisearch_down_is_service_down(server):
     error = _error(proc.call("search_text", {"query": "lorem", "corpora": ["Alpha"]}))
     assert error["code"] == "service-down"
     assert "MeiliSearch" in error["message"]
+
+
+def test_search_text_qdrant_down_names_qdrant_like_the_cli(server):
+    # MeiliSearch still answers, but a migrated corpus's index may be stale (arcaneum#178).
+    proc = server("qdrant-down")
+    proc.initialize()
+    result = proc.call("search_text", {"query": "lorem", "corpora": ["Alpha"], "limit": 2})
+
+    assert result.get("isError") in (None, False), result
+    data = result["structuredContent"]
+    assert [entry.split(": ", 1)[0] for entry in data["service_errors"]] == ["Qdrant"]
+    assert len(data["hits"]) == 2
+    assert data == _cli_text_data(
+        "lorem", ["Alpha"], limit=2, max_content_chars=1200, scenario="qdrant-down"
+    )
 
 
 def test_search_text_stall_is_timeout(server):

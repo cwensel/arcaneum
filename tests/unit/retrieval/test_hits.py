@@ -341,9 +341,10 @@ class TestSearchCoreRoots:
             "q", ["DevRef"], text_backend=MeiliTextBackend(meili), qdrant_client=qdrant
         )
 
-        assert result.to_data()["hits"][0]["cite"] == (
-            "DevRef:~/Refs/Database-Books/db(31).pdf#page=89"
-        )
+        data = result.to_data()
+        assert data["hits"][0]["cite"] == "DevRef:~/Refs/Database-Books/db(31).pdf#page=89"
+        # The hits may be a migrated corpus's stale index, so Qdrant is named (arcaneum#178).
+        assert data["service_errors"] == ["Qdrant: refused"]
 
     def test_a_failed_root_read_stops_further_root_reads(self):
         from arcaneum.retrieval import search_text

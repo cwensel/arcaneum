@@ -961,6 +961,101 @@ class TestSearchText:
         assert capsys.readouterr().out == ""
 
 
+def _qdrant_reading(failure=None):
+    """A Qdrant client whose metadata read raises ``failure``, or finds no metadata."""
+    client = MagicMock()
+    if failure is not None:
+        client.retrieve.side_effect = failure
+    else:
+        client.retrieve.return_value = []
+    return client
+
+
+class _NotFound(Exception):
+    status_code = 404
+
+
+class TestSearchTextUnreadMetadata:
+    """A failed metadata read still searches MeiliSearch, but says so (arcaneum#178)."""
+
+    @pytest.mark.parametrize(
+        "failure", [ConnectionError("refused"), TimeoutError("timed out")]
+    )
+    def test_unreadable_metadata_searches_meilisearch_and_names_qdrant(
+        self, text_client, failure
+    ):
+        from arcaneum.retrieval import search_text
+
+        result = search_text(
+            "query",
+            ["A", "B"],
+            text_backend=MeiliTextBackend(text_client),
+            qdrant_client=_qdrant_reading(failure),
+        )
+
+        assert [hit["id"] for hit in result.hits] == ["a1", "b1", "a2"]
+        data = result.to_data()
+        assert len(data["service_errors"]) == 1
+        assert data["service_errors"][0].startswith("Qdrant: ")
+        assert str(failure) in data["service_errors"][0]
+        assert data["service_errors"] == result.service_errors
+
+    def test_unread_corpus_absent_from_meilisearch_is_qdrant_service_down(self, text_client):
+        from arcaneum.retrieval import search_text
+
+        with pytest.raises(errors.ServiceDownError) as exc_info:
+            search_text(
+                "query",
+                ["Gone"],
+                text_backend=MeiliTextBackend(text_client),
+                qdrant_client=_qdrant_reading(ConnectionError("refused")),
+            )
+
+        assert not isinstance(exc_info.value, errors.UnknownCorpusError)
+        assert "Qdrant" in str(exc_info.value)
+        assert "Gone" in str(exc_info.value)
+
+    def test_unread_corpus_absent_among_others_is_reported_missing(self, text_client):
+        from arcaneum.retrieval import search_text
+
+        result = search_text(
+            "query",
+            ["A", "Gone"],
+            text_backend=MeiliTextBackend(text_client),
+            qdrant_client=_qdrant_reading(ConnectionError("refused")),
+        )
+
+        data = result.to_data()
+        assert data["missing_corpora"] == ["Gone"]
+        assert data["service_errors"][0].startswith("Qdrant: ")
+
+    def test_missing_collection_is_not_a_failed_read(self, text_client):
+        from arcaneum.retrieval import search_text
+
+        qdrant = _qdrant_reading(_NotFound("Collection `A` not found"))
+        result = search_text(
+            "query", ["A"], text_backend=MeiliTextBackend(text_client), qdrant_client=qdrant
+        )
+
+        assert result.service_errors == []
+        assert "service_errors" not in result.to_data()
+        with pytest.raises(errors.UnknownCorpusError):
+            search_text(
+                "query", ["Gone"], text_backend=MeiliTextBackend(text_client), qdrant_client=qdrant
+            )
+
+    @pytest.mark.parametrize("qdrant", [None, _qdrant_reading()], ids=["no-client", "read"])
+    def test_a_read_or_no_client_adds_no_note(self, text_client, qdrant):
+        from arcaneum.retrieval import search_text
+
+        result = search_text(
+            "query", ["A"], text_backend=MeiliTextBackend(text_client), qdrant_client=qdrant
+        )
+
+        assert result.service_errors == []
+        assert "service_errors" not in result.to_data()
+
+
 # ---------------------------------------------------------------------------
 # list_corpora
 # ---------------------------------------------------------------------------

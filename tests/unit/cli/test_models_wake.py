@@ -96,7 +96,7 @@ def test_wake_without_endpoints_exits_nonzero(monkeypatch, wake_calls):
 def test_workers_suggests_waking_an_unreachable_worker_with_wake_settings(config, monkeypatch):
     monkeypatch.setattr(
         "arcaneum.cli.remote_embedding.probe_endpoint",
-        lambda endpoint, config: EndpointStatus(endpoint.name, "unreachable", "timed out"),
+        lambda endpoint, config: EndpointStatus(endpoint.name, "unreachable", "timed out", wakeable=True),
     )
 
     result = CliRunner().invoke(cli, ["models", "workers"])

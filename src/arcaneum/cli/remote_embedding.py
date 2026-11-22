@@ -180,6 +180,7 @@ def workers_command(output_json: bool) -> None:
             "bind": endpoint.bind,
             "models": config.endpoint_models(endpoint),
             "wake": endpoint.wake.mac if endpoint.wake else None,
+            "wakeable": status.wakeable,
         }
         for endpoint, status in zip(config.endpoints, statuses)
     ]
@@ -228,7 +229,7 @@ def workers_command(output_json: bool) -> None:
         if worker["reason"]:
             details.append(worker["reason"])
         console.print(f"  {worker['endpoint']}: {'; '.join(details)}", soft_wrap=True)
-    if any(w["state"] == "unreachable" and w["wake"] for w in workers):
+    if any(w["state"] == "unreachable" and w["wake"] and w["wakeable"] for w in workers):
         console.print("Run `arc models wake` to wake workers that are asleep.")
     if not healthy:
         console.print(

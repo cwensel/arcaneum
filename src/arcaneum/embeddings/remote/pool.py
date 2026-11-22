@@ -705,6 +705,9 @@ class EndpointStatus:
     busy: Optional[bool] = None
     dependencies: dict[str, Optional[str]] = field(default_factory=dict)
     mismatches: list[str] = field(default_factory=list)
+    # The connection failed as a sleeping host's does (``sleep_shaped``), so waking it
+    # may help; a refused connection, failed authentication or handshake does not.
+    wakeable: bool = False
 
 
 def probe_endpoint(
@@ -718,7 +721,12 @@ def probe_endpoint(
     try:
         channel = connector(endpoint.host, endpoint.port, config.authkey_bytes, timeout)
     except Exception as exc:
-        return EndpointStatus(endpoint.name, "unreachable", _unreachable_reason(endpoint, exc))
+        return EndpointStatus(
+            endpoint.name,
+            "unreachable",
+            _unreachable_reason(endpoint, exc),
+            wakeable=sleep_shaped(exc),
+        )
     try:
         local = local_identity(None)
         channel.send(make_message(MessageType.INITIALIZE, uuid.uuid4().hex, **local))

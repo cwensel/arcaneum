@@ -909,6 +909,40 @@ def test_probe_endpoint_reports_unreachable_endpoints(cluster):
     assert status.reason
 
 
+@pytest.mark.parametrize(
+    ("failure", "wakeable"),
+    [
+        (TimeoutError("timed out"), True),
+        (OSError(errno.EHOSTUNREACH, "No route to host"), True),
+        (ConnectionRefusedError(errno.ECONNREFUSED, "Connection refused"), False),
+        (ConnectionError("authentication failed (digest received was wrong)"), False),
+        (socket.gaierror(socket.EAI_NONAME, "nodename nor servname provided"), False),
+    ],
+    ids=lambda value: type(value).__name__ if isinstance(value, BaseException) else None,
+)
+def test_probe_endpoint_marks_only_sleep_shaped_failures_wakeable(failure, wakeable):
+    endpoint = EndpointConfig(host="127.0.0.1", port=7300)
+    config = RemoteEmbeddingConfig(endpoints=[endpoint])
+
+    def connector(*args):
+        raise failure
+
+    status = probe_endpoint(endpoint, config, connector=connector)
+
+    assert status.state == "unreachable"
+    assert status.wakeable is wakeable
+
+
+def test_probe_endpoint_handshake_failure_is_not_wakeable(cluster):
+    server = cluster.server(authkey=b"secret")
+    pool = cluster.pool([port_of(server)])
+
+    status = probe_endpoint(pool.config.endpoints[0], pool.config)
+
+    assert status.state == "unreachable"
+    assert status.wakeable is False
+
+
 @pytest.mark.parametrize(("server_key", "client_key"), [(b"secret", None), (None, "secret")])
 def test_authkey_mismatch_is_reported_not_raised(cluster, server_key, client_key):
     server = cluster.server(authkey=server_key)

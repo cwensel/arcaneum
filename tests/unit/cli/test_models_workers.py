@@ -43,15 +43,26 @@ def statuses():
     }
 
 
-def run(args, monkeypatch, tmp_path):
+WAKE = "{mac: '10:dd:b1:c9:7d:22'}"
+
+
+def run(args, monkeypatch, tmp_path, *, known=None, wake=()):
+    def entry(host, extra=""):
+        fields = [f"host: {host}", *([extra] if extra else [])]
+        if host in wake:
+            fields.append(f"wake: {WAKE}")
+        return f"    - {{{', '.join(fields)}}}\n"
+
     config = tmp_path / "config.yaml"
     config.write_text(
         "remote_embedding:\n  endpoints:\n"
-        "    - {host: dev-0, bind: tailscale}\n    - {host: dev-1}\n    - {host: dev-2}\n"
+        + entry("dev-0", "bind: tailscale")
+        + entry("dev-1")
+        + entry("dev-2")
     )
     monkeypatch.delenv("ARC_EMBED_ENDPOINTS", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    known = statuses()
+    known = known or statuses()
     with (
         patch("arcaneum.embeddings.remote.config._default_config_path", return_value=config),
         patch(
@@ -89,6 +100,51 @@ def test_workers_table_names_states_versions_and_models(monkeypatch, tmp_path):
     for text in ("dev-0:7300", "arctic-m", "mismatch", "0.9.0", "unreachable", "2.14.1+cpu"):
         assert text in result.output
     assert "arc models deploy" in result.output
+
+
+WAKE_HINT = "arc models wake"
+
+
+def with_dev2(**fields):
+    known = statuses()
+    known["dev-2:7300"] = EndpointStatus("dev-2:7300", "unreachable", "unreachable (x)", **fields)
+    return known
+
+
+def test_workers_hints_wake_only_for_a_sleep_shaped_failure(monkeypatch, tmp_path):
+    asleep = run([], monkeypatch, tmp_path, known=with_dev2(wakeable=True), wake=("dev-2",))
+    refused = run([], monkeypatch, tmp_path, known=with_dev2(wakeable=False), wake=("dev-2",))
+
+    assert asleep.exit_code == 0, asleep.output
+    assert WAKE_HINT in asleep.output
+    assert refused.exit_code == 0, refused.output
+    assert WAKE_HINT not in refused.output
+
+
+def test_workers_hints_wake_only_for_a_worker_with_wake_settings(monkeypatch, tmp_path):
+    result = run([], monkeypatch, tmp_path, known=with_dev2(wakeable=True))
+
+    assert result.exit_code == 0, result.output
+    assert WAKE_HINT not in result.output
+
+
+def test_workers_hints_wake_only_for_an_unreachable_worker(monkeypatch, tmp_path):
+    known = statuses()
+    known["dev-0:7300"].wakeable = True
+    known["dev-1:7300"].wakeable = True
+    result = run([], monkeypatch, tmp_path, known=known, wake=("dev-0", "dev-1"))
+
+    assert result.exit_code == 0, result.output
+    assert WAKE_HINT not in result.output
+
+
+def test_workers_json_reports_wakeable(monkeypatch, tmp_path):
+    result = run(["--json"], monkeypatch, tmp_path, known=with_dev2(wakeable=True))
+
+    assert result.exit_code == 0, result.output
+    workers = {w["endpoint"]: w for w in json.loads(result.output)["data"]["workers"]}
+    assert workers["dev-2:7300"]["wakeable"] is True
+    assert workers["dev-0:7300"]["wakeable"] is False
 
 
 def test_workers_without_endpoints_explains_configuration(monkeypatch, tmp_path):

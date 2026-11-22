@@ -117,10 +117,20 @@ def port_of(server):
 def test_embed_spreads_sub_batches_and_reassembles_in_order(cluster):
     first = cluster.server(batch_sizes={MODEL: 2})
     second = cluster.server(batch_sizes={MODEL: 2})
+    for host in cluster.hosts:
+        host.encode_permits[MODEL] = threading.Semaphore(0)
     pool = cluster.pool([port_of(first), port_of(second)])
     texts = [f"text number {i}" for i in range(7)]
+    outcome = {}
 
-    result = pool.embed(texts, MODEL)
+    worker = threading.Thread(target=lambda: outcome.setdefault("v", pool.embed(texts, MODEL)))
+    worker.start()
+    # Hold every encode until each host has one, so no endpoint drains the shared queue alone.
+    wait_for(lambda: all(host.encode_started.is_set() for host in cluster.hosts))
+    for host in cluster.hosts:
+        host.encode_permits[MODEL].release(100)
+    worker.join(timeout=10)
+    result = outcome["v"]
 
     np.testing.assert_array_equal(result, expected(texts))
     assert result.dtype == np.float32 and result.flags.c_contiguous and result.flags.owndata

@@ -17,7 +17,7 @@ from arcaneum.indexing.collection_metadata import (
     METADATA_POINT_ID,
 )
 from arcaneum.retrieval.ascii_folding import fold_to_ascii
-from arcaneum.retrieval.qdrant_text import QdrantTextBackend, text_index_params, tokenize
+from arcaneum.retrieval.qdrant_text import QdrantTextBackend, text_index_params, tokenize, zero_token
 from arcaneum.schema.document import DualIndexDocument
 from arcaneum.search.filters import parse_filter
 
@@ -369,6 +369,29 @@ class TestTokenize:
     )
     def test_words_fold_as_the_qdrant_index_does(self, word, token):
         assert tokenize(f"technology {word} min", "code") == ["technology", token, "min"]
+
+    # Qdrant's word tokenizer splits on ``!char::is_alphanumeric`` (Alphabetic,
+    # or general category N), which keeps characters Python's ``\w`` drops.
+    # Each case is what a Qdrant 1.20.2 text index held, probed against a
+    # scratch collection (arcaneum#182).
+    @pytest.mark.parametrize(
+        "text, tokens",
+        [
+            ("technology Ⓐⓐ min", ["technology", "aa", "min"]),  # So, Other_Alphabetic
+            ("xⓑy", ["xby"]),
+            # The vowel sign U+0947 (Mn, Other_Alphabetic) stays in its word; the
+            # virama U+094D is not Alphabetic, so it splits.
+            ("नमस्ते दुनिया", ["नमस", "ते", "दुनिया"]),
+            # Still split: a decomposed combining acute U+0301 is not Alphabetic.
+            ("café bar", ["cafe", "bar"]),
+            ("write_ahead", ["write", "ahead"]),
+        ],
+    )
+    def test_words_split_as_the_qdrant_index_does(self, text, tokens):
+        assert tokenize(text, "code") == tokens
+
+    def test_a_circled_letter_is_a_token(self):
+        assert zero_token("ⓐ", "code") is False
 
 
 class TestAsciiFolding:

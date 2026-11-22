@@ -40,6 +40,7 @@ from ..search.filters import (
     to_qdrant_text_filter,
 )
 from .ascii_folding import fold_to_ascii
+from .qdrant_alnum import WORD_CLASS
 from .text_backend import Coverage, TextPage
 
 TEXT_FIELD = "text"
@@ -48,7 +49,7 @@ QDRANT_START_HINT = "Start with: docker compose -f deploy/docker-compose.yml up 
 # Q8's flag on a chunk whose text yields no token (set by sync, arcaneum#174).
 TEXT_TOKENS_FIELD = "text_tokens"
 
-_WORD = re.compile(r"[^\W_]+")  # Qdrant's word tokenizer: runs of letters and digits
+_WORD = re.compile(WORD_CLASS + "+")  # Qdrant's word tokenizer: runs of is_alphanumeric
 _PHRASE = re.compile(r'"([^"]*)"')
 _ADD_BATCH_SIZE = 100
 _SCROLL_PAGE_SIZE = 1000

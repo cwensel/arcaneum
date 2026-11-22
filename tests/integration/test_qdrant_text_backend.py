@@ -31,6 +31,8 @@ TEXTS = [
     "Café owners log their sales in a ledger.",
     "Schema evolution in the write-ahead log of a database.",
     "### ** `` __",
+    "Ⓐ circled items, then xⓑy and ⓐ.",
+    "नमस्ते दुनिया",
 ]
 
 

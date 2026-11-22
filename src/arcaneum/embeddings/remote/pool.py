@@ -8,6 +8,10 @@ disconnects, stops answering heartbeats or exceeds a deadline is marked down, it
 sub-batch is retried elsewhere, and it is probed in the background until it rejoins.
 An endpoint with ``wake`` settings whose connection times out is woken with a
 Wake-on-LAN packet, and the pool waits for it before following ``unavailable``.
+An endpoint a background ``arc models deploy`` is updating (``deploys``, or
+another run's deploy holding its lock, ``deploy_lock_held``) is not connected
+until that deploy exits: its vector parity check runs after the new worker
+already answers, so only a finished deploy lets the endpoint rejoin.
 """
 
 from __future__ import annotations
@@ -260,9 +264,19 @@ class _Link:
             self.channel.close()
             self.channel = None
 
+    def hold_for_deploy(self) -> bool:
+        """Keep the link out while a background deploy updates its endpoint."""
+        reason = self.pool.deploying(self.endpoint)
+        if reason is None:
+            return False
+        self.close()
+        self.state = "down" if self.state == "untried" else self.state
+        self.reason = reason
+        return True
+
     def probe_if_due(self) -> None:
         """Reconnect a down or excluded link in the background once its probe is due."""
-        if self.up or self.state == "untried":
+        if self.up or self.state == "untried" or self.hold_for_deploy():
             return
         with self._lock:
             if self._probing or self.pool.clock() < self.next_probe:
@@ -388,6 +402,8 @@ class RemoteEmbeddingPool:
         connector: Callable[..., ConnectionChannel] = connect,
         notify: Callable[[str], None] = _stderr_notify,
         waker: Optional[Waker] = None,
+        deploys: Optional[dict[str, Any]] = None,
+        deploy_lock_held: Optional[Callable[[EndpointConfig], bool]] = None,
     ) -> None:
         self.config = config
         self.clock = clock
@@ -395,6 +411,13 @@ class RemoteEmbeddingPool:
         self.connector = connector
         self.notify = notify
         self.waker = waker or Waker(clock=clock)
+        # Endpoint name -> background deploy child (``running``, ``log``); shared
+        # with the run-start preflight that starts them.
+        self.deploys = deploys if deploys is not None else {}
+        # Whether a deploy holds an endpoint's lock on this workstation: another
+        # run's, when this run's own child skipped the endpoint and exited. Unset
+        # for deploy's own parity check, which runs under that lock.
+        self.deploy_lock_held = deploy_lock_held
         self._links: dict[tuple[str, str], _Link] = {}
         self._lock = threading.Lock()
         self._last_notice = -math.inf
@@ -457,8 +480,17 @@ class RemoteEmbeddingPool:
                 pending = self._dispatch(chosen, texts, pending, results, validate)
             return np.ascontiguousarray(np.vstack(results), dtype=np.float32)
 
+    def deploying(self, endpoint: EndpointConfig) -> Optional[str]:
+        """Why this endpoint is held out while a deploy updates it, or None."""
+        deploy = self.deploys.get(endpoint.name)
+        if deploy is not None and deploy.running:
+            return f"being updated by a background `arc models deploy` (log {deploy.log})"
+        if self.deploy_lock_held is not None and self.deploy_lock_held(endpoint):
+            return "being updated by another `arc models deploy` on this workstation"
+        return None
+
     def _usable(self, links: list[_Link]) -> list[_Link]:
-        untried = [link for link in links if link.state == "untried"]
+        untried = [link for link in links if link.state == "untried" and not link.hold_for_deploy()]
         if untried:
             # First use: connect to every endpoint in parallel before choosing.
             with ThreadPoolExecutor(max_workers=len(untried)) as executor:
@@ -485,7 +517,12 @@ class RemoteEmbeddingPool:
                 "No remote endpoint can serve %s (%s); embedding locally", model, details
             )
             raise RemoteEmbeddingFallback(details)
-        hint = "Run `arc models deploy` to update the workers"
+        updating = [link.name for link in links if self.deploying(link.endpoint)]
+        hint = (
+            f"{', '.join(updating)} rejoins when its deploy finishes"
+            if updating
+            else "Run `arc models deploy` to update the workers"
+        )
         local = (
             "rerun with --local-embed (sync, repair) or with ARC_EMBED_ENDPOINTS= " "(any command)"
         )

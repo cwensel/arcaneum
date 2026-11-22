@@ -19,6 +19,40 @@ def no_router():
     install_router(None)
 
 
+@pytest.mark.parametrize(("flags", "auto_deploy"), [([], None), (["--no-auto-deploy"], False)])
+def test_corpus_sync_passes_the_auto_deploy_override(tmp_path, flags, auto_deploy):
+    with patch("arcaneum.cli.sync.sync_directory_command") as sync:
+        result = CliRunner().invoke(cli, ["corpus", "sync", "MyCorpus", str(tmp_path), *flags])
+
+    assert result.exit_code == 0, result.output
+    assert sync.call_args.kwargs["auto_deploy"] is auto_deploy
+
+
+@pytest.mark.parametrize(("flags", "auto_deploy"), [([], None), (["--no-auto-deploy"], False)])
+def test_corpus_repair_passes_the_auto_deploy_override(flags, auto_deploy):
+    with patch("arcaneum.cli.sync.repair_corpus_command") as repair:
+        result = CliRunner().invoke(cli, ["corpus", "repair", "MyCorpus", *flags])
+
+    assert result.exit_code == 0, result.output
+    assert repair.call_args.kwargs["auto_deploy"] is auto_deploy
+
+
+def test_repair_passes_the_auto_deploy_override_to_both_passes():
+    from arcaneum.cli import sync as sync_module
+
+    with (
+        patch.object(sync_module, "sync_directory_command") as sync,
+        patch.object(sync_module, "parity_command") as parity,
+        patch.object(sync_module, "acquire_corpus_lock"),
+    ):
+        sync_module.repair_corpus_command(
+            "MyCorpus", None, 0.9, False, True, None, False, False, False, auto_deploy=False
+        )
+
+    assert sync.call_args.kwargs["auto_deploy"] is False
+    assert parity.call_args.kwargs["auto_deploy"] is False
+
+
 @pytest.mark.parametrize(
     ("flags", "mode"),
     [([], "default"), (["--remote-embed"], "remote"), (["--local-embed"], "local")],
@@ -67,7 +101,57 @@ def test_sync_command_configures_routing_for_its_invocation():
             False, embed_mode="remote",
         )  # fmt: skip
 
-    configure.assert_called_once_with("remote")
+    configure.assert_called_once_with("remote", auto_deploy=None, check_workers=True)
+
+
+def test_sync_command_passes_no_auto_deploy_to_routing():
+    from arcaneum.cli import sync as sync_module
+
+    with (
+        patch.object(sync_module, "configure_remote_embedding") as configure,
+        patch.object(sync_module, "_sync_directory_locked"),
+        patch.object(sync_module, "acquire_corpus_lock"),
+    ):
+        sync_module.sync_directory_command(
+            "MyCorpus", (), None, None, None, False, False, None, None, True, None, False,
+            False, auto_deploy=False,
+        )  # fmt: skip
+
+    configure.assert_called_once_with("default", auto_deploy=False, check_workers=True)
+
+
+def test_sync_preview_does_not_check_or_deploy_workers():
+    from arcaneum.cli import sync as sync_module
+
+    with (
+        patch.object(sync_module, "configure_remote_embedding") as configure,
+        patch.object(sync_module, "_sync_directory_locked"),
+    ):
+        sync_module.sync_directory_command(
+            "MyCorpus", (), None, None, None, False, False, None, None, True, None, False,
+            False, dry_run=True,
+        )  # fmt: skip
+
+    configure.assert_called_once_with("default", auto_deploy=None, check_workers=False)
+
+
+class _Stop(Exception):
+    pass
+
+
+@pytest.mark.parametrize(("dry_run", "check_workers"), [(True, False), (False, True)])
+def test_parity_preview_does_not_check_or_deploy_workers(dry_run, check_workers):
+    from arcaneum.cli import sync as sync_module
+
+    with (
+        patch.object(sync_module, "configure_remote_embedding", side_effect=_Stop) as configure,
+        pytest.raises(_Stop),
+    ):
+        sync_module.parity_command(
+            "MyCorpus", dry_run, False, False, None, None, 120, False, True, False, False
+        )
+
+    configure.assert_called_once_with("default", auto_deploy=None, check_workers=check_workers)
 
 
 def test_repair_routes_both_passes_with_its_embed_mode():

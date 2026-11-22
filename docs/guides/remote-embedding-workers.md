@@ -110,6 +110,7 @@ All settings live under `remote_embedding` in
 ```yaml
 remote_embedding:
   unavailable: wait            # wait | local | fail
+  auto_deploy: true            # update workers running other code; see Auto-Deploy
   authkey: shared-secret       # optional; ARC_EMBED_AUTHKEY overrides
   routing:                     # per-model routing; defaults shown
     arctic-m: remote
@@ -191,7 +192,8 @@ While a worker that was just woken is booting, every policy waits for it first
 
 `local` suits a workstation whose `arc` runs a source checkout: every commit
 changes the code fingerprint, and syncs keep working on the workstation until
-the workers are redeployed.
+the workers are redeployed, which [auto-deploy](#auto-deploy-at-run-start)
+starts at the beginning of the run.
 
 ### Environment Overrides
 
@@ -300,12 +302,15 @@ the same whether computed from an installed package or a wheel. Development
 builds that report a release's version still get their own fingerprint.
 
 A worker whose fingerprint differs is reported as `mismatch` and is not used;
-the unavailable policy applies until `arc models deploy` updates it.
+the unavailable policy applies until `arc models deploy` updates it. A sync
+or repair starts that deploy itself at its start
+([auto-deploy](#auto-deploy-at-run-start)), unless it is turned off.
 
-- **Release installs (pipx):** after upgrading arcaneum on the workstation, run
-  `arc models deploy`.
+- **Release installs (pipx):** after upgrading arcaneum on the workstation,
+  the next sync deploys the release wheel; `arc models deploy` does it now.
 - **Source checkouts (editable installs):** every commit or pull changes the
-  fingerprint; run `arc models deploy --build` afterwards.
+  fingerprint; the next sync deploys the tree, and `arc models deploy --build`
+  does it now.
 
 ## Deploying and Updating Workers
 
@@ -351,6 +356,56 @@ and skipped, the others continue, and deploy exits non-zero.
 
 `--dry-run` shows each host's current and desired version, fingerprint and
 action without changing anything. `--no-verify` skips the parity check.
+
+### Auto-Deploy at Run Start
+
+A command that routes models (`arc corpus sync`, `repair` and `parity`, and
+the `arc index` commands) checks its workers when it starts, in the
+background, so waking and probing overlap extraction instead of delaying the
+first embed. It wakes sleeping workers, probes each endpoint that serves the
+run's models, and reports each state once:
+
+```text
+   Remote embedding: arctic-m on dev-0:7300, dev-1:7300
+   Remote embedding worker dev-0:7300: up (arcaneum 0.12.0 3e40a1fb4fed)
+   Remote embedding worker dev-1:7300: mismatch (version mismatch: ...)
+   Updating dev-1:7300 to this workstation's code (c96fea20c1a9) with a background `arc models deploy --build` (log ~/.arcaneum/logs/arc-deploy-dev-1_7300-...log); it rejoins when the deploy finishes.
+```
+
+For each reachable worker whose code fingerprint differs from the
+workstation's, the run starts `arc models deploy` for that endpoint as a
+detached process: `--build` when `arc` runs from a source tree, else the
+release wheel. The deploy runs in its own session and finishes even if the
+run ends first, so a worker is never left between removing its old container
+and starting the new one. Its output goes to
+`~/.arcaneum/logs/arc-deploy-<endpoint>-<utc>-<pid>.log`. The pool keeps the
+worker out until that deploy, including its vector parity check, exits; then
+the worker rejoins at the next probe. Meanwhile the run follows the
+[unavailable policy](#unavailable-policy): `local` embeds on the workstation,
+`wait` waits (its notice names the deploy and its log), `fail` ends the run
+when no other worker serves the model.
+
+Auto-deploy does not start, and says why, when:
+
+- the worker is busy with encodes, for example another workstation running
+  different code that shares it (redeploying would flip it between the two);
+- the source tree changed since the run started (another commit landed), so a
+  deploy would build code the run does not run. The deploy itself also refuses
+  if its tree no longer matches the run's fingerprint;
+- an auto-deploy of this fingerprint to that endpoint already failed. Runs do
+  not retry it; new code does, and a manual `arc models deploy` of that host
+  clears the record.
+
+A run starts at most one deploy per endpoint, and deploys of one worker from
+one workstation take a lock (under `~/.local/state/arcaneum/locks/`), so two
+concurrent syncs, or a sync and a manual deploy, do not deploy it twice: the
+second reports the deploy in progress and skips that worker. Every run on the
+workstation keeps a worker whose lock is held out until that deploy finishes.
+
+To only report mismatches, as before, set `auto_deploy: false` under
+`remote_embedding`, or pass `--no-auto-deploy` to one `arc corpus sync` or
+`arc corpus repair`. `--local-embed` routes nothing, so it checks and deploys
+nothing, and a `--dry-run` changes nothing, so it does not check its workers.
 
 ### Stopping and Starting Workers
 

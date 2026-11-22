@@ -2477,10 +2477,22 @@ def _resolve_from_index(
     return sorted(Path(p) for p in existing)
 
 
-def _configure_remote_embedding(embed_mode: str, output_json: bool) -> None:
-    """Install this invocation's remote embedding routing, or exit on bad configuration."""
+def _configure_remote_embedding(
+    embed_mode: str,
+    output_json: bool,
+    auto_deploy: Optional[bool] = None,
+    *,
+    dry_run: bool = False,
+) -> None:
+    """Install this invocation's remote embedding routing, or exit on bad configuration.
+
+    ``auto_deploy`` False is --no-auto-deploy; None follows remote_embedding.auto_deploy.
+    A dry run changes nothing, so it does not check (wake, or deploy to) the workers.
+    """
     try:
-        configure_remote_embedding(embed_mode)
+        configure_remote_embedding(
+            embed_mode, auto_deploy=auto_deploy, check_workers=not dry_run
+        )
     except RemoteEmbeddingConfigError as e:
         print_error(f"Invalid remote_embedding configuration: {e}", output_json)
         sys.exit(1)
@@ -2519,6 +2531,7 @@ def sync_directory_command(
     skip_unsupported: bool = False,
     from_index: Optional[str] = None,
     embed_mode: str = "default",
+    auto_deploy: Optional[bool] = None,
 ):
     """Sync to a corpus while holding that corpus's write lock (kata htmw).
 
@@ -2534,9 +2547,10 @@ def sync_directory_command(
     See `_sync_directory_locked` for the full parameter documentation.
     `embed_mode` routes document embedding to the remote worker pool (RDR-025):
     "default" (configured `remote` models), "remote" (--remote-embed, adds
-    `on-request` models) or "local" (--local-embed).
+    `on-request` models) or "local" (--local-embed); `auto_deploy` False is
+    --no-auto-deploy (arcaneum#187).
     """
-    _configure_remote_embedding(embed_mode, output_json)
+    _configure_remote_embedding(embed_mode, output_json, auto_deploy, dry_run=dry_run)
     lock_ctx = (
         contextlib.nullcontext()
         if dry_run
@@ -7260,6 +7274,7 @@ def parity_command(
     prune_orphans: bool = False,
     force_prune: bool = False,
     embed_mode: str = "default",
+    auto_deploy: Optional[bool] = None,
 ):
     """Check and restore parity between Qdrant and MeiliSearch.
 
@@ -7286,7 +7301,7 @@ def parity_command(
         verbose: If True, show detailed progress
         output_json: If True, output JSON format
     """
-    _configure_remote_embedding(embed_mode, output_json)
+    _configure_remote_embedding(embed_mode, output_json, auto_deploy, dry_run=dry_run)
 
     # Calculate effective workers
     if text_workers is None:
@@ -7359,6 +7374,7 @@ def repair_corpus_command(
     prune_orphans: bool = False,
     force_prune: bool = False,
     embed_mode: str = "default",
+    auto_deploy: Optional[bool] = None,
 ):
     """Repair verifier-selected files, then restore cross-system parity.
 
@@ -7389,6 +7405,7 @@ def repair_corpus_command(
                 prune_orphans=prune_orphans,
                 force_prune=force_prune,
                 embed_mode=embed_mode,
+                auto_deploy=auto_deploy,
             )
     except CorpusLockUnavailable as e:
         print_error(str(e), output_json)
@@ -7408,6 +7425,7 @@ def _repair_corpus_locked(
     prune_orphans: bool = False,
     force_prune: bool = False,
     embed_mode: str = "default",
+    auto_deploy: Optional[bool] = None,
 ):
     content_docs: List[Dict[str, Any]] = []
     try:
@@ -7435,6 +7453,7 @@ def _repair_corpus_locked(
                 repair_stale_policy=include_stale_policy,
                 quality_threshold=quality_threshold,
                 embed_mode=embed_mode,
+                auto_deploy=auto_deploy,
             )
     except BaseException:
         # Content repair already reported its failure. Parity would compare a
@@ -7462,6 +7481,7 @@ def _repair_corpus_locked(
                 prune_orphans=prune_orphans,
                 force_prune=force_prune,
                 embed_mode=embed_mode,
+                auto_deploy=auto_deploy,
             )
         parity_doc = parity_docs[-1] if parity_docs else {"status": "success", "message": ""}
         parity = {

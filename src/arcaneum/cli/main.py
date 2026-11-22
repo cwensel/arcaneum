@@ -352,7 +352,19 @@ def collection_import(file, target_name, attach_root, remaps, output_json):
 
 
 def _embed_mode_options(func):
-    """--remote-embed / --local-embed: per-invocation remote embedding routing (RDR-025)."""
+    """--remote-embed / --local-embed: per-invocation remote embedding routing (RDR-025).
+
+    --no-auto-deploy keeps a worker running other code out of the run without
+    updating it (arcaneum#187).
+    """
+    func = click.option(
+        "--no-auto-deploy",
+        is_flag=True,
+        help=(
+            "Report remote workers running other code instead of updating them with a "
+            "background `arc models deploy` (remote_embedding.auto_deploy: false)"
+        ),
+    )(func)
     func = click.option(
         "--local-embed",
         is_flag=True,
@@ -393,6 +405,11 @@ def _embed_mode(remote_embed: bool, local_embed: bool) -> str:
     if remote_embed and local_embed:
         raise click.UsageError("--remote-embed and --local-embed are mutually exclusive")
     return "remote" if remote_embed else "local" if local_embed else "default"
+
+
+def _auto_deploy(no_auto_deploy: bool):
+    """--no-auto-deploy overrides remote_embedding.auto_deploy; None follows it."""
+    return False if no_auto_deploy else None
 
 
 def _configure_index_remote_embedding() -> None:
@@ -547,7 +564,12 @@ def models_workers(output_json):
 )
 @click.option("--dry-run", is_flag=True, help="Show each host's current and desired state only")
 @click.option("--no-verify", is_flag=True, help="Skip the vector parity check after a deploy")
-def models_deploy(hosts, build, wheel_path, refresh, dry_run, no_verify):
+@click.option(
+    "--expect-fingerprint",
+    hidden=True,
+    help="Auto-deploy child: refuse unless this process's code fingerprint is this one",
+)
+def models_deploy(hosts, build, wheel_path, refresh, dry_run, no_verify, expect_fingerprint):
     """Install, upgrade or reconfigure remote embedding workers over SSH (RDR-025).
 
     Brings each configured endpoint (or the HOSTS named) to the workstation's
@@ -572,6 +594,7 @@ def models_deploy(hosts, build, wheel_path, refresh, dry_run, no_verify):
         refresh=refresh,
         dry_run=dry_run,
         no_verify=no_verify,
+        expect_fingerprint=expect_fingerprint,
     )
 
 
@@ -1997,6 +2020,7 @@ def sync_directory(
     no_gpu,
     remote_embed,
     local_embed,
+    no_auto_deploy,
     cpu_workers,
     verbose,
     output_json,
@@ -2102,6 +2126,7 @@ def sync_directory(
                 skip_dir_prefixes=effective_prefixes,
                 qdrant_timeout=timeout,
                 embed_mode=embed_mode,
+                auto_deploy=_auto_deploy(no_auto_deploy),
                 order=order,
                 lock_wait=not no_wait,
                 lock_timeout=lock_timeout,
@@ -2200,6 +2225,7 @@ def sync_directory(
         # git names every touched file, not only ones this corpus type indexes.
         skip_unsupported=bool(changed_since),
         embed_mode=embed_mode,
+        auto_deploy=_auto_deploy(no_auto_deploy),
     )
 
 
@@ -2653,6 +2679,7 @@ def corpus_repair(
     no_gpu,
     remote_embed,
     local_embed,
+    no_auto_deploy,
     max_embedding_batch,
     include_stale_policy,
     prune_orphans,
@@ -2720,6 +2747,7 @@ def corpus_repair(
         prune_orphans=prune_orphans,
         force_prune=force_prune,
         embed_mode=embed_mode,
+        auto_deploy=_auto_deploy(no_auto_deploy),
     )
 
 

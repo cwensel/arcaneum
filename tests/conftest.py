@@ -375,6 +375,11 @@ def no_remote_embedding(monkeypatch):
     """
     monkeypatch.setenv("ARC_EMBED_ENDPOINTS", "")
     monkeypatch.delenv("ARC_EMBED_AUTHKEY", raising=False)
+    # A test that configures endpoints by name (dev-0) must not probe, or
+    # auto-deploy to, a real worker of that name (arcaneum#187).
+    from arcaneum.embeddings.remote import routing
+
+    monkeypatch.setattr(routing, "start_preflight", lambda router, models: None)
     yield
     from arcaneum.embeddings.remote.routing import install_router
 

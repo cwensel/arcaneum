@@ -367,6 +367,119 @@ def test_mismatched_endpoints_under_wait_resume_after_redeploy(cluster):
     np.testing.assert_array_equal(result["v"], expected(["a"]))
 
 
+class FakeDeploy:
+    """A background deploy child, from the pool's side: running until finished."""
+
+    def __init__(self, log: str) -> None:
+        self.log = log
+        self.finished = False
+
+    @property
+    def running(self) -> bool:
+        return not self.finished
+
+
+def test_endpoint_being_auto_deployed_rejoins_only_after_its_deploy_finishes(cluster):
+    """Deploy's vector parity check runs after the new worker answers, so the pool
+    must not use the updated worker until the deploy child has exited."""
+    port = free_port()
+
+    def old_release(model):
+        identity = local_identity(model)
+        identity.update(code_fingerprint="0" * 64)
+        return identity
+
+    stale = cluster.server(port=port, identity=old_release)
+    deploy = FakeDeploy("/logs/arc-deploy-dev-0.log")
+    messages = []
+    pool = cluster.pool(
+        [port],
+        unavailable="wait",
+        notify=messages.append,
+        pool_options={"deploys": {f"127.0.0.1:{port}": deploy}},
+    )
+    result = {}
+
+    worker = threading.Thread(target=lambda: result.setdefault("v", pool.embed(["a"], MODEL)))
+    worker.start()
+    wait_for(lambda: messages)
+    assert "/logs/arc-deploy-dev-0.log" in messages[0]
+    assert "rejoins when" in messages[0]
+
+    stale.stop()
+    cluster.server(port=port)  # the new worker answers before parity is checked
+    time.sleep(0.3)  # several probe intervals
+    assert worker.is_alive() and cluster.hosts[-1].encodes == []
+
+    deploy.finished = True
+    worker.join(timeout=10)
+    np.testing.assert_array_equal(result["v"], expected(["a"]))
+
+
+def test_endpoint_stays_out_while_another_runs_deploy_holds_its_lock(cluster):
+    """Two runs find one stale worker: this run's child skips it (the other's holds
+    the lock) and exits, but the worker must stay out until that deploy finishes."""
+    server = cluster.server()
+    port = port_of(server)
+    own = FakeDeploy("/logs/own.log")
+    own.finished = True  # skipped: another deploy held the lock
+    held = {"value": True}
+    messages = []
+    pool = cluster.pool(
+        [port],
+        unavailable="wait",
+        notify=messages.append,
+        pool_options={
+            "deploys": {f"127.0.0.1:{port}": own},
+            "deploy_lock_held": lambda endpoint: held["value"],
+        },
+    )
+    result = {}
+
+    worker = threading.Thread(target=lambda: result.setdefault("v", pool.embed(["a"], MODEL)))
+    worker.start()
+    wait_for(lambda: messages)
+    assert "another `arc models deploy`" in messages[0]
+    time.sleep(0.3)  # several probe intervals
+    assert worker.is_alive() and cluster.hosts[0].encodes == []
+
+    held["value"] = False
+    worker.join(timeout=10)
+    np.testing.assert_array_equal(result["v"], expected(["a"]))
+
+
+def test_routing_pool_holds_endpoints_whose_deploy_lock_is_held():
+    from arcaneum.embeddings.remote.deploy import deploy_lock_held
+    from arcaneum.embeddings.remote.routing import RemoteRouter
+
+    router = RemoteRouter(RemoteEmbeddingConfig(endpoints=[EndpointConfig(host="dev-0")]))
+
+    assert router.pool.deploy_lock_held is deploy_lock_held
+
+
+def test_endpoint_whose_deploy_finished_is_used_at_first_connect(cluster):
+    server = cluster.server()
+    deploy = FakeDeploy("/logs/x.log")
+    deploy.finished = True
+    pool = cluster.pool(
+        [port_of(server)], pool_options={"deploys": {f"127.0.0.1:{port_of(server)}": deploy}}
+    )
+
+    np.testing.assert_array_equal(pool.embed(["a"], MODEL), expected(["a"]))
+
+
+def test_endpoint_mid_deploy_is_not_connected_at_first_use(cluster):
+    server = cluster.server()
+    deploy = FakeDeploy("/logs/x.log")
+    pool = cluster.pool(
+        [port_of(server)], pool_options={"deploys": {f"127.0.0.1:{port_of(server)}": deploy}}
+    )
+
+    with pytest.raises(RemoteEmbeddingUnavailable, match="/logs/x.log"):
+        pool.embed(["a"], MODEL)
+    assert cluster.hosts[0].encodes == []
+
+
 class SleepingHost:
     """Connector whose host times out until a magic packet wakes it."""
 

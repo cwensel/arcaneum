@@ -9,6 +9,7 @@ failing suite green.
 Each case runs pytest in a subprocess so the real hook executes.
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -16,6 +17,14 @@ from pathlib import Path
 import pytest
 
 CONFTEST = Path(__file__).resolve().parents[1] / "conftest.py"
+SRC = Path(__file__).resolve().parents[2] / "src"
+
+
+def _env() -> dict:
+    """Pin PYTHONPATH absolute: a relative `src` breaks once the cwd is tmp_path."""
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(SRC), env.get("PYTHONPATH")) if p)
+    return env
 
 
 def _run_pytest(tmp_path: Path, body: str) -> subprocess.CompletedProcess:
@@ -25,6 +34,7 @@ def _run_pytest(tmp_path: Path, body: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, "-m", "pytest", "test_generated.py", "-q", "-p", "no:cacheprovider"],
         cwd=tmp_path,
+        env=_env(),
         capture_output=True,
         text=True,
         timeout=300,
@@ -82,6 +92,7 @@ def test_coverage_reports_survive_the_guard(tmp_path, report):
             f"--cov-report={report}",
         ],
         cwd=tmp_path,
+        env=_env(),
         capture_output=True,
         text=True,
         timeout=300,

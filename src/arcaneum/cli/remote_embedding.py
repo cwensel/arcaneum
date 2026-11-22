@@ -16,12 +16,14 @@ from typing import Optional
 
 from arcaneum.embeddings.client import EMBEDDING_MODELS, model_revision
 from arcaneum.embeddings.remote.deploy import (
+    AutoDeployFailures,
     Deployer,
     DeployError,
     WorkerControl,
     resolve_wheel,
     select_endpoints,
 )
+from arcaneum.embeddings.remote.fingerprint import code_fingerprint
 from arcaneum.embeddings.remote.pool import probe_endpoint
 from arcaneum.embeddings.remote.server import EmbeddingServer, ServerSettings
 from arcaneum.embeddings.remote.wake import wake_endpoints
@@ -246,8 +248,15 @@ def deploy_command(
     refresh: bool,
     dry_run: bool,
     no_verify: bool,
+    expect_fingerprint: Optional[str] = None,
 ) -> None:
-    """Bring each configured worker to the workstation's code; exit 1 if any host fails."""
+    """Bring each configured worker to the workstation's code; exit 1 if any host fails.
+
+    ``expect_fingerprint`` marks the auto-deploy child a sync starts (arcaneum#187):
+    it refuses before building when this process's code differs from the run's,
+    and records each host's failure so later runs do not retry that code. A
+    manual deploy instead clears the selected hosts' records.
+    """
     import click
 
     config = _load_config_or_exit(False)
@@ -256,10 +265,29 @@ def deploy_command(
         sys.exit(1)
     if build and wheel_path is not None:
         raise click.UsageError("--build and --wheel are mutually exclusive")
+    failures = AutoDeployFailures()
+    if expect_fingerprint is not None:
+        local = code_fingerprint()
+        if local != expect_fingerprint:
+            click.echo(
+                f"Error: the source tree changed since the run that started this deploy: "
+                f"it runs {expect_fingerprint[:12]}, this tree is {local[:12]}; not "
+                "deploying code that run does not run",
+                err=True,
+            )
+            sys.exit(1)
+    selected = []
     try:
+        selected = select_endpoints(config, hosts)
+        if expect_fingerprint is None and not dry_run:
+            for endpoint in selected:
+                failures.clear(endpoint.name)
         wheel = resolve_wheel(build=build, wheel=wheel_path)
     except DeployError as exc:
         click.echo(f"Error: {exc}", err=True)
+        if expect_fingerprint is not None:
+            for endpoint in selected:
+                failures.record(endpoint.name, expect_fingerprint, str(exc))
         sys.exit(1)
     click.echo(
         f"Deploying arcaneum {wheel.version} (fingerprint {wheel.fingerprint[:12]}) "
@@ -272,6 +300,7 @@ def deploy_command(
         refresh=refresh,
         verify=not no_verify,
         out=click.echo,
+        failures=failures if expect_fingerprint is not None else None,
     )
     try:
         ok = deployer.deploy(hosts)

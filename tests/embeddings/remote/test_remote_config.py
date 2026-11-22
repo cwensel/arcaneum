@@ -24,6 +24,14 @@ def test_missing_config_file_has_no_endpoints(tmp_path, monkeypatch):
 
     assert config.endpoints == []
     assert config.unavailable == "wait"
+    assert config.auto_deploy is True
+
+
+def test_auto_deploy_can_be_turned_off(tmp_path, monkeypatch):
+    monkeypatch.delenv("ARC_EMBED_ENDPOINTS", raising=False)
+    path = write_config(tmp_path, "remote_embedding:\n  auto_deploy: false\n")
+
+    assert load_remote_embedding_config(path).auto_deploy is False
 
 
 def test_config_section_is_loaded_with_defaults(tmp_path, monkeypatch):

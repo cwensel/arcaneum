@@ -82,3 +82,68 @@ def test_deploy_without_endpoints_explains_configuration(monkeypatch):
 
     assert result.exit_code == 1
     assert "No remote embedding endpoints" in result.output
+
+
+# --- the auto-deploy child (arcaneum#187) ----------------------------------------------
+
+
+def test_expected_fingerprint_that_differs_refuses_before_building(monkeypatch):
+    with patch("arcaneum.cli.remote_embedding.code_fingerprint", return_value="a" * 64):
+        result, resolve, deployer = invoke(
+            ["dev-0", "--build", "--expect-fingerprint", "b" * 64], monkeypatch
+        )
+
+    assert result.exit_code == 1
+    assert "changed" in result.output and "b" * 12 in result.output
+    resolve.assert_not_called()
+    deployer.assert_not_called()
+
+
+def test_expected_fingerprint_records_failures_for_the_child(monkeypatch):
+    with patch("arcaneum.cli.remote_embedding.code_fingerprint", return_value="c" * 64):
+        result, _, deployer = invoke(
+            ["dev-0", "--build", "--expect-fingerprint", "c" * 64], monkeypatch
+        )
+
+    assert result.exit_code == 0, result.output
+    assert deployer.call_args.kwargs["failures"] is not None
+
+
+def test_failed_wheel_build_in_the_child_is_recorded(monkeypatch):
+    from arcaneum.embeddings.remote.deploy import AutoDeployFailures
+
+    error = DeployError("uv build failed")
+    with patch("arcaneum.cli.remote_embedding.code_fingerprint", return_value="c" * 64):
+        result, _, _ = invoke(
+            ["dev-0", "--build", "--expect-fingerprint", "c" * 64], monkeypatch, wheel_error=error
+        )
+
+    assert result.exit_code == 1
+    assert "uv build failed" in AutoDeployFailures().recorded("dev-0:7300", "c" * 64)
+    assert AutoDeployFailures().recorded("dev-1:7300", "c" * 64) is None
+
+
+def test_manual_deploy_clears_recorded_failures_and_records_none(monkeypatch):
+    from arcaneum.embeddings.remote.deploy import AutoDeployFailures
+
+    AutoDeployFailures().record("dev-0:7300", "c" * 64, "image build failed")
+    result, _, deployer = invoke([], monkeypatch)
+
+    assert result.exit_code == 0, result.output
+    assert AutoDeployFailures().recorded("dev-0:7300", "c" * 64) is None
+    assert deployer.call_args.kwargs["failures"] is None
+
+
+def test_manual_dry_run_keeps_recorded_failures(monkeypatch):
+    from arcaneum.embeddings.remote.deploy import AutoDeployFailures
+
+    AutoDeployFailures().record("dev-0:7300", "c" * 64, "image build failed")
+    invoke(["--dry-run"], monkeypatch)
+
+    assert AutoDeployFailures().recorded("dev-0:7300", "c" * 64) == "image build failed"
+
+
+def test_expect_fingerprint_is_hidden_from_help(monkeypatch):
+    result = CliRunner().invoke(cli, ["models", "deploy", "--help"])
+
+    assert "--expect-fingerprint" not in result.output

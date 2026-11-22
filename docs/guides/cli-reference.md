@@ -436,6 +436,10 @@ arc corpus sync MyCorpus /path/to/repo --git-version       # Keep multiple versi
   [Remote Embedding Workers](#remote-embedding-workers).
 - `--local-embed`: Embed every model locally for this run, ignoring configured
   remote workers
+- `--no-auto-deploy`: Report remote workers running other code instead of
+  updating them with a background `arc models deploy` for this run (as
+  `remote_embedding.auto_deploy: false`). See
+  [Remote Embedding Workers](#remote-embedding-workers).
 - `--background`: Run below interactive work such as compilers and tests, for
   continuous indexing on a busy machine. On macOS, arc and its worker processes
   run at nice 10: CPU priority only, so disk I/O and swap page-ins are not
@@ -708,6 +712,8 @@ arc corpus repair MyCorpus --verbose                  # Show per-file quality sc
 - `--max-embedding-batch`: Cap embedding batch size
 - `--remote-embed` / `--local-embed`: Route this repair's document embedding as
   for `arc corpus sync` (see [Remote Embedding Workers](#remote-embedding-workers))
+- `--no-auto-deploy`: Do not update remote workers running other code, as for
+  `arc corpus sync`
 - `--background`: Run below interactive work, as for `arc corpus sync`
 - `--verbose`: Show per-file old → new quality scores
 - `--json`: Output JSON format
@@ -2659,6 +2665,7 @@ Configure endpoints in `~/.config/arcaneum/config.yaml`:
 ```yaml
 remote_embedding:
   unavailable: wait          # wait (default) | local | fail
+  auto_deploy: true          # update workers running other code at run start (default)
   authkey: shared-secret     # optional; ARC_EMBED_AUTHKEY overrides
   routing:                   # defaults shown; every other model stays local
     arctic-m: remote         # sent to the pool whenever endpoints exist
@@ -2679,6 +2686,20 @@ sync or repair; `--local-embed` routes nothing. Only fastembed models with a
 pinned revision can be routed (`arctic-m` is pinned). When no endpoint can
 serve a routed model, `unavailable` decides: `wait` blocks and keeps probing,
 `local` embeds locally, `fail` ends the run.
+
+A run that routes models checks its workers at its start, in the background
+while extraction begins: it wakes sleeping workers, probes each endpoint, and
+reports each one's state once. A reachable worker whose code fingerprint
+differs from the workstation's (every commit to a source checkout changes it)
+is updated by a detached `arc models deploy` (`--build` from a source tree,
+else the release wheel), one per endpoint, logged to
+`~/.arcaneum/logs/arc-deploy-<endpoint>-<utc>-<pid>.log`. The worker rejoins
+once that deploy, including its vector parity check, finishes; until then the
+run follows `unavailable`. Auto-deploy skips a worker busy with other encodes,
+a source tree that changed since the run started, and a fingerprint whose
+auto-deploy to that endpoint already failed (a manual `arc models deploy`
+clears that record). Set `auto_deploy: false`, or pass `--no-auto-deploy` to
+`arc corpus sync` or `arc corpus repair`, to report the mismatch only.
 
 ```bash
 arc models workers          # State, versions, fingerprint, resident model per worker

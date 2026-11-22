@@ -5,6 +5,7 @@ Lives in the ``remote_embedding`` section of ``~/.config/arcaneum/config.yaml``:
     remote_embedding:
       authkey: <shared secret>        # optional; ARC_EMBED_AUTHKEY overrides
       unavailable: wait               # wait | local | fail
+      auto_deploy: true               # update a worker running other code at run start
       routing: {arctic-m: remote, qwen3-embed: on-request}
       endpoints:
         - host: dev-0
@@ -150,6 +151,9 @@ class RemoteEmbeddingConfig(BaseModel):
     endpoints: list[EndpointConfig] = Field(default_factory=list)
     routing: dict[str, Routing] = Field(default_factory=dict)
     unavailable: Unavailable = "wait"
+    # A sync that finds a reachable worker running other code updates it with a
+    # background `arc models deploy`; false only reports it (arcaneum#187).
+    auto_deploy: bool = True
     authkey: Optional[str] = None
     idle_grace: float = 60.0
     turn_length: float = 600.0

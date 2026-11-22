@@ -12,19 +12,22 @@ can use it.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import hashlib
 import json
 import math
+import re
 import shlex
 import shutil
 import subprocess
 import tempfile
 import zipfile
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from email.parser import HeaderParser
 from pathlib import Path
-from typing import Optional, Protocol
+from typing import ContextManager, Optional, Protocol
 
 import numpy as np
 
@@ -62,6 +65,10 @@ CHANGING_COMMANDS = frozenset(
 
 class DeployError(RuntimeError):
     """One step of deploying a worker failed; the message names the step."""
+
+
+class DeployInProgress(DeployError):
+    """Another deploy holds this worker's lock; this one skipped it."""
 
 
 def container_name(port: int) -> str:
@@ -203,6 +210,95 @@ def resolve_wheel(
         version=_wheel_version(path),
         sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
     )
+
+
+# --- Locks and auto-deploy failure records (arcaneum#187) -----------------------------
+
+_UNSAFE = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def safe_name(value: str) -> str:
+    return _UNSAFE.sub("_", value)[:96] or "endpoint"
+
+
+def deploy_lock_path(endpoint: EndpointConfig) -> Path:
+    from arcaneum.paths import get_state_dir
+
+    directory = get_state_dir() / "locks"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / f"deploy-{safe_name(endpoint.ssh_target)}-{endpoint.port}.lock"
+
+
+@contextlib.contextmanager
+def deploy_lock(endpoint: EndpointConfig) -> Iterator[bool]:
+    """Hold this workstation's lock on one worker; yields False when another deploy holds it.
+
+    Never waits: two runs that both find a stale worker start one deploy each, and
+    the second skips the worker the first is already updating.
+    """
+    with open(deploy_lock_path(endpoint), "a") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def deploy_lock_held(endpoint: EndpointConfig) -> bool:
+    """Whether a deploy on this workstation holds this worker's lock right now.
+
+    The pool asks while embedding, so an unreadable lock directory answers False
+    rather than failing the run.
+    """
+    try:
+        handle = open(deploy_lock_path(endpoint), "a")
+    except OSError:
+        return False
+    with handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return False
+
+
+class AutoDeployFailures:
+    """Failed auto-deploys, one marker per (endpoint, fingerprint).
+
+    A run does not retry a fingerprint whose auto-deploy to an endpoint failed: a
+    build that fails once fails every run. New code (another fingerprint) tries
+    again, and a manual `arc models deploy` clears the endpoint's markers.
+    """
+
+    def __init__(self, directory: Optional[Path] = None) -> None:
+        if directory is None:
+            from arcaneum.paths import get_state_dir
+
+            directory = get_state_dir() / "auto-deploy"
+        self.directory = Path(directory)
+
+    def _marker(self, endpoint: str, fingerprint: str) -> Path:
+        return self.directory / f"failed-{safe_name(endpoint)}-{fingerprint[:12]}"
+
+    def record(self, endpoint: str, fingerprint: str, detail: str) -> None:
+        self.directory.mkdir(parents=True, exist_ok=True)
+        self._marker(endpoint, fingerprint).write_text(detail.strip()[-500:])
+
+    def recorded(self, endpoint: str, fingerprint: str) -> Optional[str]:
+        """The recorded failure's detail, or None."""
+        try:
+            return self._marker(endpoint, fingerprint).read_text()
+        except FileNotFoundError:
+            return None
+
+    def clear(self, endpoint: str) -> None:
+        for marker in self.directory.glob(f"failed-{safe_name(endpoint)}-*"):
+            marker.unlink(missing_ok=True)
 
 
 # --- Image and container ------------------------------------------------------------
@@ -572,12 +668,17 @@ class Deployer:
         sleep: Callable[[float], None] = None,
         health_timeout: float = 180.0,
         waker: Callable[..., bool] = wake_endpoints,
+        lock: Callable[[EndpointConfig], ContextManager[bool]] = deploy_lock,
+        failures: Optional[AutoDeployFailures] = None,
     ) -> None:
         import time
 
         self.config = config
         self.wheel = wheel
         self.waker = waker
+        self.lock = lock
+        # Set for an auto-deploy: each host's failure is recorded against the wheel.
+        self.failures = failures
         self.dry_run = dry_run
         self.refresh = refresh
         self.verify = verify
@@ -602,9 +703,24 @@ class Deployer:
             except DeployError as exc:
                 ok = False
                 self.out(f"✗ {endpoint.name}: {exc}")
+                if self.failures is not None and not isinstance(exc, DeployInProgress):
+                    self.failures.record(endpoint.name, self.wheel.fingerprint, str(exc))
         return ok
 
     def _deploy_endpoint(self, endpoint: EndpointConfig) -> None:
+        """Deploy one worker under its lock; a dry run changes nothing and takes none."""
+        if self.dry_run:
+            self._deploy_unlocked(endpoint)
+            return
+        with self.lock(endpoint) as acquired:
+            if not acquired:
+                raise DeployInProgress(
+                    f"another deploy of {endpoint.ssh_target} is in progress "
+                    f"(lock {deploy_lock_path(endpoint)}); skipped"
+                )
+            self._deploy_unlocked(endpoint)
+
+    def _deploy_unlocked(self, endpoint: EndpointConfig) -> None:
         runner = self.runner_factory(endpoint.ssh_target)
         name = container_name(endpoint.port)
         try:

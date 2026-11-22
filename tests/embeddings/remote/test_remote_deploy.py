@@ -853,3 +853,92 @@ def test_start_wakes_sleeping_workers_but_stop_does_not(tmp_path):
 
     assert harness.control.start() is True
     assert woken == [["dev-0:7300"]]
+
+
+# --- per-host lock and auto-deploy failure records (arcaneum#187) ---------------------
+
+
+def test_held_host_lock_skips_that_host_and_deploys_the_others(tmp_path):
+    from arcaneum.embeddings.remote.deploy import deploy_lock
+
+    harness = Harness(tmp_path, endpoints("dev-0", "dev-1"))
+    busy = harness.config.endpoints[0]
+
+    with deploy_lock(busy) as held:
+        assert held is True
+        assert harness.deployer.deploy() is False
+
+    assert harness.hosts["dev-0"].changing() == []
+    assert container_name(7300) in harness.hosts["dev-1"].containers
+    assert any("dev-0:7300" in line and "another deploy" in line for line in harness.output)
+
+
+def test_deploy_lock_held_sees_another_deploys_lock():
+    from arcaneum.embeddings.remote.deploy import deploy_lock, deploy_lock_held
+
+    endpoint = EndpointConfig(host="dev-0")
+    assert deploy_lock_held(endpoint) is False
+    with deploy_lock(endpoint) as acquired:
+        assert acquired is True
+        assert deploy_lock_held(endpoint) is True
+    assert deploy_lock_held(endpoint) is False
+
+
+def test_host_lock_is_released_after_a_deploy(tmp_path):
+    from arcaneum.embeddings.remote.deploy import deploy_lock
+
+    harness = Harness(tmp_path, endpoints("dev-0"))
+
+    assert harness.deployer.deploy() is True
+    with deploy_lock(harness.config.endpoints[0]) as held:
+        assert held is True
+
+
+def test_dry_run_takes_no_host_lock(tmp_path):
+    from arcaneum.embeddings.remote.deploy import deploy_lock
+
+    harness = Harness(tmp_path, endpoints("dev-0"), dry_run=True)
+
+    with deploy_lock(harness.config.endpoints[0]):
+        assert harness.deployer.deploy() is True
+
+
+def test_recorded_failures_mark_failed_hosts_only(tmp_path):
+    from arcaneum.embeddings.remote.deploy import AutoDeployFailures
+
+    failures = AutoDeployFailures(tmp_path / "failures")
+    harness = Harness(tmp_path, endpoints("dev-0", "dev-1"), failures=failures)
+    harness.hosts["dev-0"].fail_build = True
+
+    assert harness.deployer.deploy() is False
+
+    assert "image build failed" in failures.recorded("dev-0:7300", FINGERPRINT)
+    assert failures.recorded("dev-1:7300", FINGERPRINT) is None
+    assert failures.recorded("dev-0:7300", OLD) is None
+
+
+def test_a_held_lock_is_not_recorded_as_a_failure(tmp_path):
+    from arcaneum.embeddings.remote.deploy import AutoDeployFailures, deploy_lock
+
+    failures = AutoDeployFailures(tmp_path / "failures")
+    harness = Harness(tmp_path, endpoints("dev-0"), failures=failures)
+
+    with deploy_lock(harness.config.endpoints[0]):
+        harness.deployer.deploy()
+
+    assert failures.recorded("dev-0:7300", FINGERPRINT) is None
+
+
+def test_clearing_a_hosts_failures_clears_every_fingerprint(tmp_path):
+    from arcaneum.embeddings.remote.deploy import AutoDeployFailures
+
+    failures = AutoDeployFailures(tmp_path)
+    failures.record("dev-0:7300", FINGERPRINT, "x")
+    failures.record("dev-0:7300", OLD, "y")
+    failures.record("dev-1:7300", FINGERPRINT, "z")
+
+    failures.clear("dev-0:7300")
+
+    assert failures.recorded("dev-0:7300", FINGERPRINT) is None
+    assert failures.recorded("dev-0:7300", OLD) is None
+    assert failures.recorded("dev-1:7300", FINGERPRINT) == "z"

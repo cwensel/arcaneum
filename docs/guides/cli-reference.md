@@ -699,8 +699,9 @@ arc corpus repair MyCorpus --verbose                  # Show per-file quality sc
 - `--dry-run`: Show the exact files that would be repaired without making changes
 - `--include-stale-policy`: Also re-index files whose only issue is stale or
   missing indexing policy
-- `--prune-orphans`: In the parity step, delete MeiliSearch documents for
-  files gone from both Qdrant and disk (see [Corpus Parity](#corpus-parity))
+- `--prune-orphans`: In the parity step of a MeiliSearch corpus, delete
+  MeiliSearch documents for files gone from both Qdrant and disk (see
+  [Corpus Parity](#corpus-parity)); a Qdrant text corpus has none to prune
 - `--force-prune`: Like `--prune-orphans`, but also prune files whose
   directory is missing
 - `--gpu`: Opt into accelerator embedding. CPU is the stable default.
@@ -721,17 +722,21 @@ arc corpus repair MyCorpus --verbose                  # Show per-file quality sc
    while retaining every physical path as an auditable alias
 5. Compares new quality to old — only replaces degraded extraction if improved
 6. Reports per-file results (improved, consolidated, skipped, or incomplete)
-7. Restores Qdrant/MeiliSearch parity, as `arc corpus parity --verify` does:
-   files missing from MeiliSearch, or with a different chunk count there, are
-   re-copied from Qdrant without re-embedding; files missing from Qdrant are
-   re-embedded if they still exist on disk, otherwise skipped and reported
-   (or pruned from MeiliSearch with `--prune-orphans`)
+7. Restores parity, as `arc corpus parity --verify` does, by the corpus's text
+   backend. On a MeiliSearch corpus, files missing from MeiliSearch, or with a
+   different chunk count there, are re-copied from Qdrant without re-embedding;
+   files missing from Qdrant are re-embedded if they still exist on disk,
+   otherwise skipped and reported (or pruned from MeiliSearch with
+   `--prune-orphans`). A Qdrant text corpus keeps its text in its chunk points,
+   so the step makes no MeiliSearch call: it ensures the Qdrant text index
+   (recreating a missing one) and reports its text coverage
 
 Both steps run under the corpus write lock, and `--dry-run` previews both. If
 the content step fails, the parity step does not run. With `--json` the output
 is one document: the content repair result, with the parity result under
-`data.parity` (`status` is `success`, `skipped` when the corpus is missing
-from one system, or `error`). A parity failure exits 1.
+`data.parity` (`status` is `success`, `skipped` when a MeiliSearch corpus is
+missing from one system, `warning` when a Qdrant text corpus's coverage is
+incomplete, or `error`). A parity failure exits 1.
 
 There is no separate `--only-corrupt` switch: ordinary `repair` already excludes
 policy-only migration while retaining incomplete chunks, corrupt extraction,

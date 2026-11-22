@@ -1581,7 +1581,7 @@ def search_passage(chunk_id, corpus, before, after, max_chars, output_json):
     ],
 )
 def corpus():
-    """Manage dual-index corpora (Qdrant + MeiliSearch)"""
+    """Manage corpora (Qdrant, full-text in Qdrant or MeiliSearch)"""
     pass
 
 
@@ -2669,11 +2669,13 @@ def corpus_repair(
     --include-stale-policy to migrate them. Re-extracts affected files with OCR
     fallback and consolidates duplicate PDFs while retaining source aliases.
 
-    Then restores Qdrant/MeiliSearch parity, as `arc corpus parity --verify`
-    does: files missing from MeiliSearch or with mismatched chunk counts are
-    re-copied from Qdrant, and files missing from Qdrant are re-embedded when
-    they still exist on disk. With --prune-orphans, MeiliSearch documents for
-    files gone from both Qdrant and disk are deleted.
+    Then restores parity, as `arc corpus parity --verify` does. On a
+    MeiliSearch corpus, files missing from MeiliSearch or with mismatched
+    chunk counts are re-copied from Qdrant, and files missing from Qdrant are
+    re-embedded when they still exist on disk; with --prune-orphans,
+    MeiliSearch documents for files gone from both Qdrant and disk are
+    deleted. A Qdrant text corpus keeps its text in Qdrant, so its pass
+    ensures the text index and recounts its coverage.
 
     Examples:
 
@@ -2924,8 +2926,9 @@ def corpus_info(name, output_json):
 def corpus_items(name, output_json):
     """List all indexed items with parity status.
 
-    Shows items from both Qdrant collection and MeiliSearch index,
-    with chunk counts from each system (Q and M columns).
+    Shows items from the Qdrant collection and the corpus's text index, with
+    chunk counts from each: Q and M (MeiliSearch) on a MeiliSearch corpus, Q
+    and S (searchable in Qdrant's text index) on a Qdrant text corpus.
 
     Examples:
 
@@ -2954,9 +2957,10 @@ def corpus_items(name, output_json):
 )
 @click.option("--json", "output_json", is_flag=True, help="Output JSON format")
 def corpus_verify(name, project, verbose, deep, strict, output_json):
-    """Verify corpus health across both Qdrant and MeiliSearch.
+    """Verify corpus health across Qdrant and its text index.
 
-    Performs fsck-like integrity checks on both systems and reports
+    Performs fsck-like integrity checks on the Qdrant collection and the
+    corpus's text index (MeiliSearch, or Qdrant's own) and reports
     collection/index health and parity status.
 
     Parity compares chunk counts per file (per git project for code corpora),
@@ -2989,10 +2993,10 @@ def corpus_doctor(names, verbose, strict, output_json):
     """Check corpora for problems and list the commands that fix them.
 
     Read-only. For every corpus (or each NAME given), runs the checks of
-    `arc corpus verify` (stored content quality and Qdrant/MeiliSearch
-    parity) and looks for MeiliSearch documents whose files are gone from
-    Qdrant and disk. Each corpus is reported as ok, needs action, or error,
-    with the command to run. Policy migration and pruning files whose
+    `arc corpus verify` (stored content quality and parity with the text
+    index) and, on a MeiliSearch corpus, looks for MeiliSearch documents
+    whose files are gone from Qdrant and disk. Each corpus is reported as ok,
+    needs action, or error, with the command to run. Policy migration and pruning files whose
     directory is missing are listed separately as optional.
 
     Uses stored quality data, like `verify` without --deep; `arc corpus

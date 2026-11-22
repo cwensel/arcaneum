@@ -79,3 +79,33 @@ def test_parity_all_json_records_a_failed_corpus_without_extra_documents():
         {"corpus": "Alpha", "status": "success", "message": "Indexes are already in parity"},
         {"corpus": "Beta", "status": "failed", "error": "backfill exploded"},
     ]
+
+
+def test_parity_all_table_shows_no_meilisearch_count_for_a_qdrant_corpus():
+    corpora = [
+        {
+            "name": "Alpha",
+            "status": "synced",
+            "text_backend": "qdrant",
+            "to_meili": 0,
+            "to_qdrant": 0,
+        },
+        {
+            "name": "Beta",
+            "status": "synced",
+            "text_backend": "meili",
+            "to_meili": 0,
+            "to_qdrant": 0,
+        },
+    ]
+    with patch("arcaneum.cli.sync._discover_corpora_for_parity", lambda: corpora):
+        result = CliRunner().invoke(cli, ["corpus", "parity", "--dry-run"], catch_exceptions=False)
+
+    assert result.exit_code == 0, result.output
+    rows = {
+        cells[0]: cells
+        for line in result.output.splitlines()
+        if (cells := [c.strip() for c in line.strip("│ ").split("│")])[0] in ("Alpha", "Beta")
+    }
+    assert rows["Alpha"][2] == "-"
+    assert rows["Beta"][2] == "0"

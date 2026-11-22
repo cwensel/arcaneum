@@ -60,7 +60,7 @@ def test_index_batch_still_writes_meilisearch_for_a_meili_corpus():
     meili.add_documents_sync.assert_called_once()
 
 
-def _sync(tmp_path, text_backend, *, meili, already_indexed=False, parity=False):
+def _sync(tmp_path, text_backend, *, meili, already_indexed=False, parity=False, output_json=True):
     """Sync one markdown file; return (get_meili_client mock, _plan_parity_backfill mock, qdrant)."""
     source = tmp_path / "note.md"
     source.write_text("# Note\n\nThe write-ahead log flushes before the checkpoint.\n")
@@ -112,7 +112,7 @@ def _sync(tmp_path, text_backend, *, meili, already_indexed=False, parity=False)
             True,
             None,
             False,
-            True,  # output_json
+            output_json,
             parity=parity,
         )
     return get_meili_client, plan_backfill, qdrant
@@ -158,6 +158,38 @@ def test_a_meili_corpus_parity_still_plans_its_backfills(tmp_path):
     _get, plan_backfill, _qdrant = _sync(tmp_path, "meili", meili=_meili_up(), parity=True)
 
     plan_backfill.assert_called_once()
+
+
+def test_the_index_banner_names_only_qdrant_for_a_qdrant_corpus():
+    lines = sync_mod._index_banner_lines("Notes", "qdrant")
+
+    assert not any("MeiliSearch" in line for line in lines)
+    assert any("Qdrant collection: Notes" in line for line in lines)
+
+
+def test_the_index_banner_still_names_both_stores_for_a_meili_corpus():
+    lines = sync_mod._index_banner_lines("Notes", "meili")
+
+    assert any("Qdrant collection: Notes" in line for line in lines)
+    assert any("MeiliSearch index: Notes" in line for line in lines)
+
+
+@pytest.mark.parametrize("parity", [False, True])
+def test_a_qdrant_corpus_sync_prints_no_meilisearch(tmp_path, capsys, parity):
+    _sync(tmp_path, "qdrant", meili=_NoMeili(), parity=parity, output_json=False)
+
+    out = capsys.readouterr().out
+    assert "Qdrant collection: Notes" in out
+    assert "MeiliSearch" not in out
+
+
+def test_a_meili_corpus_sync_still_names_meilisearch(tmp_path, capsys):
+    _sync(tmp_path, "meili", meili=_meili_up(), parity=True, output_json=False)
+
+    out = capsys.readouterr().out
+    assert "MeiliSearch index: Notes" in out
+    assert "Checking index parity between Qdrant and MeiliSearch" in out
+    assert "Total in MeiliSearch" in out
 
 
 def test_a_meili_corpus_is_refused_when_meilisearch_is_down(tmp_path):

@@ -76,7 +76,7 @@ def qdrant_corpus(qdrant):
             qdrant.delete_collection(name)
 
 
-def _sync(qdrant, corpus, source_dir, *, parity=False):
+def _sync(qdrant, corpus, source_dir, *, parity=False, output_json=True):
     """Run sync with MeiliSearch unreachable by construction; return get_meili_client's mock."""
     from arcaneum.embeddings.client import EMBEDDING_MODELS
 
@@ -106,7 +106,7 @@ def _sync(qdrant, corpus, source_dir, *, parity=False):
             True,
             None,
             False,
-            True,  # output_json
+            output_json,
             parity=parity,
         )
     return get_meili_client
@@ -177,6 +177,21 @@ def test_change_rename_and_remove_make_no_meilisearch_call(qdrant, qdrant_corpus
     removed = _chunks_by_path(qdrant, corpus)
     assert set(removed) == {c_path}
     _assert_covered(qdrant, corpus)
+
+
+def test_sync_and_parity_of_a_qdrant_corpus_print_no_meilisearch(
+    qdrant, qdrant_corpus, tmp_path, capsys
+):
+    corpus = qdrant_corpus("markdown")
+    source = tmp_path / "notes"
+    source.mkdir()
+    (source / "a.md").write_text("# Alpha\n\nThe write-ahead log flushes before the checkpoint.\n")
+
+    for parity in (False, True):
+        assert not _sync(qdrant, corpus, source, parity=parity, output_json=False).called
+        out = capsys.readouterr().out
+        assert f"Qdrant collection: {corpus}" in out
+        assert "MeiliSearch" not in out
 
 
 def _write_pdf(path, text):

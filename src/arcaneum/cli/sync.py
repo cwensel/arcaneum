@@ -2381,6 +2381,24 @@ def _force_scope(
     return f"the {count}given {noun}"
 
 
+def _index_banner_lines(corpus: str, text_backend: str) -> List[str]:
+    """Name the stores a sync writes, by the corpus's text backend (RDR-027 Q7).
+
+    A qdrant corpus keeps its text in its chunk points, so naming a
+    MeiliSearch index it never writes would misstate where its text lives.
+    """
+    if text_backend == "qdrant":
+        return [
+            "Indexing to:",
+            f"  - Qdrant collection: {corpus} (semantic and full-text search)",
+        ]
+    return [
+        "Dual indexing to:",
+        f"  - Qdrant collection: {corpus} (semantic search)",
+        f"  - MeiliSearch index: {corpus} (full-text search)",
+    ]
+
+
 def _resolve_from_index(
     qdrant,
     corpus: str,
@@ -3078,9 +3096,8 @@ def _sync_directory_locked(
                     print_info("Sync mode: git-tracked files (default)")
                     print_info("  - Git repos are discovered with git ls-files")
                     print_info("  - Changed files are checked by path, mtime, and size")
-            print_info("Dual indexing to:")
-            print_info(f"  - Qdrant collection: {corpus} (semantic search)")
-            print_info(f"  - MeiliSearch index: {corpus} (full-text search)")
+            for line in _index_banner_lines(corpus, text_backend):
+                print_info(line)
 
         # Git-aware sync: skip repos based on commit hash
         # Track repos to skip and version identifiers to apply
@@ -3326,7 +3343,13 @@ def _sync_directory_locked(
             # Full parity check: scroll all paths from both systems (slower but thorough)
             # Detects renames, stale paths, and cross-system backfill needs
             if not output_json:
-                print_info("Checking index parity between Qdrant and MeiliSearch...")
+                if meili is None:
+                    print_info(
+                        f"Checking indexed paths of Qdrant collection '{corpus}' "
+                        "against disk (renames, removals)..."
+                    )
+                else:
+                    print_info("Checking index parity between Qdrant and MeiliSearch...")
 
             # Get file paths from both systems
             sync_manager = MetadataBasedSync(qdrant)
@@ -4351,8 +4374,9 @@ def _sync_directory_locked(
                             # Index to both systems
                             if documents:
                                 if verbose and not output_json:
+                                    stores = "Qdrant" if meili is None else "Qdrant + MeiliSearch"
                                     progress.console.print(
-                                        f"[dim]  Indexing {len(documents)} chunks to Qdrant + MeiliSearch...[/dim]"
+                                        f"[dim]  Indexing {len(documents)} chunks to {stores}...[/dim]"
                                     )
 
                                 _set_phase(f"indexing:{file_path.name}")
@@ -4868,11 +4892,10 @@ def _sync_directory_locked(
             if stale_cleaned > 0:
                 console.print(f"   Stale paths cleaned:      {stale_cleaned} paths")
 
-            # New files (indexed to both systems)
+            # New files (indexed to both systems, or to Qdrant alone)
             if total_indexed > 0:
-                console.print(
-                    f"   New files (both systems): {total_indexed} files ({total_chunks} chunks)"
-                )
+                label = "New files:" if meili is None else "New files (both systems):"
+                console.print(f"   {label:<26}{total_indexed} files ({total_chunks} chunks)")
 
             # Already in both systems
             if already_indexed_count > 0:
@@ -4894,7 +4917,8 @@ def _sync_directory_locked(
 
             # Totals
             console.print(f"\n   Total in Qdrant:      {total_qdrant} vectors")
-            console.print(f"   Total in MeiliSearch: {total_meili} documents")
+            if meili is not None:
+                console.print(f"   Total in MeiliSearch: {total_meili} documents")
 
             console.print("\n[dim]Search with:[/dim]")
             console.print(f'  arc search semantic "your query" --corpus {corpus}')
@@ -6357,7 +6381,10 @@ def _parity_all_corpora(
                 else:
                     status_str = "[yellow]chunk_mismatch[/yellow]"
 
-                to_meili = f"{c['to_meili']} chunks" if c["to_meili"] > 0 else "0"
+                if c.get("text_backend") == "qdrant":
+                    to_meili = "-"  # its text is in Qdrant; nothing goes to MeiliSearch
+                else:
+                    to_meili = f"{c['to_meili']} chunks" if c["to_meili"] > 0 else "0"
                 to_qdrant = f"{c['to_qdrant']} chunks" if c["to_qdrant"] > 0 else "0"
 
                 table.add_row(name, status_str, to_meili, to_qdrant)

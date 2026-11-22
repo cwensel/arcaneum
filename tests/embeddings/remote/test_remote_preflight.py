@@ -25,6 +25,9 @@ class FakeProcess:
     def poll(self):
         return self.returncode
 
+    def wait(self):
+        return self.returncode
+
 
 class Harness:
     """A router over fake endpoints whose probes, spawns and wakes are recorded."""
@@ -41,6 +44,8 @@ class Harness:
         self.failures = AutoDeployFailures(tmp_path / "failures")
         self.changed = False
         self.buildable = True
+        self.tool_missing = None
+        self.watched: list[tuple[str, str]] = []
 
     def probe(self, endpoint, config):
         return self.statuses.get(endpoint.name) or mismatch(endpoint.name)
@@ -61,6 +66,8 @@ class Harness:
             deploys=self.deploys,
             changed=lambda: self.changed,
             buildable=lambda: self.buildable,
+            missing_tool=lambda: self.tool_missing,
+            watch=lambda child, retry, notify: self.watched.append((child.endpoint, retry)),
         )
 
 
@@ -115,6 +122,50 @@ def test_release_install_deploys_the_release_wheel(tmp_path):
     harness.run()
 
     assert harness.spawned == [("dev-0:7300", code_fingerprint(), False)]
+
+
+def test_source_tree_without_a_build_tool_spawns_and_records_nothing(tmp_path):
+    harness = Harness(tmp_path, "dev-0", "dev-1")
+    harness.tool_missing = "uv is not on PATH nor in /opt/homebrew/bin"
+
+    harness.run()
+
+    assert harness.spawned == [] and harness.deploys == {}
+    assert not (tmp_path / "failures").exists() or not list((tmp_path / "failures").iterdir())
+    notice = [m for m in harness.messages if "uv is not on PATH" in m]
+    assert len(notice) == 1
+    assert "dev-0:7300" in notice[0] and "dev-1:7300" in notice[0]
+    assert "arc models deploy --build" in notice[0]
+
+
+def test_release_install_needs_no_build_tool(tmp_path):
+    harness = Harness(tmp_path, "dev-0")
+    harness.buildable = False
+    harness.tool_missing = "no tool"
+
+    harness.run()
+
+    assert harness.spawned == [("dev-0:7300", code_fingerprint(), False)]
+
+
+def test_each_spawned_deploy_is_watched_with_its_retry_command(tmp_path):
+    harness = Harness(tmp_path, "dev-0", "dev-1")
+
+    harness.run()
+
+    assert harness.watched == [
+        ("dev-0:7300", "arc models deploy --build dev-0"),
+        ("dev-1:7300", "arc models deploy --build dev-1"),
+    ]
+
+
+def test_retry_of_a_recorded_failure_keeps_build(tmp_path):
+    harness = Harness(tmp_path, "dev-0")
+    harness.failures.record("dev-0:7300", code_fingerprint(), "--build needs uv")
+
+    harness.run()
+
+    assert any("arc models deploy --build dev-0" in m for m in harness.messages)
 
 
 def test_auto_deploy_off_spawns_nothing_and_names_the_manual_command(tmp_path):
@@ -251,6 +302,44 @@ def test_spawned_deploy_is_detached_and_logs_to_a_file(tmp_path):
     assert kwargs["stdin"] is subprocess.DEVNULL
     assert child.log.parent == tmp_path / "logs" and child.log.exists()
     assert child.running
+
+
+def failed_child(tmp_path, returncode, log_text):
+    log = tmp_path / "arc-deploy-dev-0.log"
+    log.write_text(log_text)
+    return preflight.DeployChild("dev-0:7300", FakeProcess(returncode), log)
+
+
+def test_a_failed_deploy_is_reported_once_with_its_error_and_log(tmp_path):
+    child = failed_child(tmp_path, 1, "Deploying\nError: --build needs uv\n\n")
+    messages = []
+
+    preflight.watch_deploy(child, "arc models deploy --build dev-0", messages.append).join(5)
+
+    assert len(messages) == 1
+    message = messages[0]
+    assert "dev-0:7300" in message and "exit 1" in message
+    assert "Error: --build needs uv" in message and str(child.log) in message
+    assert "arc models deploy --build dev-0" in message
+
+
+def test_a_successful_deploy_is_reported_as_an_update(tmp_path):
+    child = failed_child(tmp_path, 0, "Deployed\n")
+    messages = []
+
+    preflight.watch_deploy(child, "arc models deploy --build dev-0", messages.append).join(5)
+
+    assert len(messages) == 1 and "updated" in messages[0] and "rejoins" in messages[0]
+
+
+def test_deploy_child_failure_names_exit_code_last_line_and_log(tmp_path):
+    child = failed_child(tmp_path, 2, "one\nError: boom\n")
+
+    assert child.returncode == 2 and child.last_error() == "Error: boom"
+    assert "exit 2" in child.failure and "Error: boom" in child.failure
+    assert str(child.log) in child.failure
+    assert failed_child(tmp_path, 0, "x").failure is None
+    assert failed_child(tmp_path, None, "x").failure is None
 
 
 def test_release_deploy_command_omits_build(tmp_path):

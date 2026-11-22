@@ -33,7 +33,9 @@ remote embedding workers that embed documents on spare machines.
 - --no-wait: Send the wake packets without waiting (`wake`)
 - --timeout SECONDS: How long to wait for each woken worker (`wake`)
 - --build: Deploy a wheel built from this source tree (`deploy`; needed for
-  source checkouts and unreleased builds)
+  source checkouts and unreleased builds). Builds with uv (found on `PATH`,
+  beside the running Python, or in `/opt/homebrew/bin`, `/usr/local/bin`,
+  `~/.local/bin` or `~/.cargo/bin`), else `python -m build`
 - --wheel PATH: Deploy a given wheel (`deploy`)
 - --refresh: Rebuild the worker image without cache (`deploy`)
 - --no-verify: Skip the vector parity check (`deploy`)

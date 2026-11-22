@@ -15,19 +15,22 @@ from __future__ import annotations
 import contextlib
 import fcntl
 import hashlib
+import importlib.util
 import json
 import math
+import os
 import re
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import zipfile
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from email.parser import HeaderParser
 from pathlib import Path
-from typing import ContextManager, Optional, Protocol
+from typing import Any, ContextManager, Optional, Protocol
 
 import numpy as np
 
@@ -143,24 +146,90 @@ def source_tree() -> Path:
     return root
 
 
-def build_wheel(out_dir: Path) -> Path:
-    """Build a wheel from the source tree with ``uv build --wheel``."""
-    uv = shutil.which("uv")
+# Where uv is looked for when it is not on PATH (arcaneum#188): an `arc` started
+# by an IDE, a launcher or a git hook may run with a PATH lacking these, so a
+# build that works from the owner's shell would otherwise fail in an auto-deploy.
+UV_DIRECTORIES = ("/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin", "~/.cargo/bin")
+
+
+def uv_directories(
+    executable: str = sys.executable, directories: Optional[Sequence[Path]] = None
+) -> list[Path]:
+    """The directories searched for uv off PATH: the running Python's, then the usual ones."""
+    usual = [Path(d).expanduser() for d in UV_DIRECTORIES] if directories is None else directories
+    return [Path(executable).parent, *map(Path, usual)]
+
+
+def _importable(find_spec: Callable[[str], Any], name: str) -> bool:
+    try:
+        return find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def build_command(
+    *,
+    which: Callable[[str], Optional[str]] = shutil.which,
+    find_spec: Callable[[str], Any] = importlib.util.find_spec,
+    executable: str = sys.executable,
+    directories: Optional[Sequence[Path]] = None,
+) -> Optional[list[str]]:
+    """The wheel build command up to its output-directory flag, or None without a tool.
+
+    uv on PATH, else an executable uv beside the running Python or in
+    ``directories`` (default ``UV_DIRECTORIES``), else ``python -m uv``, else ``python -m build`` when
+    the ``build`` package is installed (it is not an arcaneum dependency). Every
+    one builds with the project's setuptools backend, so the wheel's code
+    fingerprint is the same whichever builds it; ``resolve_wheel`` still checks.
+    """
+    uv = which("uv")
     if uv is None:
-        raise DeployError("--build needs `uv` on PATH")
+        for directory in uv_directories(executable, directories):
+            candidate = directory / "uv"
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                uv = str(candidate)
+                break
+    if uv is not None:
+        return [uv, "build", "--wheel", "--out-dir"]
+    if _importable(find_spec, "uv"):
+        return [executable, "-m", "uv", "build", "--wheel", "--out-dir"]
+    if _importable(find_spec, "build"):
+        return [executable, "-m", "build", "--wheel", "--outdir"]
+    return None
+
+
+def build_tool_searched(executable: str = sys.executable) -> str:
+    """Every place ``build_command`` looked, for the error that names none was found."""
+    directories = ", ".join(str(d) for d in uv_directories(executable))
+    return (
+        f"uv is not on PATH nor in {directories}, and {executable} can run neither "
+        "`-m uv` nor `-m build`"
+    )
+
+
+def build_wheel(out_dir: Path) -> Path:
+    """Build a wheel from the source tree with uv, or ``python -m build`` without it."""
+    command = build_command()
+    if command is None:
+        raise DeployError(
+            f"--build needs uv (or the `build` package): {build_tool_searched()}. "
+            "Install uv, or use --wheel PATH"
+        )
+    tool = "python -m build" if command[1:3] == ["-m", "build"] else "uv build"
     out_dir.mkdir(parents=True, exist_ok=True)
     root = source_tree()
     result = subprocess.run(
-        [uv, "build", "--wheel", "--out-dir", str(out_dir), str(root)],
+        [*command, str(out_dir), str(root)],
         capture_output=True,
         text=True,
         timeout=600,
     )
     if result.returncode != 0:
-        raise DeployError(f"uv build failed: {result.stderr.strip()[-2000:]}")
+        output = (result.stderr or result.stdout).strip()[-2000:]
+        raise DeployError(f"{tool} failed: {output}")
     wheels = sorted(out_dir.glob("arcaneum-*.whl"), key=lambda p: p.stat().st_mtime)
     if not wheels:
-        raise DeployError(f"uv build produced no wheel in {out_dir}")
+        raise DeployError(f"{tool} produced no wheel in {out_dir}")
     return wheels[-1]
 
 

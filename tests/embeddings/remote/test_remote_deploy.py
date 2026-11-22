@@ -18,6 +18,7 @@ from arcaneum.embeddings.remote.deploy import (
     VerifyResult,
     WheelInfo,
     WorkerControl,
+    build_command,
     container_name,
     image_tag,
     render_dockerfile,
@@ -586,6 +587,115 @@ def test_missing_release_wheel_names_build(tmp_path):
 
     with pytest.raises(DeployError, match="--build"):
         resolve_wheel(downloader=missing)
+
+
+# --- The build tool (arcaneum#188) ----------------------------------------------------
+
+
+def executable_file(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\n")
+    path.chmod(0o755)
+    return path
+
+
+def no_module(name):
+    return None
+
+
+def test_build_command_finds_uv_in_a_known_directory_off_path(tmp_path):
+    uv = executable_file(tmp_path / "homebrew" / "uv")
+
+    command = build_command(
+        which=lambda name: None,
+        find_spec=no_module,
+        executable=str(tmp_path / "python" / "bin" / "python3"),
+        directories=[tmp_path / "missing", uv.parent],
+    )
+
+    assert command == [str(uv), "build", "--wheel", "--out-dir"]
+
+
+def test_build_command_tries_the_running_pythons_directory_first(tmp_path):
+    beside = executable_file(tmp_path / "venv" / "bin" / "uv")
+    executable_file(tmp_path / "homebrew" / "uv")
+
+    command = build_command(
+        which=lambda name: None,
+        find_spec=no_module,
+        executable=str(tmp_path / "venv" / "bin" / "python3"),
+        directories=[tmp_path / "homebrew"],
+    )
+
+    assert command[0] == str(beside)
+
+
+def test_build_command_prefers_uv_on_path(tmp_path):
+    executable_file(tmp_path / "homebrew" / "uv")
+
+    command = build_command(
+        which=lambda name: "/path/uv" if name == "uv" else None,
+        find_spec=no_module,
+        executable=str(tmp_path / "python3"),
+        directories=[tmp_path / "homebrew"],
+    )
+
+    assert command[0] == "/path/uv"
+
+
+def test_build_command_falls_back_to_python_m_build_without_uv(tmp_path):
+    command = build_command(
+        which=lambda name: None,
+        find_spec=lambda name: object() if name == "build" else None,
+        executable="/py/bin/python3",
+        directories=[tmp_path],
+    )
+
+    assert command == ["/py/bin/python3", "-m", "build", "--wheel", "--outdir"]
+
+
+def test_build_command_uses_an_importable_uv_before_build(tmp_path):
+    command = build_command(
+        which=lambda name: None,
+        find_spec=lambda name: object(),
+        executable="/py/bin/python3",
+        directories=[tmp_path],
+    )
+
+    assert command == ["/py/bin/python3", "-m", "uv", "build", "--wheel", "--out-dir"]
+
+
+def test_build_command_is_none_without_any_tool(tmp_path):
+    assert (
+        build_command(
+            which=lambda name: None,
+            find_spec=no_module,
+            executable=str(tmp_path / "python3"),
+            directories=[tmp_path],
+        )
+        is None
+    )
+
+
+def test_build_wheel_without_a_tool_names_every_place_it_looked(monkeypatch, tmp_path):
+    from arcaneum.embeddings.remote import deploy
+
+    monkeypatch.setattr(deploy, "build_command", lambda: None)
+
+    with pytest.raises(DeployError) as raised:
+        deploy.build_wheel(tmp_path)
+
+    message = str(raised.value)
+    assert "PATH" in message and "uv" in message and "build" in message
+    for directory in ("/opt/homebrew/bin", "/usr/local/bin", ".local/bin", ".cargo/bin"):
+        assert directory in message
+
+
+def test_a_wheel_from_the_fallback_tool_with_other_code_is_refused(tmp_path):
+    other = wheel_with(tmp_path, "arcaneum-0.10.0-py3-none-any.whl", {"__init__.py": "z"}, [])
+
+    with pytest.raises(DeployError, match="fingerprint"):
+        resolve_wheel(build=True, builder=lambda out_dir: other)
 
 
 @pytest.mark.slow

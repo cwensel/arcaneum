@@ -373,6 +373,7 @@ class FakeDeploy:
     def __init__(self, log: str) -> None:
         self.log = log
         self.finished = False
+        self.failure = None
 
     @property
     def running(self) -> bool:
@@ -466,6 +467,26 @@ def test_endpoint_whose_deploy_finished_is_used_at_first_connect(cluster):
     )
 
     np.testing.assert_array_equal(pool.embed(["a"], MODEL), expected(["a"]))
+
+
+def test_embedding_locally_names_a_failed_auto_deploy(cluster):
+    port = free_port()
+
+    def old_release(model):
+        identity = local_identity(model)
+        identity.update(code_fingerprint="0" * 64)
+        return identity
+
+    cluster.server(port=port, identity=old_release)
+    deploy = FakeDeploy("/logs/x.log")
+    deploy.finished = True
+    deploy.failure = "auto-deploy failed (exit 1: Error: --build needs uv; log /logs/x.log)"
+    pool = cluster.pool(
+        [port], unavailable="local", pool_options={"deploys": {f"127.0.0.1:{port}": deploy}}
+    )
+
+    with pytest.raises(RemoteEmbeddingFallback, match="auto-deploy failed .exit 1: Error: --build"):
+        pool.embed(["a"], MODEL)
 
 
 def test_endpoint_mid_deploy_is_not_connected_at_first_use(cluster):

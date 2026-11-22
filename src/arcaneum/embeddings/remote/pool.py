@@ -411,7 +411,8 @@ class RemoteEmbeddingPool:
         self.connector = connector
         self.notify = notify
         self.waker = waker or Waker(clock=clock)
-        # Endpoint name -> background deploy child (``running``, ``log``); shared
+        # Endpoint name -> background deploy child (``running``, ``log``, and
+        # ``failure``: how it failed once it exited non-zero, else None); shared
         # with the run-start preflight that starts them.
         self.deploys = deploys if deploys is not None else {}
         # Whether a deploy holds an endpoint's lock on this workstation: another
@@ -500,7 +501,7 @@ class RemoteEmbeddingPool:
         return [link for link in links if link.up]
 
     def _unavailable(self, model: str, links: list[_Link]) -> None:
-        details = "; ".join(f"{link.name} {link.reason or link.state}" for link in links) or (
+        details = "; ".join(self._describe(link) for link in links) or (
             "no endpoint is configured to serve it"
         )
         waking = sorted({link.name for link in links if self.waker.waking(link.endpoint)})
@@ -536,6 +537,13 @@ class RemoteEmbeddingPool:
             f"or {local} to proceed without them."
         )
         self.sleep(min(self.config.probe_interval, 1.0))
+
+    def _describe(self, link: _Link) -> str:
+        """A link's state, naming its endpoint's background deploy if that failed."""
+        detail = f"{link.name} {link.reason or link.state}"
+        deploy = self.deploys.get(link.name)
+        failure = deploy.failure if deploy is not None else None
+        return f"{detail} ({failure})" if failure else detail
 
     def _notify(self, message: str) -> None:
         now = self.clock()

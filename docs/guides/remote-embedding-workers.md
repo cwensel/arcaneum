@@ -56,7 +56,9 @@ Design record: [RDR-025](../rdr/RDR-025-remote-embedding-worker-pool.md).
 
 - The system `ssh` and `scp` (deploy runs them in batch mode, so
   `~/.ssh/config` applies).
-- `uv` when deploying a source tree with `arc models deploy --build`.
+- `uv` when deploying a source tree with `arc models deploy --build` (or,
+  without uv, the `build` package installed in the Python that runs `arc`).
+  See [Build Tool Lookup](#build-tool-lookup).
 - Optional: Tailscale with MagicDNS, for `bind: tailscale`.
 
 ## Quick Setup
@@ -357,6 +359,23 @@ and skipped, the others continue, and deploy exits non-zero.
 `--dry-run` shows each host's current and desired version, fingerprint and
 action without changing anything. `--no-verify` skips the parity check.
 
+### Build Tool Lookup
+
+`--build` builds the wheel with the first tool it finds:
+
+1. `uv` on `PATH`;
+2. an executable `uv` in the directory of the Python running `arc`, then in
+   `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin` and `~/.cargo/bin`;
+3. `python -m uv`, when the `uv` package is importable;
+4. `python -m build`, when the `build` package is installed (it is not an
+   arcaneum dependency).
+
+An `arc` started by an IDE, a launcher or a hook may run with a `PATH` that
+lacks uv's directory, which the second step covers. Every tool builds with
+the project's own backend, so the wheel has the same code fingerprint, and a
+wheel whose fingerprint differs is still refused. With no tool, deploy fails
+and names every place it looked.
+
 ### Auto-Deploy at Run Start
 
 A command that routes models (`arc corpus sync`, `repair` and `parity`, and
@@ -392,9 +411,25 @@ Auto-deploy does not start, and says why, when:
 - the source tree changed since the run started (another commit landed), so a
   deploy would build code the run does not run. The deploy itself also refuses
   if its tree no longer matches the run's fingerprint;
+- `arc` runs from a source tree but no [build tool](#build-tool-lookup) is
+  found. The notice names where it looked and the `arc models deploy --build`
+  command to run once uv is installed. Nothing is started or recorded;
 - an auto-deploy of this fingerprint to that endpoint already failed. Runs do
-  not retry it; new code does, and a manual `arc models deploy` of that host
-  clears the record.
+  not retry it, and each run's notice names the recorded error and the command
+  that retries; new code does try again, and a manual `arc models deploy` of
+  that host clears the record.
+
+The run watches each deploy it starts and reports its outcome once, even
+mid-run: on success that the worker was updated and rejoins; on failure the
+exit code, the last line of its log (the deploy's error), the log path, and
+the command that retries. When the `local` policy embeds on the workstation,
+its "embedding locally" notice also names an endpoint's failed deploy. To
+read a deploy's whole output, open its log:
+
+```bash
+ls -t ~/.arcaneum/logs/arc-deploy-*.log | head
+tail -n 20 "$(ls -t ~/.arcaneum/logs/arc-deploy-dev-0_7300-*.log | head -1)"
+```
 
 A run starts at most one deploy per endpoint, and deploys of one worker from
 one workstation take a lock (under `~/.local/state/arcaneum/locks/`), so two

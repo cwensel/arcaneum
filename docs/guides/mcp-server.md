@@ -112,7 +112,7 @@ The codes are the ones the CLI's `--json` errors carry. Exit is the CLI's exit s
 | `unknown-chunk` | 3 | `get_passage` finds the chunk id in neither system |
 | `bad-filter` | 2 | The filter does not parse, names an unfilterable field, or is a native form for the other mode |
 | `bad-argument` | 2 | Any other bad argument, e.g. `limit` above 25 on the server |
-| `service-down` | 1 | Qdrant or MeiliSearch is unreachable; the message names which |
+| `service-down` | 1 | Qdrant (or MeiliSearch, when enabled) is unreachable; the message names which |
 | `semantic-unavailable` | 1 | Q9's causes |
 | `timeout` | 1 | The call exceeds the per-call timeout |
 
@@ -144,9 +144,10 @@ overlap removed. Its `max_chars` bounds the text (default 8000; `0` is unlimited
 cut. The result carries the hit's `cite` and the window's `first_chunk_id` and `last_chunk_id`, so a reviewer can
 page further from either end.
 
-The lookup tries Qdrant, then MeiliSearch, and takes the window from the system that holds the chunk, so it still
-works while Qdrant is down. It creates no payload index and changes no MeiliSearch setting. An id that neither system
-holds, such as one a resync replaced, fails `unknown-chunk`; search again for a current id.
+The lookup tries Qdrant, then MeiliSearch when it is enabled, and takes the window from the system that holds the
+chunk, so a corpus still on MeiliSearch works while Qdrant is down. It creates no payload index and changes no
+MeiliSearch setting. An id that no enabled system holds, such as one a
+resync replaced, fails `unknown-chunk`; search again for a current id.
 
 ## Cite grammar
 

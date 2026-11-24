@@ -167,7 +167,7 @@ All other dependencies use flexible version constraints and should not cause sim
 - **sentence-transformers:** >=5.5.1 (compatible with the transformers <5.0 cap)
 - **torch:** >=2.12.0
 - **fastembed:** >=0.8.0 (uses ONNX, no transformers dependency)
-- **meilisearch:** >=0.41.0
+- **meilisearch:** >=0.41.0 (only for the optional MeiliSearch backend)
 - **PyMuPDF/PyMuPDF4LLM/pymupdf-layout:** >=1.27.2.3
 - **tree-sitter-language-pack:** >=1.8.1; the AST extractor supports both the
   older bytes-based binding and the 1.8+ method-based binding

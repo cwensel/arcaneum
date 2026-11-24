@@ -1,19 +1,21 @@
 # Testing Source Code Indexing (RDR-005)
 
 **Note on recommended workflow:** For normal use, prefer `arc corpus sync`
-(dual-indexing to Qdrant + MeiliSearch) — see the
+(semantic and full-text search in Qdrant) — see the
 [Corpus Workflow (Recommended)](#corpus-workflow-recommended) section below.
 The rest of this doc tests the single-system `arc index code` implementation
 from RDR-005; those sections are marked "Single-System (Advanced)".
 
 ## Prerequisites
 
-1. **Qdrant and MeiliSearch Running**
+1. **Qdrant Running** (MeiliSearch only if you use the optional backend)
+
    ```bash
    arc container start
    ```
 
 2. **Verify Installation**
+
    ```bash
    pip install -e .
    arc --help
@@ -21,7 +23,7 @@ from RDR-005; those sections are marked "Single-System (Advanced)".
 
 ## Corpus Workflow (Recommended)
 
-Dual-indexing source code to both Qdrant (semantic) and MeiliSearch (full-text):
+Indexing source code for semantic and full-text search (both in Qdrant by default):
 
 ```bash
 # Create a corpus for source code
@@ -62,18 +64,21 @@ arc collection create docs --type pdf
 **Important:** Collections are now typed (pdf or code). You cannot mix PDFs and source code in the same collection.
 
 **Collection vs Corpus:**
+
 - **Collection**: Qdrant-only (semantic search)
-- **Corpus**: Qdrant + MeiliSearch (semantic + full-text search, see RDR-009)
+- **Corpus**: Qdrant (semantic + full-text search; optional MeiliSearch text backend, see RDR-009)
 - Both use the same type system
 
 ### 2. Index Source Code
 
 **Index a single repository:**
+
 ```bash
 arc index code /path/to/your/repo --collection code
 ```
 
 **Index directory with multiple repositories:**
+
 ```bash
 # Index all repos in ~/projects
 arc index code ~/projects --collection code
@@ -83,6 +88,7 @@ arc index code ~/projects --collection code --depth 1
 ```
 
 **Force re-index (bypass incremental sync):**
+
 ```bash
 arc index code /path/to/repo --collection code --force
 ```
@@ -113,12 +119,14 @@ arc index code ~ --collection code
 ```
 
 Result in Qdrant:
+
 - `myproject#main` - chunks from main branch
 - `myproject#feature-x` - chunks from feature branch
 
 ### Supported Languages
 
 15+ primary languages with AST-aware chunking:
+
 - Python, Java, JavaScript, TypeScript
 - C#, Go, Rust, C/C++
 - PHP, Ruby, Kotlin, Scala, Swift
@@ -194,6 +202,7 @@ arc search "authentication logic" --collection code
 ## Performance
 
 **Target metrics:**
+
 - 100-200 files/sec indexing throughput
 - <500ms branch-specific deletion
 - <5s metadata query for 1000 projects
@@ -298,6 +307,7 @@ pytest tests/indexing/test_qdrant_indexer.py -v
 ```
 
 **Test Coverage:**
+
 - Git operations: 15 tests ✓
 - AST chunking: 27 tests ✓
 - Metadata sync: 26 tests ✓

@@ -1,18 +1,19 @@
 ---
 name: arc-container
-description: Docker container management for Qdrant and MeiliSearch services. Use when user mentions starting services, stopping services, checking container status, viewing logs, restarting containers, or resetting database services.
+description: Docker container management for Qdrant (and optional MeiliSearch) services. Use when user mentions starting services, stopping services, checking container status, viewing logs, restarting containers, or resetting database services.
 allowed-tools: Bash(arc:*), Read
 ---
 
 # Container Management
 
-Manages Qdrant and MeiliSearch Docker containers for local development.
+Manages the Qdrant Docker container for local development, plus MeiliSearch when `meilisearch.enabled` is true
+(a new install runs Qdrant only).
 
 ```bash
 # Start services
-arc container start              # Start both Qdrant and MeiliSearch
+arc container start              # Start Qdrant (and MeiliSearch, when enabled)
 arc container start --service qdrant       # Start only Qdrant
-arc container start --service meilisearch  # Start only MeiliSearch
+arc container start --service meilisearch  # Start only MeiliSearch (when enabled)
 
 # Stop services
 arc container stop
@@ -28,12 +29,12 @@ arc container status
 arc container status --json
 
 # View logs
-arc container logs                    # Tail logs from both services
+arc container logs                    # Tail logs from the running services
 arc container logs --service qdrant   # Qdrant logs only
 arc container logs --lines 100        # Show more lines
 
 # Reset (delete all data)
-arc container reset --confirm         # Reset both services
+arc container reset --confirm         # Reset all enabled services
 arc container reset --service qdrant --confirm  # Reset only Qdrant
 ```
 

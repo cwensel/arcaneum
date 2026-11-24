@@ -1,7 +1,9 @@
 # Persisted Schema Contract
 
 Arcaneum writes a `schema_version` and `app_version` to persisted Qdrant
-collection metadata, Qdrant payloads, and MeiliSearch documents.
+collection metadata, Qdrant payloads (including the text index of a
+Qdrant-text corpus), and, for installs using the optional MeiliSearch backend,
+MeiliSearch documents.
 
 ## Compatibility
 

@@ -59,8 +59,8 @@ Collections should specify a type (pdf or code) to ensure content matches:
 
 **Related Commands:**
 
-- /arc:corpus create - Create corpus for dual indexing (recommended)
-- /arc:corpus sync - Index to both systems (recommended)
+- /arc:corpus create - Create a corpus for semantic and full-text search (recommended)
+- /arc:corpus sync - Index into a corpus (recommended)
 - /arc:index pdf - Index PDFs into a collection (semantic only)
 - /arc:index code - Index source code into a collection (semantic only)
 

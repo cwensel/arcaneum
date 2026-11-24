@@ -15,7 +15,7 @@ Check that all Arcaneum prerequisites are met and the system is ready for use.
 - Python version (>= 3.12 required)
 - Required Python dependencies installed
 - Qdrant server connectivity and health
-- MeiliSearch server connectivity (if configured)
+- MeiliSearch server connectivity (only when `meilisearch.enabled`)
 - Embedding model availability
 - Write permissions for temporary files
 - Environment variable configuration

@@ -8,7 +8,7 @@ Claude Code installation before publishing to GitHub.
 - Claude Code installed and running
 - Local clone of the arcaneum repository
 - Python 3.12+ installed
-- Docker running (for Qdrant/MeiliSearch functionality)
+- Docker running (for Qdrant, and MeiliSearch when enabled)
 - `arc` CLI installed via pip (`pip install -e .`) - required for commands to work
 
 ## Permission Settings

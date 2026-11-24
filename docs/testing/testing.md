@@ -3,7 +3,7 @@
 Simple terminal commands to test the PDF indexing implementation.
 
 **Note on recommended workflow:** For normal use, prefer `arc corpus sync`
-(dual-indexing to Qdrant + MeiliSearch) — see the
+(semantic and full-text search in Qdrant) — see the
 [Corpus Workflow (Recommended)](#corpus-workflow-recommended) section below.
 The rest of this doc tests the single-system `arc index pdf` implementation
 from RDR-004; those sections are marked "Single-System (Advanced)".
@@ -62,14 +62,14 @@ pdfinfo -v
 
 ## Corpus Workflow (Recommended)
 
-For normal use, the dual-indexing corpus workflow is what you should test.
-It indexes to both Qdrant and MeiliSearch in a single command.
+For normal use, the corpus workflow is what you should test. It builds the semantic and
+full-text indexes in a single command (both in Qdrant by default).
 
 ```bash
-# Create a corpus (both Qdrant collection and MeiliSearch index)
+# Create a corpus (a Qdrant collection with a text index)
 arc corpus create pdf-test --type pdf
 
-# Sync PDFs to both systems
+# Sync PDFs (semantic and full-text)
 arc corpus sync pdf-test ./test_pdfs
 
 # Re-run to verify incremental sync (nothing reindexed if files unchanged)
@@ -81,7 +81,7 @@ arc corpus sync pdf-test ./test_pdfs --parity
 # Preview rename/remove changes without writing
 arc corpus sync pdf-test ./test_pdfs --parity --dry-run
 
-# Search both systems
+# Search both modes
 arc search semantic "machine learning" --corpus pdf-test
 arc search text '"neural network"' --corpus pdf-test
 
@@ -403,7 +403,7 @@ pip install -e .
 
 Once testing is complete, you can:
 
-1. **Index your real documents** (recommended, dual-indexing):
+1. **Index your real documents** (recommended):
 
    ```bash
    bin/arc corpus create my-docs --type pdf

@@ -1,5 +1,10 @@
 # MeiliSearch Indexing Performance Tuning
 
+This guide applies only to installs that use the optional MeiliSearch backend
+(`meilisearch.enabled: true`). A new install runs Qdrant alone and needs none
+of it. To move an existing install off MeiliSearch, see
+[Moving to Qdrant-only text search](qdrant-only-text.md).
+
 How the MeiliSearch container is sized, why those numbers were chosen, and
 what to re-measure if indexing slows down again.
 

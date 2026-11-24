@@ -74,7 +74,7 @@ Content is always persisted for durability. This enables:
 
 **Related Commands:**
 
-- /arc:corpus create - Create corpus for dual search (recommended: `--type markdown`)
+- /arc:corpus create - Create corpus for semantic and full-text search (recommended: `--type markdown`)
 - /arc:collection create - Create collection for semantic search only
 - /arc:search semantic - Search stored content semantically
 - /arc:search text - Search stored content with full-text (requires corpus)

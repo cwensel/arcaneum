@@ -1,5 +1,5 @@
 ---
-description: Manage dual-index corpora (recommended)
+description: Manage corpora for semantic and full-text search (recommended)
 argument-hint: <create|list|update|delete|sync|repair|migrate-text|hook|jobs|info|items|parity|verify|doctor> <name> [paths...] [options]
 ---
 
@@ -13,20 +13,20 @@ runs MeiliSearch, from a MeiliSearch index of the same name (`meili`).
 **Subcommands:**
 
 - `create`: Create the Qdrant collection (and a MeiliSearch index for a `meili` corpus)
-- `list`: List all corpora with parity status
+- `list`: List all corpora with text coverage (qdrant) or parity (meili) status
 - `update`: Update corpus metadata without reindexing
 - `delete`: Delete the Qdrant collection and any MeiliSearch index of the corpus
-- `sync`: Index directory to both systems simultaneously
+- `sync`: Index a directory into the corpus (Qdrant, plus MeiliSearch on a `meili` corpus)
 - `repair`: Selectively repair verifier-selected unhealthy files and PDF duplicates,
-  then restore parity
+  then restore text coverage (qdrant) or parity (meili)
 - `migrate-text`: Move a corpus's text search between MeiliSearch and Qdrant; `--all --to qdrant`
   moves every corpus on MeiliSearch (see docs/guides/qdrant-only-text.md)
 - `hook`: Install a git hook that auto-syncs a repo on every commit
 - `jobs`: List running syncs, repairs, and hook drains, plus queued hook work
   (read-only; takes no locks)
-- `info`: Show corpus details (both systems)
-- `items`: List indexed items with parity status
-- `parity`: Check and restore parity between systems
+- `info`: Show corpus details
+- `items`: List indexed items (with parity status on a `meili` corpus)
+- `parity`: Check and restore the text index; Qdrant/MeiliSearch parity applies to `meili` corpora only
 - `verify`: Verify corpus health (and Qdrant/MeiliSearch parity for a `meili` corpus)
 - `doctor`: Check all corpora (or the named ones) read-only and list the commands
   that fix each problem
@@ -112,11 +112,11 @@ runs MeiliSearch, from a MeiliSearch index of the same name (`meili`).
 - name: Corpus name (required)
 - --json: Output in JSON format
 
-**Parity Options:**
+**Parity Options** (the MeiliSearch ones apply to `meili` corpora only):
 
 - name: Corpus name (optional - if omitted, processes all corpora)
 - --dry-run: Preview what would be backfilled without making changes
-- --verify: Verify chunk counts match between systems
+- --verify: Verify chunk counts match between Qdrant and MeiliSearch (`meili` corpora)
 - --repair-metadata: Update MeiliSearch docs with missing git metadata (code corpora)
 - --create-missing: Create missing MeiliSearch indexes for qdrant_only corpora
 - --confirm: Skip confirmation prompt when processing all corpora
@@ -149,11 +149,11 @@ Files that also have an integrity or quality defect remain selected without the
 flag. Preview the exact set with `/corpus repair NAME --dry-run --json`.
 Identical PDFs retain every physical path as an alias of one searchable canonical
 document; parity cleanup promotes a live alias if the canonical path disappears.
-Repair then restores Qdrant/MeiliSearch parity (as `/corpus parity NAME --verify`
-does), so it also fixes the `mismatch` that `/corpus verify` reports. Under
-`--json` the parity result is nested at `data.parity`. MeiliSearch documents for
-files gone from both Qdrant and disk are only reported; pass `--prune-orphans`
-(or `--force-prune`) to delete them.
+On a `meili` corpus, repair then restores Qdrant/MeiliSearch parity (as
+`/corpus parity NAME --verify` does), so it also fixes the `mismatch` that
+`/corpus verify` reports. Under `--json` the parity result is nested at
+`data.parity`. MeiliSearch documents for files gone from both Qdrant and disk
+are only reported; pass `--prune-orphans` (or `--force-prune`) to delete them.
 
 **Examples:**
 
@@ -194,10 +194,15 @@ arc corpus $ARGUMENTS
 
 **What Is a Corpus?**
 
-A corpus combines two search systems:
+A corpus combines two search modes over one Qdrant collection:
 
 1. **Vector search** (Qdrant): Semantic similarity, concept matching
-2. **Full-text search** (MeiliSearch): Keyword, phrase, boolean operators
+2. **Full-text search**: Keyword and phrase matching, from a BM25 text index in the
+   same collection (default, `qdrant` backend) or from a MeiliSearch index (`meili`
+   backend, optional; boolean operators)
+
+To move an existing MeiliSearch install to Qdrant-only text, run
+`arc corpus migrate-text --all --to qdrant` (see docs/guides/qdrant-only-text.md).
 
 This enables hybrid search strategies:
 
@@ -220,7 +225,7 @@ This enables hybrid search strategies:
 - Only need semantic search (no full-text)
 - Working with embeddings/vectors directly
 - Integrating with existing vector workflows
-- MeiliSearch not available/needed
+- Full-text search not needed
 
 **How Sync Works:**
 
@@ -228,8 +233,8 @@ This enables hybrid search strategies:
 2. Chunks content appropriately (PDFs vs code)
 3. Generates embeddings with specified models
 4. Uploads to Qdrant (vector search)
-5. Indexes to MeiliSearch (full-text search)
-6. Both indexes share same document IDs and metadata
+5. Builds the text index in the same Qdrant collection; a `meili` corpus also indexes to
+   MeiliSearch, sharing the same document IDs and metadata
 
 **Keeping a Repo in Sync Automatically:**
 
@@ -262,7 +267,8 @@ appear as readable `arc ...` commands in `ps` and `top`.
 
 **Performance:**
 
-Corpus sync is approximately 2x slower than single-system indexing due to dual upload, but still efficient:
+A `meili` corpus sync is about 2x slower than single-system indexing (dual upload); a `qdrant`
+corpus has no second upload:
 
 - PDFs: ~5-15/minute
 - Source files: 50-100 files/second
@@ -272,11 +278,11 @@ Corpus sync is approximately 2x slower than single-system indexing due to dual u
 - /arc:search semantic - Search vector index
 - /arc:search text - Search full-text index
 - /arc:collection create - Create vector-only collection (advanced)
-- /arc:indexes create - Create full-text index only (advanced)
+- /arc:indexes create - Create MeiliSearch full-text index only (advanced; needs `meilisearch.enabled`)
 - /arc:index pdf - Index PDFs to vector only (advanced)
 - /arc:index code - Index code to vector only (advanced)
 
 **Implementation:**
 
-- RDR-009: Dual indexing strategy
+- RDR-009: Dual indexing strategy (the `meili` backend)
 - RDR-006: Claude Code integration

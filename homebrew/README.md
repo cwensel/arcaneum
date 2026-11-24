@@ -20,7 +20,7 @@ brew upgrade arcaneum
 ## Requirements
 
 - macOS (Apple Silicon or Intel) or Linux
-- Docker (for Qdrant and MeiliSearch services)
+- Docker (for the Qdrant service, and MeiliSearch if you enable it)
 
 ## Notes
 

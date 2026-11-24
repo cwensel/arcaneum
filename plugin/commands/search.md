@@ -21,7 +21,7 @@ arc search text '"def authenticate"' --corpus CorpusName
 **Subcommands (required):**
 
 - `semantic`: Vector-based semantic search (Qdrant)
-- `text`: Keyword-based full-text search (MeiliSearch)
+- `text`: Keyword-based full-text search (Qdrant text index by default; MeiliSearch on a `meili` corpus)
 
 **Examples:**
 
@@ -92,7 +92,7 @@ Both commands show, for each hit in ranked order:
 - A cite, `<corpus>:<path>` plus `#page=N` (PDF), `#<heading-slug>` (markdown)
   or `#L<start>-<end>` (code with a line range), e.g.
   `DevRef:Database-Books/db(31).pdf#page=89`. Quote it in backticks to cite a hit.
-- The score: semantic similarity, or MeiliSearch's ranking score for text
+- The score: semantic similarity, or the text backend's ranking score for text
   (text search prints it in compact and JSON output only)
 - A bounded content snippet
 
@@ -102,13 +102,13 @@ the stored `metadata`. See `docs/reference/cli-output-format.md`.
 
 **Related Commands:**
 
-- /arc:corpus create - Create corpus for dual indexing (recommended)
-- /arc:corpus sync - Index content to both systems
+- /arc:corpus create - Create a corpus for semantic and full-text search (recommended)
+- /arc:corpus sync - Index content into a corpus
 - /arc:corpus list - List available corpora
 - /arc:collection list - See available collections (semantic only)
 
 **Implementation:**
 
 - RDR-007: Semantic search via Qdrant
-- RDR-012: Full-text search via MeiliSearch
+- RDR-012: Full-text search via MeiliSearch (the optional `meili` backend)
 - RDR-006: Claude Code integration

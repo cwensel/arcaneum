@@ -200,7 +200,7 @@ arc corpus sync Notes ~/notes --order newest
 # List all corpora (type, text backend, and status)
 arc corpus list
 
-# List what's indexed with parity status
+# List what's indexed (with parity status on a meili corpus)
 arc corpus items MyCode
 
 # Check corpus health
@@ -460,12 +460,12 @@ Arcaneum provides granular control over indexing performance for different workl
 For better throughput on batch workloads, tune batch size and parallelism:
 
 ```bash
-# Dual-index sync (recommended) — cap embedding batch size, tune AST chunking
+# Corpus sync (recommended) — cap embedding batch size, tune AST chunking
 arc corpus sync MyDocs ~/Documents --max-embedding-batch 500
 arc corpus sync MyCode ~/projects --max-embedding-batch 500 --text-workers 8
 ```
 
-If you only need single-system (Qdrant) indexing, the equivalent `arc index`
+If you only need semantic (Qdrant vector) indexing, the equivalent `arc index`
 commands use `--embedding-batch-size` instead:
 
 ```bash
@@ -539,7 +539,7 @@ arc container restore DIR    # Restore indexed data
 arc corpus create NAME --type TYPE       # pdf, code, or markdown
 arc corpus list                          # List all corpora
 arc corpus sync NAME PATH [PATH...]      # Sync one or more directories
-arc corpus items NAME                    # List items with parity status
+arc corpus items NAME                    # List items (parity status on a meili corpus)
 arc corpus verify NAME                   # Check corpus health
 arc corpus delete NAME --confirm
 

@@ -1,6 +1,6 @@
 # Arcaneum Claude Code Plugin
 
-CLI tools for semantic and full-text search across Qdrant and MeiliSearch vector databases.
+CLI tools for semantic and full-text search over Qdrant (MeiliSearch is an optional full-text backend).
 
 ## Features
 
@@ -18,7 +18,7 @@ CLI tools for semantic and full-text search across Qdrant and MeiliSearch vector
 
 ## Sandbox Configuration
 
-The `arc` CLI requires network access to communicate with Qdrant and MeiliSearch backends.
+The `arc` CLI requires network access to communicate with the Qdrant backend (and MeiliSearch, if enabled).
 If you have Claude Code's sandbox enabled, you must configure it to allow `arc` to run.
 
 ### Option 1: Exclude `arc` from Sandbox (Recommended)
@@ -46,7 +46,7 @@ Add to your `~/.claude/settings.json` or `.claude/settings.json`:
 
 ### Option 2: Allow Local Network Access
 
-If your Qdrant/MeiliSearch run on localhost, allow local binding:
+If your Qdrant (and MeiliSearch, if enabled) run on localhost, allow local binding:
 
 ```json
 {
@@ -87,7 +87,7 @@ when you specifically need regex, exhaustive matches, or current working-tree st
 ### Manual Commands
 
 ```bash
-# List dual-indexed corpora
+# List corpora
 arc corpus list
 
 # Semantic search
@@ -106,7 +106,7 @@ arc search text '"def authenticate"' --corpus MyCode
 ## Requirements
 
 - `arc` CLI installed and in PATH (`pip install arcaneum`)
-- Qdrant and/or MeiliSearch backend running
+- Qdrant running (`arc container start`); MeiliSearch only if you opt in
 - Collections indexed with content
 
 ## Agent Integration

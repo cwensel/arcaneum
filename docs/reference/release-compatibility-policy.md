@@ -16,7 +16,7 @@ The service compatibility window for 1.0 is:
 | Service | Supported range | Gate |
 | ------- | --------------- | ---- |
 | Qdrant | 1.20.x | `arc doctor`, corpus create/sync/search, backup, and restore pass against `qdrant/qdrant:v1.20.2`, matching the `qdrant-client>=1.20.0` package floor. Qdrant upgrades one minor version at a time, so `arc container upgrade` snapshots every collection and steps older data 1.18.2 -> 1.19.2 -> 1.20.2 in place; `tests/integration/test_qdrant_upgrade.py` is the upgrade test from 1.18.2 |
-| MeiliSearch | 1.54.0 | corpus create/sync/search, parity, backup, and restore pass against `getmeili/meilisearch:v1.54.0`, within the `meilisearch>=0.43.0` SDK compatibility window. MeiliSearch opens only data written by the same exact version, so the range is a single patch release; `arc container upgrade` migrates older data (v1.12+) in place after a backup |
+| MeiliSearch (optional) | 1.54.0 | for installs that enable it: corpus create/sync/search, parity, backup, and restore pass against `getmeili/meilisearch:v1.54.0`, within the `meilisearch>=0.43.0` SDK compatibility window. MeiliSearch opens only data written by the same exact version, so the range is a single patch release; `arc container upgrade` migrates older data (v1.12+) in place after a backup |
 
 Changing either range before 1.0 requires a release note and an upgrade test
 from the previous supported image. After 1.0, widening a range is
@@ -27,7 +27,7 @@ loss/security issue.
 Image upgrades must preserve the Docker named volume identifiers in
 `deploy/docker-compose.yml`. Do not use `docker compose down --volumes` as part
 of an image-only upgrade; use `arc container stop` or plain `docker compose down`
-so the existing Qdrant and MeiliSearch volumes are retained.
+so the existing Qdrant volumes (and MeiliSearch volumes, when enabled) are retained.
 
 ## Embedding Backend Support
 
@@ -59,7 +59,8 @@ or dimension rejection.
 
 ## Persisted Data Compatibility
 
-Arcaneum treats stored Qdrant collection metadata, Qdrant payloads, and
+Arcaneum treats stored Qdrant collection metadata, Qdrant payloads (including
+the text index), and, where the optional MeiliSearch backend is enabled,
 MeiliSearch documents as persisted user data. The
 [Persisted Schema Contract](../guides/persisted-schema.md) is part of the 1.0
 compatibility promise.
@@ -118,11 +119,13 @@ starts including secrets in artifacts is release-blocking until reviewed.
 release candidate must prove that backup and restore cover:
 
 - Qdrant collections and collection metadata.
-- MeiliSearch index settings and JSONL document exports.
-- Corpus metadata needed for parity and verification commands.
-- A restore into a clean service pair using the supported service matrix.
+- MeiliSearch index settings and JSONL document exports, when MeiliSearch is
+  enabled.
+- Corpus metadata needed for verification commands (and parity, for `meili`
+  corpora).
+- A restore into clean services using the supported service matrix.
 
-Backups are crash-consistent only when indexing is idle. The command must keep
+Backups are crash-consistent only when indexing is idle. With MeiliSearch enabled, the command must keep
 checking MeiliSearch task activity and abort when it detects active work during
 the backup window. Source files referenced by indexes remain outside the backup
 contract and must be called out in release notes and docs.
@@ -133,9 +136,11 @@ A 1.0 release candidate is eligible only when all of these pass from a clean
 checkout:
 
 - Unit tests on Python 3.12 and 3.13.
-- Integration smoke tests against supported Qdrant and MeiliSearch images.
+- Integration smoke tests against the supported Qdrant image, and the MeiliSearch image for the
+  optional backend.
 - CLI smoke tests for `arc doctor`, `arc corpus create`, `arc corpus sync`,
-  semantic search, text search, parity, backup, and restore.
+  semantic search, text search, backup, and restore (plus parity for `meili`
+  corpora).
 - Offline/default-model smoke tests that avoid optional SentenceTransformers
   extras.
 - Optional accelerator smoke tests on available CUDA or MPS hardware, with the

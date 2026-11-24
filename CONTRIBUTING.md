@@ -8,7 +8,7 @@ Thank you for your interest in contributing to Arcaneum! This guide will help yo
 
 - Python 3.12 or higher
 - Git
-- Docker (for running Qdrant and MeiliSearch)
+- Docker (for running Qdrant; MeiliSearch only for its optional backend)
 - Basic understanding of vector databases and embeddings (helpful but not required)
 
 ### Development Setup
@@ -121,7 +121,7 @@ src/arcaneum/
 ├── collections/   # Collection management
 ├── indexing/      # Indexing pipelines
 ├── search/        # Search logic
-├── fulltext/      # MeiliSearch integration
+├── fulltext/      # MeiliSearch integration (optional backend)
 └── schema/        # Shared schemas
 ```
 
@@ -150,7 +150,7 @@ pytest -v tests/
 
 The `Tests` workflow combines a fast, single-version `quality-gates` job with
 the Python 3.12/3.13 test matrix. The matrix jobs exercise the service-backed
-unit, integration, and CLI suites against Qdrant and MeiliSearch. The quality
+unit, integration, and CLI suites against Qdrant and MeiliSearch (the optional backend). The quality
 job runs ahead of release as the non-service gate for:
 
 - `ruff check .` with a ratcheted lint baseline

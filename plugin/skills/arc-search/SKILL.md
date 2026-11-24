@@ -41,8 +41,8 @@ Do not default to semantic alone.
 ## Discover what's available
 
 ```bash
-arc corpus list                        # show dual-indexed corpora
-arc corpus info MyCorpus               # inspect one corpus (both sides)
+arc corpus list                        # show corpora
+arc corpus info MyCorpus               # inspect one corpus
 ```
 
 ## Semantic search (Qdrant)
@@ -62,7 +62,7 @@ Options:
 - `--json` — structured output for parsing (see [Results and cites](#results-and-cites))
 - `-v` / `--verbose` — show more detail; with `--json`, add each hit's stored `metadata`
 
-## Full-text search (MeiliSearch)
+## Full-text search
 
 ```bash
 arc search text "QUERY" --corpus NAME [OPTIONS]

@@ -13,7 +13,10 @@
 - **[Qdrant Migration Guide](guides/qdrant-migration.md)** - Move legacy bind mounts to Docker named volumes
 - **[Persisted Schema Guide](guides/persisted-schema.md)** - Persisted payload,
   file-manifest, quality-manifest, and indexing-policy contracts
-- **[MeiliSearch Tuning](guides/meilisearch-tuning.md)** - Container sizing for slow indexing and sync timeout warnings
+- **[Moving to Qdrant-only text search](guides/qdrant-only-text.md)** - Migrate an install that runs
+  MeiliSearch to Qdrant for both semantic and full-text search
+- **[MeiliSearch Tuning](guides/meilisearch-tuning.md)** - Optional MeiliSearch backend: container sizing for slow
+  indexing and sync timeout warnings
 - **[Remote Embedding Workers](guides/remote-embedding-workers.md)** - Optional: run
   document embedding on spare machines over the LAN or a tailnet
 - **[arc MCP Server](guides/mcp-server.md)** - Serve read-only arc tools to MCP
@@ -35,7 +38,7 @@
   - [RDR-002](rdr/RDR-002-qdrant-server-setup.md) - Qdrant setup
   - [RDR-003](rdr/RDR-003-collection-creation.md) - Collection management
   - [RDR-004](rdr/RDR-004-pdf-bulk-indexing.md) - PDF indexing (this implementation)
-  - [RDR-008](rdr/RDR-008-fulltext-search-server-setup.md) - MeiliSearch setup
+  - [RDR-008](rdr/RDR-008-fulltext-search-server-setup.md) - MeiliSearch setup (optional backend)
   - [RDR-009](rdr/RDR-009-dual-indexing-strategy.md) - Dual-index corpora
   - See [rdr/README.md](rdr/README.md) for complete list
 - **[Arcaneum 1.0 Release and Compatibility Policy](reference/release-compatibility-policy.md)** -

@@ -5,7 +5,7 @@ argument-hint: <pdf|code|markdown|text> <path> --collection NAME
 
 Index PDFs, markdown, or source code into Qdrant collections for semantic search.
 
-**Note:** For most users, `/arc:corpus sync` is recommended as it indexes to both semantic and
+**Note:** For most users, `/arc:corpus sync` is recommended as it serves both semantic and
 full-text search. Use `/arc:index` when you only need semantic search in a single collection.
 
 **IMPORTANT:** You must specify a subcommand (`pdf`, `code`, `markdown`, or `text`) before the path.
@@ -16,9 +16,8 @@ full-text search. Use `/arc:index` when you only need semantic search in a singl
 - `markdown`: Index plain or zstd-compressed markdown into Qdrant (with
   frontmatter extraction)
 - `code`: Index source code repositories into Qdrant (git-aware)
-- `text`: Index content to MeiliSearch for full-text search (has its own
-  `pdf`/`code`/`markdown` subcommands; advanced — prefer `/arc:corpus sync`
-  or `/arc:indexes` for full-text)
+- `text`: Index content to MeiliSearch for full-text search (needs `meilisearch.enabled: true`;
+  has its own `pdf`/`code`/`markdown` subcommands; advanced — prefer `/arc:corpus sync`)
 
 **Common Options:**
 
@@ -183,8 +182,8 @@ Use --offline for corporate proxies or SSL issues:
 
 **Related Commands:**
 
-- /arc:corpus sync - Index to both systems (recommended)
-- /arc:corpus create - Create corpus for dual indexing
+- /arc:corpus sync - Index into a corpus (recommended)
+- /arc:corpus create - Create a corpus for semantic and full-text search
 - /arc:collection create - Create collection before indexing (semantic only)
 - /arc:search semantic - Search indexed content
 

@@ -35,7 +35,7 @@ Design record: [RDR-025](../rdr/RDR-025-remote-embedding-worker-pool.md).
 | --- | --- |
 | File discovery, extraction, OCR, chunking | Document embedding for routed models |
 | Query embedding (`arc search`) | Model download into the cache volume |
-| Qdrant and MeiliSearch writes | |
+| Qdrant writes (and MeiliSearch, when enabled) | |
 | Embedding for models not routed remotely | |
 | `arc models deploy` and `arc models workers` | |
 

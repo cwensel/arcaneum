@@ -1,10 +1,14 @@
 ---
 name: arc-indexes
-description: MeiliSearch index management for full-text search. Use when user mentions managing indexes, creating index, listing indexes, verifying index health, exporting or importing indexes, or viewing indexed items in MeiliSearch.
+description: MeiliSearch index management (optional backend; needs meilisearch.enabled). Use when user mentions managing indexes, creating index, listing indexes, verifying index health, exporting or importing indexes, or viewing indexed items in MeiliSearch.
 allowed-tools: Bash(arc:*), Read
 ---
 
 # MeiliSearch Index Management
+
+Optional: these commands need `meilisearch.enabled: true`. By default full-text search runs on
+Qdrant and needs no index management; to move a MeiliSearch install to Qdrant, use
+`arc corpus migrate-text --all --to qdrant` (docs/guides/qdrant-only-text.md).
 
 ```bash
 # List all indexes

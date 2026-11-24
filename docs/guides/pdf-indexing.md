@@ -49,15 +49,15 @@ arc container start
 
 ## Quick Start
 
-**Use `arc corpus sync` for PDF indexing unless you explicitly need Qdrant-only
-(no MeiliSearch).** The `arc index pdf` command is a single-system advanced
+**Use `arc corpus sync` for PDF indexing unless you explicitly need semantic-only
+indexing (no text index).** The `arc index pdf` command is a single-system advanced
 alternative documented further below.
 
 ```bash
-# Create corpus (creates both Qdrant collection and MeiliSearch index)
+# Create corpus (a Qdrant collection with a text index by default)
 arc corpus create pdf-docs --type pdf
 
-# Sync PDFs to both systems
+# Sync PDFs (semantic and full-text)
 arc corpus sync pdf-docs /path/to/pdfs
 
 # Also detect renames and remove indexed PDFs no longer on disk
@@ -270,9 +270,9 @@ arc corpus repair pdf-docs --include-stale-policy
 PDFs that are both policy-stale and corrupt remain in the default repair set.
 Healthy PDFs are not re-indexed; no separate `--only-corrupt` option is needed.
 
-Repair then restores Qdrant/MeiliSearch parity, fixing the `mismatch` that
-`arc corpus verify` reports. MeiliSearch documents for PDFs deleted from both
-Qdrant and disk are reported but kept; add `--prune-orphans` to delete them
+On a `meili` corpus, repair then restores Qdrant/MeiliSearch parity, fixing the
+`mismatch` that `arc corpus verify` reports. MeiliSearch documents for PDFs
+deleted from both Qdrant and disk are reported but kept; add `--prune-orphans` to delete them
 (PDFs whose directory is also missing, such as on an unmounted drive, are kept
 unless `--force-prune`).
 
@@ -535,11 +535,14 @@ DEFAULT_MODELS = {
 
 ## Full-Text Indexing (RDR-010)
 
-In addition to semantic search via Qdrant, PDFs can be indexed to MeiliSearch for
-exact phrase and keyword search. This complements semantic search by providing:
+In addition to semantic search, PDFs get full-text (exact phrase and keyword)
+search from a BM25 text index in the corpus's Qdrant collection. The optional
+MeiliSearch backend can serve text instead (see
+[Optional MeiliSearch](cli-reference.md#optional-meilisearch); existing installs
+move with [Moving to Qdrant-only text search](qdrant-only-text.md)). This complements semantic search by providing:
 
 - **Exact phrase matching**: Find specific quotes or terminology
-- **Typo-tolerant search**: Find content despite spelling variations
+- **Typo-tolerant search**: Find content despite spelling variations (MeiliSearch backend)
 - **Page-level granularity**: Results point to specific pages
 
 ### Quick Start (Corpus - Recommended)
@@ -547,7 +550,7 @@ exact phrase and keyword search. This complements semantic search by providing:
 The easiest way to get both semantic and full-text search is to use corpus:
 
 ```bash
-# Create corpus and sync (indexes to both systems)
+# Create corpus and sync (semantic and full-text)
 arc corpus create pdf-docs --type pdf
 arc corpus sync pdf-docs /path/to/pdfs
 
@@ -556,7 +559,7 @@ arc search semantic "machine learning concepts" --corpus pdf-docs
 arc search text '"neural network"' --corpus pdf-docs
 ```
 
-### Quick Start (MeiliSearch Only, Advanced)
+### Quick Start (MeiliSearch Only, Advanced; needs `meilisearch.enabled: true`)
 
 **Prefer `arc corpus sync` for normal use** (see above) — it gives you both
 semantic and full-text search. Use the MeiliSearch-only path below only if
@@ -616,31 +619,34 @@ arc index text pdf ./pdfs --index pdf-docs --force
 arc index text pdf ./pdfs --index pdf-docs --json > results.json
 ```
 
-### Dual Indexing Strategy
+### Corpus Indexing Strategy
 
-For comprehensive search, index PDFs to both Qdrant (semantic) and MeiliSearch (full-text).
+For comprehensive search, index PDFs as a corpus: semantic vectors plus a text
+index, both in Qdrant by default.
 
 #### Using Corpus Commands (Recommended)
 
-A "corpus" is a paired Qdrant collection and MeiliSearch index that share the same name.
-The `corpus` commands provide a unified workflow for dual indexing:
+A "corpus" is a Qdrant collection whose full-text index lives in the same
+collection (text backend `qdrant`, the default) or in a MeiliSearch index of the
+same name (text backend `meili`, optional). The `corpus` commands provide a
+unified workflow:
 
 ```bash
-# Create both collection and index in one command
+# Create the collection (and text index) in one command
 arc corpus create my-papers --type pdf
 
-# Index to both systems in one command
+# Index semantic and full-text in one command
 arc corpus sync my-papers /path/to/pdfs
 
 # Sync multiple directories at once
 arc corpus sync my-papers /path/to/pdfs /path/to/more/pdfs
 
-# Search both systems using --corpus flag
+# Search both modes using --corpus flag
 arc search semantic "machine learning" --corpus my-papers    # Qdrant
-arc search text '"neural network"' --corpus my-papers        # MeiliSearch
+arc search text '"neural network"' --corpus my-papers        # Full-text
 ```
 
-**Using Existing Collection/Index as a Corpus:**
+**Using Existing Collection/Index as a `meili` Corpus:**
 
 If you already have a Qdrant collection and MeiliSearch index with the same name,
 you can use `corpus sync` directly without running `corpus create`:
@@ -655,7 +661,8 @@ The `corpus create` command is just a convenience that creates both in one step.
 
 #### Using Separate Commands (Advanced)
 
-If you need fine-grained control, you can manage Qdrant and MeiliSearch separately:
+If you need fine-grained control, you can manage Qdrant and MeiliSearch separately
+(the MeiliSearch steps need `meilisearch.enabled: true`):
 
 ```bash
 # Step 1: Create collections/indexes

@@ -19,12 +19,12 @@ pytest -m unit -v
 
 Tests are automatically marked based on their directory location:
 
-| Marker        | Directory             | Description                                    |
-| ------------- | --------------------- | ---------------------------------------------- |
-| `unit`        | `tests/unit/`         | Unit tests (no external dependencies)          |
-| `integration` | `tests/integration/`  | Integration tests (require Qdrant/MeiliSearch) |
-| `e2e`         | `tests/e2e/`          | End-to-end tests                               |
-| `slow`        | N/A                   | Tests taking >5 seconds (manual marker)        |
+| Marker | Directory | Description |
+| ------ | --------- | ----------- |
+| `unit` | `tests/unit/` | Unit tests (no external dependencies) |
+| `integration` | `tests/integration/` | Integration tests (require Qdrant; MeiliSearch optional) |
+| `e2e` | `tests/e2e/` | End-to-end tests |
+| `slow` | N/A | Tests taking >5 seconds (manual marker) |
 
 ## Running Tests by Category
 

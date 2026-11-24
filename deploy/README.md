@@ -43,26 +43,28 @@ docker compose up -d
 - **Qdrant**: Port 6333 (REST), 6334 (gRPC)
 - **Qdrant image**: `qdrant/qdrant:v1.20.2` (step existing data one minor
   version at a time with `arc container upgrade`)
-- **MeiliSearch image**: `getmeili/meilisearch:v1.54.0` (exact pin; migrate
+- **MeiliSearch image** (optional, only when enabled): `getmeili/meilisearch:v1.54.0` (exact pin; migrate
   existing data with `arc container upgrade`)
 - **Storage**: Docker named volumes managed by the `arcaneum` compose project
 - **Snapshots**: Docker named volumes managed by the `arcaneum` compose project
 
-**Note:** Embedding models are stored in `~/.arcaneum/models` on the host machine. Qdrant doesn't need access to these models since it only stores/searches vectors, not generates them.
+**Note:** Embedding models are stored in `~/.arcaneum/models` on the host machine.
+Qdrant doesn't need access to these models since it only stores/searches vectors,
+not generates them.
 
 ## Data Location
 
 Embedding model caches are stored in `~/.arcaneum/`:
 
-```
+```text
 ~/.arcaneum/
 ├── models/              # Embedding model cache
 ```
 
-When started with `arc container`, Qdrant and MeiliSearch data are stored in
-Docker named volumes:
+When started with `arc container`, Qdrant data is stored in Docker named
+volumes (MeiliSearch volumes exist only when MeiliSearch is enabled):
 
-```
+```text
 arcaneum_qdrant-arcaneum-storage
 arcaneum_qdrant-arcaneum-snapshots
 arcaneum_meilisearch-arcaneum-data
@@ -71,6 +73,7 @@ arcaneum_meilisearch-arcaneum-snapshots
 ```
 
 **Benefits:**
+
 - Managed by Docker and isolated from source checkouts
 - Easy inspection with `arc container status`
 - Survives `arc container stop` and plain `docker compose down`

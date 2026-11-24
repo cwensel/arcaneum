@@ -21,9 +21,12 @@ The system supports PDF documents and source code with git-aware, AST-based chun
 **Currently Available:**
 
 - Semantic search with Qdrant (vector embeddings)
-- Full-text search with Qdrant's BM25 text index (exact phrase matching), or
-  optionally MeiliSearch
-- One corpus workflow for both kinds of search
+- Full-text search with Qdrant's BM25 text index (ranked keywords and exact phrases)
+- One service, Qdrant, and one corpus workflow for both kinds of search
+
+[MeiliSearch](#meilisearch-alternative) remains available as an optional
+full-text backend. Installs that already use it keep it until they
+[move to Qdrant](#upgrading-from-meilisearch).
 
 ## Features
 
@@ -31,8 +34,7 @@ The system supports PDF documents and source code with git-aware, AST-based chun
 
 - **Semantic Search (Qdrant)**: Find conceptually similar content using vector embeddings
 - **Full-Text Search (Qdrant)**: Exact phrase matching and ranked keyword search from a BM25
-  text index in the corpus's Qdrant collection. MeiliSearch is optional, for installs that
-  already run it or want its typo-tolerant queries
+  text index in the corpus's Qdrant collection, beside its vectors
 
 ### Indexing
 
@@ -41,7 +43,8 @@ The system supports PDF documents and source code with git-aware, AST-based chun
 - **Source Code Indexing**: Git-aware with AST chunking, multi-branch support, 165+ languages
 - **Markdown Indexing**: YAML frontmatter extraction, semantic chunking, incremental sync,
   and transparent `.md.zst` support
-- **Dual Indexing**: Single command to index to both search engines
+- **One Sync for Both Searches**: `arc corpus sync` writes vectors and searchable text in
+  one pass
 - **Repository Automation**: Non-blocking git hooks keep code corpora current after commits,
   pulls, checkouts, and rebases
 - **Performance Tuning**: Granular control over workers, batch sizes, and process priority via
@@ -146,15 +149,43 @@ arc search text '"async def"' --corpus Frameworks
 
 **First time?** Run `arc doctor` to check prerequisites and get setup guidance.
 
-**MeiliSearch is optional.** A new install runs Qdrant only, and new corpora
-serve full-text search from Qdrant. An install that already ran MeiliSearch
-keeps it. To turn it on or off, set `meilisearch.enabled` in
-`~/.config/arcaneum/config.yaml` and run `arc container start`; see
-[Optional MeiliSearch](docs/guides/cli-reference.md#optional-meilisearch). To move
-an existing install to Qdrant only, follow
-[Moving to Qdrant-only text search](docs/guides/qdrant-only-text.md).
+**Only Qdrant is needed.** A new install runs Qdrant alone, and its corpora
+serve both semantic and full-text search from it.
+
+**Upgrading from 0.12 or earlier?** Your install keeps MeiliSearch and your
+corpora keep searching text on it until you move them. See
+[Upgrading from MeiliSearch](#upgrading-from-meilisearch).
 
 👉 **[Full Quick Start Guide](docs/guides/quickstart.md)** - Detailed walkthrough with troubleshooting
+
+## Upgrading from MeiliSearch
+
+Arcaneum 0.12 and earlier stored every corpus's full-text index in MeiliSearch.
+Qdrant now serves full-text search itself, so new installs run one service. An
+existing install is detected by its stored MeiliSearch key: MeiliSearch stays
+on, existing corpora keep searching text on it, and new corpora are still
+created on it, so nothing changes until you migrate.
+
+`arc corpus list` shows each corpus's text backend in its `Text` column
+(`meili` or `qdrant`). Moving a corpus keeps every vector and chunk; nothing is
+re-extracted or re-embedded:
+
+```bash
+arc container backup                                # 1. Back up both services
+arc container upgrade                               # 2. Qdrant 1.20+ is required
+arc corpus migrate-text --all --to qdrant --dry-run # 3. Check every meili corpus
+arc corpus migrate-text --all --to qdrant           # 4. Move them, one at a time
+arc corpus migrate-text --all --finalize            # 5. Delete the old MeiliSearch indexes
+```
+
+Then set `meilisearch.enabled: false` and `corpus.default_text_backend: qdrant`
+in `~/.config/arcaneum/config.yaml` and restart with `arc container stop` and
+`arc container start`. Until step 5 a corpus can return to MeiliSearch with
+`arc corpus migrate-text NAME --to meili`.
+
+👉 **[Moving to Qdrant-only text search](docs/guides/qdrant-only-text.md)** -
+the full procedure, with the fix for each pre-check failure, verification with
+MeiliSearch stopped, rollback, and volume cleanup
 
 ## Quick Reference
 
@@ -162,9 +193,9 @@ an existing install to Qdrant only, follow
 # Service Management
 arc container start          # Start Qdrant (and MeiliSearch, if enabled)
 arc container status         # Check service health
-arc container backup         # Back up Qdrant and MeiliSearch data
+arc container backup         # Back up Qdrant (and MeiliSearch, if enabled)
 arc container restore DIR    # Restore a backup
-arc container upgrade        # Migrate Qdrant and MeiliSearch data to the pinned versions
+arc container upgrade        # Migrate stored data to the pinned image versions
 arc doctor                   # Verify setup
 
 # Corpus (Recommended - Semantic and Full-Text Search)
@@ -175,13 +206,11 @@ arc corpus sync NAME PATH --order newest        # Index recent files first
 arc corpus sync NAME PATH --parity              # Also detect renames, remove files no longer on disk
 arc corpus sync NAME PATH --include-stale-policy # Migrate stale/legacy indexing policies
 arc corpus sync NAME --from-index method=pymupdf_normalized # Re-extract files selected by stored metadata
-arc corpus items NAME                           # List items with parity status
-arc corpus verify NAME                          # Verify corpus health across both systems
+arc corpus items NAME                           # List items with per-file chunk counts
+arc corpus verify NAME                          # Verify collection health and text-index coverage
 arc corpus doctor                               # Check all corpora, list the commands that fix them
-arc corpus parity NAME                          # Check/restore parity between systems
-arc corpus repair NAME                          # Repair content/integrity issues and parity, not policy-only files
+arc corpus repair NAME                          # Repair content/integrity issues, not policy-only files
 arc corpus repair NAME --include-stale-policy   # Also migrate stale/legacy indexing policies
-arc corpus repair NAME --prune-orphans          # MeiliSearch corpora: also delete docs for files gone from Qdrant and disk
 arc corpus sync NAME --changed-since HEAD       # Sync only what the last commit touched
 arc corpus hook install                         # Guided setup: pick/create a corpus, choose hooks
 arc corpus hook install NAME                    # Auto-sync a git repo's default branch
@@ -191,28 +220,25 @@ arc corpus update NAME --description "..."      # Update corpus metadata
 arc corpus migrate-text --all --to qdrant       # Move every MeiliSearch corpus to Qdrant
 arc corpus delete NAME                          # Delete the corpus
 
-# Search (Works with corpus, collection, or index)
+# Search
 arc search semantic "query" --corpus NAME              # Conceptual similarity
 arc search semantic "query" --corpus N1 --corpus N2    # Multi-corpus
 arc search text "identifier" --corpus NAME             # Ranked keyword/identifier search
 arc search text '"exact phrase"' --corpus NAME          # Exact phrase matching
 
-# --- Advanced: single-system only (prefer `arc corpus` above for normal use) ---
+# --- Advanced: semantic only (prefer `arc corpus` above for normal use) ---
 
-# Collections (Qdrant Only - Semantic Search)
+# Collections (Qdrant vectors, no text index)
 arc collection create NAME --type TYPE   # When you only need semantic search
 arc collection list
 arc collection items NAME
 arc index pdf PATH --collection NAME
 arc index code PATH --collection NAME
-
-# Indexes (MeiliSearch Only - Full-Text Search; needs meilisearch.enabled: true)
-arc indexes create NAME --type TYPE      # When you only need full-text search
-arc indexes list
-arc index text pdf PATH --index NAME
-arc index text code PATH --index NAME
-arc index text markdown PATH --index NAME
 ```
+
+Qdrant-MeiliSearch parity (`arc corpus parity`) and the MeiliSearch-only
+commands (`arc indexes`, `arc index text`) are listed under
+[MeiliSearch (Alternative)](#meilisearch-alternative).
 
 ### Choosing a Search Mode
 
@@ -304,21 +330,15 @@ arc search text "meeting notes" --corpus Notes
 - Custom exclude patterns
 - Supports `.md`, `.markdown`, `.mdown`, and zstd-compressed `.md.zst` files
 
-### Single-System Indexing (Advanced)
+### Semantic-Only Indexing (Advanced)
 
-**Prefer `arc corpus sync` for normal use.** Use collections or indexes directly
-only when you explicitly need one type of search without the other:
+**Prefer `arc corpus sync` for normal use.** Use a collection directly only when
+you explicitly need semantic search without a text index:
 
 ```bash
-# Semantic search only (Qdrant collection)
 arc collection create MyCollection --type code
 arc index code ~/project --collection MyCollection
 arc search semantic "query" --corpus MyCollection
-
-# Full-text search only (MeiliSearch index; needs meilisearch.enabled: true)
-arc indexes create MyIndex --type pdf
-arc index text pdf ~/docs --index MyIndex
-arc search text "query" --corpus MyIndex
 ```
 
 ### Store Agent Memory
@@ -485,7 +505,8 @@ steps.
 
 Use `arc container backup` before upgrades or migrations. It creates a
 timestamped directory under `~/.local/share/arcaneum/backups/` with Qdrant
-collection snapshots plus MeiliSearch index settings and JSONL document exports.
+collection snapshots (plus MeiliSearch exports while MeiliSearch is enabled; see
+[MeiliSearch (Alternative)](#meilisearch-alternative)).
 Use `arc container backup --dry-run` to preview the destination, collections,
 indexes, and orphaned snapshots without creating a backup; add `--json` for
 structured output.
@@ -496,24 +517,68 @@ Use `arc container snapshot-list` to inspect snapshots left inside Qdrant and
 `arc container snapshot-cleanup --dry-run` to preview cleanup of all snapshots
 (use `--confirm` to delete while backup and restore are idle).
 Restore with `arc container restore <backup-directory>` while the container
-services are running. Restore recreates same-named MeiliSearch indexes from the
-backup.
+services are running.
 
-MeiliSearch opens only data written by its exact version, and Qdrant upgrades
-one minor version at a time. When an Arcaneum update bumps a pinned image,
-`arc container start` refuses older MeiliSearch data, or an existing Qdrant
-container on an older minor version, until you run `arc container upgrade`.
-That command snapshots every Qdrant collection and steps it through each minor
-version, backs up every MeiliSearch index and upgrades it in place, and
-verifies point and document counts. Preview it with `--dry-run`.
+Qdrant upgrades one minor version at a time. When an Arcaneum update bumps the
+pinned image, `arc container start` refuses an existing Qdrant container on an
+older minor version until you run `arc container upgrade`. That command
+snapshots every Qdrant collection, steps it through each minor version, and
+verifies point counts. Preview it with `--dry-run`.
 
-Run backups when indexing is idle. `arc container backup` checks MeiliSearch for
-active tasks before and after export and aborts if any MeiliSearch task appears
-during the backup window.
-
-Backups protect Arcaneum's indexed data and corpus metadata stored in Qdrant and
-MeiliSearch. They do not include source files referenced by indexes, cached
+Run backups when indexing is idle. Backups protect Arcaneum's indexed data and
+corpus metadata. They do not include source files referenced by indexes, cached
 embedding models, Docker images, or local configuration secrets.
+
+## MeiliSearch (Alternative)
+
+MeiliSearch is an optional full-text backend, chosen per corpus. New installs
+do not run it. Prefer Qdrant unless you need MeiliSearch's typo-tolerant
+queries, or you run an existing MeiliSearch install you have not migrated yet
+(see [Upgrading from MeiliSearch](#upgrading-from-meilisearch)).
+
+Turn it on in `~/.config/arcaneum/config.yaml`, then run `arc container start`:
+
+```yaml
+meilisearch:
+  enabled: true
+corpus:
+  default_text_backend: meili   # optional: new corpora default to MeiliSearch
+```
+
+Or keep Qdrant as the default and pick MeiliSearch per corpus:
+
+```bash
+arc corpus create NAME --type TYPE --text-backend meili
+```
+
+A `meili` corpus keeps its text in a MeiliSearch index beside its Qdrant
+collection, so the two must stay in parity:
+
+```bash
+arc corpus parity NAME                    # Check/restore Qdrant-MeiliSearch parity (coverage on a qdrant corpus)
+arc corpus repair NAME --prune-orphans    # Also delete MeiliSearch docs for files gone from Qdrant and disk
+arc corpus migrate-text NAME --to qdrant  # Move it to Qdrant later
+```
+
+Full-text-only indexes, which are not corpora, also need MeiliSearch:
+
+```bash
+arc indexes create NAME --type TYPE
+arc indexes list
+arc index text pdf PATH --index NAME      # Also: code, markdown
+arc search text "query" --corpus NAME
+```
+
+While MeiliSearch is enabled, `arc container backup` also exports each index's
+settings and documents as JSONL, aborting if a MeiliSearch task runs during the
+backup, and `arc container restore` recreates same-named indexes. MeiliSearch
+opens only data written by its exact version, so when an Arcaneum update bumps
+its image, `arc container start` refuses the old data until
+`arc container upgrade` backs up every index and upgrades it in place.
+
+See [Optional MeiliSearch](docs/guides/cli-reference.md#optional-meilisearch)
+for every setting and [MeiliSearch Tuning](docs/guides/meilisearch-tuning.md)
+for performance.
 
 ### Corporate Networks
 
@@ -546,7 +611,7 @@ All commands use the `arc:` namespace prefix:
 | `/arc:models` | List available embedding models |
 | `/arc:config` | Manage configuration and cache |
 | `/arc:collection` | Manage Qdrant collections (semantic search only) |
-| `/arc:indexes` | Manage MeiliSearch indexes (full-text search only) |
+| `/arc:indexes` | Manage MeiliSearch indexes (optional backend, full-text only) |
 
 **Usage Examples:**
 
@@ -569,7 +634,8 @@ Use `/help` in Claude Code to see all available commands or `/arc:doctor` to che
 1. **CLI-First**: All functionality as CLI tools (RDR-001, RDR-006)
 2. **Slash Commands**: Thin wrappers calling CLI via Bash (RDR-006)
 3. **No MCP (v1)**: Avoid MCP overhead, use direct CLI execution (RDR-006)
-4. **Local Docker**: Databases run locally with volume persistence (RDR-002, RDR-008)
+4. **Local Docker**: Qdrant runs locally with volume persistence; MeiliSearch is optional
+   (RDR-002, RDR-008, RDR-027)
 5. **RDR-Based Planning**: Detailed design before implementation (docs/rdr/)
 
 ### Implementation Status
@@ -587,6 +653,7 @@ Use `/help` in Claude Code to see all available commands or `/arc:doctor` to che
 - ✅ **RDR-011**: Source code full-text indexing (COMPLETED)
 - ✅ **RDR-012**: Full-text search integration (COMPLETED)
 - ✅ **RDR-014**: Markdown indexing (COMPLETED)
+- ✅ **RDR-027**: Qdrant as a per-corpus full-text backend (COMPLETED)
 
 ### Testing
 
@@ -597,7 +664,7 @@ pytest tests/unit tests/fulltext tests/schema -v
 # Run with coverage
 pytest tests/unit tests/fulltext tests/schema --cov=src/arcaneum -v
 
-# Run integration tests (requires Qdrant and MeiliSearch running)
+# Run integration tests (requires Qdrant; MeiliSearch backend tests skip without MeiliSearch)
 arc container start
 pytest tests/integration tests/indexing tests/cli -v
 ```
@@ -610,7 +677,10 @@ pytest tests/integration tests/indexing tests/cli -v
 - **[CLI Reference](docs/guides/cli-reference.md)** - Complete command documentation and options
 - **[PDF Indexing Guide](docs/guides/pdf-indexing.md)** - Advanced PDF indexing with OCR
   support, performance tuning, and troubleshooting
+- **[Moving to Qdrant-only Text Search](docs/guides/qdrant-only-text.md)** - Migrate MeiliSearch corpora to Qdrant
+  and retire MeiliSearch
 - **[Qdrant Migration Guide](docs/guides/qdrant-migration.md)** - Migrate from bind mounts to Docker named volumes
+- **[MeiliSearch Tuning](docs/guides/meilisearch-tuning.md)** - Performance settings for the optional MeiliSearch backend
 - **[Corporate Network Setup](docs/testing/offline-mode.md)** - Setup for VPN, SSL certificates, and offline mode
 - **[Claude Code Plugin Testing Guide](docs/guides/claude-code-plugin.md)** - Local development and testing for plugin developers
 
@@ -643,4 +713,4 @@ MIT - See LICENSE file for details
 
 ## Acknowledgments
 
-- Built on [Qdrant](https://qdrant.tech/) and [MeiliSearch](https://www.meilisearch.com/)
+- Built on [Qdrant](https://qdrant.tech/), with optional [MeiliSearch](https://www.meilisearch.com/) support

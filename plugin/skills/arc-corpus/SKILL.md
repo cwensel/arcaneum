@@ -1,17 +1,19 @@
 ---
 name: arc-corpus
-description: Dual-index corpus management for combined semantic and full-text search. Use when user mentions corpus, dual indexing, syncing content to both Qdrant and MeiliSearch, checking parity between systems, deleting corpora, installing a git hook to keep an indexed repo current automatically, or managing content that needs both search types.
+description: Corpus management for combined semantic and full-text search (Qdrant by default; optional MeiliSearch backend). Use when user mentions corpus, syncing content into a corpus, migrating text search between MeiliSearch and Qdrant, checking parity on a MeiliSearch corpus, deleting corpora, installing a git hook to keep an indexed repo current automatically, or managing content that needs both search types.
 allowed-tools: Bash(arc:*), Read
 ---
 
-# Corpus Management (Dual-Index)
+# Corpus Management
 
-A corpus is a Qdrant collection serving semantic search and full-text search; a `meili` corpus
-also keeps a MeiliSearch index in sync for its full-text search.
+A corpus is a Qdrant collection serving semantic search and full-text search (a BM25 text index
+in the same collection, Qdrant 1.20+); a `meili` corpus also keeps a MeiliSearch index in sync
+for its full-text search.
 
 **For adding or updating content, always prefer `arc corpus sync` over `arc index`, `arc collection`, or `arc indexes`.**
-The `corpus` commands manage Qdrant and MeiliSearch together. Single-system commands
-(`arc index`, `arc collection`, `arc indexes`) are for advanced workflows that need one system without the other.
+The `corpus` commands manage a corpus's semantic and full-text search together. Single-system commands
+(`arc index`, `arc collection`, `arc indexes`) are for advanced workflows; `arc indexes` and
+`arc index text` are MeiliSearch-only and need `meilisearch.enabled: true`.
 
 MeiliSearch is optional: a corpus on the `qdrant` text backend serves full-text
 search from its Qdrant collection. Without `--text-backend`, `arc corpus create`
@@ -29,12 +31,12 @@ arc corpus create MyCorpus --type code
 arc corpus create MyCorpus --type markdown
 arc corpus create MyCorpus --type pdf --models qwen3-embed,jina-v3  # Multiple models
 
-# Delete corpus (deletes both collection and index)
+# Delete corpus (deletes the collection and any MeiliSearch index)
 arc corpus delete MyCorpus              # With confirmation prompt
 arc corpus delete MyCorpus --confirm    # Skip confirmation
 arc corpus delete MyCorpus --confirm --json  # JSON output
 
-# Sync files to both systems (preferred command for adding/updating content)
+# Sync files into a corpus (preferred command for adding/updating content)
 arc corpus sync MyCorpus /path/to/files
 arc corpus sync MyCorpus /path/one /path/two /path/three    # Multiple directories
 arc corpus sync MyCorpus /path/to/files --parity            # Detect renames, remove files no longer on disk
@@ -63,32 +65,33 @@ arc corpus sync MyCorpus --from-index 'method=pymupdf_normalized,!fallback' --dr
 arc corpus sync MyCorpus --from-index 'method=pymupdf_normalized,!fallback'
 arc corpus sync MyCorpus --from-index 'version<0.10.0'
 
-# Check health: content quality plus Qdrant/MeiliSearch parity
+# Check health: content quality plus text coverage (qdrant) or Qdrant/MeiliSearch parity (meili)
 arc corpus verify MyCorpus                            # Human-readable report
-arc corpus verify MyCorpus --json                     # parity_status: synced | mismatch | unknown
+arc corpus verify MyCorpus --json                     # parity_status (meili corpora): synced | mismatch | unknown
 arc corpus verify MyCorpus --strict --json            # Exit 1 on any issue, including mismatch
 
 # Sweep every corpus (read-only) and get the commands that fix each one
 arc corpus doctor                                     # All corpora; lists commands to run
 arc corpus doctor MyCorpus OtherCorpus --json         # data.commands / data.optional_commands
 
-# Repair incomplete or garbled files, then restore parity
+# Repair incomplete or garbled files, then restore text coverage/parity
 arc corpus repair MyCorpus                            # Detect and fix quality and parity issues
 arc corpus repair MyCorpus --dry-run                  # Preview what would be repaired
 arc corpus repair MyCorpus --include-stale-policy     # Also migrate policy-only files
-arc corpus repair MyCorpus --prune-orphans            # Also delete docs for files gone everywhere
+arc corpus repair MyCorpus --prune-orphans            # Also delete MeiliSearch docs for files gone everywhere (meili)
 arc corpus repair MyCorpus --quality-threshold 0.5    # More aggressive detection
 arc corpus repair MyCorpus --verbose                  # Show per-file quality scores
 
-# View corpus info (both systems)
+# View corpus info
 arc corpus info MyCorpus
 arc corpus info MyCorpus --json
 
-# List indexed items with parity status
+# List indexed items (Q/M parity status on a meili corpus)
 arc corpus items MyCorpus               # Table output with Q/M chunk counts
 arc corpus items MyCorpus --json        # JSON output for automation
 
-# Check and restore parity between systems
+# Check and restore the text index; Qdrant/MeiliSearch parity, --prune-orphans and
+# --create-missing apply to meili corpora only
 arc corpus parity MyCorpus              # Check and backfill single corpus
 arc corpus parity MyCorpus --dry-run    # Preview only
 arc corpus parity MyCorpus --verify     # Verify chunk counts match
@@ -102,7 +105,7 @@ arc corpus parity                       # Process all corpora
 arc corpus parity --dry-run             # Preview all
 arc corpus parity --confirm             # Skip confirmation prompt
 
-# Create missing MeiliSearch indexes for qdrant_only corpora
+# Create missing MeiliSearch indexes for qdrant_only collections (meili backend only)
 arc corpus parity --create-missing --dry-run   # Preview what would be created
 arc corpus parity --create-missing --confirm   # Create and sync all
 ```
@@ -111,7 +114,7 @@ arc corpus parity --create-missing --confirm   # Create and sync all
 
 - **Use Corpus**: When you need both semantic search (conceptual queries) AND full-text search (exact phrases)
 - **Use Collection alone**: When you only need semantic/conceptual search
-- **Use Index alone**: When you only need exact keyword/phrase search
+- **Use Index alone** (`arc indexes`): MeiliSearch-only keyword search; needs `meilisearch.enabled: true`
 
 ## Re-indexing by Stored Metadata
 
@@ -137,7 +140,7 @@ column-order fix, whose two-column pages are indexed as interleaved lines.
 ## Parity Behavior
 
 On a `meili` corpus, the `--parity` flag on `arc corpus sync` and the standalone
-`arc corpus parity` command both ensure both systems hold the same content, but
+`arc corpus parity` command both ensure Qdrant and MeiliSearch hold the same content, but
 operate differently. A `qdrant` corpus has no second store: sync `--parity`
 plans no backfill (its `meili_*` counts are 0) and applies renames and removals
 through Qdrant, and `arc corpus parity` only ensures the text index and reports
@@ -192,11 +195,11 @@ repair reason remain selected. Duplicate sources are consolidated without losing
 their physical-path aliases. There is no separate `--only-corrupt` flag because
 the default repair path is already selective.
 
-After the content step, repair runs the `arc corpus parity --verify` pass, so it
+After the content step, repair runs the `arc corpus parity --verify` pass, so on a `meili` corpus it
 also fixes the `mismatch` that `arc corpus verify` reports. Both steps share one
 corpus lock, and `--dry-run` previews both. With `--json` the output is one
 document with the parity result under `data.parity`; a parity failure exits 1.
-Pass `--prune-orphans` to also clear MeiliSearch documents for files gone from
+On a `meili` corpus, pass `--prune-orphans` to also clear MeiliSearch documents for files gone from
 both Qdrant and disk.
 
 ## Automatic Sync via Git Hook
@@ -214,7 +217,7 @@ How it works:
   and starts a background worker. A missed event is caught up by the next one.
 - The worker drains the queue until empty, so a burst of commits pays one
   embedding-model load instead of one per commit.
-- Deleted and renamed-away files are removed from both Qdrant and MeiliSearch.
+- Deleted and renamed-away files are removed from Qdrant (and from MeiliSearch on a `meili` corpus).
 - The hook never blocks or fails a git operation; it logs to
   `~/.local/state/arcaneum/hook.log`.
 

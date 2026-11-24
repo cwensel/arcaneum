@@ -365,9 +365,11 @@ Both search modes emit the same `data` and the same hit (RDR-026 Q2):
 }
 ```
 
-- `chunk_id` is the Qdrant point id or the MeiliSearch document id.
-- `score` is the Qdrant similarity for semantic hits and MeiliSearch's
-  `_rankingScore` for text hits. A score compares only within one mode, and a
+- `chunk_id` is the Qdrant point id, or the MeiliSearch document id for a
+  corpus whose text backend is `meili`.
+- `score` is the Qdrant similarity for semantic hits and the text backend's
+  ranking score for text hits (Qdrant BM25, or MeiliSearch's `_rankingScore`
+  for a `meili` corpus). A score compares only within one mode, and a
   text score only within one corpus.
 - Semantic hits are ordered by score across corpora. Text hits from several
   corpora are interleaved round-robin, keeping each corpus's own order.
@@ -380,7 +382,7 @@ Both search modes emit the same `data` and the same hit (RDR-026 Q2):
   one other does.
 - `service_errors` appears on a text search only when Qdrant could not be read
   for each corpus's metadata, as `["Qdrant: <error>"]`. The corpora it left
-  unread were searched on MeiliSearch, whose index is stale for a corpus
+  unread were searched on MeiliSearch (when enabled), whose index is stale for a corpus
   migrated to Qdrant but not yet finalized. Text output prints it as a
   `[WARNING]` line on stderr.
 
@@ -440,8 +442,8 @@ at most 5) of the same file and version, in order (RDR-026 Q8):
 ```
 
 - `CHUNK_ID` is a hit's `chunk_id` from either search mode. The lookup tries
-  Qdrant, then MeiliSearch, and takes the window from the system that holds
-  the chunk.
+  Qdrant, then MeiliSearch when enabled, and takes the window from the system
+  that holds the chunk.
 - `cite` is the hit chunk's cite. `first_chunk_id` and `last_chunk_id` name the
   window's ends, so a reader can page further with `--before 0` or
   `--after 0` from one of them.
@@ -481,7 +483,7 @@ The search and listing commands report these codes (RDR-026):
 | `unknown-chunk` | 3 | `search passage` finds the chunk id in neither system |
 | `bad-filter` | 2 | The filter does not parse or names an unfilterable field |
 | `bad-argument` | 2 | Any other bad argument, including a command-line usage error |
-| `service-down` | 1 | Qdrant or MeiliSearch is unreachable; the message names which |
+| `service-down` | 1 | Qdrant (or MeiliSearch, when enabled) is unreachable; the message names which |
 | `semantic-unavailable` | 1 | No embedder slot is free within the wait budget |
 | `not-found` | 3 | Another resource is missing, such as a path |
 | `error` | 1 | Any other failure |

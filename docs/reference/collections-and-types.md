@@ -33,24 +33,28 @@ arc collection create personal-code --model jina-code --type code
 
 ### Corpus (RDR-009)
 
-**Definition:** A unified searchable dataset across BOTH Qdrant AND MeiliSearch
+**Definition:** A unified searchable dataset serving semantic and full-text
+search. By default both live in one Qdrant collection (vectors plus a BM25 text
+index); a corpus with text backend `meili` keeps its full-text index in
+MeiliSearch instead (optional, see
+[Optional MeiliSearch](../guides/cli-reference.md#optional-meilisearch))
 
 **Characteristics:**
 
-- Dual indexing: Qdrant (semantic) + MeiliSearch (full-text)
+- Qdrant (semantic and, by default, full-text); MeiliSearch full-text only for `meili` corpora
 - **Inherits type** from underlying collection
-- Same name used for both systems
+- Same name used for the corpus in every system it uses
 - Enables hybrid search workflows
 
 **Creation:**
 
 ```bash
-# Creates BOTH Qdrant collection AND MeiliSearch index
+# Creates a Qdrant collection with a text index (default text backend: qdrant)
 arc corpus create docs --type pdf
-# ├─> Qdrant collection 'docs' (type=pdf)
-# └─> MeiliSearch index 'docs'
+# └─> Qdrant collection 'docs' (type=pdf)
 
-arc corpus create code --type code
+# With text backend meili (optional), also creates a MeiliSearch index
+arc corpus create code --type code --text-backend meili
 # ├─> Qdrant collection 'code' (type=code)
 # └─> MeiliSearch index 'code'
 ```
@@ -138,7 +142,7 @@ arc index code ~/projects --collection docs
 └─────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────┐
-│                CORPUS (typed, dual-system)               │
+│                CORPUS (typed)                            │
 │  ┌────────────────────────────────────────────────────┐ │
 │  │ Qdrant Collection (semantic search)                │ │
 │  │ - collection_type enforced                         │ │
@@ -146,9 +150,9 @@ arc index code ~/projects --collection docs
 │  └────────────────────────────────────────────────────┘ │
 │                          +                              │
 │  ┌────────────────────────────────────────────────────┐ │
-│  │ MeiliSearch Index (full-text search)               │ │
-│  │ - same type as collection                          │ │
-│  │ - text for exact matching                          │ │
+│  │ Text index (full-text search)                      │ │
+│  │ - Qdrant BM25 index by default                     │ │
+│  │ - or a MeiliSearch index (optional, meili corpus)  │ │
 │  └────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -165,7 +169,7 @@ arc collection create code --model jina-code --type code
 arc index code ~/projects --collection code
 
 # Search (RDR-007)
-arc search "authentication" --collection code
+arc search semantic "authentication" --corpus code
 ```
 
 **Use when:** You only need semantic similarity search
@@ -173,10 +177,10 @@ arc search "authentication" --collection code
 ### Pattern 2: Hybrid Search (Corpus)
 
 ```bash
-# Create typed corpus (both Qdrant + MeiliSearch)
+# Create typed corpus (Qdrant collection with a text index)
 arc corpus create code --type code
 
-# Sync directory (indexes to both)
+# Sync directory (indexes semantic and full-text)
 arc corpus sync code ~/projects
 
 # Sync multiple directories
@@ -185,8 +189,8 @@ arc corpus sync code ~/projects ~/libs ~/third-party
 # Semantic search (Qdrant)
 arc search "authentication" --collection code
 
-# Full-text search (MeiliSearch)
-arc search text "def authenticate" --index code
+# Full-text search
+arc search text "def authenticate" --corpus code
 ```
 
 **Use when:** You need both semantic similarity AND exact phrase matching
@@ -295,7 +299,7 @@ $ arc index code ~/projects --collection old-collection
 | Term | Meaning | Example |
 | ------ | --------- | --------- |
 | **Collection** | Typed Qdrant vector database | `arc collection create code --type code` |
-| **Corpus** | Dual-indexed (Qdrant + MeiliSearch) | `arc corpus create docs --type pdf` |
+| **Corpus** | Semantic + full-text (Qdrant; optional MeiliSearch text) | `arc corpus create docs --type pdf` |
 | **Collection Type** | Enforced at creation (pdf/code) | `--type code` |
 | **Store Type** | Metadata describing indexed content | `store_type: "source-code"` |
 | **Collection Name** | User-chosen name (flexible) | `docs`, `code`, `my-work` |
@@ -305,5 +309,6 @@ $ arc index code ~/projects --collection old-collection
 - **RDR-003**: Collection creation and management
 - **RDR-004**: PDF indexing
 - **RDR-005**: Source code indexing
-- **RDR-009**: Corpus (dual indexing) workflow
+- **RDR-009**: Corpus (dual indexing) workflow (historical)
+- **[Moving to Qdrant-only text search](../guides/qdrant-only-text.md)**
 - **[Source Code Indexing Testing](../testing/source-code-indexing.md)**: Testing guide

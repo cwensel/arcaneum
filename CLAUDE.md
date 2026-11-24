@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Arcaneum is a CLI tool for semantic and full-text search across Qdrant and MeiliSearch vector databases.
+Arcaneum is a CLI tool for semantic and full-text search, both served by Qdrant (MeiliSearch is an optional full-text backend).
 It provides Claude Code integration through slash commands and plugins.
 
 This repository uses Recommendation Decisioning Records (RDRs) for detailed technical planning before implementation.
@@ -49,14 +49,16 @@ When creating or modifying markdown files in this project:
 ## Arc CLI Quick Reference
 
 **Prefer `arc corpus` over `arc index` / `arc collection` / `arc indexes`.**
-The `corpus` commands manage Qdrant and MeiliSearch together. The single-system
-commands exist for advanced workflows that need only one system; do not reach
+The `corpus` commands manage a corpus's semantic and full-text search together. The
+single-system commands exist for advanced workflows (`arc indexes` and `arc index text`
+are MeiliSearch-only and need `meilisearch.enabled: true`); do not reach
 for them for general indexing or searching.
 
 ### Adding or updating content
 
 ```bash
-# Create a corpus once (a Qdrant collection; a meili corpus also gets a MeiliSearch index)
+# Create a corpus once (a Qdrant collection with a text index; a meili corpus also
+# gets a MeiliSearch index)
 arc corpus create MyCorpus --type pdf        # or: code, markdown
 
 # Add or update files (preferred command for indexing)
@@ -83,8 +85,8 @@ arc corpus doctor
 # Preview and repair verifier-selected content/integrity issues. Policy-only
 # findings are reported but require --include-stale-policy to migrate. For PDFs
 # this also consolidates identical sources while preserving their paths as aliases.
-# It then restores Qdrant/MeiliSearch chunk-count parity (the `mismatch` that
-# `arc corpus verify` reports).
+# On a meili corpus it then restores Qdrant/MeiliSearch chunk-count parity (the
+# `mismatch` that `arc corpus verify` reports).
 arc corpus repair MyCorpus --dry-run --json
 arc corpus repair MyCorpus
 arc corpus repair MyCorpus --include-stale-policy
@@ -92,8 +94,8 @@ arc corpus repair MyCorpus --include-stale-policy
 
 PDF corpora keep one canonical searchable chunk set per content hash. Alias
 renames/removals preserve that content; parity sync promotes a live alias when
-the canonical path disappears and verifies both indexes before retiring the old
-manifest.
+the canonical path disappears and verifies every index the corpus uses before
+retiring the old manifest.
 
 ### Searching
 

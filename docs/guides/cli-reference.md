@@ -43,7 +43,8 @@ together, which is the intended workflow for almost all cases.
   semantic search only. Advanced — use only if you explicitly don't want
   full-text search.
 - **Use Indexes** (`arc indexes ...`): MeiliSearch-only, full-text search only.
-  Advanced — use only if you explicitly don't want Qdrant.
+  Advanced, and needs the optional MeiliSearch backend
+  (`meilisearch.enabled: true`).
 
 ### Corpus Management (Recommended)
 
@@ -63,11 +64,11 @@ arc corpus update <name>                      # Update description metadata
 arc corpus sync <name> <path> [<path>...]     # Index files into the corpus
 arc corpus repair <name>                      # Repair verifier-selected unhealthy files
 arc corpus migrate-text <name> --to qdrant|meili  # Move text search between backends
-arc corpus items <name>                       # List items with parity status
+arc corpus items <name>                       # List items (parity status on a meili corpus)
 arc corpus verify <name>                      # Verify corpus health
 arc corpus doctor [<name>...]                 # Check all corpora; list fix commands
 arc corpus jobs                               # List running syncs/drains and queued hook work
-arc corpus parity <name>                      # Check/restore parity
+arc corpus parity <name>                      # Check/restore parity (meili corpora; qdrant: text index coverage)
 arc corpus delete <name>                      # Delete the collection and any MeiliSearch index
 ```
 
@@ -76,7 +77,7 @@ arc corpus delete <name>                      # Delete the collection and any Me
 ```bash
 arc search semantic <query> --corpus <name>                 # Semantic search (Qdrant)
 arc search semantic <query> --corpus <n1> --corpus <n2>     # Multi-corpus search
-arc search text <query> --corpus <name>                     # Full-text search (MeiliSearch)
+arc search text <query> --corpus <name>                     # Full-text search (Qdrant text index; MeiliSearch on a meili corpus)
 arc search passage <chunk-id> --corpus <name>               # Text around a hit
 ```
 
@@ -323,10 +324,10 @@ arc corpus sync <name> <path> [<path>...]                # Index files (multiple
 arc corpus repair <name>                                 # Repair verifier-selected unhealthy files
 arc corpus migrate-text <name> --to qdrant|meili     # Move text search between backends
 arc corpus info <name>                                   # Show corpus details
-arc corpus items <name>                                  # List indexed items with parity status
+arc corpus items <name>                                  # List indexed items (parity status on a meili corpus)
 arc corpus verify <name>                                 # Verify corpus health
 arc corpus doctor [<name>...]                            # Check all corpora, list commands to fix them
-arc corpus parity <name>                                 # Restore parity between indexes
+arc corpus parity <name>                                 # Restore parity between indexes (meili corpora)
 arc corpus hook install <name>                           # Auto-sync a git repo's branch
 ```
 
@@ -1003,7 +1004,7 @@ arc corpus parity MyCorpus --create-missing
 ```
 
 This is useful when you have Qdrant collections that were indexed before MeiliSearch
-was set up, or when migrating to dual-index workflows.
+was set up (`meili` corpora only; a `qdrant` corpus needs no MeiliSearch index).
 
 **Note:** `meili_only` corpora cannot be auto-created because creating a Qdrant
 collection requires specifying `--type` and `--model`. These must be created manually
@@ -1202,8 +1203,9 @@ arc corpus doctor --strict --json         # Exit 1 if any corpus needs action
 ```
 
 For each corpus, doctor runs the checks of `arc corpus verify` (stored content
-quality and Qdrant/MeiliSearch parity) and looks for MeiliSearch documents whose
-files are gone from both Qdrant and disk. It fails fast if either service is
+quality; plus Qdrant/MeiliSearch parity on `meili` corpora) and looks for
+MeiliSearch documents whose files are gone from both Qdrant and disk (`meili`
+corpora only). It fails fast if either service is
 unreachable, since every corpus would otherwise look one-sided.
 
 Each corpus is reported as `ok`, `needs_action`, or `error` (a check failed).
@@ -1213,7 +1215,7 @@ Findings map to commands:
 | --- | --- |
 | Files need re-indexing (incomplete, duplicate, degraded) | `arc corpus repair NAME` |
 | PDFs extracted before the column-order fix, with no other defect | `arc corpus sync NAME --from-index 'method=pymupdf_normalized,!fallback'` |
-| Items differ between Qdrant and MeiliSearch | `arc corpus repair NAME` |
+| Items differ between Qdrant and MeiliSearch (`meili` corpus) | `arc corpus repair NAME` |
 | MeiliSearch documents for files gone from Qdrant and disk | `arc corpus repair NAME --prune-orphans` |
 | Corpus exists only in Qdrant | `arc corpus parity NAME --create-missing` |
 | Corpus exists only in MeiliSearch | create the collection, then re-sync (manual) |
@@ -1285,7 +1287,7 @@ arc corpus delete MyCorpus --confirm --json
 
 **Behavior:**
 
-- Checks if either Qdrant collection or MeiliSearch index exists
+- Checks if either the Qdrant collection or a MeiliSearch index exists
 - Prompts for confirmation before deleting (unless `--confirm` is passed)
 - Deletes each that exists; if one fails, continues with the other
 - Reports partial deletion if only one system was deleted
@@ -1626,6 +1628,10 @@ arc index pdf /path/to/pdfs --collection pdf-docs --debug
 
 ## PDF Full-Text Indexing (MeiliSearch)
 
+This section covers the optional MeiliSearch backend and needs
+`meilisearch.enabled: true`. A default corpus already serves full-text search
+from Qdrant (see [Optional MeiliSearch](#optional-meilisearch)).
+
 Index PDFs to MeiliSearch for exact phrase and keyword search, complementing
 semantic search in Qdrant. This mirrors the `arc collection` commands for Qdrant
 with `arc indexes` commands for MeiliSearch.
@@ -1692,7 +1698,7 @@ arc search semantic "machine learning" --corpus pdf-docs
 arc search text '"neural network"' --corpus pdf-docs
 ```
 
-### Dual Indexing (Manual - Advanced)
+### Separate Collection and Index (Manual - Advanced)
 
 Alternatively, manage Qdrant and MeiliSearch separately (needs
 `meilisearch.enabled: true`):
@@ -1969,6 +1975,9 @@ The `arc` CLI is the entrypoint for all Claude Code plugins and slash commands:
 See individual slash command files in the `plugin/commands/` directory for detailed usage.
 
 ## Full-Text Search (MeiliSearch)
+
+This section covers the optional MeiliSearch backend (`meilisearch.enabled:
+true`); a default corpus serves full-text search from its Qdrant collection.
 
 Full-text search provides exact phrase matching, typo-tolerant keyword search, and filtered queries.
 
@@ -2841,7 +2850,7 @@ arc mcp --corpus DevRef --print-config codex  # Print a codex mcp_servers.arc TO
 
 A failed call sets `isError`, carries `{code, message}` as its structured
 content, and reads `<code>: <message>`. The codes are the ones `--json` errors
-carry, for example `service-down` (naming Qdrant or MeiliSearch) and `timeout`.
+carry, for example `service-down` (naming Qdrant, or MeiliSearch when enabled) and `timeout`.
 The [arc MCP Server guide](mcp-server.md) covers launching it from Claude Code
 and codex, the allowlist, the error codes and the cite grammar.
 
@@ -2901,8 +2910,8 @@ arc container start
 
 ### Corpus Stuck in `chunk_mismatch`
 
-`arc corpus list` shows `chunk_mismatch` when a corpus has a different number of
-chunks in Qdrant than in MeiliSearch. Normally `arc corpus parity <name> --verify`
+For a `meili` corpus, `arc corpus list` shows `chunk_mismatch` when it has a
+different number of chunks in Qdrant than in MeiliSearch. Normally `arc corpus parity <name> --verify`
 resolves it.
 
 If the mismatch survives repeated parity runs, inspect the per-file detail:

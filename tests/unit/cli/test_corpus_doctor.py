@@ -338,3 +338,42 @@ def test_other_defects_keep_repair_and_add_the_targeted_command():
         ("repairable_files", 1),
         ("stale_extraction", 1),
     ]
+
+
+def test_open_clients_skips_meilisearch_while_disabled():
+    qdrant = SimpleNamespace(get_collections=lambda: SimpleNamespace(collections=[]))
+
+    def unreachable():
+        raise AssertionError("MeiliSearch must not be contacted while disabled")
+
+    with (
+        patch(
+            "arcaneum.config.resolve_meili_settings",
+            lambda: SimpleNamespace(enabled=False),
+        ),
+        patch("arcaneum.cli.utils.create_qdrant_client", lambda: qdrant),
+        patch("arcaneum.cli.sync.get_meili_client", unreachable),
+    ):
+        assert corpus_doctor._open_clients() == (qdrant, None)
+
+
+def test_discover_without_meilisearch_flags_corpora_still_on_meili():
+    qdrant = SimpleNamespace(
+        get_collections=lambda: SimpleNamespace(
+            collections=[SimpleNamespace(name="Papers"), SimpleNamespace(name="Code")]
+        )
+    )
+    backends = {"Papers": "qdrant", "Code": "meili"}
+
+    with patch.object(corpus_doctor, "_text_backend", lambda _q, name: backends[name]):
+        presence = corpus_doctor._discover_corpora(qdrant, None)
+
+    assert presence == {"Code": "meili_disabled", "Papers": "qdrant_text"}
+
+
+def test_meili_corpus_while_meilisearch_disabled_names_the_migration():
+    result = diagnose_corpus("Docs", "meili_disabled", _verification(), None, None)
+
+    assert result["status"] == "needs_action"
+    assert result["commands"] == ["arc corpus migrate-text Docs --to qdrant"]
+    assert "meilisearch.enabled" in result["findings"][0]["message"]

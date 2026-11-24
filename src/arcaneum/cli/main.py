@@ -56,7 +56,7 @@ class _RootGroup(click.Group):
 @click.version_option(version=__version__)
 @click.pass_context
 def cli(ctx, output_json, help_all):
-    """Arcaneum: Semantic and full-text search tools for Qdrant and MeiliSearch"""
+    """Arcaneum: Semantic and full-text search tools on Qdrant (MeiliSearch optional)"""
     ctx.ensure_object(dict)
     ctx.obj["output_json"] = output_json
 

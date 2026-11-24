@@ -48,8 +48,9 @@ def diagnose_corpus(
 
     Args:
         name: Corpus name
-        presence: "both", "qdrant_only", "meili_only", or "qdrant_text" (a
-            corpus whose text backend is qdrant)
+        presence: "both", "qdrant_only", "meili_only", "qdrant_text" (a
+            corpus whose text backend is qdrant), or "meili_disabled" (a meili
+            corpus while MeiliSearch is disabled)
         verification: CollectionVerificationResult, or None when not run
         parity: Result of corpus._compare_parity_items, an
             {"status": "unknown", "reason": ...} dict, or None when not run
@@ -73,7 +74,15 @@ def diagnose_corpus(
         finding.update(extra)
         findings.append(finding)
 
-    if presence == "qdrant_only":
+    if presence == "meili_disabled":
+        add(
+            "meilisearch_disabled",
+            "action",
+            "Corpus searches text on MeiliSearch, but meilisearch.enabled is false; set it "
+            "to true and run `arc container start`, then move the corpus to Qdrant",
+            command=f"arc corpus migrate-text {name} --to qdrant",
+        )
+    elif presence == "qdrant_only":
         add(
             "qdrant_only_corpus",
             "action",
@@ -246,15 +255,20 @@ def diagnose_corpus(
 
 
 def _open_clients():
-    """Return (qdrant, meili), failing if either service is unreachable.
+    """Return (qdrant, meili), failing if an enabled service is unreachable.
 
     A sweep with one service down would report every corpus as one-sided.
+    While ``meilisearch.enabled`` is false, MeiliSearch is not contacted and
+    meili is None.
     """
+    from ..config import resolve_meili_settings
     from .sync import get_meili_client
     from .utils import create_qdrant_client
 
     qdrant = create_qdrant_client()
     qdrant.get_collections()
+    if not resolve_meili_settings().enabled:
+        return qdrant, None
     meili = get_meili_client()
     if not meili.health_check():
         raise ResourceNotFoundError("MeiliSearch server not available")
@@ -276,17 +290,21 @@ def _text_backend(qdrant, name: str) -> str:
 
 
 def _discover_corpora(qdrant, meili) -> Dict[str, str]:
-    """Map every corpus name to "both", "qdrant_only", "meili_only", or "qdrant_text".
+    """Map every corpus name to "both", "qdrant_only", "meili_only", "qdrant_text",
+    or "meili_disabled".
 
     A corpus whose text backend is qdrant is "qdrant_text" whether or not a
-    MeiliSearch index of its name remains.
+    MeiliSearch index of its name remains. With meili None (MeiliSearch
+    disabled), a corpus still on the meili backend is "meili_disabled".
     """
     qdrant_names = {c.name for c in qdrant.get_collections().collections}
-    meili_names = {idx["uid"] for idx in meili.list_indexes()}
+    meili_names = {idx["uid"] for idx in meili.list_indexes()} if meili is not None else set()
 
     def presence(name):
         if name in qdrant_names and _text_backend(qdrant, name) == "qdrant":
             return "qdrant_text"
+        if meili is None:
+            return "meili_disabled"
         if name in qdrant_names and name in meili_names:
             return "both"
         return "qdrant_only" if name in qdrant_names else "meili_only"

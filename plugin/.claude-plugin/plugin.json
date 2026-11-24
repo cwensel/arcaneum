@@ -2,7 +2,7 @@
   "name": "arc",
   "displayName": "Arcaneum",
   "description": "Semantic (vector) and full-text (keyword) search across indexed corpora via the arc CLI. Indexes PDFs, markdown, and source code into Qdrant (semantic and full-text; MeiliSearch optional) with AST-aware chunking, frontmatter, and git metadata. Full-text returns bounded, ranked corpus results even when sources are nonlocal; use it for exact symbols/phrases and semantic for conceptual queries. Both are first-class. Requires Bash(arc:*) permission.",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "author": {
     "name": "Arcaneum Contributors",
     "url": "https://github.com/cwensel/arcaneum"
